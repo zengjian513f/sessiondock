@@ -204,6 +204,10 @@ impl Bridge {
         input: Value,
     ) -> Result<Value, String> {
         match method {
+            "models" if target["uid"].as_str().is_none() => {
+                self.models(std::path::Path::new(string(&target, "cwd")?))
+                    .await
+            }
             "create" => self.create(&target, &input).await,
             "open" => {
                 let (session, key) = self.open(&target).await?;
@@ -213,7 +217,7 @@ impl Bridge {
             }
             "turn" | "interrupt" | "respond" | "models" | "discard" | "queue_cancel"
             | "queue_update" | "fork" | "revert" | "unrevert" | "revert_commit" | "compact"
-            | "shell" | "command" | "settings" | "agents" | "commands" | "usage" => {
+            | "shell" | "command" | "settings" | "agents" | "commands" | "usage" | "rename" => {
                 let (session, _) = self.open(&target).await?;
                 match method {
                     "turn" => self.turn(session, input).await,
@@ -790,6 +794,46 @@ impl Bridge {
                 || inbox["data"].as_array().is_some_and(|v| !v.is_empty())
                 || !state.requests.is_empty()
         );
+        let latest = state
+            .records
+            .values()
+            .max_by(|a, b| {
+                a["time"]["created"]
+                    .as_f64()
+                    .unwrap_or_default()
+                    .total_cmp(&b["time"]["created"].as_f64().unwrap_or_default())
+                    .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+            })
+            .cloned();
+        state.raw["retry"] = latest
+            .as_ref()
+            .filter(|record| {
+                record["type"] == "assistant"
+                    && record["time"]["completed"].is_null()
+                    && state.raw["running"] == true
+            })
+            .map(|record| record["retry"].clone())
+            .unwrap_or(Value::Null);
+        state.raw["compact"] = latest
+            .as_ref()
+            .filter(|record| record["type"] == "compaction")
+            .map(|record| {
+                json!({"state":match record["status"].as_str() {
+                Some("running") => "compacting",
+                Some("completed") => "success",
+                _ => "failed",
+            },"error":record["error"],"id":record["id"]})
+            })
+            .unwrap_or(Value::Null);
+        state.raw["last_turn"] = match info["data"]["outcome"].as_str() {
+            Some(outcome) => json!({"status":match outcome {
+                "succeeded" => "completed",
+                "interrupted" => "interrupted",
+                "failed" => "failed",
+                _ => "unknown",
+            },"at":info["data"]["time"]["idle"]}),
+            None => Value::Null,
+        };
         if state.raw["items"] != json!(state.items)
             || state.raw["requests"] != json!(state.requests)
             || state.raw != before
@@ -857,7 +901,7 @@ fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"models":true,"create":true,
     "discard":false,"queue_cancel":true,"queue_update":true,"fork":true,
     "revert":true,"unrevert":true,"revert_commit":true,"compact":true,"shell":true,
-    "command":true,"settings":true,"agents":true,"commands":true,"usage":true,
+    "command":true,"settings":true,"agents":true,"commands":true,"usage":true,"rename":true,
     "effort":true,"effort_kind":"native model variant","stream":"native API projection polling",
         "terminal_coexistence":"default shared native service only","autostart":false})
 }

@@ -111,14 +111,7 @@ const NativeSdkView = {
     try {
       const response = await this.request('api/native-sdk/models', {uid:this.uid});
       if (!this.current(generation)) return;
-      const raw = response.raw;
-      const options = raw?.configOptions || [];
-      const choices = Array.isArray(raw) ? raw : raw?.data || raw?.models?.availableModels || raw?.models
-        || options.find(option => option.id === 'model')?.options || [];
-      this.models = (Array.isArray(choices) ? choices : []).map(model => typeof model === 'string' ? {id:model} : {
-        ...model, id:model.id || model.modelId || model.value || model.model,
-        efforts:model.efforts || model.supportedEffortLevels || model.variants || options.find(option => option.id === 'reasoning_effort')?.options?.map(option => option.value),
-      }).filter(model => !model.hidden);
+      this.models = nativeSdkModelCatalog(response.raw || response, '').models;
       this.paintPickers();
     } catch { /* A failed catalog does not prevent sending with native settings. */ }
   },
@@ -240,10 +233,36 @@ const NativeSdkView = {
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
     const compacting = raw.status === 'compacting' || raw.compact?.state === 'compacting';
     const uncertain = raw.error_kind === 'uncertain';
-    const kind = raw.error ? (uncertain ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
-      : raw.retry ? 'retrying' : this.running ? 'working' : paused ? 'warning' : pending ? 'waiting' : 'ready';
-    this.setNotice(raw.error ? `${uncertain ? '结果待核对' : '错误'}：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答') : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
+    const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent);
+    // Claude's history activity closes on turn_duration, which can arrive
+    // after its assistant end_turn. The native final phase is already proof
+    // of completion; a later user/tool item prevents borrowing that proof.
+    const tail=this.historyData?.messages?.findLast(item=>['user','assistant','thinking','tool','tool_result'].includes(item.role));
+    const historyCompleted=this.uid.startsWith('claude:') && tail?.role==='assistant'
+      && tail.phase==='final' && !tail.interrupted;
+    const previous = raw.last_turn?.status || (raw.error_kind === 'interrupted' ? 'interrupted'
+      : observed.activity?.state === 'aborted' ? 'interrupted'
+      : observed.activity?.state === 'failed' ? 'failed'
+      : historyCompleted ? 'completed'
+      : this.historyData?.activity?.state === 'working' && !S.liveWorking.has(this.uid)
+        && cache.get(viewKey(this.uid, this.agent))?.cli?.instance?.busy !== true ? 'incomplete' : '');
+    const ended = !this.running && !this.requests.size && !pending;
+    const incomplete = ended && ['interrupted','incomplete','unknown'].includes(previous);
+    const failed = ended && previous === 'failed';
+    const compactFailed = raw.compact?.state === 'failed';
+    const error = raw.error || (compactFailed ? raw.compact.error || '上下文压缩失败' : null)
+      || (failed ? raw.last_turn?.error || observed.activity?.error || '上一回合失败' : null);
+    const warning = uncertain || raw.error_kind === 'interrupted' || incomplete;
+    const kind = error ? (warning ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+      : raw.retry ? 'retrying' : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
+    const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
+    let text = error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+      : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
+      : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
+      : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
+      : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成' : '就绪';
+    if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
+    this.setNotice(text, kind);
   },
 
   paintHistory() {
@@ -252,13 +271,16 @@ const NativeSdkView = {
     let cut = messages.length;
     const first = this.items?.find(item => item.role === 'user');
     if (first) {
-      let at = messages.findIndex(message => message.id && message.id === first.id);
-      if (at < 0) at = messages.findLastIndex(message => message.role === 'user' && message.text === first.text);
+      const identity = NativeSdkControls.messageIdentity(this, first);
+      const at = messages.findIndex(message => message.role === 'user' && identity
+        && NativeSdkControls.messageIdentity(this, message) === identity);
       if (at >= 0) { cut = at; messages = messages.slice(0, at); }
     }
-    if (this.historyRenderedData === this.historyData && this.historyCut === cut) return;
+    const actions=JSON.stringify([this.capabilities.fork,this.capabilities.revert,this.capabilities.rewind]);
+    if (this.historyRenderedData === this.historyData && this.historyCut === cut && this.historyActions===actions) return;
+    this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
-    SdkUI.paintHistory(this, messages);
+    SdkUI.paintHistory(this, messages, {decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
   },
 
   requestCard(request) {
@@ -385,8 +407,7 @@ function nativeSdkMessage(item) {
 // facade. Codex-specific commands and protocol rendering keep their own view.
 function savedSessionView(uid, agent) {
   const key = viewKey(uid, agent);
-  const saved = store.get('sessionViews', {})?.[key]
-    ?? (String(uid).startsWith('claude:') ? store.get('claudeSessionViews', {})?.[key] : null);
+  const saved = store.get('sessionViews', {})?.[key];
   return ['sdk', 'chat', 'terminal'].includes(saved) ? saved : null;
 }
 function rememberSessionView(uid, agent, mode) {
@@ -403,24 +424,53 @@ const SdkView = new Proxy({
   awaitingRunning: false,
   legacyViews: CodexSdkView.legacyViews,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
+  views: new Map(),
+  selection: null,
   preferredMode(uid, agent) {
-    const saved = savedSessionView(uid, agent);
-    if (saved) return saved;
-    if (!String(uid).startsWith('claude:') || agent) return defaultSessionView(uid);
-    // Discovery may still be in flight on reload. Do not start a competing
-    // SDK process before we know whether this session already has a console.
-    if (typeof T === 'undefined' || !T.listLoaded) return 'chat';
-    const name = takenOver(uid);
-    if (name) return T.openViews.get(name)?.mode === 'collapsed' ? 'chat' : 'terminal';
-    if (S.live.has(uid) && !S.liveSdk.has(uid)) return 'chat';
-    return defaultSessionView(uid);
+    return this.selection?.key === viewKey(uid, agent) ? this.selection.mode : null;
   },
-  rememberMode(uid, agent, mode) {
+  selectMode(uid, agent, mode) {
+    const key = viewKey(uid, agent);
+    this.views.set(key, mode);
     rememberSessionView(uid, agent, mode);
+    if (!agent) this.selection = {...(this.selection?.key === key ? this.selection : {}), key, mode};
+  },
+  async selectFor(uid, agent) {
+    if (agent || (!this.available(uid, agent) && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]))) {
+      this.selection = null; return;
+    }
+    const key = viewKey(uid, agent), candidate = this.views.get(key) || savedSessionView(uid, agent);
+    const selection = this.selection = {key, mode: 'loading'};
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const query = new URLSearchParams({force: '1'});
+      if (HUB_MODE) query.set('nodes', nodeOf(uid));
+      const [live] = await Promise.allSettled([
+        fetch(appUrl('api/live?' + query), {signal: controller.signal}).then(async response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        }),
+        typeof T === 'undefined' ? Promise.resolve() : loadTermList(true),
+      ]);
+      if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
+      if (!this.available(uid, agent)) { this.selection = null; return; }
+      const state = live.status === 'fulfilled' ? live.value : null;
+      const name = typeof T === 'undefined' ? null : takenOver(uid);
+      const console = name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale);
+      const sdk = state?.sdk_uids?.includes(uid);
+      const external = state?.uids?.includes(uid) && !sdk;
+      const unknown = !Array.isArray(state?.uids) || state.errors?.some(error => error.node_id === nodeOf(uid));
+      selection.runningSdk = !unknown && sdk === true;
+      // A previous view is only a candidate. Current server ownership decides
+      // whether it can still accept input, including across clients/reloads.
+      selection.mode = console ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
+        : sdk ? 'sdk' : external || unknown || terminalListUncertain(uid) ? 'chat' : candidate || defaultSessionView(uid);
+    } finally { clearTimeout(timer); }
   },
   defaultFor(uid, agent) {
-    const mode = this.preferredMode(uid, agent);
-    return this.available(uid,agent) && (mode ? mode === 'sdk' : !this.legacyViews.has(viewKey(uid,agent)));
+    if (!this.available(uid,agent)) return false;
+    return agent ? !this.legacyViews.has(viewKey(uid,agent)) : this.preferredMode(uid,agent) === 'sdk';
   },
   pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
@@ -440,9 +490,10 @@ const SdkView = new Proxy({
   open(uid,pane,agent,options) {
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
     this.awaitingRunning = true;
-    this.rememberMode(uid, agent, 'sdk');
+    this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
-    const running = !agent && S.liveSdk.has(uid);
+    const running = !agent && (this.selection?.key === viewKey(uid,agent)
+      ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid));
     this.active.open(uid,pane,agent,{...options, readOnly: !options?.start && !running});
     closeWatch();
   },

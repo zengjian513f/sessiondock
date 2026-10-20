@@ -286,11 +286,19 @@ const NativeSdkControls = {
       if(method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
       if(method==='revert_commit' && !await appConfirm('提交回退会永久移除被回退的对话记录；工作区文件不会回滚。',{ok:'提交回退'}))return false;
       if(!view.current(generation))return false;
-      const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...body,request_id:crypto.randomUUID()});
+      const {restore_text,...nativeBody}=body;
+      const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
       if(!view.current(generation))return true;
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
-      if(method==='fork'){await CodexSdkActions.openFork(view,response);return true;}
-      if(['revert','unrevert','revert_commit','rewind'].includes(method))await view.refreshHistory(generation,true);
+      if(method==='fork'){
+        await CodexSdkActions.openFork(view,response);
+        if (body.restore_text && SdkView.uid === response.uid) await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
+        return true;
+      }
+      if(['revert','unrevert','revert_commit','rewind'].includes(method)){
+        await view.refreshHistory(generation,true);
+        if(body.restore_text && view.current(generation))await CodexSdkActions.restoreInput(view,body.restore_text);
+      }
       if(method==='compact')view.paintStatus();else view.setNotice('原生操作已接受');return true;
     }catch(error){if(view.current(generation))view.setNotice(`操作失败：${error.message}`,'blocked');return false;}
   },
@@ -300,12 +308,23 @@ const NativeSdkControls = {
     let success=false;
     if(['usage','status','help'].includes(command)){
       if(command==='usage')void this.loadUsage(view,true);
-      if(command==='help')view.setNotice('网页命令：/usage、/status、/model ID、/effort 档位、/stop、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
+      if(command==='help')view.setNotice('网页命令：/usage、/status、/model ID、/effort 档位、/stop、/new、/rename 名称、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
       else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();ConversationUI.placePopover(menu,view.notice);}
       else {
         const menu=view.pane.querySelector('#sdk-more-menu'),button=view.pane.querySelector('#sdk-more');
         if(!button.hidden && !menu.matches(':popover-open')){menu.showPopover();ConversationUI.placePopover(menu,button);}
       }success=true;
+    }else if(command==='new'){document.querySelector('#new-session')?.click();success=true;}
+    else if(command==='rename'){
+      if(!view.capabilities.rename)view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
+      else if(!arg)view.setNotice('用法：/rename 新名称','blocked');
+      else{
+        const generation=view.generation;
+        await view.request('api/native-sdk/rename',{uid:view.uid,title:arg,request_id:crypto.randomUUID()});
+        await loadSessions(true,true);
+        if(view.current(generation))view.setNotice('会话已重命名');
+        success=true;
+      }
     }else if(command==='stop'){await view.interrupt();success=true;}
     else if(['model','effort'].includes(command)){
       if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
@@ -315,11 +334,40 @@ const NativeSdkControls = {
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
     return true;
   },
+  messageIdentity(view,item) {
+    if (!item || item.role !== 'user') return null;
+    const source=view.uid.split(':')[0];
+    if(source==='grok'){
+      const index=item.prompt_index ?? (/^prompt:(\d+)$/.exec(item.turn_id || '')?.[1]);
+      return index == null ? null : `prompt:${index}`;
+    }
+    if(source==='agy'){
+      const index=item.native?.step_index ?? (/^step:(\d+)$/.exec(item.turn_id || '')?.[1])
+        ?? (/:step:(\d+)$/.exec(item.native_id || '')?.[1]);
+      return index == null ? null : `step:${index}`;
+    }
+    if(source==='opencode')return item.native_id || (/^message:(.+)$/.exec(item.turn_id || '')?.[1]) || null;
+    if(source==='claude')return item.native_id || item.turn_id || item.id || null;
+    return null;
+  },
   decorate(view,node,item) {
-    if(item.role!=='user' || !view.capabilities.fork || view.uid.startsWith('grok:') && item.prompt_index==null)return;
+    if(item?.role!=='user' || node.querySelector('.sdk-bubble-toggle'))return;
+    const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:');
+    if(!identity || (!view.capabilities.fork && !view.capabilities.revert && !view.capabilities.rewind))return;
     const toggle=el('button','sdk-bubble-toggle','⋯');toggle.type='button';toggle.setAttribute('aria-label','消息操作');toggle.setAttribute('aria-expanded','false');
     const menu=el('div','new-model-menu sdk-bubble-menu');menu.setAttribute('popover','auto');menu.setAttribute('aria-label','消息操作');
-    const button=el('button','btn','从此处之前分支');button.type='button';button.onclick=()=>{menu.hidePopover();this.action(view,'fork',view.uid.startsWith('grok:')?{prompt_index:item.prompt_index}:{before:item.native_id || item.id});};menu.append(button);
+    for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
+      if(!view.capabilities[method])continue;
+      const button=el('button','new-model-option',label);button.type='button';
+      button.onclick=async()=>{
+        menu.hidePopover();
+        const generation=view.generation;
+        if(method!=='fork' && !await appConfirm('回退到这条消息之前？消息内容将追加回输入框，工作区文件保持原样。',{ok:'回退'}))return;
+        if(!view.current(generation))return;
+        await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork'?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
+      };
+      menu.append(button);
+    }
     toggle.onclick=()=>{if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();ConversationUI.placePopover(menu,toggle);}};menu.addEventListener('beforetoggle',event=>toggle.setAttribute('aria-expanded',String(event.newState==='open')));node.classList.add('sdk-user-actions');node.append(toggle,menu);
   },
   elicitation(view,request) {

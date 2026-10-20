@@ -195,7 +195,7 @@ const SdkUI = {
           && data.partial === entry.partial && data.activity === entry.activity) {
         // CLI-only updates can close a native turn whose ending was never
         // written. They must refresh status even when history is unchanged.
-        if (this.summary && this.connected && (data.observedActivity?.state !== observed?.state
+        if (this.connected && (data.observedActivity?.state !== observed?.state
             || data.observedActivity?.reason !== observed?.reason)) this.paintStatus();
         data.observedActivity = observed;
         return;
@@ -204,6 +204,7 @@ const SdkUI = {
       this.historyData = {messages: entry.msgs, partial: entry.partial,
         activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
       this.paintHistory();
+      if(this.connected)this.paintStatus();
     },
 
     scheduleHistory() {

@@ -38,6 +38,7 @@
 | `settings` | 显式更新 `permission_mode/fast_mode/model/effort`；逐项等待原生确认，仅更新进程级设置。必填 `request_id`；相同请求不重放已尝试的控制 |
 | `usage` | 查询 `get_context_usage {detail:"summary"}` 和实验性 `get_usage {skip_behaviors:true}`；失败按字段降级并保留最近有效数据 |
 | `compact` | 将原生 `/compact` 作为 user 命令写入 stream；必填 `request_id`，重试不重复提交。接受不等于完成，进度与结果来自原生事件 |
+| `rename` | 原生控制 `{subtype:"rename_session",title,source:"host",session_id}`；不模拟模型输入，不重写 JSONL |
 | `fork` | `request_id` 必填；全会话冻结当前原生主链 tail，`before` 接原生 user UUID 并冻结其 parentUuid。返回新 UID/SID、session 和可信 `sdk_fork` 计划；重试不会重复派发未确认操作 |
 
 `turn` 的模型变化通过原生 `set_model`，effort 通过原生
@@ -142,7 +143,7 @@ stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏
 仍要求原生 `session_id` 与选定 SID 一致，不接受另一会话的内容或审批。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
-effort、settings、permission_mode、fast_mode、usage、context_usage、compact、fork、fork_before、
+effort、settings、permission_mode、fast_mode、usage、context_usage、compact、rename、fork、fork_before、
 mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
 无法加入一个独立 TUI 正在使用的 runtime。Linux 在首次连接和每次发送前
 复用既有 procscan，检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸

@@ -181,6 +181,9 @@ impl Bridge {
             let mut state = session.live.lock().unwrap();
             state.running = true;
             state.prompt_started = method == "compact";
+            if method == "compact" {
+                state.compact = json!({"state":"compacting"});
+            }
             state.error = None;
             state.publish();
         }
@@ -192,6 +195,12 @@ impl Bridge {
             let mut state = session.live.lock().unwrap();
             state.running = false;
             state.prompt_started = false;
+            if method == "compact" {
+                state.compact = match &result {
+                    Ok(_) => json!({"state":"success"}),
+                    Err(error) => json!({"state":"failed","error":error}),
+                };
+            }
             if let Err(error) = &result {
                 state.error = Some(error.clone());
             }

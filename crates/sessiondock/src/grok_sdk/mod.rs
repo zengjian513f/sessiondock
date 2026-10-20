@@ -343,6 +343,7 @@ impl Bridge {
                 | "rewind"
                 | "shell"
                 | "steer"
+                | "rename"
         ) {
             return Err(format!("grok_sdk_unsupported_method: {method}"));
         }
@@ -352,6 +353,8 @@ impl Bridge {
         }
         let session = self.open(&target).await?;
         match method {
+            "rename" => session.connection.request("x.ai/session/rename",
+                json!({"sessionId":session.sid,"cwd":session.cwd,"title":required(&input,"title")?})).await,
             "open" => Ok(self.receipt(&session)),
             "models" => {
                 let live = session.live.lock().unwrap();
@@ -556,8 +559,10 @@ impl Bridge {
         {
             let mut state = live.lock().unwrap();
             state.settings(&result);
-            state.error = None;
-            state.error_kind = None;
+            if state.last_turn.is_null() {
+                state.error = None;
+                state.error_kind = None;
+            }
             state.publish();
         }
         let session = Arc::new(Session {
@@ -767,6 +772,10 @@ impl Bridge {
             state.prompt_started = false;
             state.cancel_requested = false;
             state.setup_pending = true;
+            state.last_turn = Value::Null;
+            state.runtime_error = None;
+            state.retry = Value::Null;
+            state.compact = Value::Null;
             state.error = None;
             state.error_kind = None;
             state.publish();
@@ -814,6 +823,7 @@ impl Bridge {
             if state.cancel_requested {
                 state.running = false;
                 state.prompt_started = false;
+                state.last_turn = json!({"status":"interrupted","id":state.turn});
                 state.publish();
                 state
                     .save_checkpoint()
@@ -850,6 +860,7 @@ impl Bridge {
             if !session.connection.hosted() {
                 let mut state = session.live.lock().unwrap();
                 if state.generation == session.connection.generation {
+                    state.finish_prompt(&result);
                     state.running = false;
                     state.prompt_started = false;
                     state.requests.clear();
@@ -869,7 +880,9 @@ impl Bridge {
                     if state.error_kind.is_none() {
                         state.error_kind = Some("transport");
                     }
-                    state.error = Some(error);
+                    if state.error.is_none() {
+                        state.error = Some(error);
+                    }
                     state.publish();
                 }
             }
@@ -963,7 +976,7 @@ impl Bridge {
 fn capabilities(live: &Live) -> Value {
     let supported = |name: &str| live.extensions.get(name).copied().unwrap_or(true);
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
-        "usage":supported("usage"),"billing":supported("billing"),
+        "usage":supported("usage"),"billing":supported("billing"),"rename":supported("rename"),
         "settings":!live.modes.is_null() || !live.config.is_null(),"mode":!live.modes.is_null(),
         "compact":supported("compact"),"fork":supported("fork"),"rewind_points":supported("rewind_points"),
         "rewind":supported("rewind"),"shell":true,"steer":supported("steer"),

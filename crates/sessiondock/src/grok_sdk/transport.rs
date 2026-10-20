@@ -340,6 +340,7 @@ impl Connection {
                     }
                 }
                 "session/prompt" => {
+                    state.finish_prompt(&result);
                     state.running = false;
                     state.prompt_started = false;
                     state.requests.clear();
@@ -475,8 +476,12 @@ async fn run(
             state.error = None;
             state.error_kind = None;
         } else {
-            state.error = Some(reason);
-            state.error_kind = Some("transport");
+            state.runtime_error = Some(reason.clone());
+            if state.last_turn.is_null() && state.error.is_none() {
+                state.last_turn = json!({"status":"incomplete","error":reason});
+                state.error = Some(reason);
+                state.error_kind = Some("transport");
+            }
         }
         state.publish();
     } else {

@@ -1,6 +1,8 @@
 # Codex SDK mode
 
-The SDK view is the default view for Codex sessions and their subagents. 对话 and 终端
+The SDK view is the default for idle Codex sessions and their subagents. Main
+sessions validate the previous view against current server SDK/CLI ownership
+before opening; see [view selection](native-sdk.md#配置与页面). 对话 and 终端
 remain available during their retirement transition. It drives the session through the Codex app-server JSON-RPC protocol
 (the interface used by rich Codex clients such as the IDE extension) instead of
 typing into a terminal. Persisted history still comes from the ordinary read
@@ -29,6 +31,13 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   `codex app-server daemon start` with that `CODEX_HOME` once per connect
   attempt. An explicit socket path is never started; `off` disables the mode.
   Non-Unix nodes report `codex_sdk: false`.
+- A configured Codex launcher whose installation probe reports missing or
+  non-executable (including wrappers returning 126/127) also reports
+  `codex_sdk: false` and refuses SDK requests. The node and Hub new-session
+  pickers use the owning node's current capability, including after restart.
+  Explicit app-server integrations without a CLI launcher retain their existing
+  socket-only contract. The five-provider matrix is covered by
+  [sdk_cli_availability_browser.py](../tests/sdk_cli_availability_browser.py).
 - Handshake: `initialize` with `clientInfo.name = "sessiondock"` and
   `capabilities.experimentalApi = true`, then `initialized`.
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per

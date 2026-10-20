@@ -116,7 +116,7 @@ class ClaudeFixture:
             "timestamp": "2026-10-18T10:00:00Z", "message": {"role": "user", "content": "earlier synthetic Claude prompt"}}) + "\n" +
             json.dumps({"type": "assistant", "uuid": "seed-a", "parentUuid": "seed-u", "sessionId": self.sid,
                 "cwd": str(self.cwd), "isSidechain": False, "timestamp": "2026-10-18T10:00:01Z",
-                "message": {"id": "seed-message", "role": "assistant", "model": "fake-claude", "content": [{"type": "text", "text": "earlier synthetic Claude answer"}]}}) + "\n")
+                "message": {"id": "seed-message", "role": "assistant", "model": "fake-claude", "stop_reason":"end_turn", "content": [{"type": "text", "text": "earlier synthetic Claude answer"}]}}) + "\n")
         self.uid = native_uid(self.path)
         self.launcher = self.root / "launcher.json"
         self.launcher.write_text(json.dumps({"host_binary": "/bin/true", "host_dir": str(self.root / "host"),
@@ -244,7 +244,8 @@ def fake_cli():
     pending = {}
     inputs = queue.Queue()
     interrupted = threading.Event()
-    previous = json.loads(path.read_text().splitlines()[-1])["uuid"] if path.is_file() else None
+    previous = next((row["uuid"] for row in reversed([json.loads(line) for line in path.read_text().splitlines()])
+                     if row.get("uuid")), None) if path.is_file() else None
 
     def materialize_fork():
         nonlocal previous
@@ -334,11 +335,14 @@ def fake_cli():
             if content == "crash":
                 print("synthetic stderr token=should-not-leak", file=sys.stderr, flush=True)
                 os._exit(7)
-            if content == "error":
+            if content in ("error", "generalize-error-exit"):
                 send({"type": "result", "subtype": "error_during_execution", "is_error": True,
                     "uuid": str(uuid.uuid4()), "errors": ["synthetic native execution failure"],
                     "modelUsage": {}, "total_cost_usd": 0})
                 send({"type": "system", "subtype": "session_state_changed", "state": "idle", "sdk_host_only": True})
+                if content == "generalize-error-exit":
+                    time.sleep(.1)
+                    os._exit(17)
                 continue
             if content == "/compact":
                 send({"type": "system", "subtype": "status", "status": "compacting", "uuid": str(uuid.uuid4())})
@@ -408,6 +412,9 @@ def fake_cli():
             send({"type": "result", "subtype": "success", "is_error": False, "uuid": str(uuid.uuid4()), "result": "final",
                 "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 10},
                 "modelUsage": model_usage(), "total_cost_usd": state["completed"] * .01})
+            if content=="generalize-success-exit":
+                time.sleep(.1)
+                os._exit(17)
             send({"type": "system", "subtype": "session_state_changed", "state": "idle", "sdk_host_only": True})
 
     threading.Thread(target=turns, daemon=True).start()
@@ -449,6 +456,10 @@ def fake_cli():
                     "commands": [{"name": "compact", "description": "Compact synthetic context"}], "pid": os.getpid(), "fast_mode_state": "off"}
             elif subtype == "set_model":
                 state["model"] = request["model"]
+            elif subtype == "rename_session":
+                assert request["session_id"]==sid and request["source"]=="host"
+                with path.open("a") as stream:
+                    stream.write(json.dumps({"type":"custom-title","sessionId":sid,"customTitle":request["title"]})+"\n")
             elif subtype == "set_permission_mode":
                 state["permission_mode"] = request["mode"]
             elif subtype == "apply_flag_settings":

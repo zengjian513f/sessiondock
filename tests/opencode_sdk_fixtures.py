@@ -202,6 +202,10 @@ class FakeOpenCode:
         operation = parts[3:]
         if not operation and method == 'PATCH':
             self.sessions[sid].update(body)
+            if 'title' in body:
+                with closing(sqlite3.connect(self.db)) as connection, connection:
+                    connection.execute('UPDATE session_v2 SET title=? WHERE id=?',
+                                       (body['title'], sid))
             return 204, None
         if not operation:
             return 200, {'data': self.sessions[sid]}
@@ -324,6 +328,22 @@ class FakeOpenCode:
                      'content': [{'type': 'reasoning', 'text': 'synthetic reasoning'},
                                  {'type': 'text', 'text': 'partial native reply'}]}
         self.append(sid, assistant)
+        if text == 'generalize-progress':
+            gate=self.root/'generalize-release'
+            for phase in ('retry','compact'):
+                if phase=='retry':
+                    assistant['retry']={'attempt':2,'at':time.time()*1000,'error':{'type':'provider.synthetic','message':'synthetic capacity retry'}}
+                    self.append(sid,assistant)
+                else:
+                    assistant.pop('retry',None)
+                    self.append(sid,assistant)
+                    compact={'id':mid+'_compact','type':'compaction','status':'running','reason':'auto','summary':'','recent':'','time':{'created':time.time()*1000}}
+                    self.append(sid,compact)
+                deadline=time.monotonic()+20
+                while time.monotonic()<deadline and not self.closed.wait(.02):
+                    if gate.exists() and gate.read_text()==phase:break
+            compact['status']='completed'
+            self.append(sid,compact)
         if text == 'first SDK turn':
             self.stream_release.wait(15)
         elif self.closed.wait(0.8):
@@ -359,6 +379,8 @@ class FakeOpenCode:
             assistant['tokens'] = {'input': 1200, 'output': 100, 'reasoning': 40, 'cache': {'read': 600, 'write': 200}}
             assistant['cost'] = 0.0125
             info = self.sessions[sid]
+            info['outcome']='interrupted' if interrupted else 'failed' if text=='error' else 'succeeded'
+            info['time']['idle']=time.time()*1000
             info['cost'] += assistant['cost']
             for key in ('input', 'output', 'reasoning'):
                 info['tokens'][key] += assistant['tokens'][key]

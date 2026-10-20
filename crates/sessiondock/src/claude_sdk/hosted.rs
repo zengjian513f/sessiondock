@@ -528,11 +528,20 @@ async fn run(
         live.host_key = None;
         live.ready = false;
         if let Err(error) = &outcome {
-            live.error = Some(error.clone());
-            live.error_kind = Some("transport");
+            live.runtime_error = Some(error.clone());
+            if live.last_turn.is_null() && live.error.is_none() {
+                live.last_turn = json!({"status":"incomplete","error":error});
+                live.error = Some(error.clone());
+                live.error_kind = Some("transport");
+            }
         } else if !deliberate && (!live.turns.is_empty() || live.native_running) {
-            live.error = Some("claude_sdk_disconnected: native CLI exited with unfinished work; accepted input is not replayed".into());
-            live.error_kind = Some("transport");
+            let error = "claude_sdk_disconnected: native CLI exited with unfinished work; accepted input is not replayed";
+            live.runtime_error = Some(error.into());
+            if live.last_turn.is_null() && live.error.is_none() {
+                live.last_turn = json!({"status":"incomplete","error":error});
+                live.error = Some(error.into());
+                live.error_kind = Some("transport");
+            }
         }
         live.turns.clear();
         live.native_running = false;
@@ -544,8 +553,11 @@ async fn run(
         && !deliberate
         && let Err(error) = &outcome
     {
-        live.error = Some(error.clone());
-        live.error_kind = Some("transport");
+        live.runtime_error = Some(error.clone());
+        if live.last_turn.is_null() && live.error.is_none() {
+            live.error = Some(error.clone());
+            live.error_kind = Some("transport");
+        }
     }
     let control_error = live
         .error

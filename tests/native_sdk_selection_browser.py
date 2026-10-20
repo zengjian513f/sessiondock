@@ -9,6 +9,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from native_sdk_footer_browser import provider
 from sdk_selection_fixtures import snapshots
+from sdk_ui_fixtures import start_sdk
 
 
 
@@ -43,6 +44,7 @@ def exercise(browser, base, source, events, width, theme, screenshots):
     row = page.locator(f'#side .item[data-uid^="{source}:"]').first
     if not row.is_visible():page.locator(f'#chips button[data-source="{source}"]').click()
     row.click();page.locator('#a-sdk').click()
+    start_sdk(page)
     expect(page.locator('#sdk-model')).to_have_value('short')
     box,send = page.locator('#sdk-input'),page.locator('#sdk-send')
     box.fill('草稿保留，选择立即执行 / '+label)

@@ -93,6 +93,7 @@ async fn execute(
             | "stop"
             | "respond"
             | "models"
+            | "rename"
             | "discard"
             | "usage"
             | "billing"
@@ -120,7 +121,14 @@ async fn execute(
     }
     body.as_object_mut().unwrap().remove("images");
     body.as_object_mut().unwrap().remove("files");
-    let target = if method == "create" {
+    let target = if method == "models" && body["uid"].as_str().is_none() {
+        let cwd = body["cwd"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or(std::env::current_dir().map_err(|e| failure(e.to_string()))?);
+        json!({"source":body["source"],"cwd":cwd})
+    } else if method == "create" {
         let cwd = body["cwd"].as_str().unwrap_or_default().to_owned();
         let cwd = match super::lifecycle::prepare_cwd(cwd, body["create_cwd"] == true).await? {
             super::lifecycle::PreparedCwd::Ready(cwd) => cwd,

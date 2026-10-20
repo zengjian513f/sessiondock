@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_ui_fixtures import start_sdk
 
 from browser_runtime import wait_for_async
 from history_fixtures import BINARY, Corpus, isolated_server
@@ -127,6 +128,7 @@ def main():
                     uid = page.evaluate('sid => S.sessions.find(s => s.sid === sid).uid', SID)
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     page.locator('#a-sdk').click()
+                    start_sdk(page)
                     expect(page.locator('#sdk-input')).to_be_visible()
                     return uid
 
@@ -313,7 +315,7 @@ def main():
                     assert command[2] == {'name': 'synthetic-command', 'text': 'browser parameters', 'delivery': 'queue'}
 
                     action('compact')
-                    snapshot("r => r.items.some(m => m.content === 'OpenCode 上下文压缩完成') && r.usage.context === null")
+                    snapshot("r => r.compact?.state === 'success' && r.usage.context === null")
                     compaction = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/compact')]
                     assert compaction[-1][2]['delivery'] == 'steer'
                     action('shell')
