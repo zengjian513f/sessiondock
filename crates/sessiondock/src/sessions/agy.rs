@@ -17,6 +17,9 @@ pub const MESSAGES_FILE: &str = "messages.jsonl";
 /// This is not a file-size limit; comparison reads through EOF.
 const COMPARE_CHUNK: usize = 8 * 1024;
 pub fn transcript_warning(summary: &Value, has_history: bool) -> Option<&'static str> {
+    if !has_history && summary["session"]["step_count"].as_u64() == Some(0) {
+        return None;
+    }
     (summary["transcript_missing"] == true).then_some(if has_history {
         "未找到 Agy 的完整正文文件；保留上次读取的历史。正文文件可读取后会自动更新。"
     } else {
@@ -343,6 +346,25 @@ impl Mirror {
         let previous = fs::read(&summary)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        // Agy init writes Go's zero time until the first input. It is not
+        // conversation activity. Keep a stable native-file time in the private
+        // projection until the catalog supplies a real activity timestamp.
+        if zero_time(&value["time_updated"]) {
+            if let Some(updated) = previous
+                .as_ref()
+                .map(|v| &v["session"]["time_updated"])
+                .filter(|v| v.is_string() && !zero_time(v))
+            {
+                value["time_updated"] = updated.clone();
+            } else if let Ok(modified) =
+                fs::metadata(self.home.join("conversations").join(format!("{sid}.db")))
+                    .and_then(|meta| meta.modified())
+            {
+                value["time_updated"] = chrono::DateTime::<chrono::Utc>::from(modified)
+                    .to_rfc3339()
+                    .into();
+            }
+        }
         value["time_created"] = previous
             .as_ref()
             .map(|v| v["session"]["time_created"].clone())
@@ -382,7 +404,7 @@ impl Mirror {
             publish(&messages, &bytes[..complete], true)?;
             self.exported.insert(sid.to_owned(), current);
         }
-        if value["time_created"].is_null() {
+        if value["time_created"].is_null() || zero_time(&value["time_created"]) {
             value["time_created"] = value["time_updated"].clone();
         }
         let bytes = serde_json::to_vec(&json!({"format":FORMAT,"session":value,
@@ -396,6 +418,11 @@ impl Mirror {
 
 fn db_error(error: rusqlite::Error) -> io::Error {
     io::Error::other(error)
+}
+fn zero_time(value: &Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|time| time.starts_with("0001-01-01T00:00:00"))
 }
 fn timestamp(text: &str) -> String {
     chrono::DateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f%:z")
