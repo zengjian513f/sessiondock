@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native SDK accepted receipts stay compact without duplicating sent input."""
+"""Native SDK submissions stay user bubbles through queue and delivery states."""
 import argparse
 from pathlib import Path
 import tempfile
@@ -30,8 +30,7 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         page.wait_for_function('seq=>NativeSdkView.seq===seq', arg=events.packet['seq'])
     def submit(route):
         data = route.request.post_data_json
-        raw['items'] = [{'id': 'sent', 'role': 'user', 'text': data['text']}]
-        raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'accepted', 'text': data['text']}]
+        raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'preparing', 'text': data['text']}]
         route.fulfill(json={'ok': True, 'accepted': True})
     context.route('**/api/native-sdk/turn', submit)
     page.goto(base, wait_until='domcontentloaded')
@@ -49,6 +48,19 @@ def exercise(browser, base, source, events, width, theme, screenshots):
     with page.expect_response('**/api/native-sdk/turn'): page.locator('#sdk-send').click()
     publish()
     receipt = page.locator('.sdk-queue [data-queue-id="bridge:sent"]')
+    for state, label in (('preparing', '准备输入'), ('queued', '排队中'), ('sending', '正在发送…')):
+        raw['input_queue'][0]['state'] = state
+        publish()
+        if screenshots: page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-{state}.png'), full_page=True)
+        expect(receipt).to_have_attribute('data-role', 'user')
+        expect(receipt.locator('.mb')).to_have_text(TEXT)
+        expect(receipt.locator('.queued-send-state')).to_have_text(label)
+        expect(receipt.locator('.sdk-request-title')).to_have_count(0)
+        expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(1)
+        expect(receipt.get_by_role('button', name='撤销', exact=True)).to_have_count(1 if state == 'queued' else 0)
+    raw['items'] = [{'id': 'sent', 'role': 'user', 'text': TEXT}]
+    raw['input_queue'][0]['state'] = 'accepted'
+    publish()
     expect(receipt).to_have_text('原生已接收')
     expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(1)
     expect(page.locator('.sdk-queue .msg')).to_have_count(0)
@@ -114,9 +126,41 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         publish()
         expect(receipt).to_have_count(0)
         expect(page.locator('#sdk-input')).to_have_value('后续草稿\n'+TEXT)
+    if source == 'opencode':
+        raw['capabilities'].update(queue_cancel=True, queue_update=True)
+        def inbox(route):
+            raw['queue'] = [{'id': 'inbox:sent', 'text': route.request.post_data_json['text']}]
+            route.fulfill(json={'ok': True, 'accepted': True})
+        def steer(route):
+            assert route.request.post_data_json['id'] == 'inbox:sent'
+            raw['queue'][0]['delivery'] = 'steer'
+            route.fulfill(json={'ok': True})
+        def cancel_inbox(route):
+            assert route.request.post_data_json['id'] == 'inbox:sent'
+            raw['queue'] = []
+            route.fulfill(json={'ok': True})
+        context.route('**/api/native-sdk/turn', inbox)
+        context.route('**/api/native-sdk/queue_update', steer)
+        context.route('**/api/native-sdk/queue_cancel', cancel_inbox)
+        page.locator('#sdk-input').fill(TEXT)
+        with page.expect_response('**/api/native-sdk/turn'): page.locator('#sdk-send').click()
+        publish()
+        native = page.locator('.sdk-queue [data-queue-id="inbox:sent"]')
+        expect(native).to_have_attribute('data-role', 'user')
+        expect(native.locator('.mb')).to_have_text(TEXT)
+        if screenshots: page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-inbox.png'), full_page=True)
+        with page.expect_response('**/api/native-sdk/queue_update'):
+            native.get_by_role('button', name='立即引导', exact=True).click()
+        publish()
+        expect(native.locator('.queued-send-state')).to_have_text('等待引导')
+        expect(native.get_by_role('button', name='立即引导', exact=True)).to_have_count(0)
+        with page.expect_response('**/api/native-sdk/queue_cancel'):
+            native.get_by_role('button', name='撤销', exact=True).click()
+        publish()
+        expect(native).to_have_count(0)
     assert not errors, errors
     context.close()
-    print(f'PASS {source} {width} {theme}: send, failure recovery, uncertain result, explicit resend/cancel and draft preserved', flush=True)
+    print(f'PASS {source} {width} {theme}: user submission states, acceptance, failure recovery, explicit resend/cancel and draft preserved', flush=True)
 
 
 def main():
