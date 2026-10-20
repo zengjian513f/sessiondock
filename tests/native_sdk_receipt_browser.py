@@ -13,7 +13,7 @@ TEXT = '全面审计sessiondock的代码，找出所有的dead code，重复逻�
 
 
 def exercise(browser, base, source, events, width, theme, screenshots):
-    context = browser.new_context(viewport={'width': width, 'height': 900},
+    context = browser.new_context(viewport={'width': width, 'height': 846 if width == 675 else 900},
         color_scheme=theme, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base+'/') else route.abort())
     page = context.new_page()
@@ -69,9 +69,54 @@ def exercise(browser, base, source, events, width, theme, screenshots):
     publish()
     expect(receipt).to_have_count(0)
     expect(page.locator('#sdk-input')).to_have_value('后续草稿\n'+TEXT)
+
+    # Lost result receipts are not a known send failure. In particular, the
+    # report's legacy Agy input already has native consumption evidence.
+    retried = []
+    def retry(route):
+        retried.append(route.request.post_data_json)
+        raw['input_queue'][0]['state'] = 'queued'
+        route.fulfill(json={'ok': True})
+    context.route('**/api/native-sdk/queue_retry', retry)
+    for consumed in ((False,) if source == 'grok' else (False, True)):
+        raw['running'] = False
+        raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'unknown', 'text': TEXT,
+            'consumption': 'observed' if consumed else 'unverified',
+            'observed_consumed': consumed,
+            'error': '服务已重启，原生投递结果未确认；不会自动重发输入。'}]
+        publish()
+        expect(receipt).to_contain_text('处理结果待核对')
+        reason = '原生已读取这条输入，但执行结果尚未确认。' if consumed else '尚未确认原生是否收到或处理了这条输入。'
+        expect(receipt).to_contain_text(reason)
+        expect(receipt.get_by_role('button', name='重试', exact=True)).to_have_count(0)
+        resend = receipt.get_by_role('button', name='重新发送', exact=True)
+        before = len(retried)
+        if screenshots: page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-unknown-{consumed}.png'), full_page=True)
+        resend.click()
+        dialog = page.get_by_role('dialog')
+        expect(dialog).to_have_accessible_name('重新发送这条输入？')
+        expect(dialog).to_contain_text(reason)
+        expect(dialog).to_contain_text('再次提交整条输入，可能重复执行')
+        assert len(retried) == before
+        if screenshots: page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-resend-{consumed}.png'), full_page=True)
+        dialog.get_by_role('button', name='取消', exact=True).click()
+        expect(dialog).to_have_count(0)
+        assert len(retried) == before
+        resend.click()
+        with page.expect_response('**/api/native-sdk/queue_retry'):
+            dialog.get_by_role('button', name='重新发送', exact=True).click()
+        assert len(retried) == before + 1 and retried[-1]['confirmed'] is True
+        assert retried[-1]['id'] == 'bridge:sent' and retried[-1]['request_id']
+        publish()
+        expect(receipt).to_contain_text('排队中')
+        with page.expect_response('**/api/native-sdk/queue_cancel'):
+            receipt.get_by_role('button', name='撤销', exact=True).click()
+        publish()
+        expect(receipt).to_have_count(0)
+        expect(page.locator('#sdk-input')).to_have_value('后续草稿\n'+TEXT)
     assert not errors, errors
     context.close()
-    print(f'PASS {source} {width} {theme}: send, compact receipt, failure recovery and cancel', flush=True)
+    print(f'PASS {source} {width} {theme}: send, failure recovery, uncertain result, explicit resend/cancel and draft preserved', flush=True)
 
 
 def main():
@@ -86,7 +131,7 @@ def main():
             for source in ('agy', 'grok', 'claude', 'opencode'):
                 root = Path(temporary)/source; root.mkdir()
                 with provider(source, root, args.binary) as base, snapshots() as events:
-                    for width, theme in ((1440, 'dark'), (390, 'light')):
+                    for width, theme in ((1440, 'dark'), (390, 'light'), (675, 'light')):
                         exercise(browser, base, source, events, width, theme, args.screenshots)
         finally: browser.close()
 

@@ -280,13 +280,13 @@ def failure_and_unknown(browser, fixture, screenshots):
             state(page, request, 'unknown')
             blocked = send(page, 'blocked behind unknown')
             state(page, blocked['request_id'], 'queued')
-            card(page, request).get_by_role('button', name='重试', exact=True).click()
+            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
             page.get_by_role('button', name='取消', exact=True).click()
             state(page, request, 'unknown')
             assert len(fixture.inputs('disconnect')) == 1
-            card(page, request).get_by_role('button', name='重试', exact=True).click()
+            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
             with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/queue_retry')) as response:
-                page.get_by_role('button', name='重新发送', exact=True).click()
+                page.get_by_role('dialog').get_by_role('button', name='重新发送', exact=True).click()
             assert response.value.ok, response.value.text()
             retry = response.value.request.post_data_json
             state(page, request, 'unknown', attempts=1)
@@ -385,6 +385,49 @@ def restart_output(browser, fixture):
             expect(page.locator('#sdk-composer')).to_be_hidden()
             fixture.wait_exited(stop_pid)
             print('Agy: output while node offline replayed, HTTP retry deduplicated, explicit session stop ends native child', flush=True)
+        finally:
+            context.close()
+
+
+def legacy_unknown(browser, fixture, screenshots):
+    """A pre-sdkhost receipt cannot be recovered or resent by opening a page."""
+    with fixture.server() as base:
+        context, page, uid = open_page(browser, base, fixture)
+        context.close()
+    request = 'legacy-consumed-input'
+    target = {'source': 'agy', 'uid': uid, 'session_id': fixture.sid,
+              'cwd': str(fixture.work), 'agent': ''}
+    text = '全面审计代码、重复逻辑和性能；原生已消费的旧任务'
+    draft = {'text': text, 'request_id': request, 'attachments': [], 'quotes': []}
+    row = {'id': 'bridge:' + request, 'request_id': request, 'delivery_id': request,
+           'operation': 'turn', 'target': target, 'draft': draft, 'input': draft,
+           'state': 'unknown', 'consumption': 'observed', 'attempts': 0, 'actions': {},
+           'result': {'accepted': True},
+           'error': '服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。'}
+    scope = json.dumps(['agy', uid, ''], separators=(',', ':'))
+    (fixture.root / 'state/native-sdk-inputs.json').write_text(json.dumps({scope: [row]}))
+    with fixture.server() as base:
+        context, page, uid = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            state(page, request, 'unknown')
+            expect(card(page, request)).to_contain_text('原生已读取这条输入，但执行结果尚未确认。')
+            assert not fixture.inputs(text)
+            follower = send(page, 'continue after checking legacy history')
+            state(page, follower['request_id'], 'queued')
+            assert not fixture.inputs('continue after checking')
+            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
+            expect(page.get_by_role('dialog')).to_contain_text('可能重复执行')
+            page.get_by_role('dialog').get_by_role('button', name='取消', exact=True).click()
+            assert fixture.entry(request)['attempts'] == 0 and not fixture.inputs(text)
+            pictures(page, uid, screenshots, 'legacy-consumed-unknown')
+            card(page, request).get_by_role('button', name='移除记录', exact=True).click()
+            with page.expect_response('**/api/native-sdk/queue_cancel'):
+                page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            gone(page, follower['request_id'])
+            assert not fixture.inputs(text)
+            assert fixture.entry(request)['state'] == 'cancelled'
+            assert len(fixture.inputs('continue after checking')) == 1
+            print('Agy: consumed legacy unknown stays explicit; cancelling resend sends nothing, removing record unblocks new input once', flush=True)
         finally:
             context.close()
 
@@ -534,12 +577,15 @@ def main():
             root = Path(temporary)
             for source in ('grok', 'agy', 'claude'):
                 fixtures[source] = NativeQueueFixture(root / source, source, args.binary, args.host_binary)
-            for fixture in fixtures.values():
+            fixtures['legacy-agy'] = NativeQueueFixture(root / 'legacy-agy', 'agy', args.binary, args.host_binary)
+            for source in ('grok', 'agy', 'claude'):
+                fixture = fixtures[source]
                 basic_queue(browser, fixture, args.screenshots)
             cancelled_draft(browser, fixtures['grok'], args.screenshots)
             failure_and_unknown(browser, fixtures['grok'], args.screenshots)
             restart_queue(browser, fixtures['claude'], args.screenshots)
             restart_output(browser, fixtures['agy'])
+            legacy_unknown(browser, fixtures['legacy-agy'], args.screenshots)
             restart_approval(browser, fixtures['claude'])
             restart_approval(browser, fixtures['grok'])
             stop_inherited_pipes(browser, fixtures['agy'])
