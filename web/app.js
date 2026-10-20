@@ -7490,10 +7490,24 @@ function renderSessionAction(m, button = $('#a-session-action')) {
 // Without process detection `S.live` only holds sessions this page launched or
 // took over, so a listed managed instance also makes the session stoppable.
 const sessionStopCapable = () => SessionDockCapabilities.config.session_stop === true;
+// A native continuation can be displayed in its predecessor's still-running
+// console. The host keeps the predecessor's guarded UID, so stop that exact
+// instance when the user stops the continuation shown in its pane.
+function sessionStopUid(uid) {
+  const linked = typeof linkedTermSession === 'function' ? linkedTermSession(uid) : null;
+  if (!linked || typeof T === 'undefined') return uid;
+  const hosts = (T.list || []).filter(row => row.name === linked.name
+    && row.instance_id && !row.stale);
+  if (hosts.length !== 1) return uid;
+  const bound = hosts[0];
+  return bound.uid !== uid && followContinuedSession(bound.uid) === uid
+    ? bound.uid : uid;
+}
 function sessionStoppable(uid) {
   if (S.live.has(uid)) return true;
+  const boundUid = sessionStopUid(uid);
   return sessionStopCapable() && typeof T !== 'undefined'
-    && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
+    && (T.list || []).some(row => row.uid === boundUid && !!row.instance_id && !row.stale);
 }
 let sessionLinkNotice = null;
 // Keep the frozen scene inside the selected session pane, never in global floats.
@@ -7568,9 +7582,10 @@ const STOP_STAGE_TEXT = {
 };
 
 async function requestSessionStop(m) {
-  const body = { uid: m.uid, ...(m.agent_id ? {agent:m.agent_id} : {}) };
-  if (sessionStopCapable()) body.request_id = requestId();
   const sdk = m.agent_id || sessionLiveStatus(m.uid).sdk;
+  const stopUid = sdk ? m.uid : sessionStopUid(m.uid);
+  const body = { uid: stopUid, ...(m.agent_id ? {agent:m.agent_id} : {}) };
+  if (sessionStopCapable()) body.request_id = requestId();
   const endpoint = !sdk ? 'api/session/stop' : !String(m.uid).startsWith('codex:') ? 'api/native-sdk/stop'
     : m.agent_id || SdkView.pending(m.uid) ? 'api/codex-sdk/stop' : 'api/session/stop';
   const response = await fetch(appUrl(endpoint), {
@@ -7579,7 +7594,10 @@ async function requestSessionStop(m) {
   });
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error || response.status);
-  if (sessionStopCapable() && result.stopped && !m.agent_id) S.live.delete(m.uid);
+  if (sessionStopCapable() && result.stopped && !m.agent_id) {
+    S.live.delete(stopUid);
+    S.live.delete(m.uid);
+  }
   if (result.stopped || result.raw?.stopped) SdkView.stopped(m.uid, m.agent_id || null);
   return result;
 }
