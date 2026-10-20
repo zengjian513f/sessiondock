@@ -239,9 +239,10 @@ const NativeSdkView = {
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
     const compacting = raw.status === 'compacting' || raw.compact?.state === 'compacting';
-    const kind = raw.error ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+    const uncertain = raw.error_kind === 'uncertain';
+    const kind = raw.error ? (uncertain ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : this.running ? 'working' : paused ? 'warning' : pending ? 'waiting' : 'ready';
-    this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
+    this.setNotice(raw.error ? `${uncertain ? '结果待核对' : '错误'}：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答') : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
   },
 

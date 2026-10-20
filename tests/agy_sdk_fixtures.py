@@ -115,6 +115,19 @@ for line in sys.stdin:
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)
         result('ERROR',error='synthetic native error');continue
+    if text in ('__RECOVERED_STREAM__', '__UNRECOVERED_STREAM__') or text.startswith('好，请在独立工作区'):
+        error='The stream was interrupted. Please continue the task you were working on.'
+        native_record('PLANNER_RESPONSE','正在核对审计结果。')
+        step('agent_response',state='DONE');advance()
+        native_record('ERROR_MESSAGE','Error: '+error,error=error)
+        step('error_message',state='DONE');advance()
+        answer='正在核对审计结果。'
+        if text!='__UNRECOVERED_STREAM__':
+            answer='已完成审计与修改，并完成验证。\n\n最终结果：所有指定检查通过，原生运行时继续保留。'
+            native_record('PLANNER_RESPONSE',answer)
+            step('agent_response',state='DONE');advance()
+        result('ERROR','先前流式片段\n'+answer+'\n',error)
+        continue
     if text=='__ARTIFACT__':
         artifact=native/'brain'/sid/'codebase_audit_report.md'
         artifact.write_text('# SessionDock 全量代码审计报告\n\n## 审计结论\n\n完整报告正文：保留运行中的子代理，修复文档链接。\n')

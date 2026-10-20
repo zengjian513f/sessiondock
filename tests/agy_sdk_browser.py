@@ -50,7 +50,10 @@ def watch(page, uid):
 
 
 def idle(page):
-    page.wait_for_function('window.__agySnapshot?.raw?.running === false')
+    page.wait_for_function('''window.__agySnapshot?.raw?.running === false &&
+        NativeSdkView.raw?.running === false &&
+        !(NativeSdkView.raw.input_queue || []).some(row =>
+            ['preparing', 'queued', 'sending', 'accepted'].includes(row.state))''')
 
 
 def post(page, base, method, body, *, ok=True):
@@ -78,7 +81,12 @@ def send(page, text):
     with page.expect_response(lambda response: '/api/native-sdk/turn' in response.url and response.request.method == 'POST') as event:
         page.locator('#sdk-send').click()
     assert event.value.ok, event.value.text()
-    return event.value.json()
+    receipt = event.value.json()
+    page.wait_for_function('''id =>
+        (NativeSdkView.raw?.input_queue || []).some(row => row.request_id === id) ||
+        (NativeSdkView.raw?.items || []).some(item => item.request_id === id)''',
+        arg=receipt['request_id'])
+    return receipt
 
 
 def resize_sdk(page, uid, width):
@@ -341,10 +349,53 @@ def exercise(browser, base, fixture, screenshots=None):
         diagnostic = page.evaluate('window.__agySnapshot.raw.diagnostics')
         assert 'synthetic transport diagnostic' in diagnostic
         assert fixture.env['AGY_SDK_FAKE_KEY'] not in diagnostic and '[redacted]' in diagnostic
-        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='__ERROR__' && row.state==='failed')")
+        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='__ERROR__' && row.state==='unknown')")
         failed = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='__ERROR__')")
-        page.locator(f'[data-queue-id="{failed["id"]}"]').get_by_role('button', name='撤销', exact=True).click()
+        assert failed['observed_consumed']
+        page.locator(f'[data-queue-id="{failed["id"]}"]').get_by_role('button', name='移除记录', exact=True).click()
+        page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
         expect(page.locator(f'[data-queue-id="{failed["id"]}"]')).to_have_count(0)
+
+        print('Agy: recovered stream with stale ERROR receipt is not a failed send', flush=True)
+        for marker, conflict in [('好，请在独立工作区修复审计发现的问题，完成复审与验证；不要重复执行已经完成的任务，并保留当前会话。', True), ('__UNRECOVERED_STREAM__', False)]:
+            send(page, marker)
+            idle(page)
+            page.wait_for_function("text=>NativeSdkView.raw.input_queue?.some(row=>row.text===text && row.state==='unknown')", arg=marker)
+            row = page.evaluate("text=>NativeSdkView.raw.input_queue.find(row=>row.text===text)", marker)
+            card = page.locator(f'[data-queue-id="{row["id"]}"]')
+            expect(card).to_contain_text('原生已读取这条输入')
+            expect(card).not_to_contain_text('发送失败')
+            expect(card.get_by_role('button', name='重试', exact=True)).to_have_count(0)
+            raw = page.evaluate('NativeSdkView.raw')
+            assert raw['error_kind'] == ('uncertain' if conflict else 'turn'), raw['error']
+            if conflict:
+                expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
+                expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('结果待核对')
+                expect(page.locator('.native-sdk-pane .sdk-status')).to_have_attribute('data-state', 'warning')
+                assert not any(item.get('id', '').startswith('agy:error:') and item.get('content', '').startswith('agy_sdk_result_conflict:') for item in raw['items'])
+                assert 'result.status=ERROR' in raw['diagnostics']
+                if screenshots:
+                    for width, theme in [(1440, 'dark'), (675, 'light')]:
+                        page.set_viewport_size({'width':width,'height':900})
+                        page.emulate_media(color_scheme=theme)
+                        page.screenshot(path=str(screenshots/f'agy-result-conflict-{width}-{theme}.png'),full_page=True)
+                    page.set_viewport_size({'width':1440,'height':900})
+                    page.emulate_media(color_scheme='dark')
+            before = len(fixture.inputs(marker))
+            card.get_by_role('button', name='重新发送', exact=True).click()
+            dialog = page.get_by_role('dialog')
+            expect(dialog).to_contain_text('可能重复执行')
+            dialog.get_by_role('button', name='取消', exact=True).click()
+            assert len(fixture.inputs(marker)) == before
+            card.get_by_role('button', name='移除记录', exact=True).click()
+            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            expect(card).to_have_count(0)
+            if conflict:
+                send(page, 'after conflicting result')
+                expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after conflicting result')
+                idle(page)
+                assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs('after conflicting result')[-1]['pid']
+                assert len(fixture.inputs(marker)) == 1
         fixture.occupy()
         before = len(fixture.inputs())
         send(page, 'must not take over')

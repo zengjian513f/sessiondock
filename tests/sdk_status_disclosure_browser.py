@@ -79,6 +79,7 @@ def native(browser, base, source, events, shots):
             ({'input_queue': [{'id': 'queued', 'state': 'queued'}]}, '等待发送', None),
             ({'input_queue': [{'id': 'paused', 'state': 'failed'}]}, '队列暂停', '处理失败或待核对记录'),
             ({'error': '模型暂不可用。Capacity unavailable for the selected model. ' * 3}, '错误', 'Capacity unavailable'),
+            ({'error_kind': 'uncertain', 'error': '输入已读取，中断后已有完整回复，但最终回执仍报告旧中断；请核对会话结果。'}, '结果待核对', '已有完整回复'),
         ]
         for seq, (raw, label, detail) in enumerate(states, 1):
             events.packet = {'type': 'snapshot', 'seq': seq, 'raw': {'running': False, **raw}}
@@ -88,7 +89,9 @@ def native(browser, base, source, events, shots):
             start_sdk(page)
             status = page.locator('.native-sdk-pane .sdk-status')
             check_status(page, status, page.locator('#sdk-status-menu'), label, detail)
-            if label in ('处理中', '错误') or detail == '（2）':
+            if label == '结果待核对':
+                expect(status).to_have_attribute('data-state', 'warning')
+            if label in ('处理中', '错误', '结果待核对') or detail == '（2）':
                 page.screenshot(path=str(shots / f'{source}-sdk-{width}-{theme}-{seq}.png'))
             page.keyboard.press('Escape')
         # The ordinary conversation view uses the same disclosure rule for every source.

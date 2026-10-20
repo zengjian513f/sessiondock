@@ -133,6 +133,10 @@ OpenCode 保留原生 inbox 的 queue/steer 语义，本地账本只跟踪未确
 隐藏但继续去重。accepted 只表示接收，Agy 的关联 user_input、Claude 的真实 user UUID
 回显和 OpenCode 的已消费原生消息才提供 observed 消费证据。Grok 正常完成仍保留
 consumption:unverified，不把乐观用户气泡当原生回显。
+DELTA（BUG-20261020-085320-73b6ac）：已有 observed 消费证据后的执行错误
+进入 unknown，不回退为“发送失败”或提供无需确认的重试；原生错误继续可见。
+重启读取旧账本时，同样将 observed＋failed 纠正为 unknown，保留正文、错误和去重记录，
+不自动重发，也不以回复文字推断任务成功。
 
 失败或未知投递阻塞本地后续输入。启用[独立宿主](sdkhost.md)的 Agy/Claude/Grok
 重启先复接原进程并核对 sending/accepted 的回执；网页继续显示 accepted，恢复失败
