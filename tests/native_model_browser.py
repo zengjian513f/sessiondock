@@ -78,7 +78,10 @@ def opencode(browser, root, binary, host_binary, screenshots):
             try:
                 expect(page.locator('#sdk-model')).to_have_value('synthetic/fake-opencode')
                 expect(page.locator('.dhead')).to_contain_text('fake-opencode')
-                page.locator('#sdk-effort').select_option('high')
+                with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/settings')) as response:
+                    page.locator('#sdk-effort').select_option('high')
+                assert response.value.ok, response.value.text()
+                expect(page.locator('#sdk-effort')).to_be_enabled()
                 expect(page.locator('#sdk-effort')).to_have_value('high')
                 page.reload(wait_until='domcontentloaded')
                 expect(page.locator('#sdk-model')).to_have_value('synthetic/fake-opencode')

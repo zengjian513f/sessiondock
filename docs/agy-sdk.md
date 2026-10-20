@@ -138,7 +138,12 @@ DELTA：底栏展示原生 `result.usage` 累计 Token；`step_update.usage` 在
 不发送模型 turn；与设置页共享持久快照和查询，缓存与刷新条件见[额度合同](quotas.md)。
 打开先显示已有数据，不等待原生启动；明细及菜单条件见[SDK 界面合同](sdk-ui.md)。
 
-原生目录提供 low/medium/high/xhigh/max 独立 effort。`settings.mode` 可显式选择
+模型目录与新建会话共用解析：带强度后缀的原生模型已固定 effort。SDK 模型框将这些
+变体合并为一个模型，强度框只提供目录中实际存在的档位；选择后传对应原生模型 ID，
+并清除旧的独立 effort。包含基础模型的分组可选择“CLI 默认”。无变体的普通模型保留
+low/medium/high/xhigh/max 独立 `--effort`。恢复旧设置或排队任务时，具体变体不会再
+附带冲突的 `--effort`，模型目录不可用时不猜测可选档位。
+`settings.mode` 可显式选择
 accept-edits/auto/plan，标明下一轮生效，以独立 `--mode` argv 传入，不制造在线 RPC。
 网页 `/usage`、`/model`、`/effort` 与正文分流，未知 slash 保留草稿。
 图片沿用普通附件路径；headless 审批回传限制仍有效。
@@ -147,3 +152,5 @@ accept-edits/auto/plan，标明下一轮生效，以独立 `--mode` argv 传入�
 无 Token 与双额度组的组合、阻塞刷新、失败保留及宽窄屏明暗主题。
 [模型浏览器](../tests/agy_model_browser.py)覆盖顶部、列表和底栏的模型名称、
 原生默认值、实时更新、刷新、服务重启复接、目录失败与显式切换。
+[强度浏览器](../tests/agy_effort_browser.py)覆盖分组、真实可选组合、基础模型默认档、
+普通模型独立 flag、旧冲突设置、运行中切换与实际 CLI argv。

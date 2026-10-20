@@ -48,7 +48,7 @@ const SdkUI = {
     for (const kind of ['model', 'effort']) {
       pane.querySelector(`#sdk-${kind}`).onchange = async event => {
         const generation = view.generation, value = event.target.value;
-        if (!value) return;
+        if (!value && !(kind === 'effort' && event.target.selectedOptions[0]?.disabled === false)) return;
         try { await settings(view, {[kind]: value}); }
         catch (error) { if (view.current(generation)) view.setNotice(`设置失败：${error.message}`, 'blocked', true); }
       };

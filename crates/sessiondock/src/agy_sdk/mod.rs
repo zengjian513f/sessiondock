@@ -223,7 +223,7 @@ impl Bridge {
                 let live=self.open(&target).await?;let mut data=live.data.lock().unwrap();
                 if let Some(mode)=choice(&input,"mode") { data.mode=Some(mode); }
                 if let Some(model)=choice(&input,"model") { data.model=Some(model); }
-                if let Some(effort)=choice(&input,"effort") { data.effort=Some(effort); }
+                if input.get("effort").is_some() { data.effort=choice(&input,"effort"); }
                 live.publish(&mut data);
                 Ok(json!({"settings":{"mode":data.mode,"model":data.model,"effort":data.effort},"applies":"next_turn"}))
             },

@@ -123,38 +123,64 @@ const NativeSdkView = {
     } catch { /* A failed catalog does not prevent sending with native settings. */ }
   },
 
+  modelChoices() {
+    return this.uid.startsWith('agy:') ? agyModelCatalog({models:this.models.map(row => ({
+      ...row, name:row.displayName || row.name || row.id,
+    }))}).models : this.models;
+  },
+
   paintPickers() {
     if (!this.pane) return;
+    const agy = this.uid.startsWith('agy:');
+    const models = this.modelChoices();
     const model = this.pane.querySelector('#sdk-model');
     model.replaceChildren();
-    for (const row of this.models) {
+    for (const row of models) {
       const id = typeof row === 'string' ? row : row.id || row.model || row.modelId;
-      if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
+      if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option((agy ? row.name : row.displayName || row.name) || id, id));
     }
     const modelName=sdkSettingValue(this,'model',this.nativeModel || '');
     // Agy's native settings notices name the model rather than its catalog ID.
     const namedModel=this.uid.startsWith('agy:') ? this.models.find(row=>(row.displayName || row.name)===modelName) : null;
     const modelId=namedModel?.id || modelName;
-    ConversationUI.selectValue(model,modelId,'选择模型');
+    const selected = models.find(row => row.id === modelId || agy && row.variants && Object.values(row.variants).includes(modelId));
+    const variants = agy ? selected?.variants : null;
+    ConversationUI.selectValue(model,selected?.id || modelId,'选择模型');
     if (this.raw?.model_observed && modelName === this.nativeModel && model.selectedOptions[0]) {
       model.selectedOptions[0].textContent += '（上次使用）';
     }
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !modelName;
-    const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelId);
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
     effort.replaceChildren();
-    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(UsageUI.effort(id), id)); }
+    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id != null && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(id ? UsageUI.effort(id) : 'CLI 默认', id)); }
     let chosen=sdkSettingValue(this,'effort',this.nativeEffort || '');
+    if (variants) chosen = Object.entries(variants).find(([,id])=>id===modelId)?.[0] || '';
     if(chosen && ![...effort.options].some(option=>option.value===chosen)){
       if(modelName!==this.nativeModel && !this.settingChoices.has('effort'))chosen='';
       else effort.add(new Option(UsageUI.effort(chosen),chosen));
     }
-    ConversationUI.selectValue(effort,chosen,'选择强度');
+    if (variants && Object.hasOwn(variants, '')) effort.value = chosen;
+    else ConversationUI.selectValue(effort,chosen,'选择强度');
     effort.title = effort.selectedOptions[0]?.textContent || '强度';
     effort.closest('label').hidden = !efforts.length && !chosen;
     NativeSdkControls.layout(this);
+  },
+
+  modelSettings(values) {
+    if (!this.uid.startsWith('agy:') || !('model' in values || 'effort' in values)) return values;
+    const models = this.modelChoices();
+    const current = this.models.find(row => (row.displayName || row.name) === this.nativeModel)?.id || this.nativeModel;
+    const id = values.model ?? current;
+    const selected = models.find(row => row.id === id || row.variants && Object.values(row.variants).includes(id));
+    if (!selected?.variants) return values;
+    const variant = Object.entries(selected.variants).find(([,native])=>native===id)?.[0];
+    const previous = Object.entries(selected.variants).find(([,native])=>native===current)?.[0];
+    const level = values.effort ?? variant ?? previous ?? (selected.efforts.includes('high') ? 'high' : selected.efforts[0]);
+    if (!Object.hasOwn(selected.variants, level)) throw new Error('该模型不提供此强度');
+    // The native ID already encodes effort. Clear any previous independent flag.
+    return {...values, model:selected.variants[level], effort:''};
   },
 
   applySnapshot(raw) {

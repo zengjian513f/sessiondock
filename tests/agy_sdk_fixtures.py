@@ -44,7 +44,7 @@ if option('-p')=='/usage':
     remaining=float((root/'quota-remaining').read_text()) if (root/'quota-remaining').exists() else 0.72
     emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':remaining,'reset_time':'2026-10-20T00:00:00Z'}]}]}}});sys.exit(0)
 if 'models' in args:
-    print('synthetic-agy-low\tSynthetic Agy Low\nsynthetic-agy-high\tSynthetic Agy High');sys.exit(0)
+    print((root/'models.tsv').read_text() if (root/'models.tsv').exists() else 'synthetic-agy-low\tSynthetic Agy (Low)\nsynthetic-agy-high\tSynthetic Agy (High)');sys.exit(0)
 assert not sys.stdin.isatty(), 'SDK must not use a PTY'
 assert '--dangerously-skip-permissions' not in args, 'bridge must not auto-approve'
 assert option('--input-format')=='stream-json' and option('--output-format')=='stream-json', args
