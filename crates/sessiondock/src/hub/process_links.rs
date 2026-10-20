@@ -137,7 +137,11 @@ async fn fetch(
             return None;
         }
         let incremental = response.header(sync::HEADER) == Some("1");
-        let raw = response.into_body().read_to_end(JSON_LIMIT).await.ok()?;
+        // A boot-long initial snapshot can exceed the ordinary JSON API limit.
+        // Rejecting it would prevent establishing a baseline and download the
+        // same history on every retry. Legacy node replies retain their limit.
+        let limit = if incremental { usize::MAX } else { JSON_LIMIT };
+        let raw = response.into_body().read_to_end(limit).await.ok()?;
         Some((incremental, raw))
     }
     .await;

@@ -16,7 +16,7 @@ from node_auth_fixtures import node_env, TOKEN, free_port
 from process_links_fixtures import counted_node, history_collector
 
 NODE = 'a' * 32
-COUNT = 20_000
+COUNT = 140_000
 
 
 def wait(page, condition):
@@ -86,7 +86,9 @@ def main():
                 wait(page, lambda: len(counts.reports) >= 3)
                 first, *steady = counts.reports
                 assert first['sync'] and first['base'] is None and first['connections'] == COUNT, first
-                assert first['bytes'] > 8_000_000, first
+                # Boot-long snapshots already exceed the ordinary 64 MiB
+                # JSON API limit in production; they must establish a baseline.
+                assert first['bytes'] > 64 * 1024 * 1024, first
                 assert all(r['base'] and r['connections'] == 0 and r['bytes'] < 2000 for r in steady), steady
                 print(f'Initial {first["bytes"]} bytes; unchanged {steady[-1]["bytes"]} bytes', flush=True)
 
@@ -104,7 +106,7 @@ def main():
                 assert full == dict(plain=COUNT, full=COUNT, base=None), full
                 changed = deepcopy(report)
                 changed['sampled_at'] = 2.
-                changed['connections'][0].update(closed_at=25., shared=True, session=None)
+                changed['connections'][0].update(closed_at=1700000025., shared=True, session=None)
                 changed['connections'][1]['launch_chain'] = [
                     dict(process=dict(node_id=NODE, boot_id='sync-boot', process=dict(pid=9, start=90)),
                          session=owner)]
@@ -123,7 +125,7 @@ def main():
                 assert delta['base'] and delta['bytes'] < 5000 and delta['remove'] == 1, delta
                 rows = {r['process']['pid']: r for r in delta['rows']}
                 assert set(rows) == {1000, 1001, 999999}, rows
-                assert rows[1000]['closed_at'] == 25 and rows[1000]['shared'] and rows[1000]['session'] is None
+                assert rows[1000]['closed_at'] == 1700000025 and rows[1000]['shared'] and rows[1000]['session'] is None
                 assert rows[1001]['launch_chain'][0]['process']['process']['pid'] == 9
                 wait(page, lambda: any(r['sampled_at'] == 2 and r['base'] and r['connections'] == 3
                                        for r in counts.reports))
@@ -132,6 +134,7 @@ def main():
                 before = len(counts.reports)
                 collector.fail = True
                 wait(page, lambda: any(not r['sync'] for r in counts.reports[before:]))
+                before = len(counts.reports)
                 collector.fail = False
                 recovered = wait(page, lambda: next((r for r in counts.reports[before:] if r['sync']), None))
                 assert recovered['base'] and recovered['connections'] == 0, recovered
@@ -142,8 +145,12 @@ def main():
                 wait(page, lambda: counts.fail_gets == 0 and len(counts.reports) > before)
                 assert counts.reports[-1]['base'] and counts.reports[-1]['bytes'] < 2000
                 counts.legacy = True
+                # Ordinary old-node replies still obey their original JSON
+                # limit; compatibility uses a report within that limit.
+                collector.replace(dict(changed, connections=changed['connections'][:1000]))
                 wait(page, lambda: not counts.reports[-1]['sync'])
-                assert counts.reports[-1]['connections'] == COUNT
+                assert counts.reports[-1]['connections'] == 1000
+                collector.replace(changed)
                 counts.legacy = False
                 wait(page, lambda: counts.reports[-1]['sync'])
                 assert counts.reports[-1]['base'], counts.reports[-1]

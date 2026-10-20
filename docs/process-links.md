@@ -267,10 +267,14 @@ an invalid delta clears its baseline and the next poll resynchronizes. Both node
 diff/serialization and Hub typed decoding/reconstruction run on blocking workers
 (Hub uses its existing bounded pool), without expanding a generic JSON tree.
 The two-second polling interval and collector persistence are unchanged.
+The opt-in bulk response is read completely even when the initial boot history
+exceeds the ordinary JSON API's 64 MiB limit. Old-node replies retain that limit;
+authenticated targets, idle timeouts and typed decoding are unchanged.
 
 [`process_links_sync_browser.py`](../tests/process_links_sync_browser.py) opens
 history through Chromium with a real node and Hub and a large private collector.
-It measures full/delta bytes and covers updates, removals, reordering, collector
+It measures full/delta bytes with 140,000 records (initial snapshot over 64 MiB)
+and covers updates, removals, reordering, collector
 outages, failed polls, old nodes, invalid baselines, Hub/node restarts and boot changes.
 The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py);
 `--legacy-collector` covers collectors that ignore the projection. The real-agent
