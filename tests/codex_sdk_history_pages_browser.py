@@ -11,6 +11,7 @@ import tempfile
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_fixtures import FakeAppServer
@@ -62,8 +63,14 @@ def exercise(browser, binary, mode, width, theme, screenshots):
             expect(gap).to_be_visible()
             expect(history).to_contain_text('assistant history row 0749')
             expect(history).not_to_contain_text('history row 0300')
+            start_sdk(page)
             page.wait_for_function('CodexSdkView.connected && !_es')
-            assert len(reads) == 1 and parse_qs(urlsplit(reads[0]).query).get('window') == ['1'], reads
+            # Explicit start can catch up the existing live checkpoint. Only
+            # the first request may load a fresh window; none may fill the gap.
+            queries = [parse_qs(urlsplit(url).query) for url in reads]
+            assert queries[0].get('window') == ['1'] and 'start' not in queries[0], reads
+            assert all(query.get('window') == ['1'] and 'start' in query for query in queries[1:]), reads
+            assert not any('/page?' in url for url in reads), reads
             assert page.evaluate('cache.get(viewKey(S.sel,S.agent)).msgs.some(m=>m.text.includes("history row 0300"))') is False
             if screenshots:
                 screenshots.mkdir(parents=True, exist_ok=True)

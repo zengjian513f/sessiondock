@@ -9677,16 +9677,12 @@ function renderActivity(activity) {
     details.id = 'conversation-status-menu'; details.setAttribute('popover', 'auto');
     details.setAttribute('role', 'dialog'); details.setAttribute('aria-label', '完整状态');
     row.append(details);
-    details.addEventListener('beforetoggle', event => row.querySelector('.sdk-status')?.setAttribute('aria-expanded', String(event.newState === 'open')));
   }
   details.textContent = n.title;
-  n.onclick = () => {
-    if (details.matches(':popover-open')) details.hidePopover();
-    else { details.showPopover(); CodexSdkView.placeMenu(details, n); }
-  };
+  ConversationUI.bindPopover(n, details, row);
   row.prepend(n);
   renderConversationUsage(row, S.sel);
-  sdkUpdateStatusDisclosure(n, details);
+  ConversationUI.updateStatusDisclosure(n, details);
 }
 
 function pendingHistoryQuestion(entry) {

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
 from claude_sdk_fixtures import ClaudeFixture
 from browser_runtime import wait_for_async
+from sdk_ui_fixtures import start_sdk
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
@@ -32,6 +33,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     if not row.count():
         row = page.locator('#side .item[data-uid^="claude:"]').first
     row.click()
+    start_sdk(page)
     expect(page.locator('#sdk-input')).to_be_visible()
     uid = page.evaluate('S.sel')
     assert '~' in uid and uid != fixture.uid
@@ -66,8 +68,13 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     status_send('retry')
     capture_status('retrying')
     expect(status).to_have_text('就绪', timeout=15000)
-    status_send('/compact')
-    capture_status('maintenance')
+    compact_gate = fixture.received.with_name('compact-hold')
+    compact_gate.touch()
+    try:
+        status_send('/compact')
+        capture_status('maintenance')
+    finally:
+        compact_gate.unlink(missing_ok=True)
     expect(status).to_have_text('就绪', timeout=15000)
     expect(page.locator('.sdk-msgs')).not_to_contain_text('上下文已压缩')
     status_send('/unsupported-status-command')

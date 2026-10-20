@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 from agy_sdk_fixtures import AgyFixture
 from claude_sdk_fixtures import ClaudeFixture
@@ -128,6 +129,7 @@ def exercise(browser, base, source, screenshots, events):
             page.locator(f'#chips button[data-source="{source}"]').click()
         row.click()
         page.locator('#a-sdk').click()
+        start_sdk(page)
         pane = page.locator('.native-sdk-pane')
         model = pane.locator('#sdk-model')
         expect(model.locator('option[value="long"]')).to_have_count(1)
@@ -239,6 +241,7 @@ def exercise(browser, base, source, screenshots, events):
         page.route('**/api/native-sdk/models',lambda route:route.fulfill(status=503,json={'ok':False,'error':'catalog temporarily unavailable'}),times=1)
         page.reload(wait_until='domcontentloaded')
         if not page.locator('#sdk-input').is_visible():page.locator('#a-sdk').click()
+        start_sdk(page)
         expect(page.locator('#sdk-model')).to_have_value('outside-catalog-model')
         expect(page.locator('#sdk-effort')).to_have_value('max')
         if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
@@ -265,6 +268,7 @@ def exercise(browser, base, source, screenshots, events):
             status = page.locator('.native-sdk-pane .sdk-status')
             if not page.locator('#sdk-input').is_visible():
                 page.locator('#a-sdk').click()
+            start_sdk(page)
             expect(status).to_have_attribute('data-state', state)
             expect(page.locator('#sdk-send')).to_have_text('排队' if extra.get('running') else '发送')
             if state == 'blocked':

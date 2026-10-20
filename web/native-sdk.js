@@ -3,24 +3,14 @@
 // Native providers share the SDK surface, draft/upload store and history
 // renderer. Protocol translation and process ownership stay on the node.
 const NativeSdkView = {
+  ...SdkUI.methods,
   uid: '', agent: null, pane: null, generation: 0, connected: false,
-  pending: uid => CodexSdkView.pending(uid),
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
     return !(agent && source === 'claude') && SessionDockCapabilities.config.native_sdks?.[source] === true
       && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.native_sdks?.[source] === true);
   },
-  current: CodexSdkView.current,
-  request: CodexSdkView.request,
-  fitInput: CodexSdkView.fitInput,
-  nearBottom: CodexSdkView.nearBottom,
-  scrollBottom: CodexSdkView.scrollBottom,
-  refreshHistory: CodexSdkView.refreshHistory,
-  useHistory: CodexSdkView.useHistory,
-  scheduleHistory: CodexSdkView.scheduleHistory,
-  setConnected: CodexSdkView.setConnected,
-  closeToolbarMenus: CodexSdkView.closeToolbarMenus,
-  updateStatusDisclosure: CodexSdkView.updateStatusDisclosure,
+  layoutToolbar() { NativeSdkControls.layout(this); },
 
   open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
     this.close();
@@ -35,53 +25,11 @@ const NativeSdkView = {
     this.nativeModel = this.nativeEffort = null;
     const generation = ++this.generation;
     const name = SOURCES[String(uid).split(':')[0]]?.name || 'Agent';
-    pane.setAttribute('aria-label', `${name} SDK`);
-    pane.classList.add('sdk-pane','native-sdk-pane');
-    pane.innerHTML = `<div class="sdk-view">
-      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
-      <div id="sdk-composer">
-        <div class="sdk-status-row">
-          <button class="sdk-status" data-state="connecting" type="button" disabled><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
-          <div class="sdk-options"><div class="sdk-pickers">
-            <label class="new-effort sdk-model sdk-model-fit" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
-            <label class="new-effort sdk-effort" title="推理强度" hidden><span class="visually-hidden">推理强度</span><select id="sdk-effort" aria-label="推理强度"></select></label>
-          </div></div>
-        </div>
-        <div class="composer-row">
-          <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" placeholder="通过 ${esc(name)} SDK 发送"></textarea></div>
-          <div class="cbtns"><button class="btn" id="sdk-stop" type="button" hidden>停止</button><button class="btn go" id="sdk-send" type="button">发送</button></div>
-        </div>
-      </div></div>`;
-    this.box = pane.querySelector('.sdk-msgs'); this.history = pane.querySelector('.sdk-history');
-    this.live = pane.querySelector('.sdk-live'); this.notice = pane.querySelector('.sdk-status');
-    this.input = pane.querySelector('#sdk-input');
-    pane.querySelector('#sdk-composer').hidden = readOnly;
-    const statusMenu = pane.querySelector('#sdk-status-menu');
-    statusMenu.addEventListener('beforetoggle', event => this.notice?.setAttribute('aria-expanded', String(event.newState === 'open')));
-    this.notice.onclick = () => {
-      if (statusMenu.matches(':popover-open')) statusMenu.hidePopover();
-      else { statusMenu.showPopover(); CodexSdkView.placeMenu(statusMenu,this.notice); }
-    };
-    observeMessageLayout(this.box);
-    this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
-    this.input.onblur = () => PathCompletion.close(this.input);
-    this.input.onkeydown = event => {
-      if (PathCompletion.key(this.input, event, () => this.uid)) return;
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
-        event.preventDefault(); void this.send();
-      }
-    };
-    pane.querySelector('#sdk-send').onclick = () => this.send();
-    pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
-    for (const kind of ['model', 'effort']) {
-      pane.querySelector(`#sdk-${kind}`).onchange = async event => {
-        const generation = this.generation, value = event.target.value;
-        if (!value) return;
-        try { await NativeSdkControls.settings(this, {[kind]:value}); }
-        catch (error) { if (this.current(generation)) this.setNotice(`设置失败：${error.message}`, 'blocked'); }
-      };
-    }
+    pane.classList.add('native-sdk-pane');
+    SdkUI.mount(this, {name, readOnly, historyReady,
+      settings: (view, values) => NativeSdkControls.settings(view, values)});
     NativeSdkControls.mount(this);
+    this.mountToolbar(generation);
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
     void this.start(generation);
@@ -92,6 +40,7 @@ const NativeSdkView = {
     CodexSdkCompose.close(this);
     if (this.input) PathCompletion.close(this.input);
     NativeSdkControls.close(this);
+    SdkUI.closeToolbar(this);
     this.generation++;
     this.es?.close(); this.es = null;
     this.openRead?.abort(); this.openRead = null;
@@ -101,17 +50,6 @@ const NativeSdkView = {
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.historyReady = this.historyData = this.historyEntry = null;
     this.historyFailed = this.openFailed = false;
-  },
-
-  setNotice(text, kind = '') {
-    if (!this.notice) return;
-    this.notice.querySelector('[role=status]').textContent = sdkStatusSummary(text, kind); this.notice.title = text;
-    this.notice.classList.toggle('blocked', kind === 'blocked');
-    this.notice.dataset.state = kind || 'neutral';
-    this.pane.querySelector('#sdk-status-menu').textContent = text;
-    CodexSdkView.updateStatusDisclosure.call(this);
-    NativeSdkControls.layout(this);
-    sdkSyncSettings(this);
   },
 
   async start(generation, reconnecting = false) {
@@ -194,7 +132,7 @@ const NativeSdkView = {
       if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
     }
     const modelName=sdkSettingValue(this,'model',this.nativeModel || '');
-    CodexSdkView.selectValue(model,modelName,'选择模型');
+    ConversationUI.selectValue(model,modelName,'选择模型');
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !modelName;
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelName);
@@ -207,7 +145,7 @@ const NativeSdkView = {
       if(modelName!==this.nativeModel && !this.settingChoices.has('effort'))chosen='';
       else effort.add(new Option(UsageUI.effort(chosen),chosen));
     }
-    CodexSdkView.selectValue(effort,chosen,'选择强度');
+    ConversationUI.selectValue(effort,chosen,'选择强度');
     effort.title = effort.selectedOptions[0]?.textContent || '强度';
     effort.closest('label').hidden = !efforts.length && !chosen;
     NativeSdkControls.layout(this);
@@ -234,8 +172,7 @@ const NativeSdkView = {
       const id = String(item.id); ids.add(id);
       const old = this.nodes.get(id);
       if (old?._updateMessage && old.dataset.role === item.role) { old._updateMessage(item); continue; }
-      const selectors = ['.tool-out-actions .more','.tool-toggle','.tool-wrap'];
-      const toolState = item.role === 'tool' && old ? selectors.map(selector => [...old.querySelectorAll(selector)].map(control => control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
+      const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
       if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
         // Keep partial stdout rendered, but never label a partial rawOutput as
@@ -246,10 +183,7 @@ const NativeSdkView = {
       }
       NativeSdkControls.decorate(this,node,item);
       if (old) old.replaceWith(node); else this.live.append(node);
-      if (toolState) selectors.forEach((selector,group) => node.querySelectorAll(selector).forEach((control,index) => {
-        const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded', previous = toolState[group][index];
-        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
-      }));
+      ConversationUI.restoreToolState(node, toolState);
       this.nodes.set(id, node);
     }
     for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
@@ -290,14 +224,7 @@ const NativeSdkView = {
     }
     if (this.historyRenderedData === this.historyData && this.historyCut === cut) return;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
-    this.history.replaceChildren();
-    const partial = this.historyData.partial;
-    const split = partial ? Math.min(partial.head, messages.length) : 0;
-    const plan = partial ? [...planTurns(messages.slice(0, split).filter(sdkHistoryMessageVisible), {tailComplete:false,foldTail:true}),
-      {gap:{uid:this.uid,agent:this.agent,omitted:partial.omitted}},
-      ...planTurns(messages.slice(split).filter(sdkHistoryMessageVisible), {tailComplete:true})] : planTurns(messages.filter(sdkHistoryMessageVisible), {tailComplete:true});
-    buildPlan(this.history, plan, null);
-    refreshMessageTimeDividers(this.history);
+    SdkUI.paintHistory(this, messages);
   },
 
   requestCard(request) {
@@ -461,7 +388,7 @@ const SdkView = new Proxy({
     const mode = this.preferredMode(uid, agent);
     return this.available(uid,agent) && (mode ? mode === 'sdk' : !this.legacyViews.has(viewKey(uid,agent)));
   },
-  pending(uid) { return CodexSdkView.pending(uid); },
+  pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
     const view = this.active;
     if (!this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent

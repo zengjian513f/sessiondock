@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import tempfile
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build, server
@@ -26,6 +27,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+    start_sdk(page)
     expect(page.locator('#sdk-mode')).to_have_value('default')
     expect(page.locator('.sdk-pane .sdk-status-row .sdk-status')).to_have_text('就绪')
     more, menu = page.locator('#sdk-more'), page.locator('#sdk-more-menu')
@@ -63,7 +65,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     expect(more).to_be_visible()
     more.click()
     expect(menu).to_be_visible()
-    expect(page.locator('#sdk-controls-result')).to_have_text('权限设置已应用。')
+    expect(page.locator('#sdk-controls-result')).to_have_text('权限设置已提交。')
     expect(menu.locator('#sdk-actions')).to_be_hidden()
     separator(False)
     capture('wide-message-only')

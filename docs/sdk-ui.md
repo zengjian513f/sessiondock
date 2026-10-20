@@ -3,6 +3,29 @@
 五种 agent 共用状态栏的布局、可读标签和交互条件。协议能力、计量单位与原生
 身份仍以各来源合同为准；一致性不意味着制造缺失数据或不支持的控件。
 
+## 公共接口与适配边界
+
+[ConversationUI](../web/conversation-ui.js) 供 SDK 和普通会话共用：输入框自动高度、
+Enter/Shift+Enter/输入法/移动端提交规则、排队用户气泡、状态摘要与详情、菜单定位
+及工具控件状态。调用者保留自己的草稿身份、投递证据和操作处理器，公共呈现层不发送请求。
+输入框最大高度仍由所在页面决定，不借统一组件改变普通会话的布局。
+
+[SdkUI](../web/sdk-ui.js) 为五种 SDK 提供页面骨架、编辑器绑定、HTTP 错误处理、
+历史窗口读取、历史过程折叠恢复、底栏空间分配和菜单生命周期。视图通过
+`uid/agent/generation/pane` 标识自身，提供 `send/interrupt/paintHistory/paintStatus/layoutToolbar`
+及设置回调；原生快照、消息身份、消费确认、审批回答和会话动作仍由适配器处理。
+不再从 Codex 视图借用通用方法。
+
+五种 SDK 的草稿、附件、引用和路径补全继续共用
+[composer](../web/codex-sdk-compose.js) 与普通会话的草稿存储；历史继续使用普通
+会话的缓存、分页及 `planTurns/buildPlan/msgNode` 渲染器。公共 HTTP 方法只负责
+传输错误，不替代普通会话的投递账本，也不合并不同来源的原生 API。
+
+DELTA：五种 SDK 点击发送后保留编辑器焦点；排队正文与普通用户消息共用 Markdown
+渲染，状态及动作保留在正文下方。四种原生 SDK 刷新历史时也按 turn 身份保留已展开
+的过程，菜单关闭、窗口变化和键盘详情沿用共同生命周期。消费确认不由气泡外观推断。
+完整审阅范围和保留差异见[五来源对照](sdk-feature-audit.md#交互与呈现审阅)。
+
 ## 查看、启动与停止
 
 DELTA（BUG-20261019-160908-75ee7f）：Codex、Claude、Grok、Agy、OpenCode
@@ -105,6 +128,8 @@ DELTA（BUG-20261020-065559-70fe5d）：四种原生 SDK 的普通输入在准�
 实际打开、操作并亲自查看整页。记录最终版本与截图，历史 PASS 不证明后续改动。
 
 - [原生底栏](../tests/native_sdk_footer_browser.py)：四来源宽窄屏、主题、设置与动作。
+- [公共交互](../tests/sdk_shared_ui_browser.py)：五来源历史/工具折叠、发送焦点与并发草稿、
+  排队 Markdown、状态详情及窗口变化。
 - [发送回执](../tests/native_sdk_receipt_browser.py)：四来源实际发送、轻量接收状态、失败恢复与撤销。
 - [读取恢复](../tests/native_sdk_recovery_browser.py)：四来源阻塞打开时缓存可见、退避和隔离。
 - [Agy 用量](../tests/agy_usage_browser.py)：无 Token＋双额度组、直接明细、刷新与失败。

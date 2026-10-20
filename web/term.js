@@ -4136,34 +4136,25 @@ function renderQueuedSends(uid = composerUid) {
     const interrupted = item.state === 'interrupted';
     const returned = item.state === 'returned';
     const rejected = item.state === 'rejected';
-    const n = el('div', 'msg queued-send' + (lost ? ' lost' : ''));
-    n.dataset.role = 'user';
-    n.dataset.requestId = item.request_id;
-    n.dataset.state = item.state || 'queued';
-    const body = el('div', 'mb');
     const text = String(item.text || '');
-    if (typeof md === 'function') body.innerHTML = md(text, true, [], {uid, agent:null});
-    else body.textContent = text;
-    n.appendChild(body);
     // The CLI's own enqueue record means it holds the text until its current step ends.
     const inCli = !lost && !interrupted && !returned && !rejected && item.cli_queued_at != null;
-    if (inCli) n.dataset.cliQueued = '1';
-    const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看'
+    const state = lost ? '未送达，请到终端查看'
       : interrupted ? 'CLI 已中断，未确认处理，请到终端查看'
       : returned ? '已从 CLI 队列退回编辑区，未确认处理，请到终端查看'
       : rejected ? 'CLI 已拒绝命令：' + String(item.error || '未知命令')
-      : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
-    // The state element carries only the state text; the dismiss button sits beside it.
-    const foot = el('div', 'queued-send-foot');
-    foot.appendChild(state);
+      : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理';
+    const {card: n, actions} = ConversationUI.queuedMessage(text, state, {uid, className: lost ? 'lost' : ''});
+    n.dataset.requestId = item.request_id;
+    n.dataset.state = item.state || 'queued';
+    if (inCli) n.dataset.cliQueued = '1';
     if (lost || interrupted || returned || rejected || /^\s*\/\S+/.test(text)) {
       const close = el('button', 'queued-send-dismiss', '关闭');
       close.type = 'button';
       close.title = '仅关闭此发送提示，不取消或重发 CLI 输入';
       close.onclick = () => dismissQueuedSend(uid, item.request_id);
-      foot.appendChild(close);
+      actions.appendChild(close);
     }
-    n.appendChild(foot);
     block.appendChild(n);
   }
   if (box) box.appendChild(block);
@@ -4915,10 +4906,7 @@ function renderComposer() {
 }
 
 function autoGrow(ta) {
-  ta.style.height = 'auto';
-  const wanted = ta.scrollHeight;
-  ta.style.height = Math.min(180, Math.max(36, wanted)) + 'px';
-  ta.style.overflowY = wanted > 180 ? 'auto' : 'hidden';
+  ConversationUI.resizeInput(ta, {minHeight: 36, maxHeight: 180});
 }
 
 function syncComposerMode() {
@@ -6036,10 +6024,7 @@ $('#cinput').addEventListener('keydown', e => {
     return;
   }
   // 手机软键盘没有方便的 Shift+Enter：Enter 始终换行，只允许按钮发送。
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE.matches) {
-    e.preventDefault();
-    submitComposer();
-  }
+  ConversationUI.submitOnEnter(e, submitComposer);
 });
 MOBILE.addEventListener('change', () => {
   syncComposerMode();

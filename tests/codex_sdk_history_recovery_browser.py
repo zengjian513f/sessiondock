@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import tempfile
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_controls_browser import ControlsServer
@@ -37,7 +38,11 @@ class RecoveryServer(ControlsServer):
 
     async def _handle(self, writer, message):
         method, params = message.get('method'), message.get('params', {})
-        if method == 'thread/resume':
+        if method == 'thread/loaded/list':
+            # This fixture starts with a live daemon-owned turn, including
+            # while the bridge reconnects. Discovery must report that fact.
+            result = {'data': [THREAD]}
+        elif method == 'thread/resume':
             result = {'thread': {'id': THREAD, 'status': {'type': 'active'}, 'turns': []},
                       'model': 'fake-sol', 'reasoningEffort': 'high'}
         elif method == 'thread/turns/list':
@@ -76,6 +81,7 @@ def exercise(browser, binary, root, width, theme, screenshots):
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(base, wait_until='networkidle')
         page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        start_sdk(page)
         expect(page.locator('#sdk-send')).to_have_text('排队')
         expect(page.locator('.sdk-history')).to_contain_text('上一次同文提示的答复应保留。')
         page.screenshot(path=str(screenshots/f'{width}-{theme}-recovered.png'))
@@ -99,6 +105,7 @@ def exercise(browser, binary, root, width, theme, screenshots):
         page.locator('#a-sdk').click()
         expect(live).to_contain_text('离开 SDK 页面期间产生的进度')
         expect(live.locator('.msg[data-role="assistant"]')).to_have_count(49)
+        start_sdk(page)
         page.locator('#sdk-input').fill('保留未发送草稿 / draft')
         resumes = len(fake.methods('thread/resume'))
         fake.disconnect()
