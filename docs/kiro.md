@@ -1,30 +1,39 @@
 # Kiro sessions
 
-Kiro CLI (`kiro-cli`) supports two native session storage formats under `~/.kiro/sessions` (configurable via `SESSIONDOCK_KIRO_ROOT`):
+Kiro 的目标合同以 [接入实施计划](../implementation_plan_codex_for_kiro.md) 为准。
+当前接入仍是未完成的初稿，不能将合成浏览器测试通过视作真实原生验收完成。
 
-1. **V3 KAS format (`--agent-engine=v3`, primary)**:
-   - `<root>/<workspace_hash>/<session_id>/session.json` + `messages.jsonl` (or direct `<root>/<session_id>/session.json` + `messages.jsonl`).
-   - `session.json` records `id` / `sessionId`, `cwd` / `workspaceDirectory`, `title`, `createdAt`, `updatedAt`, `modelId`, `effortLevel`, and optional `parentSessionId` / `createdReason` for subagents.
-   - `messages.jsonl` records append-only turn items (`user`, `assistant`, `tool_call`, `tool_result`, `session_start`, `checkpoint`, `compact`).
-2. **V2 legacy CLI format (`cli/<uuid>.json`, backward-compatible read model)**:
-   - `<root>/cli/<uuid>.json` (+ optional `<uuid>.jsonl` and `<uuid>.lock`).
-   - Contains `session_id`, `cwd`, `history` (embedded user/assistant/tool turns), and `session_state` (`rts_model_state`, `conversation_metadata.user_turn_metadatas`).
+## 已核对的原生入口
 
-SessionDock indexes both formats under `source: "kiro"` with native UID `kiro:<hash>` and native SID `<session_id>`.
+2026-10-21 在隔离 HOME、XDG、Kiro 配置目录和临时工作目录中核对：
 
-## Dual-Mode Only Architecture
+- 安装版本为 `kiro-cli 2.24.1`。
+- CLI 帮助包含 `--agent-engine=v3`、`--resume-id`、`--list-sessions`、
+  `--all-cwds`、`--format json`、`--model`、`--effort` 和删除入口。
+- ACP 帮助包含 V3 引擎和 `--auth-method=cli`。
+- 空认证环境中的结构化列表，以及显式或省略认证参数的 ACP 启动，均在返回
+  列表或 `initialize` 能力之前因未登录退出。没有调用模型，也没有操作生产会话。
 
-Kiro sessions provide **two modes only**:
+这只验证了命令入口。目标安装版的能力广告、列表数据、只读历史接口、删除语义，
+以及 SDK 创建后经 CLI 再回到 SDK 的 SID 和内容连续性，均未得到真实验证。
+官方命令说明见 [CLI reference](https://kiro.dev/docs/reference/cli-commands/)。
 
-1. **ACP SDK mode (`#a-sdk`)**: Native JSON-RPC 2.0 conversation view hosted by `sdkhost` ([Kiro 原生 SDK 桥接](kiro-sdk.md)).
-2. **CLI mode (`#a-console` / `#a-term`)**: Interactive xterm.js PTY terminal hosted by `ptyhost` running `kiro-cli chat --agent-engine=v3` (`--resume-id <sid>` on resume).
+## 双模式及只读边界
 
-The screen-parsed PTY chat mode (`#a-chat`) is intentionally omitted and hidden for Kiro sessions.
+Kiro 提供 CLI 原生终端和 ACP SDK 两种模式，不增加 PTY 屏幕解析或普通 CLI 对话
+投影。两个模式必须使用同一原生 SID，互斥及停止行为遵循实施计划和公共生命周期
+合同，不能凭命令名称宣称已经验证。
 
-## Mutual Exclusion
+[官方 V3 迁移说明](https://kiro.dev/docs/cli/v3/acp-migration/)要求用公开接口
+发现和恢复会话，不依赖私有存储布局。SessionDock 应保存自己的目录和历史投影：
+发现使用广告的 `session/list`；恢复使用 `session/load`；只读历史或导出仅调用
+实际广告的接口。`session/load` 会激活会话并回放历史，普通查看不能调用它。
 
-CLI mode and ACP SDK mode operate on the same native Kiro session (`SID`, `UID`, `cwd`, history) and cannot run simultaneously:
+若目标版本没有已确认的只读历史接口，采用“缓存可查看，用户显式启动 SDK 后同步”
+的降级；未缓存正文及搜索覆盖范围必须据实说明。配置作用域与原生 SID 定义身份，
+不能以原生文件是否落盘或猜测的路径定义 UID。升级必须保留已有 SessionDock 身份
+映射，不能把切换投影目录当作会话迁移。
 
-- When a Kiro CLI PTY session is active (via `ptyhost` binding, `/proc` scan, or a live `<sid>.lock` whose PID is verified alive in `/proc`), SDK `open` and `turn` reject with `kiro_sdk_session_busy`. Stale `.lock` files left behind by a terminated process are cleaned up automatically before `session/load`.
-- When a Kiro ACP SDK session is active, `/api/sessions/spawn` and `/api/sessions/send` reject with `409 Conflict` (`sdk_session_busy`).
-- Stopping the active mode allows immediate switching to the other mode on the same session.
+当前代码中的私有 V2/V3 文件解析及原生文件改写不符合该合同，不能作为官方协议
+证据或后续实现依据。具体未完成事项集中记录在 [TODO](../TODO.md#kiro-integration)。
+ACP 接口的证据边界见 [SDK 桥接](kiro-sdk.md)。
