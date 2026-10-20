@@ -266,6 +266,71 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     expect(editor).to_have_value('发送期间写下的下一条草稿')
     expect(queued.get_by_role('button', name='撤销', exact=True)).to_be_visible()
 
+    # Keep streaming the current answer while the user submits another input.
+    # Queue-only events must leave the live message and its later text intact.
+    raw['running'] = True
+    raw['turn'] = {'id': 'queue-turn', 'status': 'inProgress'}
+    raw['summary']['status'] = {'type': 'active'}
+    answer = {'id': 'queue-stream', 'type': 'agentMessage', 'role': 'assistant',
+              'text': '正在等待隔离环境中的 V2/V3'}
+    raw['items'] = [answer]
+    publish()
+    live = page.locator('[data-sdk-item="queue-stream"] .mb')
+    expect(live).to_have_text(answer['text'])
+    editor.fill('到底是接v3还是v2好')
+    with page.expect_request(f'**/api/{api}/turn'): page.locator('#sdk-send').click()
+    answer['text'] += ' 会'
+    publish()
+    expect(live).to_have_text(answer['text'])
+    short = {'id': 'short' if source == 'codex' else 'bridge:short',
+             'state': 'queued', 'text': '到底是接v3还是v2好'}
+    queue = raw['summary']['queue'] if source == 'codex' else raw['input_queue']
+    queue.append(short)
+    held.pop().fulfill(json={'ok': True, 'accepted': True, 'raw': {'queued': True}})
+    if source != 'codex':
+        events.packet = {'type': 'input_queue', 'raw': {'input_queue': queue}}
+        publish()
+    else:
+        publish()
+    short_card = page.locator('.sdk-queue .msg').filter(has_text=short['text'])
+    expect(short_card).to_be_visible()
+    expect(live).to_have_text(answer['text'])
+    answer['text'] += '话落盘结构与 `session/new` 完整返回输出完成。'
+    events.packet = {'type': 'snapshot', 'raw': raw}
+    publish()
+    expect(live).to_have_text('正在等待隔离环境中的 V2/V3 会话落盘结构与 session/new 完整返回输出完成。')
+    expect(short_card).to_be_visible()
+    # The report's short native status and action fit on the same footer row.
+    if source != 'codex':
+        layout = short_card.evaluate('''card => {
+          const state = card.querySelector('.queued-send-state').getBoundingClientRect();
+          const action = card.querySelector('button').getBoundingClientRect();
+          return {stateTop: state.top, stateBottom: state.bottom,
+                  actionTop: action.top, actionBottom: action.bottom};
+        }''')
+        if screenshots:
+            page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-short-queue.png'), full_page=True)
+        assert layout['stateTop'] < layout['actionBottom'] and layout['actionTop'] < layout['stateBottom'], layout
+    def cancel_short(route):
+        body = route.request.post_data_json
+        assert body['id'] == short['id'], body
+        if source == 'codex': assert body['action'] == 'cancel', body
+        queue.remove(short)
+        route.fulfill(json={'ok': True})
+    cancel_path = f'**/api/{api}/' + ('queue' if source == 'codex' else 'queue_cancel')
+    context.route(cancel_path, cancel_short)
+    with page.expect_response(cancel_path):
+        short_card.get_by_role('button', name='撤销', exact=True).click()
+    publish()
+    expect(short_card).to_have_count(0)
+    answer['text'] += '\n\n排队撤销后继续生成。'
+    publish()
+    expect(live).to_contain_text('排队撤销后继续生成。')
+    raw['running'] = False
+    raw.pop('turn')
+    raw['summary']['status'] = {'type': 'idle'}
+    publish()
+
     error = '原生请求失败：保留完整原因，不能改变其他来源的权限与投递语义。'
     raw['error'] = error
     raw['summary']['last_error'] = {'message': error}

@@ -2671,7 +2671,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-queued .mb { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
 .sdk-queued .queued-send-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sdk-queued .queued-send-dismiss { margin-left: 0; min-height: 24px; }
-.sdk-queued .queued-send-state { flex: 1 1 160px; }
+.sdk-queued .queued-send-state { flex: 1 1 auto; }
 
 .sdk-pickers > .sdk-action { flex: none; width: 28px; min-width: 28px; height: 28px; padding: 4px; }
 .sdk-pickers > .sdk-action .sdk-action-label { display: none; }
