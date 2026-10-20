@@ -439,6 +439,7 @@ function defaultSessionView(uid) {
 
 const SdkView = new Proxy({
   active: CodexSdkView,
+  awaitingRunning: false,
   legacyViews: CodexSdkView.legacyViews,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   preferredMode(uid, agent) {
@@ -461,8 +462,23 @@ const SdkView = new Proxy({
     return this.available(uid,agent) && (mode ? mode === 'sdk' : !this.legacyViews.has(viewKey(uid,agent)));
   },
   pending(uid) { return CodexSdkView.pending(uid); },
+  syncRunning() {
+    const view = this.active;
+    if (!this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
+        || SessionContentView.kind !== 'sdk' || !S.liveSdk.has(view.uid)) return;
+    // Discovery can arrive after history was opened read-only on reload.
+    // Attach to the observed running instance without replacing history/drafts.
+    view.readOnly = false;
+    view.pane.querySelector('#sdk-composer').hidden = false;
+    void view.start(view.generation);
+  },
+  retryOpen() {
+    this.syncRunning();
+    this.active.retryOpen();
+  },
   open(uid,pane,agent,options) {
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
+    this.awaitingRunning = true;
     this.rememberMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     const running = !agent && S.liveSdk.has(uid);
@@ -483,6 +499,8 @@ const SdkView = new Proxy({
   stopped(uid, selectedAgent = null) {
     if (!selectedAgent) { S.liveSdk.delete(uid); S.live.delete(uid); }
     if (this.uid === uid && this.agent === selectedAgent && this.pane) {
+      // This is an intentional stop, not initial discovery still in flight.
+      this.awaitingRunning = false;
       const pane = this.pane, agent = this.agent;
       this.active.open(uid, pane, agent, {readOnly: true});
     }

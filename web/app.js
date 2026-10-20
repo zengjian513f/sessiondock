@@ -2403,6 +2403,7 @@ async function refreshLive(force = false, onlineOnly = false) {
   S.liveSdk = nextSdk;
   S.liveWorking = nextWorking;
   S.liveStarted = nextStarted;
+  SdkView.syncRunning();
   trimCache();
   if (changed) {
     paintLive();
