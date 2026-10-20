@@ -406,6 +406,17 @@ impl NativeSdks {
                 .expect("SDK session row")
                 .remove("pending");
             row["sdk_pending"] = json!(true);
+            // A native identity may exist before its first history record.
+            // Persist the creation time once so pending rows sort consistently
+            // across list refreshes and idempotent create retries.
+            let created =
+                chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339();
+            if !row["created"].is_string() {
+                row["created"] = json!(created);
+            }
+            if !row["updated"].is_string() {
+                row["updated"] = row["created"].clone();
+            }
             row["request_id"] = input["request_id"].clone();
             row["sdk_operation"] = json!(method);
             if method == "fork" {

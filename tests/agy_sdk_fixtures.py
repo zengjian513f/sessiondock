@@ -63,7 +63,9 @@ with sqlite3.connect(native/'conversation_summaries.db') as catalog:
       conversation_id TEXT PRIMARY KEY,title TEXT,last_modified_time TEXT,workspace_uris TEXT,
       parent_conversation_id TEXT,status TEXT,step_count INTEGER,agent_name TEXT)''')
     catalog.execute('INSERT OR IGNORE INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
-       (sid,'Agy SDK synthetic history','2026-10-18T00:00:00Z',json.dumps([Path.cwd().as_uri()]),'','IDLE',index,''))
+       (sid,'Agy SDK synthetic history',
+        '0001-01-01 00:00:00+00:00' if (root/'empty-time').exists() else '2026-10-18T00:00:00Z',
+        json.dumps([Path.cwd().as_uri()]),'','IDLE',index,''))
 logs=native/'brain'/sid/'.system_generated/logs';logs.mkdir(parents=True,exist_ok=True)
 transcript=logs/'transcript_full.jsonl'
 def native_record(kind,content,**fields):
