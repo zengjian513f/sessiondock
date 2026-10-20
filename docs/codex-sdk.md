@@ -468,6 +468,28 @@ so a node without draft storage remains usable for text even when other nodes
 support attachments. Child SDK views currently use text-only input and never
 read, publish or clear their owner's draft or staged attachments.
 
+### Automatic and manual context compaction
+
+Codex SDK mode retains native automatic compaction: the shared app-server owns
+the model context and compacts it when its native token threshold is reached,
+including during a running turn. It does not require an open terminal or browser.
+SessionDock does not disable or override that threshold. Codex's
+[`model_auto_compact_token_limit`](https://learn.chatgpt.com/docs/config-file/config-reference)
+uses the model default when unset; the displayed context percentage is usage,
+not a promise that compaction starts at a particular percentage.
+
+The menu's “压缩上下文” and `/compact` request an additional, manual compaction.
+Automatic and manual compaction use the same native `contextCompaction` events
+and status display below. When automatic compaction finishes inside an active
+turn, the status returns to “处理中” as the turn continues. Native Codex owns
+the persisted compacted context; SessionDock continues reading its history.
+An accepted input may still be waiting for native consumption during compaction,
+so its queued bubble remains until native confirmation. Refreshing must neither
+lose the input nor submit it again. See the synthetic
+[automatic-compaction browser regression](../tests/codex_sdk_compaction_browser.py)
+for progress/reconnect, completion/continued processing, interrupt/retry and
+service-restart recovery; it validates the bridge, not a real model's threshold.
+
 DELTA (native controls): the operation menu starts fork, paginated turn
 selection for revert, compaction and inline review. Native APIs own every
 history mutation. Explicit SDK forks of main sessions persist the source's
