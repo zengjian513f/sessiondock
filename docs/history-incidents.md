@@ -3,6 +3,33 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261020-222442-40bae0：历史读取成功但 SDK 装饰用户消息时抛错
+
+报告的 manifest、browser-state、environment 和 128 条浏览器事件均已核对；无附件或
+terminal.txt。以下时间为 2026-10-20 UTC。22:24:05.372 的事件 11 已收到 HTTP 200
+及 717 条历史消息，end 为 3536465；事件 23 首次记录
+`SdkUI.decorateUserBubble is not a function`，事件 69 在刷新后再次记录同一错误。
+页面缓存已有历史，SDK 渲染却进入“读取历史失败”分支，是读取成功后的首个明确异常。
+
+只读核对原生完整 JSONL 与 Agy 镜像：均为 897 条步骤，末步 896，文件长度与浏览器
+游标一致；原生 SDK 输入账本的六次输入均 completed、consumption=observed，无错误。
+该路径不走 PTY，lifecycle 无对应启动记录，也没有 delivery 目录，未修改生产数据。
+
+已发布的 native-sdk-controls 调用了缺失的共享方法。无分支/回退能力的 Agy 也会传入
+空操作列表，因此普通历史用户消息即可触发错误。补齐公共方法，空操作列表不生成
+菜单，有能力的来源沿用既有消息菜单、回调和布局；不隐藏读取错误或改变历史协议。
+补丁仅提取共享工作区已有实现中这一个方法，其余未提交重构保留。
+
+隔离 Chromium 在原发布源码上复现 historyFailed=true 和红色“读取历史失败”。
+回归入口为 [SDK 历史与消息菜单](../tests/sdk_generalization_ui_browser.py)，新增初次
+打开、刷新后进入 SDK、无能力菜单及失败状态断言；使用合成消息和假服务。
+修复快照上该套件的 Agy、Grok、OpenCode、Claude、Codex 全部 PASS，
+[Kiro SDK 套件](../tests/kiro_sdk_browser.py)也 PASS；复用现有测试二进制，未调用真实模型。
+亲自检查六来源整页：五来源 1440px 明色与 390px 暗色，Kiro 1280px 明色与 390px 暗色。
+Agy 初次打开与刷新均恢复“未运行”状态，历史正文和输入区保持完整；有操作能力的
+消息菜单沿用原有紧凑行、字号及边距，窄屏菜单未越界。日志与前后截图位于本地
+`target/bug-40bae0/`，不入库。
+
 ## BUG-20261020-122705-101231：修复前死亡的 Agy 运行时在下一次输入时报重启
 
 完整读取本报告 manifest、browser-state、environment 及 815 条审计事件；无附件和

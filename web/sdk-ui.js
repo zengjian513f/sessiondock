@@ -65,6 +65,32 @@ const SdkUI = {
     view.closeToolbarMenus();
   },
 
+  decorateUserBubble(view, node, items) {
+    if (!items.length || node.querySelector('.sdk-bubble-toggle')) return;
+    node.classList.add('sdk-user-actions');
+    const toggle = el('button', 'sdk-bubble-toggle', '⋯');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', '消息操作');
+    toggle.setAttribute('aria-expanded', 'false');
+    const menu = el('div', 'new-model-menu sdk-bubble-menu');
+    menu.setAttribute('popover', 'auto');
+    menu.setAttribute('aria-label', '消息操作');
+    menu.addEventListener('beforetoggle', event => toggle.setAttribute('aria-expanded', String(event.newState === 'open')));
+    for (const [label, handler] of items) {
+      const button = el('button', 'new-model-option', label);
+      button.type = 'button';
+      button.onclick = () => { menu.hidePopover(); void handler(); };
+      menu.append(button);
+    }
+    toggle.onclick = () => {
+      if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+      view.closeToolbarMenus();
+      menu.showPopover();
+      view.placeMenu(menu, toggle, 180);
+    };
+    node.append(toggle, menu);
+  },
+
   paintHistory(view, messages, {tailComplete = true, decorate} = {}) {
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));

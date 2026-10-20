@@ -46,6 +46,10 @@ def exercise(browser,base,source,events,screenshots):
         data.update(messages=history,reset=True,start=0,end=104,message_total=len(history),partial=None,activity=activity)
         route.fulfill(response=response,json=data)
     context.route('**/api/messages/**',messages)
+    # The overridden history is static; do not let the fixture's unrelated
+    # native watch replace it while the read-only view is open.
+    context.route('**/api/watch?*',lambda r:r.fulfill(
+        content_type='text/event-stream',body=': synthetic history is unchanged\n\n'))
     context.route(f'**/api/{api}/open',lambda r:r.fulfill(json={'ok':True,'capabilities':caps,'raw':{}}))
     context.route(f'**/api/{api}/events?*',lambda r:r.continue_(url=events.url))
     context.route(f'**/api/{api}/usage',lambda r:r.fulfill(json={'ok':True,'raw':{}}))
@@ -64,6 +68,22 @@ def exercise(browser,base,source,events,screenshots):
     row.click()
     uid=row.get_attribute('data-uid')
     page.locator('#a-sdk').click()
+    # A successful messages response must also finish SDK rendering. Agy has
+    # native user identities but no message actions: the shared decorator must
+    # handle that case on both the initial read and a restored SDK view.
+    for entry in ('open', 'reload'):
+        if entry == 'reload':
+            page.reload(wait_until='domcontentloaded')
+            page.locator('#a-sdk').click()
+        page.wait_for_function('SdkView.pane && !SdkView.historyReady')
+        page.screenshot(path=str(screenshots/f'{source}-history-{entry}.png'),full_page=True)
+        status=page.locator('.sdk-pane .sdk-status')
+        assert page.evaluate('SdkView.historyFailed') is False, status.get_attribute('title')
+        expect(page.locator('.sdk-history')).to_contain_text('历史答复 12')
+        assert '读取历史失败' not in (status.get_attribute('title') or '')
+        if source != 'codex':
+            expect(page.locator('.sdk-history .sdk-bubble-toggle')).to_have_count(0)
+        assert not errors,errors
     start_sdk(page)
     if source=='codex':
         page.locator('#sdk-more').click()
@@ -79,6 +99,9 @@ def exercise(browser,base,source,events,screenshots):
         expect(page.locator('.sdk-live .msg[data-role="user"]')).to_have_count(1)
         expect(page.locator('.sdk-history .msg[data-role="user"]')).to_have_count(2)
         expect(page.locator('.sdk-history')).to_contain_text('历史答复 12')
+        if source=='agy':
+            expect(page.locator('.sdk-history .sdk-bubble-toggle, .sdk-live .sdk-bubble-toggle')).to_have_count(0)
+            assert page.evaluate('SdkView.historyFailed') is False
         # Once the exact native identity appears, only its own tail is replaced.
         raw['items']=[live(12)]
         events.publish()
