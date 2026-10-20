@@ -120,7 +120,12 @@ pub fn init(directory: Option<PathBuf>, layer: &str, identity: Value) {
                             let key = ["level", "event", "code", "status", "path", "source"]
                                 .map(|k| row[k].to_string())
                                 .join("|");
-                            if let Some(b) = buckets.get_mut(&key) {
+                            // Low-frequency state transitions need their complete
+                            // causal sequence. They retain the same admission,
+                            // record-size and retention bounds as other events.
+                            if row["aggregation"] == "none" {
+                                sink.write(&bytes, &worker);
+                            } else if let Some(b) = buckets.get_mut(&key) {
                                 b.count += 1;
                                 b.last = row;
                                 worker.coalesced.fetch_add(1, Ordering::Relaxed);

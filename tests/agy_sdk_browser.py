@@ -477,6 +477,53 @@ def exercise(browser, base, fixture, screenshots=None):
         context.close()
 
 
+def check_diagnostic_logs(fixture):
+    """Read the real service's persisted trace after its normal shutdown flush."""
+    records = [json.loads(line)
+               for path in (fixture.root / 'state/runtime-logs').glob('*.jsonl')
+               for line in path.read_text().splitlines()]
+    events = [row for row in records if row.get('event', '').startswith(('agy.sdk.', 'native_sdk.input_'))]
+    assert events, 'SDK diagnostics were not persisted'
+    assert all(row.get('aggregation') == 'none' and 'repeat_count' not in row for row in events)
+    encoded = json.dumps(events, ensure_ascii=False)
+    for private in (fixture.env['AGY_SDK_FAKE_KEY'], '__UNRECOVERED_STREAM__',
+                    '最终结果：所有指定检查通过', 'synthetic native error',
+                    'The stream was interrupted. Please continue the task you were working on.'):
+        assert private not in encoded, f'private native content escaped into metadata logs: {private}'
+    results = [row for row in events if row['event'] == 'agy.sdk.result']
+    for conflict, reason in [(True, 'recovered_response_with_stale_error'),
+                             (False, 'missing_final_response')]:
+        matches = [row for row in results if row['evidence']['reason'] == reason]
+        assert matches, (reason, results)
+        result = matches[0]
+        delivery = result['delivery_id']
+        trace = [row for row in events if row.get('delivery_id') == delivery]
+        assert result['conflict'] == conflict and result['status'] == 'ERROR', result
+        evidence = result['evidence']
+        assert evidence['user_step'] < evidence['error_steps'][0] <= evidence['last_step'], evidence
+        assert result['response_bytes'] > 0 and result['stdout_offset'] > 0
+        assert result['native_pid'] != result['pid'], 'native PID was overwritten by the service logger'
+        assert any(row['pid'] == result['native_pid'] for row in fixture.inputs())
+        assert any(row['event'] == 'agy.sdk.input_written' and row['native_pid'] == result['native_pid'] for row in trace)
+        assert any(row['event'] == 'agy.sdk.write_receipt' and row['written'] and not row['reused'] for row in trace)
+        assert any(row['event'] == 'agy.sdk.step' and row['kind'] == 'user_input' for row in trace)
+        finished = next(row for row in trace if row['event'] == 'agy.sdk.turn_finished')
+        assert finished['runtime_retained'] == conflict, finished
+        transition = next(row for row in trace if row['event'] == 'native_sdk.input_transition' and row['to'] == 'unknown')
+        assert transition['consumption'] == 'observed' and transition['attempts'] == 0
+        assert transition['request_id'] and transition['uid'] and transition['source'] == 'agy'
+        assert all(row['runtime_id'] == result['runtime_id'] for row in trace if 'runtime_id' in row)
+        if conflict:
+            assert evidence['response_suffix_matches'] and evidence['final_response_bytes'] > 0
+            assert evidence['last_step'] > evidence['error_steps'][-1]
+            assert not any(row['event'] in ('agy.sdk.interrupt', 'agy.sdk.terminate') for row in trace)
+        else:
+            assert any(row['event'] == 'agy.sdk.terminate' for row in trace)
+    assert any(row['status'] == 'SUCCESS' for row in results), 'normal result tracing missing'
+    assert any(row['event'] == 'agy.sdk.interrupt' and row['sent'] for row in events), 'SIGINT tracing missing'
+    print('Agy: persisted request/delivery/runtime/step/result/queue trace and metadata-only logging verified', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -504,6 +551,7 @@ def main():
                     exercise(browser, base, fixture, args.screenshots)
                 finally:
                     browser.close()
+        check_diagnostic_logs(fixture)
     print('PASS Agy native SDK browser', flush=True)
 
 

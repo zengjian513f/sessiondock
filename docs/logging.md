@@ -99,6 +99,37 @@ Successful history opens taking at least 2 s also emit `history.open.slow`:
 `ms`. These phases separate history work from runtime waits without recording
 message text or native contents.
 
+## Native SDK input and Agy result traces
+
+`native_sdk.input_transition` records durable admission, state/consumption changes,
+explicit stop and service recovery after the journal save succeeds. It carries
+source, UID/native SID, original request ID, delivery ID, old/new state,
+consumption, retry count and reason. The delivery ID joins Agy's
+`agy.sdk.turn_started`, `write_receipt`, `input_written`, `step`, `result` and
+`turn_finished` events; runtime ID, `native_pid` and stdout offset locate the existing
+private sdkhost output and receipts. A reused write receipt is explicit and
+does not mean input was sent again. Recovery/replay is labelled separately.
+
+Agy logs completed user/assistant/error step boundaries, not token deltas.
+`result` includes native status, output byte count, whether SessionDock sent an
+interrupt, and the transcript reconciliation reason: user/error/final step
+indices, missing or unreadable evidence, or the existing response-tail match.
+`interrupt`, `kill_requested`, `kill_signal`, `output_closed`, `read_failed`,
+`terminate` and `turn_finished`
+distinguish explicit signals, transport failures and retained runtimes.
+Original prompts, replies, native error text and stderr are not copied into
+these metadata logs. Existing private native output and redacted live diagnostics
+remain the place to inspect content. These events use the ordinary runtime log
+sink and retention above; no debug switch is required.
+These low-frequency transitions set `aggregation: "none"` so separate deliveries
+and intermediate states remain separate records, including several results within
+five seconds. They retain the writer's normal bounded admission, size limits and
+loss counters. `pid` remains the logging service's PID; `native_pid` names Agy.
+
+The Agy browser suite verifies persisted trace correlation for normal replies,
+recovered contradictory results, genuine errors and explicit interruption,
+including absence of message bodies and fixture credentials.
+
 ## Validation
 
 [`tests/server_log_browser.py`](../tests/server_log_browser.py) drives the page on

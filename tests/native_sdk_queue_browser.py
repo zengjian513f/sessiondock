@@ -668,6 +668,22 @@ def restart_idle_registry(browser, fixture):
             context.close()
 
 
+def check_recovery_logs(fixtures):
+    for source in ('grok', 'agy', 'claude'):
+        records = [json.loads(line)
+                   for path in (fixtures[source].root / 'state/runtime-logs').glob('*.jsonl')
+                   for line in path.read_text().splitlines()]
+        transitions = [row for row in records if row.get('event') == 'native_sdk.input_transition']
+        assert any(row['reason'] == 'service_recovery' for row in transitions), (source, transitions)
+        assert any(row['to'] == 'completed' for row in transitions), source
+        assert all(row['request_id'] and row['delivery_id'] and row['uid'] for row in transitions)
+        if source == 'agy':
+            reused = [row for row in records if row.get('event') == 'agy.sdk.write_receipt' and row['reused']]
+            assert reused and all(row['written'] for row in reused), 'Agy receipt reuse must be explicit'
+            assert any(row.get('event') == 'agy.sdk.turn_started' and row['recovering'] for row in records)
+    print('Native queue: persisted recovery and reused-receipt diagnostic correlation verified', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -709,6 +725,7 @@ def main():
             restart_idle_registry(browser, fixtures['claude'])
             restart_idle_registry(browser, fixtures['grok'])
             restart_idle_registry(browser, fixtures['agy'])
+            check_recovery_logs(fixtures)
         finally:
             browser.close()
             for fixture in fixtures.values():

@@ -277,6 +277,9 @@ type NativeStreams = (
 );
 
 impl Native {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
     #[allow(clippy::too_many_arguments)]
     pub async fn start(
         process: Arc<ProcessConfig>,
@@ -508,17 +511,26 @@ impl Native {
             .map_err(|_| "agy_sdk_encode")?;
         bytes.push(b'\n');
         if let Some(host) = &self.host {
-            let receipt = match host
+            let existing = host
                 .receipt(request)
                 .await
-                .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?
-            {
+                .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?;
+            let reused = existing.is_some();
+            let receipt = match existing {
                 Some(receipt) => receipt,
                 None => host
                     .write(request, &bytes)
                     .await
                     .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?,
             };
+            crate::log::transition(
+                "info",
+                "agy.sdk.write_receipt",
+                json!({
+                "session_id":self.sid,"host_key":self.key,"delivery_id":request,
+                "native_pid":self.pid,"reused":reused,"written":receipt.state=="written",
+                "stdout_offset":self.stdout_offset}),
+            );
             if receipt.state != "written" {
                 return Err(format!("agy_sdk_write_uncertain: {}", receipt.state));
             }
@@ -592,9 +604,25 @@ impl Native {
     }
 
     pub async fn terminate(&mut self) {
+        crate::log::transition(
+            "warn",
+            "agy.sdk.kill_requested",
+            json!({
+            "session_id":self.sid,"host_key":self.key,"native_pid":self.pid,
+            "stdout_offset":self.stdout_offset,"hosted":self.host.is_some()}),
+        );
         if let Some(host) = &self.host {
             #[cfg(unix)]
-            let _ = host.signal(libc::SIGKILL).await;
+            {
+                let signal = host.signal(libc::SIGKILL).await;
+                crate::log::transition(
+                    "warn",
+                    "agy.sdk.kill_signal",
+                    json!({
+                    "session_id":self.sid,"host_key":self.key,"native_pid":self.pid,
+                    "signal":"SIGKILL","sent":signal.is_ok()}),
+                );
+            }
             let _ = host.wait().await;
         } else if let Some(child) = &mut self.child {
             let _ = child.kill().await;
