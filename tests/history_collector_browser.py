@@ -14,6 +14,8 @@ import psutil
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
 from node_auth_fixtures import node_env, free_port
+from history_collector_fixtures import real_collector
+from spawned_by_fixtures import proc_pid
 
 NODE = 'a' * 32
 COUNT = 100_000
@@ -66,6 +68,7 @@ def main():
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--report-only', action='store_true')
     parser.add_argument('--legacy-collector', action='store_true')
+    parser.add_argument('--agent-binary', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='history-collector-') as temporary:
         root = Path(temporary)
@@ -80,10 +83,13 @@ def main():
         (proc / 'stat').write_text('btime 1700000000\n')
         (root / 'ids').mkdir()
         (root / 'ids/node-id').write_text(NODE)
+        if args.agent_binary:
+            proc_pid(proc, 100, 'codex', ['codex', 'resume'], 1, fds={3: str(corpus.paths['small-0'])})
         env = node_env(root, free_port(), '127.0.0.0/8')
         env.update(SESSIONDOCK_PROC_ROOT=str(proc), SESSIONDOCK_RESOURCE_AGENT_SOCKET=str(root / 'collector.sock'),
                    SESSIONDOCK_LOG_REQUESTS='all')
-        with collector(root, args.legacy_collector) as ((size, projected_size), calls), isolated_server(corpus, args.binary, extra_env=env) as (base, _):
+        fixture = real_collector(root, args.agent_binary, NODE, COUNT) if args.agent_binary else collector(root, args.legacy_collector)
+        with fixture as ((size, projected_size), calls), isolated_server(corpus, args.binary, extra_env=env) as (base, _):
             print(f'Collector full response: {size} bytes; projected: {projected_size} bytes; opening page', flush=True)
             process = next(p for p in psutil.Process().children() if p.cmdline() == [str(args.binary.resolve())])
             with sync_playwright() as pw:
@@ -101,6 +107,11 @@ def main():
                     for i in range(4):
                         # Three ordinary liveness consumers overlap a user opening
                         # a cold history. Force bypasses the unchanged-list cache.
+                        if args.agent_binary:
+                            # A coordinator refresh recomputes attribution while
+                            # ordinary live readers need only a completed sample.
+                            page.evaluate("() => { window.collectorBusy = fetch('api/process-links').then(r => r.body.cancel()); }")
+                            page.wait_for_timeout(100)
                         live_started = time.monotonic()
                         page.evaluate('''() => { window.liveReads = Promise.all(Array.from({length:3},
                             () => fetch('api/live?force=1').then(r => {if(!r.ok) throw Error(r.status); return r.json()}))); }''')
@@ -110,7 +121,9 @@ def main():
                         times.append(round((time.monotonic() - started) * 1000))
                         page.evaluate('() => window.liveReads')
                         live_times.append(round((time.monotonic() - live_started) * 1000))
-                        print(f'Cold history {i}: {times[-1]} ms', flush=True)
+                        print(f'Cold history {i}: {times[-1]} ms; live {live_times[-1]} ms', flush=True)
+                        if args.agent_binary:
+                            page.evaluate('() => window.collectorBusy')
                     # The coordinator path must still receive all old evidence;
                     # optimizing liveness cannot prune or hide connection records.
                     full = page.evaluate('''async () => {const r=await fetch('api/process-links');
@@ -122,14 +135,15 @@ def main():
                                if line.startswith('VmHWM:')) / 1024
                     print(json.dumps(dict(collector_bytes=size, projected_bytes=projected_size, cold_open_ms=times, live_reads_ms=live_times, peak_rss_mib=round(hwm),
                                           requests=len(calls), complete_connections=full['count'])), flush=True)
-                    assert any(c['op'] == 'catalog' for c in calls), calls
-                    reads = [c for c in calls if c['op'] == 'report']
-                    assert len(reads) >= 3, reads
-                    if not args.report_only:
-                        assert all(c.get('bindings_only') for c in reads), reads
-                    assert any(c['op'] == 'catalog' and not c.get('bindings_only') for c in calls), calls
+                    if not args.agent_binary:
+                        assert any(c['op'] == 'catalog' for c in calls), calls
+                        reads = [c for c in calls if c['op'] == 'report']
+                        assert len(reads) >= 3, reads
+                        if not args.report_only:
+                            assert all(c.get('bindings_only') for c in reads), reads
+                        assert any(c['op'] == 'catalog' and not c.get('bindings_only') for c in calls), calls
                     if not args.legacy_collector and not args.report_only:
-                        assert max(live_times) < 2000, live_times
+                        assert max(live_times) < (1000 if args.agent_binary else 2000), live_times
                     assert not errors, errors
                     if not args.report_only:
                         assert hwm < 800, f'Collector JSON expanded into excessive heaps: {hwm:.0f} MiB'

@@ -250,8 +250,17 @@ The large-report Chromium regression is [`history_collector_browser.py`](../test
 [`process_links_browser.py`](../tests/process_links_browser.py) suite with
 `--with-agent` verifies projected report/catalog/publish replies alongside browser
 attribution, liveness and resource interactions.
-Report and resource reads capture immutable snapshots under the attribution
-lock, then serialize and aggregate outside it. Boot-long SSH evidence is streamed
+Report reads clone the last completed immutable sample through a separate
+publication lock. Recomputing attribution or copying boot-long history for
+persistence cannot block these reads; `sampled_at` still identifies the actual
+sample, with no extra TTL or invented fresh observation. Publication swaps only
+an Arc, and old reports are released outside that short-held lock. Catalog and
+publish requests still complete their mutation before returning its report.
+Resource reads capture immutable snapshots under the attribution lock, then
+serialize and aggregate outside it. The real-collector variant of
+`history_collector_browser.py --agent-binary target/release/resource-agent`
+loads retained connection ancestry and overlaps coordinator refreshes with
+browser navigation/live reads, while checking complete history is preserved. Boot-long SSH evidence is streamed
 without first expanding it into a JSON value tree; concurrent readers must not
 block new samples. Event batches yield to due sampling and persistence every
 100 ms while leaving remaining events queued.

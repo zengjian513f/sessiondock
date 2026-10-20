@@ -359,7 +359,12 @@ impl Response {
     }
 }
 
+// Report readers use the last completed sample without joining attribution or
+// persistence work. Publishing only swaps an Arc under this short-held lock.
+type PublishedReport = Arc<Mutex<Arc<Report>>>;
+
 struct State {
+    published_report: PublishedReport,
     engine: Engine,
     snapshot: Snapshot,
     report: Arc<Report>,
@@ -380,6 +385,7 @@ impl State {
         ));
         self.snapshot = snapshot;
         self.resources = Arc::new(resources);
+        self.publish_report();
     }
     fn refresh(&mut self) {
         self.report = Arc::new(self.engine.update(
@@ -387,6 +393,19 @@ impl State {
             self.resources.sampled_at,
             self.status.clone(),
         ));
+        self.publish_report();
+    }
+    fn publish_report(&self) {
+        let previous = {
+            let mut published = self
+                .published_report
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            std::mem::replace(&mut *published, self.report.clone())
+        };
+        // Releasing a boot-long report can itself be expensive. Never do that
+        // while holding the publication lock used by liveness readers.
+        drop(previous);
     }
     fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
@@ -1042,7 +1061,12 @@ fn save(path: &Path, saved: &Saved) -> io::Result<()> {
     file.sync_all()?;
     fs::rename(temp, path)
 }
-fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Result<()> {
+fn serve(
+    mut stream: UnixStream,
+    state: Arc<Mutex<State>>,
+    published: PublishedReport,
+    uid: u32,
+) -> io::Result<()> {
     use std::os::fd::AsRawFd;
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
@@ -1088,6 +1112,9 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
         Err(_) => "invalid",
     };
     let response = match decoded {
+        Ok(Request::Report) => Ok(Response::Report(
+            published.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        )),
         Ok(request) => state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1203,7 +1230,8 @@ pub fn run() -> io::Result<()> {
         0,
         &SlowObservations::default(),
     );
-    let report = engine.update(&snapshot, data.sampled_at, status.clone());
+    let report = Arc::new(engine.update(&snapshot, data.sampled_at, status.clone()));
+    let published_report = Arc::new(Mutex::new(report.clone()));
     let mut usage = crate::usage::Ledger::open(
         &config.state.with_extension("usage.json"),
         &config.node_id,
@@ -1211,9 +1239,10 @@ pub fn run() -> io::Result<()> {
     )?;
     let initial_usage = usage.view();
     let state = Arc::new(Mutex::new(State {
+        published_report: published_report.clone(),
         engine,
         snapshot,
-        report: Arc::new(report),
+        report,
         resources: Arc::new(data),
         status,
         usage: initial_usage,
@@ -1508,10 +1537,11 @@ pub fn run() -> io::Result<()> {
         match listener.accept() {
             Ok((stream, _)) => {
                 let state = state.clone();
+                let published = published_report.clone();
                 let uid = config.uid;
                 std::thread::spawn(move || {
                     let started = Instant::now();
-                    let result = serve(stream, state, uid);
+                    let result = serve(stream, state, published, uid);
                     if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
                         crate::runtime_log::emit(
                             "warn",
