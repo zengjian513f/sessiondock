@@ -21,7 +21,7 @@ from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode
-from sdk_usage_fixtures import assert_inline_usage, assert_single_status_row, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, assert_single_status_row, toggle_usage_details, assert_reset_countdown
 from send_browser import initialize
 from sdk_selection_fixtures import snapshots as native_events
 
@@ -98,6 +98,10 @@ def exercise(browser, base, source, screenshots, events):
             'usage': {'tokens': {'total_tokens': 123456789},
                       'context': {'percent': 25.4, 'used_tokens': 50800, 'max_tokens': 200000}}}}
         events.packet = packet
+        if source == 'grok':
+            packet['raw']['billing'] = {'config': {'creditUsagePercent': 30, 'currentPeriod': {'end': '2027-01-15T08:00:00Z'}}}
+        if source == 'claude':
+            packet['raw']['rate_limits'] = {'five_hour': {'used_percentage': 30, 'resets_at': '2027-01-15T08:00:00Z'}}
         def update_settings(route):
             body=route.request.post_data_json
             for key in ('model','effort'):
@@ -114,12 +118,14 @@ def exercise(browser, base, source, screenshots, events):
         context.route('**/api/native-sdk/usage', lambda route: route.fulfill(json={
             'ok': True, 'usage': {'tokens': {'total_tokens': 123456789},
                 'context': {'percent': 25, 'used_tokens': 50000, 'max_tokens': 200000}},
-            'quota': {'buckets': [{'group': long_quota, 'remaining_percent': 30}, {'group':long_quota,'window':'seven_day','remaining_percent':80}]}}))
+            'quota': {'buckets': [{'group': long_quota, 'remaining_percent': 30}, {'group':long_quota,'window':'seven_day','remaining_percent':80,'resets_at':'2027-01-15T08:00:00Z'}]}}))
         quota_rows = [{'group':'Gemini Models' if source=='agy' else source,'window':'5h','remaining_percent':80},
                       {'group':'Gemini Models' if source=='agy' else source,'window':'weekly','remaining_percent':60}]
         if source=='agy':
             quota_rows += [{'group':'Claude and GPT models','window':'5h','remaining_percent':95},
                            {'group':'Claude and GPT models','window':'7d','remaining_percent':50}]
+        for bucket in quota_rows:
+            bucket['resets_at'] = '2027-01-15T08:00:00Z'
         context.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':source,'buckets':quota_rows}]}))
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
@@ -135,6 +141,9 @@ def exercise(browser, base, source, screenshots, events):
         expect(model.locator('option[value="long"]')).to_have_count(1)
         page.wait_for_function('NativeSdkView.nativeEffort === "low"')
         expect(model).to_be_visible()
+        expect(pane.locator('.sdk-status-row > .sdk-gauges')).to_have_attribute('title', re.compile('重置剩余'))
+        assert_reset_countdown(page, pane.locator('.sdk-status-row > .sdk-gauges'), 1800000000)
+        assert_reset_countdown(page, pane.locator('.sdk-gauge[title*="重置剩余"]').last, 1800000000)
         expect(model.locator('option[value="short"]')).to_have_count(1)
         expect(model.locator('option[value=""]')).to_have_count(0)
         expect(page.locator('#sdk-effort option[value="low"]')).to_have_count(1)
@@ -181,7 +190,7 @@ def exercise(browser, base, source, screenshots, events):
                 page.wait_for_function('e => e.scrollLeft < 1', arg=gauges.element_handle())
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
-            expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title]').filter(has=page.locator('[role=progressbar]')).last).to_have_attribute('title', re.compile(long_quota))
+            expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
             toggle_usage_details(page)
             expect(page.locator('#native-usage-detail')).to_contain_text('123,456,789')
             expect(page.locator('#native-usage-detail')).not_to_contain_text(long_quota)
@@ -302,6 +311,7 @@ def exercise(browser, base, source, screenshots, events):
             page.locator('#a-chat').click()
             footer=page.locator('#conversation-status')
             expect(footer).to_be_visible()
+            assert_reset_countdown(page, footer.locator('.sdk-gauge[title*="重置剩余"]').first, 1800000000)
             expect(footer.locator('.sdk-gauges')).to_contain_text('5小时')
             expect(footer.locator('.sdk-gauges')).to_contain_text('7天')
             expect(footer.locator('.sdk-gauges')).not_to_contain_text('weekly')

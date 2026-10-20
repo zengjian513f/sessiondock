@@ -17,7 +17,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_controls_browser import ControlsServer
 from history_fixtures import BINARY
-from sdk_usage_fixtures import assert_inline_usage
+from sdk_usage_fixtures import assert_inline_usage, assert_reset_countdown
 
 
 def single_row(page):
@@ -67,6 +67,10 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     expect(page.locator('#sdk-mode')).to_have_value('default')
     expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
     expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('data-state', 'ready')
+    page.locator('#sdk-input').fill('reset clock keeps this draft')
+    assert_reset_countdown(page, page.locator('[data-gauge="5h"]'), fake._bucket()['primary']['resetsAt'])
+    expect(page.locator('#sdk-input')).to_have_value('reset clock keeps this draft')
+    page.locator('#sdk-input').fill('')
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector

@@ -1,5 +1,19 @@
 """Browser interactions for always-visible SDK usage and optional details."""
+import re
+import time
 from playwright.sync_api import expect
+
+
+def assert_reset_countdown(page, node, end):
+    """Exercise local time updates on an already opened user-facing surface."""
+    for remaining, label in ((3*86400+3*3600+38*60, '3d 03:38'),
+                             (3*3600+38*60, '03:38'), (86400, '1d 00:00'),
+                             (59, '00:00'), (0, '已到期'), (-60, '已到期')):
+        page.clock.set_fixed_time(end-remaining)
+        expect(node).to_have_attribute('title', re.compile('重置剩余 ' + re.escape(label)))
+        if node.get_attribute('aria-description') is not None:
+            expect(node).to_have_attribute('aria-description', re.compile('重置剩余 ' + re.escape(label)))
+    page.clock.set_fixed_time(time.time())
 
 
 def assert_inline_usage(page):

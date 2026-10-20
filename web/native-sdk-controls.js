@@ -100,13 +100,14 @@ const NativeSdkControls = {
   paintUsage(view) {
     if (!view.pane) return;
     const gauges=view.pane.querySelector('.sdk-gauges'),detail=view.pane.querySelector('#native-usage-detail');if(!gauges || !detail)return;
-    gauges.replaceChildren();detail.replaceChildren();
+    gauges.replaceChildren();
     const usage=Object.keys(view.raw?.usage || {}).length ? view.raw.usage : view.usageData?.usage || {},t=usage.tokens || usage;
     const number=(...values)=>values.find(value=>typeof value==='number' && Number.isFinite(value));
     const count=value=>value.toLocaleString(undefined,{maximumFractionDigits:0});
     const input=number(t.input,t.input_tokens,t.inputTokens),output=number(t.output,t.output_tokens,t.outputTokens);
     const total=number(t.total_tokens,t.totalTokens,input != null && output != null ? input+output : null);
-    const text=(label,value)=>{const line=el('div','sdk-control-note',`${label}：${value}`);detail.append(line);};
+    const lines=[];
+    const text=(label,value)=>{lines.push(()=>`${label}：${typeof value==='function' ? value() : value}`);};
     const gauge=(label,used,title)=>{
       if (!Number.isFinite(used)) return;
       gauges.append(UsageUI.gauge(label,used,title));text(label,title);
@@ -118,14 +119,14 @@ const NativeSdkControls = {
     const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${context.used_tokens!=null ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
     const quota=view.usageData?.quota;
     UsageUI.appendQuotas(gauges,quota,view.uid.split(':')[0]);
-    for(const bucket of quota?.buckets || [])text(`${bucket.group || bucket.id} · ${UsageUI.window(bucket.window)}`,`剩余 ${Number.isFinite(bucket.remaining_percent)?UsageUI.percent(bucket.remaining_percent)+'%':'未知'}${bucket.resets_at ? `；${UsageUI.time(bucket.resets_at)} 重置`:''}`);
+    for(const bucket of quota?.buckets || [])text(`${bucket.group || bucket.id} · ${UsageUI.window(bucket.window)}`,()=>`剩余 ${Number.isFinite(bucket.remaining_percent)?UsageUI.percent(bucket.remaining_percent)+'%':'未知'}${UsageUI.reset(bucket.resets_at)}`);
     if(quota?.error)text('额度查询',quota.error);
     const billing=view.raw?.billing || view.usageData?.billing;const b=billing?.config || billing;
-    if(b){gauge('额度',b.creditUsagePercent,`本周期已用 ${b.creditUsagePercent}%${b.currentPeriod?.end ? `；${new Date(b.currentPeriod.end).toLocaleString()} 重置`:''}`);if(b.prepaidBalance?.val!=null)text('预付余额',`$${(b.prepaidBalance.val/100).toFixed(2)}`);}
+    if(b){gauge('额度',b.creditUsagePercent,()=>`本周期已用 ${b.creditUsagePercent}%${UsageUI.reset(b.currentPeriod?.end)}`);if(b.prepaidBalance?.val!=null)text('预付余额',`$${(b.prepaidBalance.val/100).toFixed(2)}`);}
     const rate=view.raw?.rate_limits || view.usageData?.rate_limits;
     for(const [window,limit] of Object.entries(rate || {})) {
       const used=number(limit?.utilization,limit?.used_percentage,limit?.usedPercent);
-      if(used!=null)text(UsageUI.window(window),`已用 ${UsageUI.percent(used)}%${limit.resets_at ? `；${UsageUI.time(limit.resets_at)} 重置`:''}`);
+      if(used!=null)text(UsageUI.window(window),()=>`已用 ${UsageUI.percent(used)}%${UsageUI.reset(limit.resets_at)}`);
     }
     if(usage.basis)text('统计范围',usage.basis);
     if(view.raw?.step_usage)text('最近步骤用量',JSON.stringify(view.raw.step_usage));
@@ -133,9 +134,8 @@ const NativeSdkControls = {
     if(view.raw?.settings?.fast_mode_state)text('Fast 状态',JSON.stringify(view.raw.settings.fast_mode_state));
     if(view.raw?.settings?.fast_mode_disabled_reason)text('Fast 不可用原因',view.raw.settings.fast_mode_disabled_reason);
     if(view.usageError)text('查询未完成',view.usageError);
-    if(!detail.childElementCount)text('用量','原生尚未提供用量数据');
-    const description=detail.textContent;
-    gauges.title=description;gauges.setAttribute('aria-description',description);
+    if(!lines.length)text('用量','原生尚未提供用量数据');
+    UsageUI.title(gauges,()=>lines.map(line=>line()).join(''),true);
     this.paintUsageDetail(detail,view,usage,t,total,input,output);
     const usageMenu=view.pane.querySelector('#sdk-usage-menu');
     usageMenu.hidden=!detail.childElementCount;

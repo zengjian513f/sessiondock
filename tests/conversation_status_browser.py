@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright, expect
-from sdk_usage_fixtures import assert_single_status_row
+from sdk_usage_fixtures import assert_single_status_row, assert_reset_countdown
 from history_fixtures import Corpus, codex_row, codex_message, isolated_server
 
 
@@ -47,7 +47,7 @@ def main():
                 page.route('**/api/quotas', lambda r: r.fulfill(json={'agents': [{'source': 'codex', 'captured_at': '2026-10-19T03:00:00Z', 'buckets': [
                     {'id':'codex:credits','group':'Codex credits','remaining_text':'1234.6'},
                     {'id':'reset-credits','group':'重置卡','remaining_text':'3 张','expires_at':'2026-11-01T00:00:00Z'},
-                    {'group':'Codex','window': 300, 'remaining_percent': 74},
+                    {'group':'Codex','window': 300, 'remaining_percent': 74, 'resets_at':'2027-01-15T08:00:00Z'},
                     {'group':'Codex','window': 10080, 'remaining_percent': 91},
                     {'group':'专项模型','window':'weekly','remaining_percent':9}]}]}))
                 def history(route):
@@ -80,6 +80,8 @@ def main():
                     expect(page.locator('#msgs #activity')).to_have_count(0)
                     expect(page.locator('#msgs')).to_contain_text('Existing conversation content')
                     assert_single_status_row(footer)
+                    if status == 'working':
+                        assert_reset_countdown(page, footer.locator('.sdk-quota-windows .sdk-gauge').first, 1800000000)
                     if status == 'failed':
                         footer.locator('.sdk-status').click()
                         expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
