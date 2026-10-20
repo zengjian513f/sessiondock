@@ -36,7 +36,10 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 输出处理：`step_update` 按原生 SID/step index 累积 `text_delta`；工具保留
 `tool_info.parameters/output/error`，后续稀疏 DONE 事件不会擦掉先前参数。
 工具提供读模型使用的 `input`、`result`、`error`，并另保留 `output`、`tool_error`
-及原始事件。未知步骤保留为系统消息；`result` 保留终态错误，缺少流式正文时使用
+及原始事件。已知 `agent_response`、`system_message` 只有完成通知而没有正文时，
+按当前原生 SID 和 step index 从完整 transcript 读取正文；落盘稍迟时继续只读补齐。
+思考只显示原生记录提供的内容，空通知不生成助手气泡；系统消息沿用普通历史的
+信封解析与来源标签。未知步骤保留为系统消息；`result` 保留终态错误，缺少流式正文时使用
 原生 result.response。协议未提供独立 thinking 正文时不制造 thinking 消息。
 
 ## 能力和限制

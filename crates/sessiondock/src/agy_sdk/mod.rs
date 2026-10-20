@@ -1,5 +1,6 @@
 //! Native Agy headless NDJSON bridge. No PTY, mirror writes or approval emulation.
 //! See docs/agy-sdk.md for the verified protocol and coexistence boundary.
+mod transcript;
 mod transport;
 
 use serde_json::{Value, json};
@@ -674,8 +675,12 @@ async fn execute(
     let mut interrupted = false;
     let mut interrupt_deadline = None;
     let mut saw_assistant = false;
+    let mut transcript = transcript::Pending::default();
     loop {
         tokio::select! {
+            _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty()=>{
+                saw_assistant |= transcript.refresh(process,live,turn).await;
+            }
             _=shutdown.cancelled()=>{ return Err("agy_sdk_shutdown".into()); }
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             _=async { match interrupt_deadline { Some(deadline)=>tokio::time::sleep_until(deadline).await, None=>std::future::pending().await } }=>{
@@ -695,8 +700,15 @@ async fn execute(
                 let event:Value=match serde_json::from_str(&line) {Ok(event)=>event,Err(_)=>{native.terminate().await;return Err("agy_sdk_invalid_ndjson".into());}};
                 if let Err(error)=native.check_event(&event) {native.terminate().await;return Err(error);}
                 match event["event"].as_str() {
-                    Some("step_update")=>{ saw_assistant |= event["step_update"]["step_type"]=="agent_response" && event["step_update"]["text_delta"].as_str().is_some_and(|s|!s.is_empty()); project(live,turn,&event["step_update"]); }
+                    Some("step_update")=>{
+                        let step=&event["step_update"];
+                        saw_assistant |= step["step_type"]=="agent_response" && step["text_delta"].as_str().is_some_and(|s|!s.is_empty());
+                        project(live,turn,step);
+                        transcript.observe(step);
+                        saw_assistant |= transcript.refresh(process,live,turn).await;
+                    }
                     Some("result")=>{
+                        saw_assistant |= transcript.refresh(process,live,turn).await;
                         let value=&event["result"];
                         if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
                         if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.is_empty()) {
@@ -748,6 +760,27 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
     }
     let kind = step["step_type"].as_str().unwrap_or("unknown");
     let native_id = format!("agy:{}:step:{}", live.sid, step["step_index"]);
+    if let Some(thinking) = step["transcript"]["thinking"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+    {
+        let id = format!("{native_id}:thinking");
+        if !data.items.iter().any(|item| item["id"] == id) {
+            data.items.push(json!({"id":id,"role":"thinking","content":thinking,"request_id":turn.id,"native_type":"PLANNER_RESPONSE"}));
+        }
+    }
+    // A completed step notification need not carry any visible body. Its
+    // transcript is authoritative; metadata alone is not an assistant message.
+    if matches!(kind, "agent_response" | "system_message")
+        && !step["text"].as_str().is_some_and(|text| !text.is_empty())
+        && !step["text_delta"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+        && !data.items.iter().any(|item| item["id"] == native_id)
+    {
+        live.publish(&mut data);
+        return;
+    }
     if kind == "user_input" {
         if let Some(item) = data
             .items
@@ -773,7 +806,9 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
         };
         let item = &mut data.items[index];
         let mut body = item["content"].as_str().unwrap_or("").to_owned();
-        if let Some(delta) = step["text_delta"].as_str() {
+        if let Some(text) = step["text"].as_str() {
+            body = text.to_owned();
+        } else if let Some(delta) = step["text_delta"].as_str() {
             body.push_str(delta);
         }
         item["content"] = json!(body);
@@ -806,6 +841,11 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
                 }
             }
             item["content"] = json!(serde_json::to_string_pretty(&json!({"name":item["name"],"parameters":item["input"],"output":item["output"],"error":item["tool_error"]})).unwrap_or_default());
+        } else if kind == "system_message" {
+            item["native_type"] = json!("SYSTEM_MESSAGE");
+            if let Some(fields) = step["system_fields"].as_object() {
+                item.as_object_mut().unwrap().extend(fields.clone());
+            }
         } else if kind != "agent_response" {
             item["content"] = json!(step.to_string());
         }

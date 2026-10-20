@@ -216,6 +216,33 @@ def exercise(browser, base, fixture, screenshots=None):
         ids = [item['id'] for item in snapshot['raw']['items']]
         assert len(ids) == len(set(ids)), ids
 
+        print('Agy: metadata-only notifications hydrate native system/thinking/reply text without empty bubbles', flush=True)
+        send(page, '__METADATA_ONLY__')
+        expect(page.locator('.sdk-live')).to_contain_text('服务重启后，请核对子代理状态再继续审计。')
+        expect(page.locator('.sdk-live')).to_contain_text('已接续原会话，正在核对各项审计结果。')
+        expect(page.locator('.sdk-live')).to_contain_text('全部子代理状态已核对。')
+        expect(page.locator('.sdk-live')).not_to_contain_text('"step_type"')
+        expect(page.locator('.sdk-live')).not_to_contain_text('附加信息 · system_message')
+        page.wait_for_function("window.__agySnapshot.raw.items.some(item=>item.role==='thinking' && item.content==='核对已有子代理的状态与历史记录。')")
+        assert page.evaluate("window.__agySnapshot.raw.running"), 'body must appear before final result'
+        assert page.locator('.sdk-live .msg[data-role="assistant"]').evaluate_all('(nodes)=>nodes.every(node=>node.textContent.trim().length>0)')
+        if screenshots:
+            for width, theme in ((1280,'light'),(390,'light'),(390,'dark')):
+                page.set_viewport_size({'width':width,'height':900})
+                page.emulate_media(color_scheme=theme)
+                if not page.locator('.native-sdk-pane').is_visible():
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(page.locator('.native-sdk-pane')).to_be_visible()
+                page.screenshot(path=str(screenshots / f'agy-metadata-{width}-{theme}.png'), full_page=True)
+            page.set_viewport_size({'width':1280,'height':900})
+            page.emulate_media(color_scheme='light')
+        page.reload(wait_until='domcontentloaded')
+        select_sdk(page, uid);watch(page,uid)
+        expect(page.locator('.sdk-live')).to_contain_text('已接续原会话，正在核对各项审计结果。')
+        assert len(fixture.inputs('__METADATA_ONLY__')) == 1
+        fixture.release('metadata-only');idle(page)
+        assert page.locator('.sdk-live .msg[data-role="assistant"]').filter(has_text='已接续原会话，正在核对各项审计结果。').count() == 1
+
         print('Agy: running request retry, FIFO, detach/reopen without cancellation', flush=True)
         held = send(page, 'hold:detached')
         expect(page.locator('.sdk-live')).to_contain_text('Agy running detached')

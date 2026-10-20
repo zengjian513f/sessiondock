@@ -96,6 +96,13 @@ impl ProcessConfig {
         self.home.join("conversations").join(format!("{sid}.db"))
     }
 
+    pub fn transcript_path(&self, sid: &str) -> PathBuf {
+        self.home
+            .join("brain")
+            .join(sid)
+            .join(".system_generated/logs/transcript_full.jsonl")
+    }
+
     fn command(&self, cwd: &Path) -> Command {
         let mut command = Command::new(&self.profile.executable);
         command

@@ -66,10 +66,10 @@ with sqlite3.connect(native/'conversation_summaries.db') as catalog:
        (sid,'Agy SDK synthetic history','2026-10-18T00:00:00Z',json.dumps([Path.cwd().as_uri()]),'','IDLE',index,''))
 logs=native/'brain'/sid/'.system_generated/logs';logs.mkdir(parents=True,exist_ok=True)
 transcript=logs/'transcript_full.jsonl'
-def native_record(kind,content):
+def native_record(kind,content,**fields):
     with transcript.open('a') as output:
         output.write(json.dumps({'type':kind,'content':content,'step_index':index,
-          'created_at':'2026-10-18T00:00:00Z','status':'DONE','source':'MODEL'},ensure_ascii=False)+'\n')
+          'created_at':'2026-10-18T00:00:00Z','status':'DONE','source':'MODEL',**fields},ensure_ascii=False)+'\n')
 def step(kind,**fields):
     emit({'event':'step_update','step_update':dict(conversation_id=sid,step_index=index,step_type=kind,**fields)})
 def advance():
@@ -103,6 +103,29 @@ for line in sys.stdin:
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)
         result('ERROR',error='synthetic native error');continue
+    if text=='__METADATA_ONLY__':
+        # Real Agy can emit only a step identity/status, with all body text in
+        # the native transcript. Persist one body after its notification too.
+        step('system_message',state='DONE',duration_seconds=0.000375701)
+        threading.Event().wait(0.5)
+        native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T05:50:41Z sender=system priority=MESSAGE_PRIORITY_LOW content=服务重启后，请核对子代理状态再继续审计。\n</SYSTEM_MESSAGE>')
+        advance()
+        native_record('PLANNER_RESPONSE','',thinking='核对已有子代理的状态与历史记录。')
+        step('agent_response',state='DONE');advance()
+        # An empty planner record still has no visible assistant bubble.
+        native_record('PLANNER_RESPONSE','')
+        step('agent_response',state='DONE');advance()
+        answer='已接续原会话，正在核对各项审计结果。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        step('tool',state='ACTIVE',tool_name='manage_subagents',tool_info={'name':'manage_subagents','parameters':{'Action':'list'}})
+        step('tool',state='DONE',tool_name='manage_subagents',tool_info={'output':'全部子代理状态已核对。'});advance()
+        deadline=time.monotonic()+25
+        while not (root/'release/metadata-only').exists():
+            if time.monotonic()>deadline:result('ERROR',error='fixture metadata hold timeout');sys.exit(1)
+            threading.Event().wait(0.02)
+        result('SUCCESS',answer)
+        continue
     if text.startswith('hold:'):
         token=text.split(':',1)[1]
         assert Path(token).name==token
