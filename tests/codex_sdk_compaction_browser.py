@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Accepted SDK inputs survive pre-input compaction, interrupt and restart."""
+"""Native automatic compaction needs no manual RPC and preserves accepted input."""
 import argparse
 import asyncio
 import json
 from pathlib import Path
 import tempfile
 from playwright.sync_api import expect, sync_playwright
-from codex_sdk_queue_browser import QueueServer, open_page
+from codex_sdk_queue_browser import QueueServer
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_actions_browser import environment
 from history_fixtures import BINARY
@@ -32,6 +32,25 @@ class CompactionServer(QueueServer):
         asyncio.run_coroutine_threadsafe(finish(), self.loop).result(timeout=5)
 
 
+def open_page(browser, base, width, theme):
+    context = browser.new_context(viewport={'width': width, 'height': 844},
+                                  color_scheme=theme, service_workers='block')
+    context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
+    page = context.new_page()
+    page.goto(base, wait_until='networkidle')
+    page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
+    expect(page.locator('.sdk-history')).to_be_visible()
+    # Opening an idle session is read-only; start it through the user control.
+    if not page.locator('#sdk-input').is_visible():
+        button = page.locator('#a-session-toggle')
+        expect(button).to_have_attribute('aria-label', '启动会话')
+        if not button.is_visible(): page.locator('#a-more').click()
+        button.click()
+    expect(page.locator('#sdk-input')).to_be_visible()
+    expect(page.locator('#sdk-input')).to_be_enabled()
+    return context, page
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -52,10 +71,16 @@ def main():
                         page.locator('#sdk-input').fill(text); page.locator('#sdk-send').click()
                         row = page.locator('.sdk-queued').filter(has_text=text)
                         expect(row).to_contain_text('正在发送')
-                        expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('data-state', 'maintenance')
+                        status = page.locator('.sdk-pane .sdk-status')
+                        expect(status).to_have_text('压缩中')
+                        expect(status).to_have_attribute('data-state', 'maintenance')
                         expect(page.locator('[data-sdk-item="compact"]')).to_have_count(0)
+                        starts = len(fake.methods('turn/start'))
                         page.reload(wait_until='networkidle')
                         expect(row).to_contain_text(text)
+                        expect(status).to_have_text('压缩中')
+                        assert len(fake.methods('turn/start')) == starts, 'reconnect must not resubmit during automatic compaction'
+                        assert not fake.methods('thread/compact/start'), 'native automatic compaction needs no manual request'
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'compact-{width}.png'))
                         page.locator('#sdk-stop').click()
                         expect(row).to_contain_text('内容已保留')
@@ -72,10 +97,16 @@ def main():
                         fake.compact_next = True
                         page.locator('#sdk-input').fill('压缩成功后才确认消息'); page.locator('#sdk-send').click()
                         expect(page.locator('.sdk-queued')).to_contain_text('正在发送')
+                        expect(status).to_have_text('压缩中')
                         fake.consume()
                         expect(page.locator('.sdk-queued')).to_have_count(0)
+                        expect(page.locator('.sdk-live')).to_contain_text('压缩成功后才确认消息')
+                        expect(status).to_have_text('处理中')
+                        expect(status).to_have_attribute('data-state', 'working')
+                        assert not fake.methods('thread/compact/start')
+                        if args.screenshots: page.screenshot(path=str(args.screenshots/f'continued-{width}.png'))
                         fake.complete(); context.close()
-                        print(f'PASS {width} {theme}: compact/reload/interrupt/explicit retry/native confirmation', flush=True)
+                        print(f'PASS {width} {theme}: automatic compact/reload/no manual RPC/interrupt/retry/native confirmation/continued turn', flush=True)
                     fake.compact_next = True
                     context, page = open_page(browser, base, 1280, 'dark')
                     page.locator('#sdk-input').fill('restart while compacting')
