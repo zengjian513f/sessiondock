@@ -268,7 +268,7 @@ struct Envelope<T> {
     result: T,
 }
 impl Response {
-    fn write(self, writer: &mut impl Write) -> io::Result<()> {
+    fn write(self, writer: &mut impl Write, bindings_only: bool) -> io::Result<()> {
         match self {
             Self::Value(value) => serde_json::to_writer(
                 writer,
@@ -277,6 +277,31 @@ impl Response {
                     result: value,
                 },
             )?,
+            Self::Report(report) if bindings_only => {
+                #[derive(serde::Serialize)]
+                struct Bindings<'a> {
+                    version: u32,
+                    node_id: &'a str,
+                    boot_id: &'a str,
+                    supported: bool,
+                    sampled_at: f64,
+                    bindings: &'a [process_links::Binding],
+                }
+                serde_json::to_writer(
+                    writer,
+                    &Envelope {
+                        ok: true,
+                        result: Bindings {
+                            version: report.version,
+                            node_id: &report.node_id,
+                            boot_id: &report.boot_id,
+                            supported: report.supported,
+                            sampled_at: report.sampled_at,
+                            bindings: &report.bindings,
+                        },
+                    },
+                )?;
+            }
             Self::Report(report) => serde_json::to_writer(
                 writer,
                 &Envelope {
@@ -1043,6 +1068,14 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
     let started = Instant::now();
     static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
     let request_id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    #[derive(serde::Deserialize)]
+    struct Projection {
+        #[serde(default)]
+        bindings_only: bool,
+    }
+    let bindings_only = serde_json::from_str::<Projection>(&line)
+        .map(|projection| projection.bindings_only)
+        .unwrap_or(false);
     let decoded = serde_json::from_str::<Request>(&line);
     let op = match &decoded {
         Ok(Request::Probe { .. }) => "probe",
@@ -1070,7 +1103,7 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
     }
     let mut writer = BufWriter::new(&mut stream);
     match response {
-        Ok(response) => response.write(&mut writer)?,
+        Ok(response) => response.write(&mut writer, bindings_only)?,
         Err(error) => serde_json::to_writer(&mut writer, &json!({"ok":false,"error":error}))?,
     }
     writer.write_all(b"\n")?;

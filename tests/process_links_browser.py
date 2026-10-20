@@ -111,13 +111,15 @@ def counted_node(node):
 
 
 @contextmanager
-def gpu_collector(root):
+def gpu_collector(root, receives_links=False):
     """Keep real collector attribution/lifetimes; inject only GPU measurements.
 
     The production collector intentionally disables NVIDIA reads for synthetic
     proc roots. This private socket models its separately refreshed GPU cache.
     """
     listener = socket.socket(socket.AF_UNIX)
+    projections = []
+    projection_errors = []
     listener.bind(str(root / 'gpu.sock'))
     listener.listen()
 
@@ -135,7 +137,13 @@ def gpu_collector(root):
                         upstream.connect(str(root / 'agent.sock'))
                         upstream.sendall(request)
                         response = json.loads(upstream.makefile('rb').readline())
-                    if json.loads(request)['op'] == 'resources' and response['ok']:
+                    decoded = json.loads(request)
+                    if decoded.get('bindings_only') and response['ok']:
+                        projections.append(decoded['op'])
+                        if set(response['result']) != {'version', 'node_id', 'boot_id',
+                                'supported', 'sampled_at', 'bindings'}:
+                            projection_errors.append(decoded['op'])
+                    if decoded['op'] == 'resources' and response['ok']:
                         rows = [line.split(', ') for line in (root / 'gpu.csv').read_text().splitlines()]
                         data = response['result']
                         for sample in data['samples']:
@@ -152,6 +160,9 @@ def gpu_collector(root):
     worker.start()
     try:
         yield
+        expected = {'report', 'catalog', 'publish'} if receives_links else {'report', 'catalog'}
+        assert expected <= set(projections), projections
+        assert not projection_errors, projection_errors
     finally:
         listener.close()
 
@@ -315,7 +326,7 @@ def main():
                 wait_for(lambda: (corpus.root / 'agent.sock').exists())
                 if index == 1:
                     wait_for(lambda: ledger.stat().st_mode & 0o777 == 0o600)
-                agents.enter_context(gpu_collector(corpus.root))
+                agents.enter_context(gpu_collector(corpus.root, receives_links=index == 1))
         hubroot = root / 'hub'
         hubroot.mkdir()
         hub = None

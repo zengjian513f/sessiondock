@@ -235,11 +235,21 @@ every five seconds and independent local parent discovery every ten seconds.
 The application decodes collector responses directly into the requested type on
 its blocking worker, without cloning a generic JSON tree. Local liveness,
 background catalog delivery and publication acknowledgements decode only the
-binding fields they consume; unknown fields are validated and skipped. Full
+binding fields they consume and request `"bindings_only": true` alongside `op`.
+The collector returns only version, node/boot identity, support, sampling time and
+bindings for report/catalog/publish replies, borrowing the same immutable snapshot.
+This avoids serializing and transferring boot-long TCP history on each live read.
+Older collectors ignore the optional field; their full replies are still validated
+and skipped without allocating unused records. Old clients continue to receive
+full reports, and catalog/publish mutations and identity checks are unchanged. Full
 `/api/process-links` responses still include every retained connection for the
 coordinator. The Hub also decodes the full report directly on its bounded blocking pool.
-The wire requests, boot-long evidence and identity checks are unchanged.
-The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py).
+Boot-long evidence is retained unchanged.
+The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py);
+`--legacy-collector` covers collectors that ignore the projection. The real-agent
+[`process_links_browser.py`](../tests/process_links_browser.py) suite with
+`--with-agent` verifies projected report/catalog/publish replies alongside browser
+attribution, liveness and resource interactions.
 Report and resource reads capture immutable snapshots under the attribution
 lock, then serialize and aggregate outside it. Boot-long SSH evidence is streamed
 without first expanding it into a JSON value tree; concurrent readers must not

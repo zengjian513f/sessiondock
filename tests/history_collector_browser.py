@@ -20,7 +20,7 @@ COUNT = 100_000
 
 
 @contextmanager
-def collector(root):
+def collector(root, legacy=False):
     session = dict(node_id=NODE, source='codex', sid='small-0', title='Synthetic owner ' * 12)
     record = dict(process=dict(pid=200, start=20000),
         connection=dict(client_ip='10.0.0.1', client_port=50000, server_ip='10.0.0.2', server_port=50022),
@@ -34,14 +34,16 @@ def collector(root):
     prefix = json.dumps(dict(ok=True, result=report), separators=(',', ':')).encode()
     payload = prefix.replace(b'"connections":[]', b'"connections":[' +
         b','.join([json.dumps(record, separators=(',', ':')).encode()] * COUNT) + b']') + b'\n'
+    projected = json.dumps(dict(ok=True, result={key: value for key, value in report.items()
+        if key not in ('outgoing', 'incoming', 'connections')}), separators=(',', ':')).encode() + b'\n'
     calls = []
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             try:
                 request = json.loads(self.rfile.readline())
-                calls.append(request['op'])
+                calls.append(request)
                 if request['op'] in ('report', 'catalog', 'publish'):
-                    self.wfile.write(payload)
+                    self.wfile.write(projected if request.get('bindings_only') and not legacy else payload)
                 else:
                     self.wfile.write(json.dumps(dict(ok=True, result=dict(version=1, node_id=NODE,
                         boot_id='private-boot', availability='unavailable', samples=[]))).encode() + b'\n')
@@ -53,7 +55,7 @@ def collector(root):
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         try:
-            yield len(payload), calls
+            yield (len(payload), len(projected)), calls
         finally:
             server.shutdown()
             worker.join(timeout=5)
@@ -63,6 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--report-only', action='store_true')
+    parser.add_argument('--legacy-collector', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='history-collector-') as temporary:
         root = Path(temporary)
@@ -80,8 +83,8 @@ def main():
         env = node_env(root, free_port(), '127.0.0.0/8')
         env.update(SESSIONDOCK_PROC_ROOT=str(proc), SESSIONDOCK_RESOURCE_AGENT_SOCKET=str(root / 'collector.sock'),
                    SESSIONDOCK_LOG_REQUESTS='all')
-        with collector(root) as (size, calls), isolated_server(corpus, args.binary, extra_env=env) as (base, _):
-            print(f'Collector response: {size} bytes; opening page', flush=True)
+        with collector(root, args.legacy_collector) as ((size, projected_size), calls), isolated_server(corpus, args.binary, extra_env=env) as (base, _):
+            print(f'Collector full response: {size} bytes; projected: {projected_size} bytes; opening page', flush=True)
             process = next(p for p in psutil.Process().children() if p.cmdline() == [str(args.binary.resolve())])
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
@@ -91,10 +94,14 @@ def main():
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.goto(base, wait_until='domcontentloaded')
                     expect(page.locator('#side .item')).to_have_count(4)
+                    page.reload(wait_until='domcontentloaded')
+                    expect(page.locator('#side .item')).to_have_count(4)
                     times = []
+                    live_times = []
                     for i in range(4):
                         # Three ordinary liveness consumers overlap a user opening
                         # a cold history. Force bypasses the unchanged-list cache.
+                        live_started = time.monotonic()
                         page.evaluate('''() => { window.liveReads = Promise.all(Array.from({length:3},
                             () => fetch('api/live?force=1').then(r => {if(!r.ok) throw Error(r.status); return r.json()}))); }''')
                         started = time.monotonic()
@@ -102,6 +109,7 @@ def main():
                         expect(page.locator('#msgs')).to_contain_text(f'History {i} answer')
                         times.append(round((time.monotonic() - started) * 1000))
                         page.evaluate('() => window.liveReads')
+                        live_times.append(round((time.monotonic() - live_started) * 1000))
                         print(f'Cold history {i}: {times[-1]} ms', flush=True)
                     # The coordinator path must still receive all old evidence;
                     # optimizing liveness cannot prune or hide connection records.
@@ -112,9 +120,16 @@ def main():
                     assert full == dict(count=COUNT, first=1, last='small-0', bindings=1), full
                     hwm = next(int(line.split()[1]) for line in Path(f'/proc/{process.pid}/status').read_text().splitlines()
                                if line.startswith('VmHWM:')) / 1024
-                    print(json.dumps(dict(collector_bytes=size, cold_open_ms=times, peak_rss_mib=round(hwm),
+                    print(json.dumps(dict(collector_bytes=size, projected_bytes=projected_size, cold_open_ms=times, live_reads_ms=live_times, peak_rss_mib=round(hwm),
                                           requests=len(calls), complete_connections=full['count'])), flush=True)
-                    assert calls.count('catalog') >= 1 and calls.count('report') >= 3, calls
+                    assert any(c['op'] == 'catalog' for c in calls), calls
+                    reads = [c for c in calls if c['op'] == 'report']
+                    assert len(reads) >= 3, reads
+                    if not args.report_only:
+                        assert all(c.get('bindings_only') for c in reads), reads
+                    assert any(c['op'] == 'catalog' and not c.get('bindings_only') for c in calls), calls
+                    if not args.legacy_collector and not args.report_only:
+                        assert max(live_times) < 2000, live_times
                     assert not errors, errors
                     if not args.report_only:
                         assert hwm < 800, f'Collector JSON expanded into excessive heaps: {hwm:.0f} MiB'
