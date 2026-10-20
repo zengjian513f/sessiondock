@@ -24,7 +24,7 @@ sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
 from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details, refresh_usage
 from agy_sdk_fixtures import AgyFixture, MODEL, SID, TITLE
-from history_fixtures import BINARY, REPO, Corpus, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
 from new_session_model_browser import open_dialog
 from send_browser import initialize
 from media_browser import PNG
@@ -317,6 +317,37 @@ def exercise(browser, base, fixture, screenshots=None):
         print('Agy: running request retry, FIFO, detach/reopen without cancellation', flush=True)
         held = send(page, 'hold:detached')
         expect(page.locator('.sdk-live')).to_contain_text('Agy running detached')
+        # BUG-20261020-131530-fda8ec: navigation reconnects the browser
+        # subscription, not the native runtime. Drop the test observer too so
+        # it cannot accidentally keep accepted work alive during the switch.
+        detached_pid = fixture.inputs('hold:detached')[0]['pid']
+        native_launches = [event for event in fixture.events()
+                           if event['kind'] == 'launch' and '--input-format' in event['argv']]
+        page.evaluate('''() => {
+            window.__agyEvents.close();
+            window.__navigationStream = NativeSdkView.es;
+        }''')
+        page.locator('#sdk-input').fill('未发送的切换草稿')
+        other = page.locator(f'#side .item[data-uid]:not([data-uid="{uid}"])').first
+        expect(other).to_be_visible()
+        other_uid = other.get_attribute('data-uid')
+        other.click()
+        page.wait_for_function('uids => S.sel === uids.other && SdkView.uid !== uids.agy',
+                               arg={'other': other_uid, 'agy': uid})
+        assert page.evaluate('window.__navigationStream.readyState === EventSource.CLOSED')
+        select_sdk(page, uid)
+        page.wait_for_function('NativeSdkView.connected && NativeSdkView.running')
+        expect(page.locator('.sdk-live')).to_contain_text('Agy running detached')
+        expect(page.locator('#sdk-input')).to_have_value('未发送的切换草稿')
+        assert page.evaluate('NativeSdkView.es !== window.__navigationStream')
+        assert len(fixture.inputs('hold:detached')) == 1
+        assert [event for event in fixture.events()
+                if event['kind'] == 'launch' and '--input-format' in event['argv']] == native_launches
+        assert not any(event['kind'] == 'signal' for event in fixture.events())
+        if screenshots:
+            page.screenshot(path=str(screenshots / 'agy-navigation-attached.png'), full_page=True)
+        page.locator('#sdk-input').fill('')
+        watch(page, uid)
         post(page, base, 'turn', {'uid': uid, 'request_id': held['request_id'], 'text': 'hold:detached'})
         post(page, base, 'turn', {'uid': uid, 'request_id': 'queued-once', 'text': 'queued after detach'})
         # Closing this document also closes every EventSource; the accepted turn must survive.
@@ -329,6 +360,7 @@ def exercise(browser, base, fixture, screenshots=None):
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: queued after detach')
         idle(page)
         assert len(fixture.inputs('hold:detached')) == len(fixture.inputs('queued after detach')) == 1
+        assert fixture.inputs('queued after detach')[0]['pid'] == detached_pid
         assert all(row['sid'] == SID for row in fixture.inputs())
 
         print('Agy: native SIGINT then resume same SID', flush=True)
@@ -578,9 +610,14 @@ def main():
         root = Path(tmp).resolve()
         cleanup.callback(stop_private_sdkhosts, root)
         fixture = AgyFixture(root, args.ptyhost.resolve(strict=True))
+        corpus = Corpus(root)
+        corpus.put('navigation-history', 'claude', [
+            claude_row('navigation-history', 'user', 'navigation-user', None,
+                       '另一个会话的历史，用于验证 SDK 切换。'),
+        ], [])
         with patch.dict(os.environ, fixture.env):
             initialize('--initialize-lifecycle', root / 'ledger', args.binary.resolve(strict=True))
-            with isolated_server(Corpus(root), args.binary, host_dir=root / 'host',
+            with isolated_server(corpus, args.binary, host_dir=root / 'host',
                     lifecycle_dir=root / 'ledger', state_dir=root / 'state',
                     launcher_config=fixture.launcher, extra_env=fixture.extra_env) as (base, _), sync_playwright() as pw:
                 options = {'headless': True}
