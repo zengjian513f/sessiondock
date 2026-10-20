@@ -3135,9 +3135,23 @@ async function applyUiChanges() {
       if (change.sessions) continue;
       const rows = [];
       const sessions = new Map(S.sessions.map(row => [row.uid, row]));
+      const searchRows = new Map((S.results || []).map(row => [row.uid, row]));
+      let metadataChanged = false;
       for (const update of change.cursors.values()) {
         const session = sessions.get(update.uid);
         if (!session) continue; // A later list invalidation introduces new rows.
+        // Activity belongs to the list even while this conversation's body is
+        // unopened. Apply it to main/agent rows and existing search results.
+        for (const row of [session, searchRows.get(update.uid)]) {
+          const target = update.agent ? row?.agent_items?.find(a => a.id === update.agent) : row;
+          if (!target) continue;
+          for (const field of ['updated', 'size']) {
+            if (Object.hasOwn(update, field) && target[field] !== update[field]) {
+              target[field] = update[field];
+              metadataChanged = true;
+            }
+          }
+        }
         if (update.agent) {
           const agent = session.agent_items?.find(row => row.id === update.agent);
           if (agent) agent.cursor = update.cursor;
@@ -3148,6 +3162,10 @@ async function applyUiChanges() {
         }
       }
       if (rows.length) syncSidebarUpdates(rows);
+      if (metadataChanged) {
+        refreshSessionMeta();
+        patchSide(visible());
+      }
     }
   } finally { uiEventApplying = false; }
 }
