@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build, server
@@ -84,6 +85,7 @@ def native(browser, base, source, events, shots):
             uid = select_source(page, base, source)
             if not page.locator('#sdk-input').is_visible():
                 page.locator('#a-sdk').click()
+            start_sdk(page)
             status = page.locator('.native-sdk-pane .sdk-status')
             check_status(page, status, page.locator('#sdk-status-menu'), label, detail)
             if label in ('处理中', '错误') or detail == '（2）':
@@ -147,6 +149,7 @@ def codex(browser, base, corpus, fake, shots):
         select_source(page, base, 'codex')
         if not page.locator('#sdk-input').is_visible():
             page.locator('#a-sdk').click()
+        start_sdk(page)
         expect(page.locator('#sdk-model')).to_have_value('fake-sol')
         status, menu = page.locator('.sdk-pane .sdk-status'), page.locator('#sdk-status-menu')
         notify('turn/completed', {'turn': {'id': 'status', 'status': 'completed', 'items': []}})

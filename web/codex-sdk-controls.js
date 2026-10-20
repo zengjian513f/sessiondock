@@ -60,7 +60,7 @@ const CodexSdkControls = {
     const settings = this.effective(view);
     const mode = view.pane.querySelector('#sdk-mode');
     if (mode) {
-      view.selectValue(mode, sdkSettingValue(view, 'mode', settings.collaborationMode?.mode || ''), '模式');
+      ConversationUI.selectValue(mode, sdkSettingValue(view, 'mode', settings.collaborationMode?.mode || ''), '模式');
       mode.disabled = view.settingChoices.has('mode');
     }
     const dialog = state.panel;
@@ -70,7 +70,7 @@ const CodexSdkControls = {
       ['sandbox', settings.sandboxPolicy?.type || '', this.sandboxNames],
     ]) {
       const select = view.pane.querySelector(`#sdk-control-${kind}`);
-      view.selectValue(select, sdkSettingValue(view, kind, value), '未返回');
+      ConversationUI.selectValue(select, sdkSettingValue(view, kind, value), '未返回');
       select.title = `${kind === 'approval' ? '审批策略' : '沙箱策略'}：${names[select.value] || select.value || '未返回'}`;
       select.disabled = !!state.saving || view.settingChoices.has(kind);
     }
@@ -97,7 +97,7 @@ const CodexSdkControls = {
         option.title = tier.description || '';
         select.append(option);
       }
-      view.selectValue(select, value, '档位');
+      ConversationUI.selectValue(select, value, '档位');
       select.dataset.options = signature;
       view.toolbarLayout = null;
       view.layoutToolbar();

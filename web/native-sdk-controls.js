@@ -9,20 +9,13 @@ const NativeSdkControls = {
     view.usageData.quota=UsageUI.quota(view.uid) || view.usageData.quota;
     view.quotaRevision=0;
     view.nativeSettings=[];
-    const row = view.pane.querySelector('.sdk-status-row');
-    const gauges = el('div','sdk-gauges'); gauges.setAttribute('aria-label','用量');
-    const more = el('button','btn','⋯'); more.id='sdk-more'; more.type='button'; more.setAttribute('aria-label','会话操作');
-    const menu = el('div','new-model-menu sdk-toolbar-menu sdk-native-menu'); menu.id='sdk-more-menu'; menu.setAttribute('popover','auto'); menu.setAttribute('aria-label','会话操作');
+    const menu = view.pane.querySelector('#sdk-more-menu');
+    menu.classList.add('sdk-native-menu');
     const usageMenu = el('section','sdk-inline-usage'); usageMenu.id='sdk-usage-menu'; usageMenu.setAttribute('aria-label','用量');
     const detail = el('div','sdk-control-section'); detail.id='native-usage-detail';
     const refresh = el('button','btn','刷新'); refresh.type='button'; refresh.id='native-usage-refresh'; refresh.setAttribute('aria-label','刷新用量');
     refresh.onclick=()=>this.loadUsage(view,true);
     const heading=el('div','sdk-usage-heading'); heading.append(el('h3','','用量'),refresh); usageMenu.append(heading,detail);
-    row.insertBefore(gauges,row.querySelector('.sdk-options'));
-    view.pane.querySelector('.sdk-pickers').append(more,menu);
-    more.setAttribute('aria-expanded','false'); more.setAttribute('aria-controls',menu.id); more.setAttribute('popovertarget',menu.id);
-    menu.addEventListener('beforetoggle',event=>more.setAttribute('aria-expanded',String(event.newState==='open')));
-    more.onclick=event=>{event.preventDefault();if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();CodexSdkView.placeMenu(menu,more);}};
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
       const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=label;button.setAttribute('aria-label',label);
@@ -31,7 +24,6 @@ const NativeSdkControls = {
     }
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
     menu.append(usageMenu);
-    view.nativeResize = new ResizeObserver(() => this.layout(view)); view.nativeResize.observe(row);
     this.paint(view);
     // Account snapshots are independent of native startup; never wait for /open.
     if(['agy','claude'].includes(view.uid.split(':')[0])) {
@@ -45,21 +37,20 @@ const NativeSdkControls = {
   close(view) {
     if(view.uid)this.rememberUsage(view);
     view.quotaRead?.abort();view.quotaRead=null;
-    view.nativeResize?.disconnect();view.nativeResize=null;
     clearTimeout(view.usageRetryTimer);view.usageRetryTimer=0;
     view.usageRead?.abort();view.usageRead=null;
     CodexSdkActions.close();
   },
   layout(view) {
     if (!view.pane) return;
-    const row=view.pane.querySelector('.sdk-status-row'),gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
+    const gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
     if (!gauges || !menu) return;
     const more=view.pane.querySelector('#sdk-more-menu');
-    sdkLayoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector))
+    SdkUI.layoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector))
       .concat(view.nativeSettings || [],[...view.pane.querySelectorAll('[data-sdk-action]')]));
     for (const [popover,trigger] of [[menu,'#sdk-more'],[more,'#sdk-more']])
-      if (popover.matches(':popover-open')) CodexSdkView.placeMenu(popover,view.pane.querySelector(trigger));
-    CodexSdkView.updateStatusDisclosure.call(view);
+      if (popover.matches(':popover-open')) ConversationUI.placePopover(popover,view.pane.querySelector(trigger));
+    view.updateStatusDisclosure();
   },
   async loadUsage(view,refresh) {
     const generation=view.generation;
@@ -197,7 +188,7 @@ const NativeSdkControls = {
       const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
       for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
       if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
-      CodexSdkView.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
+      ConversationUI.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
       select.disabled=pending;
       label.hidden=!options.length && !current;label.append(el('span','visually-hidden',title),select);holder.append(label);view.nativeSettings.push(label);
       select.onchange=async()=>{
@@ -230,10 +221,9 @@ const NativeSdkControls = {
     // Admission/delivery progress belongs to the user's message, like Codex's
     // queue. It is not an assistant request and does not prove consumption.
     const userCardFor=(item,title)=>{
-      const card=el('div','msg queued-send sdk-queued'),body=el('div','mb',item.text || item.prompt?.text || item.id);
-      card.dataset.role='user';card.dataset.queueId=item.id;
-      const foot=el('div','queued-send-foot'),actions=el('span','sdk-queue-actions');
-      foot.append(el('span','queued-send-state',title),actions);card.append(body,foot);holder.append(card);return body;
+      const {card,body}=ConversationUI.queuedMessage(item.text || item.prompt?.text || item.id,title,
+        {uid,agent:view.agent,className:'sdk-queued'});
+      card.dataset.queueId=item.id;holder.append(card);return body;
     };
     const actionsFor=body=>{let actions=body.querySelector('.sdk-request-actions');if(!actions){actions=el('div','sdk-request-actions');body.append(actions);}return actions;};
     const operation=(body,item,method,title,extra={})=>{
@@ -310,10 +300,10 @@ const NativeSdkControls = {
     if(['usage','status','help'].includes(command)){
       if(command==='usage')void this.loadUsage(view,true);
       if(command==='help')view.setNotice('网页命令：/usage、/status、/model ID、/effort 档位、/stop、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
-      else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();CodexSdkView.placeMenu(menu,view.notice);}
+      else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();ConversationUI.placePopover(menu,view.notice);}
       else {
         const menu=view.pane.querySelector('#sdk-more-menu'),button=view.pane.querySelector('#sdk-more');
-        if(!button.hidden && !menu.matches(':popover-open')){menu.showPopover();CodexSdkView.placeMenu(menu,button);}
+        if(!button.hidden && !menu.matches(':popover-open')){menu.showPopover();ConversationUI.placePopover(menu,button);}
       }success=true;
     }else if(command==='stop'){await view.interrupt();success=true;}
     else if(['model','effort'].includes(command)){
@@ -329,7 +319,7 @@ const NativeSdkControls = {
     const toggle=el('button','sdk-bubble-toggle','⋯');toggle.type='button';toggle.setAttribute('aria-label','消息操作');toggle.setAttribute('aria-expanded','false');
     const menu=el('div','new-model-menu sdk-bubble-menu');menu.setAttribute('popover','auto');menu.setAttribute('aria-label','消息操作');
     const button=el('button','btn','从此处之前分支');button.type='button';button.onclick=()=>{menu.hidePopover();this.action(view,'fork',view.uid.startsWith('grok:')?{prompt_index:item.prompt_index}:{before:item.native_id || item.id});};menu.append(button);
-    toggle.onclick=()=>{if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();CodexSdkView.placeMenu(menu,toggle);}};menu.addEventListener('beforetoggle',event=>toggle.setAttribute('aria-expanded',String(event.newState==='open')));node.classList.add('sdk-user-actions');node.append(toggle,menu);
+    toggle.onclick=()=>{if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();ConversationUI.placePopover(menu,toggle);}};menu.addEventListener('beforetoggle',event=>toggle.setAttribute('aria-expanded',String(event.newState==='open')));node.classList.add('sdk-user-actions');node.append(toggle,menu);
   },
   elicitation(view,request) {
     const card=el('div','msg sdk-request');card.dataset.sdkRequest=request.key;const body=el('div','mb');body.append(el('p','sdk-request-title',request.title || 'MCP 请求'),el('p','',request.message || request.description || ''));

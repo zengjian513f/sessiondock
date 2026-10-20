@@ -342,6 +342,13 @@ def fake_cli():
                 continue
             if content == "/compact":
                 send({"type": "system", "subtype": "status", "status": "compacting", "uuid": str(uuid.uuid4())})
+                # Presentation suites can acknowledge this short native state
+                # before it completes, including through a slower Hub/browser.
+                gate = Path(os.environ["SESSIONDOCK_FAKE_CLAUDE_LOG"]).with_name("compact-hold")
+                deadline = time.monotonic() + 10
+                while gate.exists() and time.monotonic() < deadline:
+                    if interrupted.wait(.02):
+                        break
                 time.sleep(.3)
                 state["context"] = 200
                 send({"type": "system", "subtype": "compact_boundary", "uuid": str(uuid.uuid4()),

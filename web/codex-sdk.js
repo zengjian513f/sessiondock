@@ -5,6 +5,7 @@
 // 审批和提问来自节点与共享 Codex app-server 的连接（/api/codex-sdk/*）。
 // 这里只负责呈现与交互，不解析终端画面，也不另存历史。
 const CodexSdkView = {
+  ...SdkUI.methods,
   uid: '', agent: null, pane: null, es: null, generation: 0,
   box: null, history: null, live: null, notice: null, input: null,
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
@@ -17,10 +18,6 @@ const CodexSdkView = {
   legacyViews: new Set(),
 
   defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(viewKey(uid, agent)); },
-  pending(uid) {
-    return typeof T === 'undefined' || S.sessions.some(row => row.uid === uid) ? null
-      : T.sdkSessions?.find(row => row.uid === uid) || null;
-  },
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true
@@ -46,72 +43,18 @@ const CodexSdkView = {
     const remembered=UsageUI.remembered(uid,agent);
     this.limits=remembered?.limits || null;this.cachedUsage=remembered?.usage || null;
     this.limitsRecordedAt=this.limits ? '' : null;
-    pane.setAttribute('aria-label', 'Codex SDK');
-    pane.classList.add('sdk-pane');
-    pane.innerHTML = `<div class="sdk-view">
-      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
-      <div id="sdk-composer">
-        <div class="sdk-status-row">
-          <button class="sdk-status" type="button" disabled><span role="status" aria-live="polite"></span></button>
-          <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
-          <div class="sdk-gauges" aria-label="用量">
-            <span class="sdk-gauge" data-gauge="context" hidden></span>
-            <span class="sdk-gauge" data-gauge="5h" hidden></span>
-            <span class="sdk-gauge" data-gauge="7d" hidden></span>
-            <span class="sdk-credits" hidden></span>
-          </div>
-          <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
-          <div class="sdk-options">
-            <div class="sdk-pickers">
-              <label class="new-effort sdk-model sdk-model-fit" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
-              <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="" disabled hidden>推理强度</option></select></label>
-              <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
-              <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作">
-                <span class="sdk-reset" hidden>
-                  <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
-                  <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
-                </span>
-              </div>
-              <div class="new-model-menu sdk-toolbar-menu sdk-usage-menu" id="sdk-usage-menu" popover="auto" aria-label="用量"></div>
-            </div>
-          </div>
-
-        </div>
-        <div class="composer-row">
-          <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" placeholder="通过 Codex SDK 发送"></textarea></div>
-          <div class="cbtns">
-            <button class="btn" id="sdk-stop" type="button" hidden title="中断当前回合">停止</button>
-            <button class="btn go" id="sdk-send" type="button">发送</button>
-          </div>
-        </div>
-      </div></div>`;
-    this.box = pane.querySelector('.sdk-msgs');
-    observeMessageLayout(this.box);
-    this.history = pane.querySelector('.sdk-history');
-    if (historyReady) this.history.innerHTML = '<div class="spin">正在读取会话…</div>';
-    this.live = pane.querySelector('.sdk-live');
-    this.notice = pane.querySelector('.sdk-status');
-    this.input = pane.querySelector('#sdk-input');
-    pane.querySelector('#sdk-composer').hidden = readOnly;
-    this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
-    this.input.onblur = () => PathCompletion.close(this.input);
-    this.input.onkeydown = event => {
-      if (PathCompletion.key(this.input, event, () => this.uid)) return;
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
-        event.preventDefault();
-        this.send();
-      }
-    };
-    pane.querySelector('#sdk-send').onclick = () => this.send();
-    pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
-    for (const kind of ['model', 'effort']) {
-      pane.querySelector(`#sdk-${kind}`).onchange = async event => {
-        const generation = this.generation, value = event.target.value;
-        if (!value) return;
-        try { await CodexSdkControls.settings(this, {[kind]: value}); }
-        catch (error) { if (this.current(generation)) this.setNotice(`设置失败：${error.message}`, 'blocked', true); }
-      };
-    }
+    SdkUI.mount(this, {name: 'Codex', readOnly, historyReady,
+      settings: (view, values) => CodexSdkControls.settings(view, values)});
+    pane.querySelector('.sdk-gauges').innerHTML = `
+      <span class="sdk-gauge" data-gauge="context" hidden></span>
+      <span class="sdk-gauge" data-gauge="5h" hidden></span>
+      <span class="sdk-gauge" data-gauge="7d" hidden></span>
+      <span class="sdk-credits" hidden></span>`;
+    pane.querySelector('.sdk-options').insertAdjacentHTML('beforebegin', '<button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>');
+    pane.querySelector('.sdk-pickers').insertAdjacentHTML('beforeend', '<div class="new-model-menu sdk-toolbar-menu sdk-usage-menu" id="sdk-usage-menu" popover="auto" aria-label="用量"></div>');
+    pane.querySelector('#sdk-more-menu').innerHTML = `<span class="sdk-reset" hidden>
+      <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
+      <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button></span>`;
     pane.querySelector('#sdk-reset-use').onclick = () => this.redeem();
     CodexSdkCompose.mount(this);
     CodexSdkActions.mount(this);
@@ -151,11 +94,8 @@ const CodexSdkView = {
     this.generation++;
     this.es?.close();
     this.es = null;
-    this.toolbarObserver?.disconnect(); this.toolbarObserver = null;
+    SdkUI.closeToolbar(this);
     disposeMessageObservers(this.box);
-    this.toolbarBindings?.abort(); this.toolbarBindings = null;
-    this.toolbarWidth = null; this.toolbarLayout = null;
-    this.closeToolbarMenus();
     clearTimeout(this.historyTimer);
     clearTimeout(this.openRetryTimer);
     clearTimeout(this.reconnectTimer);
@@ -172,50 +112,6 @@ const CodexSdkView = {
     this.historyReady = null; this.historyFailed = false;
   },
 
-  current(generation) { return generation === this.generation && !!this.pane; },
-
-  mountToolbar(generation) {
-    this.toolbarBindings = new AbortController();
-    for (const name of ['more', 'usage', 'status']) {
-      const button = this.pane.querySelector({more: '#sdk-more', usage: '#sdk-usage-toggle', status: '.sdk-status'}[name]);
-      const menu = this.pane.querySelector(`#sdk-${name}-menu`);
-      menu.addEventListener('beforetoggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
-      button.onclick = () => {
-        if (button.disabled) return;
-        if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
-        this.closeToolbarMenus();
-        menu.showPopover();
-        this.placeMenu(menu, button);
-      };
-    }
-    window.addEventListener('resize', () => this.closeToolbarMenus(), {signal: this.toolbarBindings.signal});
-    this.toolbarObserver = new ResizeObserver(() => {
-      if (this.current(generation)) this.layoutToolbar(this.pane.querySelector('.sdk-status-row').clientWidth);
-    });
-    this.toolbarObserver.observe(this.pane.querySelector('.sdk-status-row'));
-    this.toolbarObserver.observe(this.notice);
-    this.layoutToolbar();
-  },
-
-  placeMenu(menu, button, preferredWidth = 300) {
-    const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
-    const edge = 8, gap = 6, limit = Math.min(preferredWidth, innerWidth - edge * 2);
-    const status = menu.classList.contains('sdk-status-menu');
-    menu.style.width = status ? 'max-content' : `${limit / zoom}px`;
-    if (status) menu.style.maxWidth = `${limit / zoom}px`;
-    const width = menu.getBoundingClientRect().width;
-    const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
-    const up = above > below;
-    menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
-    menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
-    menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
-  },
-
-  closeToolbarMenus() {
-    for (const menu of this.pane?.querySelectorAll('.sdk-toolbar-menu, .sdk-bubble-menu') || [])
-      if (menu.matches(':popover-open')) menu.hidePopover();
-  },
-
   layoutToolbar(width = this.toolbarWidth) {
     if (!this.pane) return;
     const row = this.pane.querySelector('.sdk-status-row'), gauges = this.pane.querySelector('.sdk-gauges');
@@ -226,21 +122,10 @@ const CodexSdkView = {
     usage.hidden = true;
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
-    sdkLayoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
+    SdkUI.layoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
       .map(selector => this.pane.querySelector(selector))
       .concat([...this.pane.querySelectorAll('.sdk-policy')], buttons));
     this.updateStatusDisclosure();
-  },
-
-  async request(path, body, signal) {
-    const response = await fetch(appUrl(path), {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({agent: this.agent || '', ...body}),
-      signal,
-    });
-    let data = null;
-    try { data = await response.json(); } catch { /* 下面按 HTTP 状态说明 */ }
-    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code, status: response.status});
-    return data;
   },
 
   async start(generation, reconnecting = false) {
@@ -490,8 +375,9 @@ const CodexSdkView = {
     for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
       modelSelect.append(new Option(modelName, modelName));
-    this.selectValue(modelSelect, modelName, '选择模型');
+    ConversationUI.selectValue(modelSelect, modelName, '选择模型');
     modelSelect.title = modelName;
+    modelSelect.closest('label').hidden = !this.models.length && !modelName;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
     let chosen = sdkSettingValue(this, 'effort', this.summary?.settings?.effort || '');
@@ -506,92 +392,14 @@ const CodexSdkView = {
       if (switching && !this.settingChoices.has('effort')) chosen = '';
       else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
-    this.selectValue(select, chosen, '选择强度');
+    ConversationUI.selectValue(select, chosen, '选择强度');
+    select.closest('label').hidden = !model?.supportedReasoningEfforts?.length && !chosen;
     CodexSdkControls.paintTier(this);
     sdkSyncSettings(this);
     this.layoutToolbar();
   },
 
-  selectValue(select, value, label) {
-    select.querySelector('option[value=""]')?.remove();
-    if (value) {
-      if (![...select.options].some(option => option.value === value)) select.append(new Option(value, value));
-      select.value = value;
-    }
-    else {
-      const placeholder = new Option(label, ''); placeholder.disabled = placeholder.hidden = true;
-      select.prepend(placeholder); select.value = '';
-    }
-  },
-
   // ---------------------------------------------------------------- 历史
-  async refreshHistory(generation, afterTurn = false) {
-    if (this.pending(this.uid) && !afterTurn) return;
-    try {
-      if (this.historyReady) {
-        const ready = this.historyReady;
-        try { await ready; }
-        catch (error) {
-          if (this.historyReady !== ready) return;
-          throw error;
-        }
-        finally { if (this.historyReady === ready) this.historyReady = null; }
-        if (!this.current(generation)) return;
-      }
-      if (afterTurn && this.pendingAtOpen) {
-        await loadSessions(true, true);
-        if (!this.current(generation)) return;
-        if (!this.pending(this.uid)) {
-          this.pendingAtOpen = false;
-          await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
-        }
-      }
-      // History is the same native head/tail window as the conversation view.
-      // Catch up through its accepted live checkpoint; never fill the gap just
-      // because an SDK view opened or a turn completed.
-      const key = viewKey(this.uid, this.agent);
-      if (afterTurn && cache.has(key)) await syncSession(this.uid, this.agent);
-      if (!this.current(generation)) return;
-      let cached = cacheGet(key);
-      if (!cached) {
-        const {data, bytes} = await fetchMessages(this.uid, {agent: this.agent, windowed: true});
-        if (!this.current(generation)) return;
-        cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
-          end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-          prompt: data.prompt || null, cli: data.cli ?? null,
-          total: data.message_total, partial: data.partial || null});
-        cached = cacheGet(key);
-      }
-      this.historyFailed = false;
-      this.useHistory(cached, true);
-    } catch (error) {
-      if (this.current(generation)) {
-        this.historyFailed = true;
-        if (!this.historyData) this.history.innerHTML = `<div class="empty">读取历史失败：${esc(error.message || error)}</div>`;
-        this.setNotice(`读取历史失败：${error.message || error}`, 'blocked');
-      }
-    }
-  },
-
-  useHistory(entry, force = false) {
-    if (!this.pane || !entry) return;
-    const data = this.historyData;
-    const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
-    if (!force && this.historyEntry === entry && data?.end === entry.end
-        && data.messages === entry.msgs && data.length === entry.msgs.length
-        && data.partial === entry.partial && data.activity === entry.activity) {
-      // CLI-only updates can close a native turn whose ending was never
-      // written. They must refresh status even when history is unchanged.
-      if (this.summary && this.connected && (data.observedActivity?.state !== observed?.state
-          || data.observedActivity?.reason !== observed?.reason)) this.paintStatus();
-      data.observedActivity = observed;
-      return;
-    }
-    this.historyEntry = entry;
-    this.historyData = {messages: entry.msgs, partial: entry.partial,
-      activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
-    this.paintHistory();
-  },
 
   paintHistory() {
     const data = this.historyData;
@@ -615,23 +423,8 @@ const CodexSdkView = {
         }
       }
     }
-    const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
-      .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
-    this.history.replaceChildren();
-    const partial = data.partial;
-    const split = partial ? Math.min(partial.head, messages.length) : 0;
-    const plan = partial
-      ? [...planTurns(messages.slice(0, split).filter(sdkHistoryMessageVisible), {tailComplete: false, foldTail: true}),
-         {gap: {uid: this.uid, agent: this.agent, omitted: partial.omitted}},
-         ...planTurns(messages.slice(split).filter(sdkHistoryMessageVisible), {tailComplete, openTail: !tailComplete})]
-      : planTurns(messages.filter(sdkHistoryMessageVisible), {tailComplete, openTail: !tailComplete});
-    const built = buildPlan(this.history, plan, null);
-    built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
-    for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
-      if (folds.has(node.dataset.turnId))
-        folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
-    }
-    refreshMessageTimeDividers(this.history);
+    SdkUI.paintHistory(this, messages, {tailComplete,
+      decorate: (node, message) => CodexSdkActions.decorate(this, node, message)});
     CodexSdkQuestions.paint(this);
     // 已经落盘的回合从实时区移除，避免同一回合出现两次。
     for (const [id, node] of this.nodes) {
@@ -639,12 +432,6 @@ const CodexSdkView = {
     }
     if (this.summary) this.paintStatus();
     if (stick) this.scrollBottom();
-  },
-
-  scheduleHistory() {
-    clearTimeout(this.historyTimer);
-    const generation = this.generation;
-    this.historyTimer = setTimeout(() => this.refreshHistory(generation, true), 600);
   },
 
   activeUserText() {
@@ -656,12 +443,6 @@ const CodexSdkView = {
   },
 
   // ---------------------------------------------------------------- 事件
-  setConnected(connected) {
-    this.connected = connected;
-    if (!this.uid || this.agent) return;
-    paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(this.uid)}"]`));
-    if (S.sel === this.uid) paintHeaderTurn();
-  },
 
   applySnapshot(raw) {
     this.setConnected(true);
@@ -812,11 +593,7 @@ const CodexSdkView = {
       old._updateMessage(message);
       return;
     }
-    const toolControls = ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'];
-    const toolState = TOOL_ROLES.has(message.role) && old
-      ? toolControls.map(selector => [...old.querySelectorAll(selector)].map(control =>
-          control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded')))
-      : null;
+    const toolState = TOOL_ROLES.has(message.role) ? ConversationUI.toolState(old) : null;
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
     CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
@@ -831,13 +608,7 @@ const CodexSdkView = {
       const firstRequest = this.live.querySelector('[data-sdk-request]');
       this.live.insertBefore(node, firstRequest);
     }
-    if (toolState) toolControls.forEach((selector, group) => {
-      node.querySelectorAll(selector).forEach((control, index) => {
-        const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded';
-        const previous = toolState[group][index];
-        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
-      });
-    });
+    ConversationUI.restoreToolState(node, toolState);
     this.nodes.set(item.id, node);
   },
 
@@ -904,43 +675,6 @@ const CodexSdkView = {
     this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : kind);
   },
 
-  setNotice(text, kind = '', sticky = false) {
-    if (!this.notice) return;
-    this.notice.firstElementChild.textContent = sdkStatusSummary(text, kind);
-    const details = this.pane.querySelector('#sdk-status-menu');
-    details.textContent = text;
-    if (!text && details.matches(':popover-open')) details.hidePopover();
-    this.notice.title = text;
-    this.notice.hidden = !text;
-    this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
-    this.notice.dataset.state = kind || 'neutral';
-    this.notice.dataset.sticky = sticky ? '1' : '';
-    this.updateStatusDisclosure();
-  },
-
-  updateStatusDisclosure() {
-    if (!this.notice) return;
-    sdkUpdateStatusDisclosure(this.notice, this.pane.querySelector('#sdk-status-menu'));
-  },
-
-  nearBottom() {
-    const box = this.box;
-    return !box || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  },
-
-  scrollBottom() {
-    if (this.box) this.box.scrollTop = this.box.scrollHeight;
-  },
-
-  fitInput() {
-    const input = this.input;
-    if (!input) return;
-    input.classList.toggle('shell-mode', /^\s*(?:!|\/shell(?:\s|$))/.test(input.value));
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 240) + 'px';
-    input.style.overflowY = input.scrollHeight > 240 ? 'auto' : 'hidden';
-  },
-
   // ---------------------------------------------------------------- 操作
   paintQueue() {
     const holder = this.pane?.querySelector('.sdk-queue');
@@ -951,14 +685,10 @@ const CodexSdkView = {
     holder._sdkQueueContents = contents;
     holder.replaceChildren();
     for (const item of this.summary?.queue || []) {
-      const card = document.createElement('div');
-      card.className = 'msg queued-send sdk-queued'; card.dataset.role = 'user'; card.dataset.queueId = item.id;
-      const text = document.createElement('div'); text.className = 'mb'; text.textContent = item.text;
-      const foot = document.createElement('div'); foot.className = 'queued-send-foot';
-      const status = document.createElement('span'); status.className = 'queued-send-state';
-      status.textContent = item.state === 'failed' ? (item.error || '发送失败') : item.state === 'sending' ? '正在发送…' : '已排队，当前回合结束后发送';
-      const controls = document.createElement('span'); controls.className = 'sdk-queue-actions';
-      foot.append(status, controls);
+      const state = item.state === 'failed' ? (item.error || '发送失败') : item.state === 'sending' ? '正在发送…' : '已排队，当前回合结束后发送';
+      const {card, foot, actions: controls} = ConversationUI.queuedMessage(item.text, state,
+        {uid: this.uid, agent: this.agent, className: 'sdk-queued'});
+      card.dataset.queueId = item.id;
       for (const [action, label] of [['cancel', '撤销'], [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? '重试' : '立即引导']]) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'queued-send-dismiss';
@@ -988,7 +718,7 @@ const CodexSdkView = {
         };
         controls.append(button);
       }
-      card.append(text, foot); holder.append(card);
+      holder.append(card);
     }
   },
 
@@ -1102,7 +832,6 @@ function mergeSdkLimits(previous, update) {
 }
 
 /** app-server ThreadItem → 消息模式的消息对象，由同一个 msgNode 渲染。 */
-function sdkHistoryMessageVisible(message) { return message.event_kind !== 'compact'; }
 
 function itemMessage(item) {
   const done = ['completed', 'failed', 'declined'].includes(item.status);
@@ -1308,7 +1037,6 @@ function requestCard(request, submit) {
   return card;
 }
 
-
 // Async questions arrive as agentMessage.questions, not server requests. Their
 // answer is an ordinary user message; explicit submission may steer a live turn.
 const CodexSdkQuestions = {
@@ -1381,77 +1109,3 @@ const CodexSdkQuestions = {
     }
   },
 };
-
-// A complete short status is a label, not an invitation to repeat it in a menu.
-function sdkUpdateStatusDisclosure(notice, details) {
-  const full = details.textContent.trim(), summary = notice.textContent.trim();
-  const available = !notice.hidden && !!full
-    && (full !== summary || notice.scrollWidth > notice.clientWidth + 1);
-  notice.disabled = !available;
-  if (available) {
-    notice.setAttribute('aria-controls', details.id);
-    notice.setAttribute('aria-haspopup', 'dialog');
-    notice.setAttribute('aria-expanded', String(details.matches(':popover-open')));
-  } else {
-    if (details.matches(':popover-open')) details.hidePopover();
-    for (const attribute of ['aria-controls', 'aria-haspopup', 'aria-expanded']) notice.removeAttribute(attribute);
-  }
-}
-
-// Keep protocol detail intact; only the toolbar label is summarized.
-function sdkStatusSummary(text, kind) {
-  text = String(text || '');
-  if ([...text].length <= 6) return text;
-  const lead = text.split(/[：:，,。；;\s]/)[0];
-  if (lead && [...lead].length <= 6) return lead;
-  if (text.startsWith('不支持的命令')) return '命令不支持';
-  if (text.startsWith('队列暂停')) return '队列暂停';
-  return {blocked: '执行失败', retrying: '正在重试', working: '处理中',
-    waiting: '等待处理', maintenance: '压缩中', connecting: '连接中', ready: '就绪'}[kind] || '状态详情';
-}
-
-function sdkLayoutFooter(view, controls) {
-  const row = view.pane.querySelector('.sdk-status-row'), gauges = row.querySelector('.sdk-gauges');
-  const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
-  const trigger = view.pane.querySelector('#sdk-more');
-  const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
-    [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
-    controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
-  if (row.dataset.footerLayout === signature) return;
-  row.dataset.footerLayout = signature;
-  gauges.tabIndex = 0;
-  if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== row.clientWidth) view.closeToolbarMenus();
-  row.dataset.footerWidth = row.clientWidth;
-  // Start with status, usage and ⋯; optional controls never displace usage.
-  trigger.hidden = false;
-  const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
-  for (const control of controls.filter(Boolean)) overflow(control).append(control);
-  const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
-  const anchor = trigger;
-  for (const control of controls.filter(Boolean)) {
-    pickers.insertBefore(control, anchor);
-    if (!fits()) { overflow(control).append(control); break; }
-  }
-  const overflowPickers=controls.filter(control=>control?.matches('.new-effort') && control.parentElement===menu);
-  menu.prepend(...overflowPickers);
-  for(const control of controls.filter(control=>control?.matches('.new-effort'))){
-    const inMenu=control.parentElement===menu,select=control.querySelector('select');
-    let label=control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
-    if(!label && select){label=el('span','',select.getAttribute('aria-label') || control.title);control.prepend(label);}
-    label?.classList.toggle('visually-hidden',!inMenu);label?.classList.toggle('sdk-picker-label',inMenu);
-  }
-  // Empty wrappers and hidden reset cards are not menu contents. The same
-  // contents decide both disclosure visibility and boundaries between groups.
-  const hasContent = node => !node.hidden && (node.matches('button, input, select, textarea')
-    || [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE
-      ? !!child.textContent.trim() : child.nodeType === Node.ELEMENT_NODE && hasContent(child)));
-  for (const group of menu.querySelectorAll(':scope > #sdk-actions, :scope > #sdk-permissions')) {
-    group.hidden = false;
-    group.hidden = !hasContent(group);
-  }
-  trigger.hidden = !hasContent(menu);
-  if (trigger.hidden && menu.matches(':popover-open')) {
-    menu.hidePopover();
-    view.input?.focus();
-  }
-}

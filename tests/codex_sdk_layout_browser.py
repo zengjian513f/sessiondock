@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import tempfile
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build, server
@@ -62,6 +63,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+    start_sdk(page)
     expect(page.locator('#sdk-mode')).to_have_value('default')
     expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
     expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('data-state', 'ready')
