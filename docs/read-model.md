@@ -1,13 +1,11 @@
 # 读模型设计：惰性索引 + 按需视图
 
-这是会话读模型（列表、详情、分页、SSE、搜索、运行时身份的数据来源）的
-**唯一有效设计**。它取代了 2026-09-12 之前的"冻结库存"（全量启动解析）；
-那套设计已废弃，不再是任何代码或文档的依据。
+本页定义会话读模型：列表、详情、分页、SSE、搜索及运行时身份的数据来源。
 
 ## 原则
 
-1. **没有启动解析。** 服务启动后第一次列表只做目录遍历 + `stat` + 每个文件的
-   有界头/尾读取；不解析任何文件的全文。
+1. **按需建立索引。** 列表读取目录、文件 stamp 和头尾摘要；当前模型、回合与活动时间
+   使用独立标量扫描，必要时读取摘要窗口之外的记录，不建立正文消息视图。
 2. **每个文件相互独立。** 一个文件在读取期间被追加、重写或删除，只影响它自己
    这一行/这一份视图；永远不存在"整份索引作废"。
 3. **只在打开时才解析。** 会话视图（消息投影、LF 检查点、媒体片段）只为被打开
@@ -26,8 +24,8 @@
 
 | 组件 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `sessions/index` | 目录遍历、`stat`、并行头/尾摘要、按 stamp 缓存、行推导、归属图、`sig`/`built_at` | 三个读根 | `/api/sessions` 行、候选文件表（uid → 路径/来源/stamp/原生 id/归属）、运行时原生目录 |
-| `sessions/index/summary` | 三家来源的有界摘要：头 96 KiB（≤ 40 条记录）+ 尾 512 KiB | 单个文件 | `RowSummary` |
+| `sessions/index` | 目录遍历、`stat`、并行摘要及标量扫描、按 stamp 缓存、行推导、归属图、`sig`/`built_at` | 配置的原生读根与私有投影根 | `/api/sessions` 行、候选文件表（uid → 路径/来源/stamp/原生 id/归属）、运行时原生目录 |
+| `sessions/index/summary` | 各来源的有界摘要：头 96 KiB（Claude 最多 40 条、Codex 最多 120 条）+ 尾 512 KiB | 单个文件 | `RowSummary` |
 | `sessions/views` | 单会话视图：经既有 `RecordCache`/`RawIndex`/provider 投影流式解析**这一个**文件，增量续读，重写重建；LRU（条数 + 字节） | 候选文件 + 可选时间线 pin | `ViewSnapshot`（消息、分页、媒体、检查点、原生输入证据） |
 | `search` + `search/cache` + `search/service` | 搜索文本缓存（按会话、按文件版本持久化的语义正文）、解析预算、按需构建；未缓存的会话借用已缓存视图或流式投影后丢弃；有界准入与 `partial` | 查询 + 候选表 + 缓存目录 | NDJSON 命中流 |
 | `observe`（SSE） | 每会话 `stat` 轮询 + 视图增量扩展；列表 SSE 用索引 `sig` | 索引 + 视图 | 事件流 |
@@ -35,7 +33,7 @@
 
 ## Agy 原生数据投影
 
-当前 Agy 1.2.16 实现用成对的 `SESSIONDOCK_AGY_HOME`（显式原生目录）与
+Agy 使用成对的 `SESSIONDOCK_AGY_HOME`（显式原生目录）与
 `SESSIONDOCK_AGY_ROOT`（私有可写镜像）接入：只读目录 DB 加完整
 `brain/<sid>/.system_generated/logs/transcript_full.jsonl`，生成
 `<AGY_ROOT>/cli/<sid>/summary.json`、`messages.jsonl`，复用下游索引、历史分页、
@@ -46,11 +44,9 @@
 为空）；恢复后重新核对并清除提示。成功读取
 目录发现行被删时只清理带本实现标记的私有镜像，不修改 native 文件。
 
-真实 user、planner final、thinking、错误与 fd identity 已核对；工具/媒体字段来自
-CLI 内置格式文档，尚无成功真实工具/媒体样本。工具调用保留原始 JSON，其他步骤
-独立投影结果，不按位置猜配对；图片使用既有媒体授权，其合成 schema browser
-路径已有通过记录。Agy 不输出 `turn`，未证实 busy；parent/status 的读取也不代表
-原生子代理/回合状态已支持。具体合同及验证边界见 [Agy](agy.md)。
+工具调用保留原始 JSON，其他步骤独立投影结果，不按位置猜配对；图片使用媒体授权。
+原生 parent 经私有镜像进入子代理归属图，明确的运行 status 用于子代理活跃标记；
+它不等同于完整回合三态。来源字段和验证边界由 [Agy](agy.md) 维护。
 
 Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，保留通知来源、
 优先级和时间，不作为工具结果或回复计数。用户外层包裹的附加元数据与设置变更
@@ -73,7 +69,7 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   仅含未知字段的 Codex `session_meta.payload` 回退完整值，保持真值语义。
   小记录继续原有快速解码，读取窗口和半行处理不变。sidecar、独立最新模型/回合扫描、
   历史与搜索正文解码不接入这个投影；64 KiB 只是选择解码路径，不是输入限制。
-- **摘要读取**：头 96 KiB 内最多 40 条完整记录 + 尾 512 KiB 内的完整记录
+- **摘要读取**：头 96 KiB 内 Claude 最多 40 条、Codex 最多 120 条完整记录，加尾 512 KiB 内的完整记录
   （残行丢弃）；推导 `title`
   （custom-title > 最新 ai-title > 首条用户输入生成；Claude 都没有时为
   `新建 Claude 会话`，Python 回退为文件名前 8 位，DELTA）、`cwd`（头部优先，尾部
@@ -134,7 +130,7 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   撤销不晚于该结果的旧回合活动。只有子代理新的回合开始边界才能重新激活；
   settings/token 等记录不算唤醒，未知状态、无匹配调用和引用正文不算停止证据。
   该状态校正用于列表和子代理活动标记，不改原生历史；相对仅看子代理边界的
-  基线为本缺陷修复的 **DELTA**。回归见 `tests/turn_state_browser.py`。
+  基线为 **DELTA**。回归见 `tests/turn_state_browser.py`。
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
   （只有它算收尾），未收尾时再对照主会话里该子代理最近一次停止通知
   （`<task-notification>` 的 `<task-id>` 或前台 Agent 的 `toolUseResult`，
@@ -187,27 +183,25 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   不因别的会话被删除而返回 503。被删除的 owner 和失效依赖仍按原有错误处理。
   AST 独占借出并归还全局预算，淘汰对象在锁外释放，解析临时内存在锁外回收。
   并行读取会增加在途内存，常驻缓存预算不等于进程 RSS 上限。
-- **继承前缀共享**（`views::PrefixCache`，2026-09-15）：Codex 分叉子会话继承父文件
+- **继承前缀共享**（`views::PrefixCache`）：Codex 分叉子会话继承父文件
   `[0, cut)` 的投影按（父 uid、cut、父 stamp）缓存（≤ 8 条、同一 128 MiB 视图字节
   预算），已打开的视图、SSE 续读和搜索的瞬时投影共用同一份；十个分叉共享一个 1.6 GB
   父文件时只流式解析一次。父文件 stamp 一变即重读，不按内容猜。
 
-### 大文件的读取代价（2026-09-15）
+### 大文件的读取代价
 
 打开会话必须把这个文件（及其继承前缀）的每个字节读一遍：LF 边界、记录计数、
 `message_total`/`partial.omitted`、语义锚点都依赖全部记录。但"读一遍"不等于
-"全部解码驻留"，GB 级会话的代价被压到接近 I/O：
+"全部解码驻留"：
 
-- **指纹代替 SHA**：物理索引每行的前缀校验点、追加复用时对旧前缀的整段校验、
-  私有 span 的读回校验，全部改用 `crate::fingerprint`（128 位非加密混合，
-  单核数 GB/s）。它们校验的是本机文件是否在我们眼皮底下变了，不是对抗性完整性；
+- **文件指纹**：物理索引每行的前缀校验点、追加复用时对旧前缀的整段校验、
+  私有 span 的读回校验使用 `crate::fingerprint`（128 位非加密混合）。
+  它们检测本机文件变化，不提供对抗性完整性；
   能改写原生根的人本来就拥有数据。SHA-1 仍用于 `head`（首 4 KiB）、`sig`、
   uid 等短输入。
-- **64 KiB 以上的字符串一律是 span**（`budgets::INLINE_STRING_BYTES`，原 2 MiB）：
-  图片以 `NativeSpan` 留在文件里、GET 时按范围读回校验，不再以 base64 驻留在
-  AST 和视图中（截图密集会话的常驻从"≈ 文件大小的 1.6 倍"降到与图片无关）；普通
-  巨型文本仍从 stamped 来源读回进记录。AST 也因此小到能进 64 MiB 的追加复用缓存：
-  活跃的 GB 级会话每次追加只解码新增行。
+- **64 KiB 以上的字符串使用 span**（`budgets::INLINE_STRING_BYTES`）：
+  图片以 `NativeSpan` 留在文件里，GET 时按范围读回校验；普通巨型文本从 stamped
+  来源读回进记录。AST 能保留在追加复用缓存且旧前缀校验通过时，追加只解码新增行。
 - **小记录先走 serde_json**：≤ 64 KiB 的完整行不可能含 span，`serde_json` 与结构
   扫描器对它接受的输入产生相同的 `Value`（保序、重复键后者胜、同一数字解析器）；
   它拒绝的（超过其递归深度、真正的语法错误）再交给没有深度门槛的扫描器裁决。
@@ -218,23 +212,18 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   仍有完整读取、旧事件复制和编码比较成本；其他来源保持完整投影。
   详见 [append-cache.md](append-cache.md)。
 - **长字符串用 SIMD 跳过**：扫描器在字符串内用 `memchr2` 找下一个引号/反斜杠，
-  逐行读取器只在本次能拷贝的窗口内找 LF（原先每 8 KiB 就重扫整段 64 KiB 缓冲，
-  长行是二次方开销）。
+  逐行读取器只在本次能拷贝的窗口内找 LF。
 
-实测见 [performance.md](performance.md#大文件-2026-09-15)。仍未做的：不读中间
-字节的"真正局部解析"需要把物理索引与浅投影落盘（按文件版本），留作下一步。
+历史测量见 [performance.md](performance.md#大文件-2026-09-15)；后续工作见 [TODO](../TODO.md)。
 - 每视图契约不变：游标 schema `rs-m2-1`、前缀散列、语义锚点、时间线 pin、
   `valid_checkpoint`、
   分页/媒体授权、`message_total`/`partial`/`activity`。见
   [history-pages.md](history-pages.md)、[native-input.md](native-input.md)、
   [media.md](media.md)。
 
-### 视图字节缓存（2026-09-15）
+### 视图字节缓存
 
-热读（同一文件版本的第二次 `/api/messages`）以前仍要把每条消息 `Value` 克隆一遍再
-序列化：隔离实例上 52 MB 的 Claude 会话每次全文 105–119 ms，404 MB 的 Codex 会话
-437–444 ms，`window=1` 首屏 18–33 ms（[performance.md](performance.md#热读视图字节缓存2026-09-15)）。
-现在每个已解析文件（`Parsed.encoded`，
+每个已解析文件（`Parsed.encoded`，
 `views/encoded.rs`）在投影之后**只序列化一次**，把结果留在视图里，
 HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
 
@@ -243,23 +232,20 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   输出首尾相接、逗号分隔，并记每条的起点，于是任意连续的一段消息位置就是一次
   `memcpy`；status 事件另存（不进 `messages`，但进语义 digest）。
 - **同一次序列化还产出**语义 digest（`projection_digest(events, committed)`，
-  与旧算法逐字节相同的 SHA-1 输入）和 LRU 记账（Σ 消息字节），代替以前解析时的两遍
-  丢弃式序列化；过期检查点的锚点（`start < committed`）也从缓存字节算 digest，不再
-  为一次增量请求重新序列化整个前缀。
+  使用 SHA-1 输入）和 LRU 记账（Σ 消息字节）；过期检查点的锚点
+  （`start < committed`）也从缓存字节计算 digest。
 - **响应 = 小字段 + 拼接**：`meta`/`version`/`reset`/`start`/`end`/`anchor` 由 serde_json
   照旧生成、去掉收尾的 `}`，接 `"messages":[` + 缓存片段 + `]`，再接
   `message_total`/`partial`/`activity_changed`/`activity`，最后由 handler 追加
   `prompt`（主视图）并收尾。全文、`window=1`（头 100 + 尾 500 是两段
   `memcpy`）、`start=/head=/anchor=` 增量（`end > start` 的后缀）、`append=1`、
   历史页（`/page?cursor=`，按非 status 位置切片）都走这条路；分页预算
-  （`pages::Budget`）用缓存里记下的消息长度与文本引用数，不再为了称重再序列化 600 条。
-- **逐字节相同**：可缓存的消息就是它自己的 `to_vec` 输出，周围字段由同一个
-  `json!` 值序列化，字节渲染器的输出与原 `Value` 渲染器逐字节相等（原
-  `Value` 渲染器只为测试保留，已随单元测试于 2026-10-06 删除）。
-- **不是纯函数的消息每次照旧投影**：带类型化图片的事件（描述符注册是每次请求的
+  （`pages::Budget`）使用缓存中的消息长度与文本引用数。
+- **编码格式**：可缓存的消息使用自身的 `to_vec` 输出，周围字段通过 `json!` 值序列化。
+- **具有请求副作用的消息逐次投影**：带类型化图片的事件（描述符注册是每次请求的
   副作用，超过 16 张还要签发 `media_more` grant）和正文里发现了图片引用的事件
-  （文件 token 每次随机）在编码时标为 `special`，请求时克隆 + 投影 + 序列化，与
-  以前完全一样；其它消息直接拷贝。Codex 重命名事件（`rename_at`）按 `ts` 插在序列
+  （文件 token 每次随机）在编码时标为 `special`，请求时克隆、投影并序列化；
+  其它消息直接拷贝。Codex 重命名事件（`rename_at`）按 `ts` 插在序列
   里，只切断一次拷贝。
 - **追加只编码新尾巴**：追加后的投影（除上述 Agy 路径外仍是全量投影）对照上一次解析逐条比较
   （`same_value`：键序敏感、`-0.0`/`0.0` 区分——`Value::eq` 都不区分，而字节要求
@@ -273,9 +259,8 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   不为非搜索内容（尤其是工具输出）序列化消息、扫描媒体引用或计算详情游标。
   这种私有投影不生成 `ViewSnapshot`，不进入文件/视图 LRU；后续打开详情仍完整编码，
   历史、分页与 SSE 检查点保持原样。共享继承前缀仍按原合同解析、校验与记账。
-- **预算**：见下文"常驻内存预算"——字节与 `Value` 树记在同一笔账上（`SESSIONDOCK_VIEW_CACHE_MB`），
-  不另设旋钮；代价是常驻倍率从记账的 1.2–1.6× 估为约 2.2–2.6×（同一预算最坏多
-  128 MiB；实测见 performance.md，打开 404 MB 之后的 RSS 反而从 472 降到 415 MB）。
+- **预算**：字节与 `Value` 树使用同一视图缓存预算（`SESSIONDOCK_VIEW_CACHE_MB`），
+  见下文"常驻内存预算"。缓存记账不等于进程 RSS。
 
 ### 视图模块的接口（`sessions/views`）
 
@@ -316,21 +301,20 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
 
 详情增量/SSE 的 `meta` 不携带列表投影的 `child_count`，不得用它抹掉已有计数；
 未展开父行也不得因详情包含 `agent_items` 而载入子代理行。计数仍由列表响应更新，
-包括 Hub 汇总的跨节点子会话。BUG-20261011-081307-31eb05 的详情覆盖曾使展开入口
-消失、刷新列表后暂时恢复；`child_modes_browser.py` 覆盖打开父会话、原生追加、
+包括 Hub 汇总的跨节点子会话。`child_modes_browser.py` 覆盖打开父会话、原生追加、
 详情跟进后展开三个 Codex 子代理并打开历史的路径。
 
 ## 测试数据隔离
 
-测试使用临时独立数据根，不通过生产显示过滤隐藏会话。旧
-`debug-runs.json` 不再读取、导入或修改；`debug_run` URL 参数作为未知参数忽略。
+测试使用临时独立数据根，不通过生产显示过滤隐藏会话。
+`debug-runs.json` 文件和 `debug_run` URL 参数均不影响读模型。
 列表、搜索、live、term 与 Hub 始终使用正常会话集合，共享普通缓存与 SSE 观察器。
 独立测试节点通过 `SESSIONDOCK_CLAUDE_ROOT`、`SESSIONDOCK_CODEX_ROOT`、
-`SESSIONDOCK_GROK_ROOT` 指定各来源的临时目录；OpenCode 使用临时数据库和镜像根。
+`SESSIONDOCK_GROK_ROOT` 指定对应来源的临时目录；OpenCode、Agy 使用临时原生目录和镜像根。
 
 ## 搜索
 
-字面搜索默认是多关键词 AND（2026-09-15）：`q` 按空白拆词，双引号保留连续短语，
+字面搜索默认是多关键词 AND：`q` 按空白拆词，双引号保留连续短语，
 例如 `部署 失败` 要求整个会话正文同时包含两个词，顺序不限、可以在不同消息中；
 `"部署 失败" 重启` 要求连续的“部署 失败”以及“重启”。`mode=any` 选择 OR，
 省略 `mode` 或其他值使用 AND。`AND`、`OR` 本身是普通关键词。空词与完全相同的
@@ -389,8 +373,7 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   工具参数/输出、媒体、游标、私有片段不进正文。
 - **缓存条目**：`<SESSIONDOCK_SEARCH_CACHE_DIR>/<source>-<hex>`——配置目录后以
   同目录临时文件 + rename 更新；首行 JSON 头（schema、构建指纹、uid、版本键、kind、
-  字节数），其后是未压缩正文（真实根 816 会话共 18 MB，读页缓存比解压快，见
-  [performance.md](performance.md)）。确定性的打开失败也按版本缓存，不再每次
+  字节数），其后是未压缩正文。确定性的打开失败也按版本缓存，避免每次
   搜索重新流式解析。未配置目录时缓存只在
   内存（≤ 64 MiB）。
 - **版本键**（`SessionStore::search_version`，只 `stat` + 索引，不读正文）：数据
@@ -399,18 +382,13 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   另加构建指纹（schema/crate 版本/二进制大小与 mtime），换二进制即整体重建，
   绝不信任旧投影。元数据 sidecar、名字索引、行装饰不影响正文，不进版本键。
   解析前后各取一次版本，期间变化的结果只用不存。每次搜索仍为每个候选 `stat`
-  一次（899 个候选 ≈ 17 ms CPU，8 个 worker 摊到 2–3 ms 墙钟）：这是"追加后的
-  下一次搜索就能搜到"（当时由 `search_cache_suite` 验证（已于 2026-10-06 随非浏览器测试删除））的代价——索引快照 ≤ 500 ms
-  一刷，改用它的戳会让刚追加的会话在下一次刷新前搜到上一版正文，实测被该套件
-  拒绝。
-- **折叠副本与预筛**（`search/fold.rs`、`search/prefilter.rs`，2026-09-15）：
+  一次，以便下一次搜索发现追加，不依赖尚未刷新的索引版本戳。
+- **折叠副本与预筛**（`search/fold.rs`、`search/prefilter.rs`）：
   缓存为每个提供过或生成过的正文在内存里常驻一份大小写折叠副本
-  （`SESSIONDOCK_SEARCH_FOLD_BYTES`，默认 128 MiB，按最近使用淘汰；真实根 899
-  会话 19.3 MB）。折叠 = 把每个字符映射为其 Unicode simple case folding 等价类
+  （`SESSIONDOCK_SEARCH_FOLD_BYTES`，默认 128 MiB，按最近使用淘汰）。折叠 = 把每个字符映射为其 Unicode simple case folding 等价类
   （`regex-syntax` 的 `ClassUnicode::case_fold_simple`，正是匹配器 `(?i)` 用的表）
   中码点最小的成员：匹配器认为 `c` 与 `d` 大小写相等 ⟹ 折叠相同，所以任何能
-  命中的正文，其折叠文本必含折叠后的 needle（`fold::tests` 枚举全部码点验证
-  每个等价类与 `regex`/`fancy-regex` 一致，且 U+1FFFF 以上无映射）。折叠不保长
+  命中的正文，其折叠文本必含折叠后的 needle。折叠不保长
   （`K` U+212A → `K`），因此预筛只回答"是否包含"，从不给位置；位置一律来自原文。
   每个查询先在折叠副本上跑预筛：单词字面/全词查询要求折叠 needle 出现；多词
   AND 要求每个折叠词出现，OR 要求至少一个出现，超出预筛子句预算时只减少预筛、
@@ -448,17 +426,13 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   `[\p{L}\p{N}_]`（`regex-syntax` 同一张表）里则挡住这次出现；汉字、平假名、
   片假名、谚文、注音与其它字母直接相邻时不算挡住，所以 `tag` 命中
   `无法识别的tag`，`猫` 仍不命中 `猫猫`，数字和 `_` 仍粘在词上。该规则与
-  `whole_word` 的环视逐位置等价，但不再让回溯引擎在出现之间逐字符扫描（lookbehind 使引擎失去
-  字面量预扫，原来 19 MB 要 3 s CPU）；多词各用一个字面匹配器，在扫描器里跨块
+  `whole_word` 的环视逐位置等价，使用字面量预扫；多词各用一个字面匹配器，在扫描器里跨块
   保留每个词的命中状态，AND 必须找到所有词才返回结果（即使某个词已达计数上限），
   不合成为回溯正则；不含换行的词和短语仍分块读取。`regex=1` 的查询仍由 `fancy-regex`
-  提供 lookaround 与 backreference。当时的 `search::tests::matchers_equal_the_reference_pattern…`
-  （已随单元测试于 2026-10-06 删除）用改前的单一 `fancy-regex` 模式作参照，对每种查询形状、整体与分块逐一断言
-  命中数、上限与片段相同。未知 `source` 是
+  提供 lookaround 与 backreference。未知 `source` 是
   空筛选，`flags` 只有数值等于 `1` 时启用。
 - **按需构建**：仅搜索请求为候选检查版本并构建或复用正文缓存；启动和空闲期间
-  不遍历会话预热，也不定时刷新历史。旧 `SESSIONDOCK_SEARCH_WARMUP` 环境变量
-  不再读取（与其它未识别变量一样忽略），任何值都不能开启后台扫描。已有持久条目
+  不遍历会话预热，也不定时刷新历史。已有持久条目
   重启后仍复用；追加或改写由下一次搜索的版本检查发现。
 - **容量**：`SESSIONDOCK_SEARCH_CACHE_BYTES`（默认 1 GiB）按最近使用淘汰磁盘
   条目；`SESSIONDOCK_SEARCH_FOLD_BYTES`（默认 128 MiB）单独按最近使用淘汰常驻
@@ -466,32 +440,19 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   正文退回"读文件、不预筛"。
 - 搜索并发在服务内部排队；没有 10 秒 Busy、查询长度、编译大小或结果总字节数的
   Rust 专属拒绝。`limit` 控制命中条数。搜索结束只在本次解析过正文时
-  `malloc_trim`（热搜索不再每次花 6 ms 遍历 arena）。
+  `malloc_trim`。
 
 ## 目标与验收
 
-真实读根（772 会话、3.4 GB，本机）：
-
-| 指标 | 目标 |
-| --- | ---: |
-| `/api/sessions?force=1` 冷 | ≤ 1 s |
-| `/api/sessions` 热（stat-only） | ≤ 100 ms |
-| 打开最新会话（≤ 100 MB 文件） | ≤ 1 s |
-| 列表后 RSS | ≤ 300 MB |
-| 打开 20 个会话后 RSS | ≤ 512 MB |
-| 依次打开最大的 5 个会话（含 385 MB、两个 304 MB 截图会话）后 RSS，空闲 20 s 不回升 | ≤ ~800 MB |
-| 一次全文搜索（无命中、扫全部 800 会话）后 RSS 净增 | ≈ 0（折叠副本常驻一次，≤ `SESSIONDOCK_SEARCH_FOLD_BYTES`） |
-| 活跃 CLI 持续追加时连续 30 次列表 | 0 失败 |
-
-当时的验收套件 `inventory_scale_suite`、`inventory_live_append_suite`、
-`list_rows_parity` 与 `real_roots_bench` 已于 2026-10-06 随非浏览器测试删除；
-现在的列表行为由 `sidebar_scale_browser.py`、`list_delta_browser.py` 等浏览器套件覆盖。
+列表行为由 `sidebar_scale_browser.py`、`list_delta_browser.py` 等 Chromium 套件覆盖；
+历史与分页使用 `history_browser.py`、`history_pages_browser.py`。
+性能验证使用隔离合成数据，记录数据规模、构建、运行环境及冷／热缓存条件；
+适用套件和命令见 [验证合同](validation.md)。历史测量不作为当前产物的通过记录。
 
 ## 历史容量与读取边界
 
-不再设置 64 MiB
-记录、4 GiB 文件、100 万记录、200 万事件/检查点、1 GiB 消息/索引以及摘要
-文件的固定拒读门槛。源文件的已验证长度限定实际读取范围；JSON 语法、完整行、
+不按固定的记录大小、文件大小、记录／事件／检查点数量、消息或索引总量拒绝历史。
+源文件的已验证长度限定实际读取范围；JSON 语法、完整行、
 源身份、跨度长度和 digest 校验仍生效。AST 节点/键/驻留记账上界从实际输入长度
 推导，缓冲区随已读数据增长，不按允许上限预分配。
 
@@ -500,7 +461,7 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
 
 结构扫描不另设重复键、嵌套深度、节点/键/数字长度门槛；重复键
 由最后一个值胜出。工具 envelope 不另设层数、候选数或累计 replay work 门槛，
-媒体也不增加单图容量拒绝。
+单张解码图片保留 [媒体合同](media.md#size-and-cache-behavior) 的 32 MiB 上限。
 
 ## 常驻内存预算
 
@@ -510,31 +471,17 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
 | 缓存 | 默认 | 环境变量 | 记账口径 |
 | --- | ---: | --- | --- |
 | 已解析文件 / 视图 LRU 条数 | 16 | `SESSIONDOCK_CACHE_ENTRIES`（0 = 不保留） | 条数；AST 缓存取其一半 |
-| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节；序列化字节本身自 2026-09-15 起真的驻留（视图字节缓存），同一笔账同时约束 `Value` 树和字节 |
+| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图序列化消息及内嵌图片的驻留字节记账；同一预算约束 `Value` 树与编码字节的缓存保留 |
 | 解码 AST 缓存 | 64 MiB | `SESSIONDOCK_AST_CACHE_MB`（0 = 不保留，追加全量重解码） | `serde_json::Value` 树的估重 |
 | 搜索折叠副本 | 128 MiB | `SESSIONDOCK_SEARCH_FOLD_BYTES` | 折叠正文字节 + 每条 256 B（[搜索](#搜索)） |
 
-实测（真实根，2026-09-13，[performance.md](performance.md#常驻内存)）：
-一个视图的常驻 ≈ 记账字节的 1.2–1.6 倍（文本会话）。2026-09-13 时截图密集的 Codex
-会话还 ≈ 文件大小的 1.6 倍（≤ 2 MiB 的内嵌图片以 base64 驻留在视图里）；2026-09-15
-起 64 KiB 以上的字符串一律是 span，图片不再驻留（见上文"大文件的读取代价"）。
-视图字节缓存（2026-09-15）之后序列化字节也驻留：同一个视图估为记账的 ≈ 2.2–2.6 倍，
-预算不变，所以同一预算下最坏多 128 MiB 常驻、保留的视图数不变；不为字节另设预算，
-是因为 Σ 字节 ≤ Σ 记账本来就被同一上限约束，而把字节按 2× 记账会让 404 MB + 52 MB +
-p90 三个会话无法同时留在 128 MiB 里，热切换时重新解析 5 s 远比多 100 MB 常驻贵。
-AST 缓存只对小于其预算的文件生效：它让活跃会话的每次追加免于重解码整文件；
-图片改为 span 后 GB 级会话的 AST 也落在预算内。
+AST 在其记账预算内保留，满足前缀校验时可复用已解码记录。跨度、对象树、
+序列化字节、响应缓冲及分配器保留均会影响 RSS，不能用单个缓存预算承诺进程内存上限。
+搜索的瞬时投影不进入视图 LRU；折叠副本按上表预算保留。新解析与淘汰后的内存归还
+由实现按平台处理，热响应复用编码字节。异步工作线程默认
+`clamp(核数/8, 4, 16)`，配置见 [环境变量](environment.md)。
 
-除了缓存上限，进程在每次新解析、视图淘汰和每次搜索结束后调用 `malloc_trim(0)`
-（遍历全部 arena 归还空闲页；打开视图的历史响应曾经也 trim，因为它克隆了全部消息，
-字节缓存之后热读不再产生投影临时对象，这一处 trim 撤掉了）：
-在 256 核机器上 tokio 曾开 256 个 worker（`SESSIONDOCK_ASYNC_WORKERS` 现默认
-`clamp(核数/8, 4, 16)`），每个线程一个 glibc arena，释放的几百 MB 永远留在 RSS 里。
-`mallopt(M_ARENA_MAX, 2)` 实测被否决：并行索引读取和读 worker 争抢两个 arena，
-十次 `/proc` 扫描的 futex 调用从 2.6k 涨到 564k，CPU 反而更高。搜索的瞬时投影
-不进 LRU、不记 AST，扫完即释放并 trim，RSS 不净增；只有折叠副本按上表预算常驻。
-
-索引容量与视图序列化字节继续记账，但不再以固定 1 GiB 门槛拒绝读取。
+索引容量与视图序列化字节保持记账；预算控制缓存保留，不拒绝合法输入。
 
 ## 明确不做
 

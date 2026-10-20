@@ -15,7 +15,7 @@
 | 外部 CLI 扫描 `/api/live` | `/proc` 扫描 | `scan.status = unsupported_platform`，`capabilities.live=false`；托管实例观测照常（同 Windows，[liveness.md](liveness.md)） |
 | `hostname` | `/proc/sys/kernel/hostname` | `gethostname(2)`（launchd 不设 `HOSTNAME`） |
 | PTY 尾输出 | 子进程退出后其它持有者仍可写 | 会话首领退出即 `revoke(2)`，master 立刻 EOF；`host_output.rs` 两条 drain 合同不适用 |
-| 会话根 / cwd 的无符号链接祖先规则 | `/tmp` 等真实目录 | `/tmp`、`/var` 都是到 `/private/*` 的符号链接：会话根、host、附件根都放在 `/Users/<user>/…` 下 |
+| 临时路径 | 按系统配置解析 | `/tmp`、`/var` 通常指向 `/private/*`；会话文件按 [原生输入合同](native-input.md) 解析符号链接，host 使用显式私有目录 |
 | Unix socket 路径上限 | 108 | **104**：`host_dir` 要短（`/Users/<user>/sessiondock/host` + `sessiondock-<32hex>.sock` = 76） |
 
 ## 2. 构建
@@ -25,12 +25,12 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 # 源码用 git archive 导出到独立目录（不在运行目录里跑 Cargo）
 cd <SD_SOURCE>
 ~/.cargo/bin/cargo check -p sessiondock --all-targets --locked
-~/.cargo/bin/cargo build --release --workspace --locked
+~/.cargo/bin/cargo build --release -p sessiondock -p ptyhost --locked
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
 
 行为验证使用 headless Chromium；编译和部署检查按 [验证合同](validation.md) 与
-[部署测试门](deployment.md#测试门build--test--push) 执行，不运行已移除的 HTTP-only 套件。
+[部署测试门](deployment.md#测试门build--test--push) 执行。
 
 ## 3. 运行目录与 launchd
 
@@ -67,13 +67,16 @@ launchd 的初始环境不含交互 shell 的完整 PATH；上面的 `with-zshrc
 
 ## 4. 滚动更新
 
+用统一部署工具选择全部受影响目标；共享功能的范围包含其他节点和 Hub，见
+[部署合同](deployment.md)。先检查计划，再按已完成的验证选择测试参数：
+
 ```sh
-cp target/release/sessiondock <PREFIX>/bin/sessiondock.new && mv <PREFIX>/bin/sessiondock.new <PREFIX>/bin/sessiondock
-rsync -a --delete web/ <PREFIX>/web/
-launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyhost 会话不受影响
+python3 deploy/deploy.py deploy --targets <全部相关目标> --dry-run
+python3 deploy/deploy.py deploy --targets <全部相关目标> --test-suites <相关套件>
 ```
 
-`ptyhost` 二进制变更时同样 `.new` + `mv`；已在跑的宿主继续用旧文件，直到该会话结束。
+纯前端加 `--web-only`；涉及 ptyhost 才加 `--with-ptyhost`。工具负责备份、暂存、
+原子换入、launchd 重启、健康检查和失败回滚。已运行的 ptyhost 保持到会话结束。
 
 ## 5. 验收
 
@@ -81,7 +84,7 @@ launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyho
   只在私网地址上监听。
 - Hub 侧 `sessiondock-hub register`（注册表在 Hub 启动时读取，注册后重启 Hub），`/api/nodes` 里
   `online: true`，`/api/sessions?nodes=<id>` 能列出本机会话。
-- `POST /api/term/create {source: claude, cwd}` → `term/list` 的 `pending` 行 `running: true` → `POST /api/term/kill`。
+- 创建、pending 和停止行为由私有临时目录中的 Chromium 套件验证；生产只做只读健康检查，不创建测试会话。
 - 机器不能休眠（`pmset -g` 里 `sleep 0`），WireGuard 需随开机自启，否则节点随之离线。
 
 ## 6. 用 deploy.py 部署
@@ -115,6 +118,3 @@ python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-depl
 - verify：健康端点应答、launchd 正在运行且 PID 已变、二进制版本与 stage 相同，发布 web 时
   `build` 等于 stage 日期版本，ptyhost PID 和 host 记录保留。
 - rollback：从备份用同一条 `.new` + `mv` 路径恢复二进制、`rsync --delete` 恢复 `web/`，再 kickstart。
-
-历史验收：2026-09-15 在 macOS 节点上实测 push → rollback → push，各轮约 40 秒，
-重启前后 ptyhost PID 不变。当时使用内容摘要；当前日期版本流程见上文。

@@ -142,7 +142,7 @@ timings are observations, not a claim of equivalent performance.
 
 ## Suites
 
-The table lists the suites `--list` reports plus the opt-in `*_real` browser suites; rows for the removed non-browser suites were dropped on 2026-10-06.
+The table lists the suites `--list` reports plus the opt-in `*_real` browser suites.
 
 | Suite | Command | Covers | Needs |
 | --- | --- | --- | --- |
@@ -404,8 +404,7 @@ Both use private synthetic peers; `--screenshots DIR` records full pages.
 input, compact accepted receipts without duplicate text, failure recovery and
 cancellation, on desktop/mobile in dark/light themes. `--screenshots DIR` records full pages.
 
-Shared helpers imported by browser suites live in `tests/*_fixtures.py`
-(extracted on 2026-10-06 from the removed HTTP/parity/real scripts); the runner
+Shared helpers imported by browser suites live in `tests/*_fixtures.py`; the runner
 skips them.
 
 `python3 tests/bug_report_shutdown_browser.py` uses Chromium and a private fake

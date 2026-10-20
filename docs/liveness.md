@@ -382,9 +382,7 @@ service (the launcher `env_clear`s).
 ## Validation
 
 - `python3 tests/live_browser.py` and the process-tree browser suites that use
-  `tests/spawned_by_fixtures.py` (synthetic proc trees); the former HTTP suites
-  `live_http_suite`, `metadata_suite`, `check_config_suite` and
-  `spawned_by_suite` were removed on 2026-10-06 with the non-browser suites.
+  `tests/spawned_by_fixtures.py` (synthetic proc trees).
 - Real roots, read-only: the debug binary with the real roots on a loopback
   port versus the deployed
   service's `/api/live`; the uid sets and the reasons for every difference are
@@ -392,10 +390,7 @@ service (the launcher `env_clear`s).
 
 ### DELTA: expired Grok active registrations
 
-BUG-20261013-154315-ac4fbd exposed a Grok registry entry whose PID was gone
-and whose managed receipt was already Exited. The old unconditional hint made
-cleanup repeatedly report running although there was no process to stop.
-PID-bearing registrations now exclude missing/zombie processes; independent
+PID-bearing registrations exclude missing/zombie processes; independent
 command/file evidence and legacy PID-less hints retain their existing semantics.
 No native registry or session file is rewritten.
 `tests/cleanup_counts_browser.py` exercises missing, live and zombie registry

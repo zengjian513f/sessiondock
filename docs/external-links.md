@@ -73,10 +73,7 @@ agent link); subsequent compact refreshes preserve those branches. Explicit link
 also reopen a collapsed desktop sidebar. Reload and Back/Forward reveal the target
 again, while ordinary polling respects a later manual fold.
 `tests/session_link_reveal_browser.py` covers this on a private node and Hub in all
-three child modes, with desktop/mobile navigation. BUG-20261012-084532-19dfa1
-previously reached the Hub's detail resolver with no corresponding sidebar row:
-the compact inventory omitted the child, and revealing a session only cleared
-the older persisted folds rather than opening its on-demand ancestor branches.
+three child modes, with desktop/mobile navigation.
 
 Subagent rows hang under their owning session in both flat and hierarchical
 sidebar modes; the session row's triangle folds or expands them, and the

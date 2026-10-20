@@ -62,5 +62,4 @@ Unknown, expired or wrong-view tokens fail without exposing source paths.
 Changed sources produce a conflict/retry response. The public response sets the
 stored MIME, `nosniff` and private no-store caching headers.
 
-Synthetic coverage lives in `tests/media_*.py`; unit coverage lives under
-`src/media` and `sessions::media_projection`.
+Synthetic Chromium coverage lives in `tests/media_*_browser.py`.

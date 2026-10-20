@@ -21,8 +21,9 @@ The archive holds one top-level directory with:
 | `manifest.json` | commit, version, target triple, `rustc -V`, `source_date_epoch`, binaries |
 | `web/release-version.txt`, `bin/<name>.version` | Source commit date (`source_date_epoch`); no content checksums |
 
-`resource-agent` is not included: it is a separate Linux service with its own
-deployment, and its build compiles an embedded BPF object with clang.
+`resource-agent` and `sdkhost` are not included. Resource collection uses a
+separate Linux service whose build compiles an embedded BPF object with clang.
+Stateful native SDK operation requires a separately installed [SDK host](sdkhost.md).
 
 Reproducibility: build paths are removed with `--remap-path-prefix` (source,
 Cargo home, work directory), `SOURCE_DATE_EPOCH` is the commit time,
@@ -32,8 +33,7 @@ entries, owner `0:0`, fixed modes (`0755` for binaries and directories,
 the same time and no file name. The same commit built with the same toolchain
 (recorded in `manifest.json`) gives the same bytes. `--check` builds twice in
 two different directories and exits 1 when the packages differ, keeping the
-second as `<name>.second.tar.gz`. Verified on lyra (rustc 1.98.1) on
-2026-10-06.
+second as `<name>.second.tar.gz`.
 
 Fleet deployment does not use this package; it keeps using
 `deploy/deploy.py` ([deployment](deployment.md)).

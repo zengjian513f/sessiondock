@@ -1,19 +1,18 @@
 # 部署 `sessiondock-hub`（多机 Hub，仅样例）
 
 实际节点身份、两套 WireGuard 的边界和路由核对方法见
-[网络拓扑](network-topology.md)。尤其不要把另一套网络的中转站
-`192.168.2.10` 当作 Cetus。
+[网络拓扑](network-topology.md)。中继路径与节点身份分别核对。
 
 本文只给 systemd 单元与 nginx 位置的**形状**，用占位符代替地址、路径与凭据。
 日常修复及舰队发布遵循 [AGENTS.md](../AGENTS.md) 的既有授权和统一部署流程；
-修改 `deploy/*` 本身不另设审批。停旧 Python 或改变反向代理流量仍须用户明确授权，
+修改 `deploy/*` 本身不另设审批。服务退役或改变反向代理流量须用户明确授权，
 已有授权无需重复确认（[replacement-checklist.md](replacement-checklist.md)）。
 Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后面（和节点侧一样）。
 
 ## 边界
 
-- 生产发布同批尝试 Hub 和所有在线节点；至少一台节点与 Hub 部署、重启及健康检查
-  成功即满足完成条件，其余目标记录待补发，不反复轮询。详见 [部署合同](deployment.md)。
+- 发布目标、逐台尝试及完成条件统一遵循 [部署合同](deployment.md)；
+  Hub 安装示例不缩减共享功能的完整发布范围。
 - Hub 是独立二进制 `sessiondock-hub`，**不共享节点的任何私有目录**：不读会话根、host、delivery、
   lifecycle、state、audit（节点的）。它只拥有自己的注册表、缓存目录和（可选）审计目录。
 - 注册是**服务器端操作**：`sessiondock-hub register/remove/list`，网页上没有注册路由。节点凭据从
@@ -124,7 +123,6 @@ location <HUB_PATH>/ {
   并关闭正文及 Content-Length 透传。否则上传正文虽不交给鉴权服务，子请求仍会先按默认
   1 MiB 限制返回 413，`auth_request` 再将异常状态转换为页面的 HTTP 500。
   共享代理可为 SessionDock 使用专用鉴权位置；保留同一个鉴权服务、Cookie 和登录处理。
-  原先的私有 Nginx 回归脚本 `nginx_upload_auth.py` 已于 2026-10-06 随非浏览器测试删除。
 - 读写超时给长连接（终端、SSE）留足。
 - 反代把 Host 原样传给 Hub（Hub 的同源检查按 Host 核对 Origin）；Hub 只 loopback，不直接对外。
 

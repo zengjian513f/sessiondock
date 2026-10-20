@@ -59,13 +59,10 @@ Child exit is not PTY EOF: the reader continues publishing delayed or buffered
 bytes for up to 3 seconds after the host observes its owned child's exit. Real EOF
 finishes normally. An indefinitely retained slave descriptor triggers explicit
 incompleteness instead; the host does not enumerate or kill unknown descendants.
-The imported 200 ms forced finish was reproduced discarding a delayed PTY tail
-and has been replaced by this bounded drain. On Windows the drain is 600 ms
+On Windows the drain is 600 ms
 and its end is the regular exit (`output_complete: true`, no `reason`):
 ConPTY keeps the output pipe open as long as the host owns the pseudo console,
-so EOF never arrives, conhost has rendered the child's final writes within a
-few frames of its exit, and a 3 s wait made every stop report `uncertain`
-although the host was about to finish. Completeness on Windows
+so EOF does not signal completion. Completeness on Windows
 therefore means "the drain window elapsed after the child's exit", not EOF.
 
 Exit payloads add `output_complete: true` on EOF. PTY drain timeout or a read
@@ -86,7 +83,7 @@ reader/model lock is held while waiting for PTY EOF or socket drainage.
 
 Final output and exit ordering are exercised end to end by the terminal
 browser suites (`terminal_*_browser.py`) against private ptyhost directories;
-the repository has no unit tests (removed on 2026-10-06).
+the repository has no unit tests.
 
 Linux tests and `cargo check -p ptyhost --locked --target
 x86_64-pc-windows-msvc` have passed. The cross-check compiles the TCP write-timeout

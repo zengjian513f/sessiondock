@@ -222,4 +222,4 @@ policy (a leftover `bug_report_profiles` key is ignored).
 
 Default check is `python3 tests/lifecycle_browser.py` and
 `python3 tests/lifecycle_cli_browser.py` when the launcher argv or environment
-changes. The repository has no unit tests (removed on 2026-10-06).
+changes. The repository has no unit tests.

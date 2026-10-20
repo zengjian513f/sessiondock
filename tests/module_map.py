@@ -38,8 +38,9 @@ ATTR_RE = re.compile(r"^\s*#!?\[")
 INTRO = """# Module map
 
 This file is produced by `tests/module_map.py`. It maps every `.rs` file under
-the crate `src` trees below with the first module doc line, line count and
-`mod` declarations. Regenerate:
+the crate `src` trees below with line counts and `mod` declarations.
+Behavioral contracts live in the topic documents linked from [the index](README.md).
+Regenerate:
 
 ```sh
 python3 tests/module_map.py --write
@@ -110,8 +111,7 @@ def sort_names(node: dict) -> list[str]:
 
 
 def file_line(name: str, item: dict) -> str:
-    doc = item["doc"] or "(no module doc)"
-    return f"`{name}` — {doc} ({item['lines']} lines)"
+    return f"`{name}` ({item['lines']} lines)"
 
 
 def render_tree(node: dict, depth: int) -> list[str]:
@@ -131,9 +131,8 @@ def render_tree(node: dict, depth: int) -> list[str]:
 
 
 def render_crate(title: str, rel: str, items: list[dict]) -> list[str]:
-    undocumented = sum(1 for item in items if not item["doc"])
     n_lines = sum(item["lines"] for item in items)
-    summary = f"`{rel}`: {len(items)} files, {n_lines} lines, {undocumented} undocumented."
+    summary = f"`{rel}`: {len(items)} files, {n_lines} lines."
     return [f"## {title}", "", summary, ""] + render_tree(nest(items), 0) + [""]
 
 

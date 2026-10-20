@@ -99,7 +99,7 @@ def relpath(path: Path, root: Path) -> str:
 def check_file(path: Path, root: Path, slug_cache: dict) -> tuple[int, list[dict]]:
     broken, checked = [], 0
     for number, line in visible_lines(path.read_text(encoding="utf-8")):
-        for match in LINK_RE.finditer(INLINE_CODE_RE.sub("", line)):
+        for match in LINK_RE.finditer(INLINE_CODE_RE.sub("inline-code", line)):
             raw = match.group(1)
             href = raw[1:-1].strip() if raw.startswith("<") and raw.endswith(">") else raw
             if href.lower().startswith(("http://", "https://", "mailto:")):

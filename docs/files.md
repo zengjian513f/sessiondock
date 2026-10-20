@@ -62,11 +62,8 @@ and published files retain the existing textual-path contract.
 Covered by [Codex compose](../tests/codex_sdk_compose_browser.py) on node/Hub and
 [native SDK attachment display](../tests/sdk_attachment_display_browser.py).
 
-DELTA: SessionDock's directory listing, file-manager actions and chunked
-uploads (`GET /api/session/files`, `POST /api/session/files/action`,
-`POST /api/session/files/upload`, the JSON upload-completion form of
-`POST /api/session/attachment` and the `files_jobs`/`files_write`
-capabilities) were removed on 2026-10-07; FileDock owns them.
+DELTA: FileDock owns directory listing, file-manager actions and chunked uploads.
+SessionDock exposes session-reference reads and multipart attachment publication.
 
 Conversation links recognize absolute Windows drive paths (`X:\project\file.md`
 and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive
@@ -100,9 +97,6 @@ DELTA (BUG-20261013-223056-f48de9): configured FileDock previews CSV as a table
 with a source toggle, reusing its document table styles. CSV parsing and bounded
 preview handling belong to FileDock; SessionDock continues to resolve and route
 the file reference. Its standalone fallback without FileDock remains plain text.
-The report's browser event 226 opened the CSV link in a new page; native history
-and the lifecycle binding agreed on the referenced file and session. FileDock's
-text renderer classified CSV as source-only, so no table mode was available.
 FileDock's `tests/csv_browser.py` now clicks a real SessionDock conversation link
 through the resolver and FileDock node/hub, then exercises table/source switching,
 copy, download, directory reopening and truncated CSV exports in Chromium.

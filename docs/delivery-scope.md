@@ -76,4 +76,4 @@ the main session for a child scope.
 ## Validation
 
 Default check is the conversation SEND browser path that uses the scope
-(`python3 tests/send_browser.py`). The repository has no unit tests (removed on 2026-10-06).
+(`python3 tests/send_browser.py`). The repository has no unit tests.

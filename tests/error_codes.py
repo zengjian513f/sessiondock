@@ -32,8 +32,8 @@ FIELD_RE, STR_RE = re.compile(r'(\w+)\s*:\s*("(?:\\.|[^"\\])*")'), re.compile(r'
 INTRO = (
     "# HTTP error codes\n\nThis file is produced by `tests/error_codes.py`. "
     "Handlers return JSON `{\"error\": \"<message>\", \"code\": \"<code>\"}`. "
-    "Status **501** means the route or capability is declared not implemented "
-    "in this migration stage. Session errors use `unsupported_history` at 501 "
+    "Status **501** identifies an unsupported operation or a required service "
+    "that is not configured. Session errors use `unsupported_history` at 501 "
     "and `session_error` otherwise. Regenerate:\n\n```sh\npython3 tests/error_codes.py --write\n```\n")
 
 def close(text, i, opn="(", cls=")"):

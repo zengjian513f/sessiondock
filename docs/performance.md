@@ -1,4 +1,7 @@
-# 读模型性能：真实读根与合成规模
+# 历史性能记录：真实读根与合成规模
+
+本文件保留特定版本的测量与实验过程；命令、预算和结果均按记录时的版本理解。
+当前实现见 [read-model.md](read-model.md)，当前验收入口见 [validation.md](validation.md)。
 
 ## Hub 列表浏览器测量（2026-10-07）
 
@@ -80,7 +83,7 @@ c0d2f28，隔离实例、只读真实根、页缓存热）：
 热打开、`append=1` 空增量与第一页历史在改前改后都 ≤ 11 ms；改后依次打开三个会话
 空闲后 RSS 202 MB（改前 1831 MB）。
 
-设计变更见 [read-model.md](read-model.md#大文件的读取代价2026-09-15)：指纹代替
+设计变更见 [read-model.md](read-model.md#大文件的读取代价)：指纹代替
 SHA-1/SHA-256、64 KiB 以上字符串一律 span、小记录先走 serde_json、字符串内 SIMD
 跳过、逐行读取器不再二次扫描、继承前缀跨视图与搜索共享。分阶段计时
 （当时的 `sessions::views::tests::benchmark_parse_phases`，已随单元测试于 2026-10-06 删除；本机 EPYC 7763 单核、release、
@@ -279,7 +282,7 @@ fixture_gen 语料 1500 会话 / 1 GiB（三家来源，最后一对 user/assist
 
 ## 热读：视图字节缓存（2026-09-15）
 
-设计见 [read-model.md](read-model.md#视图字节缓存2026-09-15)：每个已解析文件的消息
+设计见 [read-model.md](read-model.md#视图字节缓存)：每个已解析文件的消息
 在投影后只序列化一次并留在视图里，`/api/messages`、`window=1`、增量、历史页和 SSE
 包按字节拼接，不再逐条克隆 `Value` 再序列化。起因是 Python 前身在热读上反超：它缓存
 解析结果 **和** 序列化后的 JSON 字节（外加 gzip 成员），重复全文读是一次 memcpy。
@@ -523,3 +526,62 @@ python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root 
 
 尚待补充：多连接真实 SSE 基准、长期缓存抖动、慢消费者、审计饱和、Hub 节点超时，
 以及相同正确性语料下的 Python 对照。
+
+## Append cache measurement (2026-09-15)
+
+### Historical measurement (2026-09-15)
+
+The numbers in this section are the saved run described below. They are not a
+current performance result, and the removed tools are not a current check.
+The 32 MiB cache named with the second binary is that binary's budget, not
+the 64 MiB default above.
+
+The former `tests/append_benchmark.py` (removed on 2026-10-06 with the
+non-browser scripts) created fresh synthetic Claude/Codex/Grok servers for
+1k/5k/10k records, measures first window/idle/single append/same-length rewrite,
+and verifies cursor behavior and reloaded text. Rewrites are beyond 4 KiB and
+preserve mtime. Timings include loopback HTTP and Python JSON decoding, exclude
+fixture generation and process startup, and are observations rather than test
+thresholds. A fresh process does not imply a cold operating-system file cache.
+Optional `--rss` reads Linux VmRSS/VmHWM for the exact spawned server PID outside
+the HTTP timing windows. These process figures include all server allocations,
+not only the record cache; they cannot prove a cross-platform or whole-workload
+memory bound. Further timing and memory observations are in [native input](native-input.md).
+
+It was run against saved pre-change and post-change release binaries:
+
+```sh
+python3 tests/append_benchmark.py --binary target/sessiondock-before13 --samples 3
+python3 tests/append_benchmark.py --binary target/release/sessiondock --samples 3
+```
+
+### Release comparison
+
+Adjacent serial runs, three samples per provider/size, passed all 27 cursor cases
+for both binaries. The 10k-record p50 observations in milliseconds were:
+
+| Provider | First window, old → new | Append, old → new | Rewrite, old → new |
+| --- | ---: | ---: | ---: |
+| Claude | 179.343 → 187.400 | 180.549 → 147.089 | 134.029 → 131.996 |
+| Codex | 107.021 → 110.588 | 100.380 → 78.936 | 69.234 → 70.295 |
+| Grok | 75.477 → 89.895 | 76.009 → 70.613 | 50.985 → 49.319 |
+
+Append improved by approximately 18.5%, 21.4% and 7.1%, respectively; first reads
+regressed by approximately 4.5%, 3.3% and 19.1%. Rewrite was within approximately
+3%. At 1k records Grok append was slightly slower (8.159 → 8.361 ms). Idle reads
+were approximately 0.7–1.5 ms. These small-sample smoke measurements do not establish
+statistical significance or an overall speedup. Establishing and weighting the
+cache has a cold-read cost; not every workload benefits.
+
+Measured binary SHA-256: baseline
+`49fd8b8b7ebbdb4cfb40f7edeafe672070dd8a5070c6a107518dea7e8cf1f522`,
+new `2eef6f836142e6b37e96f91b157db9eff6f29ca37d684271f13dcd27e7f74f48`.
+The latter is the 32 MiB cache implementation before the later over-budget
+weight-calculation short-circuit and media text-parity fixes. Those changes were
+validated separately; these numbers are not relabeled as final-binary measurements.
+
+Keep baseline executables local/ignored; do not publish them or run a benchmark
+against production directories. Decode/reuse counters that showed which records
+avoided deserialization lived in the unit tests removed on 2026-10-06 with the
+other non-browser tests. They are not a current check. Wall-clock timing alone
+cannot prove a cache hit.

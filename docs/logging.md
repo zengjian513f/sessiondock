@@ -7,7 +7,6 @@ without it, the sink is stderr. `SESSIONDOCK_RUNTIME_LOG_DIR` selects a private
 directory explicitly, or `-` selects stderr. The Hub normally retains its
 external stderr configuration; under systemd, journald keeps that output with
 the unit (`journalctl --user -u sessiondock -o cat`).
-Before 2026-10-06 the services printed free-form text lines.
 
 Every line has:
 
@@ -147,22 +146,3 @@ Their sum is `read_ms`; `echo_ms` and `prompt_ms` complete the handler timing.
 These are elapsed wall times, not CPU measurements. Failed or cancelled opens
 may have no completion record. `tests/server_log_browser.py` opens native
 history through node and Hub pages and verifies the phase totals and IDs.
-
-BUG-20261018-040613-165ffa: the browser sent the opening request 8 ms after
-clicking and received its parsed body after 5902.6 ms, then rendered within
-9 ms. The matching node trace recorded 5830 ms in the previously combined
-read phase, 0 ms retiring echoes and 4 ms probing the prompt. The native turn
-had completed before the click, and the lifecycle binding still named its
-running instance; no delivery directory existed. A synthetic five-screenshot
-Chromium open took approximately 0.4 seconds and did not reproduce the stall.
-Follow-up phase logs captured 1519–2271 ms in snapshots with no admission delay.
-The collector returned 71.8 MB / 103k boot-long connection records: liveness,
-catalog acknowledgements and coordinator reads expanded them into a generic JSON
-tree, cloned it and converted it again. Typed decoding on blocking workers and
-bindings-only decoding for liveness remove those unnecessary allocations; the
-coordinator still receives full evidence. In the synthetic 92 MB / 100k-record
-Chromium regression, the old release peaked at 8776 MiB and cold opens took
-468–1838 ms; the fixed release peaked at 285 MiB and took 34–343 ms.
-This reproduces and fixes contention under collector load; the old combined
-trace cannot retrospectively assign every millisecond of its 5830 ms stall.
-See [collector regression](../tests/history_collector_browser.py).

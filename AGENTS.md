@@ -2,9 +2,9 @@
 
 ## Scope and boundaries
 
-- This is an independent repository. The predecessor Python project and its
-  deployment are retired; never require or restore them for ordinary development.
-- The retired predecessor is not a SessionDock compatibility surface. No code,
+- This is an independent repository. Development and deployment use this
+  repository and the current contracts in `docs/`.
+- The predecessor is not a SessionDock compatibility surface. No code,
   tests, configuration, static assets, or frozen source references may contain
   its identifiers or branding. Historical Markdown and recorded benchmark
   queries retain their original wording with an explicit historical context.
@@ -33,7 +33,8 @@
   Deploy runtime changes under the scope rules below. Do not stop at a local commit. Stage only this task's changes;
   preserve concurrent edits. Report validation, push and deployment failures
   accurately, including which targets remain incomplete.
-- Hub SSH: `ecs-user@driftnode.cn`.
+- Hub SSH and node addresses come from the untracked `deploy/targets.local.json`;
+  verify target identity before remote operations.
 - Match validation and delivery to the changed artifacts. This section is the
   workflow authority for this repository; command examples, historical delivery
   records and tool defaults do not expand the current task. Apply mixed changes
@@ -144,9 +145,8 @@
   fixes or deployments.
 - Target parity with the frozen Python behavioral baseline, not more. The
   production replacement is complete; do not introduce extra rejection policies
-  absent from that baseline. The Python-oracle comparison tools were removed on
-  2026-10-06; the baseline is enforced through the contracts in `docs/` and the
-  browser suites that exercise them.
+  absent from that baseline. Enforce behavior through the contracts in `docs/`
+  and the browser suites that exercise them.
 
 ## Validation
 
@@ -158,8 +158,7 @@
   render is not enough.
 - Behavioral validation uses headless Chromium browser suites. Do not add unit
   tests or non-browser suites; add or extend a browser suite instead. Shared
-  helpers live in `tests/*_fixtures.py`. Historical lessons are in
-  [docs/delegation.md](docs/delegation.md); consult them only for related issues.
+  helpers live in `tests/*_fixtures.py`.
 - Docs/rules-only changes run `check_docs_links.py` and `check_agents_md.py`.
   Deploy-script-only changes also exercise the changed planning/CLI path with
   temporary inputs or a non-mutating dry run; doc checks alone do not validate

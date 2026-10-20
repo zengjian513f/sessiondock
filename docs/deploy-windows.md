@@ -40,21 +40,12 @@ set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 编译检查和 release 构建都成功后，记录发布日期版本号再部署。错误 448 属于工具链问题；
 修正后重建，不得复用旧 EXE。
 
-## 3. 先暂存，再停止 Web 服务
+## 3. 暂存、备份与换入
 
-把新 EXE 暂存为 `sessiondock.pending.exe`。记录日期版本号，再备份线上 EXE 及其版本标记。
-完成前不要停止服务。
-
-```bat
-set "SD_RUNTIME=<private-runtime-directory>"
-set "SD_BACKUP=<new-timestamped-backup-directory>"
-mkdir "%SD_BACKUP%"
-copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
-```
-
-使用现有监督器停止 SessionDock Web。不要停止 `ptyhost.exe`，也不要删除私有数据。
-
-停止后原子替换 EXE并启动。任一步失败都从 `SD_BACKUP` 回滚。
+统一部署工具负责暂存新 EXE 和版本标记、备份、停止 Web 服务、换入产物、重启与失败
+回滚，具体顺序见第 5 节。不手工复制生产产物或另行重启，不停止现有 `ptyhost.exe`。
+纯前端使用 `--web-only`，目标覆盖所有提供受影响组件的已启用实例，见
+[部署合同](deployment.md)。
 
 ## 4. 部署后验收
 
@@ -63,7 +54,7 @@ copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 1. Web 服务由既有监督器管理并处于健康状态；配置检查和 `/api/health` 成功。
 2. 线上 `sessiondock.exe.version` 等于本次发布日期版本号。
 3. host 记录数和既有 `ptyhost.exe` 的 PID、创建时间、Session ID 不变。
-4. 用只读或合成探针验证修复；不要创建付费会话或真实附件。
+4. 生产只用只读健康检查；行为验证在私有临时目录运行 Chromium 合成套件。
 5. 记录回滚目录、版本号、健康结果和平台限制；新工作写入 `TODO.md`。
 
 静态文件和 EXE 必须来自同一份选定源码快照，不混入工作区后续改动。

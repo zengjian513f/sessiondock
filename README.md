@@ -29,7 +29,7 @@ docs/                当前架构、协议、运维和验证合同
 
 ## 开发
 
-需要较新的 Rust 2024 edition 工具链（本轮使用 Rust 1.98.1，尚未验证最低支持版本）。
+需要支持 Rust 2024 edition 的工具链；最低支持版本尚未确定。
 默认页面无需 Node.js、Vite 或前端构建。
 以下命令从仓库根目录执行。
 
@@ -69,8 +69,8 @@ cargo run -p sessiondock --bin sessiondock --locked
 | `SESSIONDOCK_PTYHOST_DIR` | 无 | 私有 host 目录；启用精确 UID/实例控制台和观察 |
 | `SESSIONDOCK_FILE_ROOTS` | 无 | 兼容旧配置的目录列表，不授予或限制文件读取；POSIX 以冒号、Windows 以分号分隔 |
 
-只读取明确配置的数据根，拒绝会话路径中的符号链接；这不是对敌对本地
-文件系统的完整沙箱。建议先用脱敏副本；无法解释的历史形状会明确报错。
+只读取明确配置的数据根；候选发现的符号链接行为见[读模型](docs/read-model.md#列表索引与摘要)，
+不构成对敌对本地文件系统的完整沙箱。开发验证使用合成数据；无法解释的历史形状会明确报错。
 静态文件变更后需要重启以更新资源快照/build。配置没有通用的目录互斥要求；
 具体服务仍检查其实际协议、身份和 OS 访问条件。
 
@@ -88,7 +88,7 @@ cargo run -p sessiondock --bin sessiondock --locked
 共享夹具在 `tests/*_fixtures.py`，套件选择见 [验证合同](docs/validation.md)。
 纯文档改动运行 `python3 tests/check_docs_links.py` 和 `python3 tests/check_agents_md.py`；
 全量验证入口是 `python3 tests/run_validation.py`。
-历史踩坑与委派记录见 [delegation.md](docs/delegation.md)，仅在相关问题时查阅。
+独立工具任务的委派要求见 [delegation.md](docs/delegation.md)。
 
 ```sh
 cargo build --workspace --release --locked
@@ -124,7 +124,7 @@ python3 tests/grok_metadata_browser.py
 
 ## 当前范围
 
-- 提供 Claude、Codex、Grok、OpenCode 会话读取、搜索、分页、媒体和 SSE。
+- 提供 Claude、Codex、Grok、OpenCode、Agy 会话读取、搜索、分页、媒体和 SSE。
 - 可选服务提供受管终端、生命周期、可靠发送、文件、回收站和诊断能力。
 - 本地节点与 `sessiondock-hub` 支持多机 Hub。
 - 未启用的能力明确返回 501；不会伪造成功。

@@ -38,8 +38,8 @@ CHECK 当前页与原生历史/hook 可直接回答的完整问卷题干及选�
 同一个问题只显示一张可回答题卡，并收起相应的未回答历史题卡。没有匹配问卷时显示当前终端菜单，
 过期 hook 不另起一张活动题卡；其他审批或文字输入菜单仍保留原生控件。
 
-DELTA（BUG-20261012-082941-7a829b）：删除曾用于 CHECK 菜单的独立 composer 题卡滚动区，
-统一历史、hook 和 CHECK 的活动题卡渲染入口。历史修复审查见 [题卡回归审查](question-card-regression-audit.md)。
+DELTA：历史、hook 和 CHECK 的活动题卡使用统一渲染入口及消息滚动区，
+覆盖范围见 [题卡核验范围](question-card-regression-audit.md)。
 
 `screen_menu` 的 `questions` 只描述当前可见页；选项携带 `keys`，多选另带 `toggle`/`selected`，不可选项没有可执行按键。`actions` 为原生页内操作，`cancel_keys` 只在语义已核对时给出；原生“保存并关闭”显示其真实作用。可编辑的 `text` 带 `before_keys`、`after_keys`、`mode` 与原生当前值；只有源代码证明能替换原有文字，或原生输入确实为空时才提供。密钥、凭据、无法区分秘密字段的 MCP 文本和任意快捷键捕获保留原生终端路径。
 

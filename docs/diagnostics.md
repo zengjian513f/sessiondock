@@ -279,55 +279,6 @@ still arrives. Assertions join all three layers, retain final state on
 replacement, verify uncertain input is not replayed, and check that terminal
 text and node credentials do not appear in these logs.
 
-### BUG-20261013-232935-441af3: repeated PTY upstream stalls
-
-The Cygnus report was captured on build `20261013T223823185417Z`, commit
-`afbe3f7c`, with a clean checkout. The complete manifest, browser state,
-environment, 842 audit events and terminal capture were reviewed alongside
-the lifecycle/conversation ledgers, the native Claude JSONL and the node/Hub
-service journals. Times below are UTC on 2026-10-13.
-
-- At 23:28:40 the first claim completed in 52 ms and the browser painted the
-  initial grid within 167 ms. The first recorded input at 23:28:44.093
-  (event 513, 27 bytes) had no corresponding node write receipt. This is the
-  first observable input-path divergence, before the report dialog existed.
-- Across the first four connections the browser recorded 42 inputs. Each
-  received its initial screen but timed out its first bidirectional heartbeat
-  after 10 seconds (events 533, 625, 697 and 792). None had an input-write
-  receipt. Replacement claims completed in 49–72 ms, and ordinary HTTP/SSE
-  traffic continued. The browser reported zero buffered WebSocket bytes at
-  timeout; this is not a remote-delivery acknowledgement.
-- The fifth connection opened at 23:29:27.254. Its first input receipt was
-  two zero-byte resize frames (event 820), not the user's text. The terminal
-  capture still showed an unsubmitted draft; the native history checkpoint
-  stayed at 9277741 throughout the report window. PTY keystrokes do not use a
-  SEND delivery ledger; the deployment had no `delivery/` directory, and its
-  current conversation ledger and running lifecycle record were inspected.
-- The subsequent daily audit shows new input on the fifth connection at
-  23:29:37.784 and a node write window at 23:29:38.810 (39 bytes).
-  At 23:29:51.028 native JSONL recorded a new user message. The same managed
-  instance remained running; this recovery preceded this investigation and
-  involved no repair or restart by the investigator.
-
-The evidence identifies the browser-input → node-write gap and failed
-bidirectional transport checks. It does not identify whether browser/network,
-HTTPS proxy, Hub forwarding or node receive processing caused the gap.
-The journals contain slow successful HTTP requests but no event establishing
-a WebSocket failure cause. Header-button errors after opening the report are
-occlusion by that dialog, not evidence that the terminal keyboard was blocked.
-No speculative runtime change, input replay or production-data edit was made.
-
-On 2026-10-14, `python3 tests/terminal_heartbeat_browser.py` passed in headless
-Chromium with private synthetic fixtures: separately stalled downstream/upstream
-sockets recovered, the host survived, and uncertain input was not replayed.
-`python3 tests/terminal_rtt_browser.py --binary target/debug/sessiondock` also
-passed: node and authenticated Hub paths each returned and painted all 85
-keys (5 warmup, 40 individual, 40 grouped). Both runs used existing debug
-binaries and the current frontend; they were not production-network tests.
-These checks exercise recovery and input delivery, not the cause of this
-intermittent production incident. The unresolved investigation remains in
-[TODO](../TODO.md).
-
 ## Embedded information and resource views
 
 `dom.snapshot` (also used by bug reports) records `view` separately from the
@@ -353,25 +304,7 @@ An intentionally modal-covered console button records `occluded_by_modal` in
 its normal state receipt, rather than a `console.button.missing` error.
 Missing, hidden or clipped buttons remain faults.
 
-For BUG-20261015-135638-c5bbf6, all 917 bundled events, the manifest, browser
-state, environment, terminal capture, lifecycle binding and native JSONL
-metadata were reviewed. The first observable diagnostic divergence is snapshot
-587 after information-button click 583: it still reports the CSS-hidden terminal
-as visible. Resource click 701 and information click 730 confirm the active
-surface; no iframe wheel evidence existed. All 26 heartbeat replies matched,
-HTTP response receipts were 200, native progress continued, and the lifecycle
-binding was running. The four button errors followed report-modal occlusion.
-No delivery directory existed and none was created.
-
-The private Chromium baseline reproduced the information root's `overflow:hidden`:
-2853px content in a 714px viewport stayed at scrollTop 0 after mouse wheel input.
-The resource pane scrolled from 0 to 426 normally. The fix gives the information
-root vertical scrolling; resource layout remains unchanged. The
-[content scroll suite](../tests/content_scroll_browser.py) checks real wheels,
-view changes, retry, geometry, themes/zoom and persisted audit records, including
-an HTTP-served old-CSS fault to verify blocked-scroll diagnostics.
-
-## Queued-input incident evidence
+## Queued-input observations
 
 `dom.snapshot` and `browser-state.json` include `cli`: last observation time,
 instance/input state, queued request IDs with state/send/enqueue times, and the
@@ -383,49 +316,7 @@ audit window and receipts recovered after a service restart. Remote capture
 carries this with the session row. Capture does not observe, reconcile, dismiss
 or resend input; null observation fields mean no in-memory observation exists.
 
-BUG-20261015-154632-c5f7ce: all 3539 bundled audit rows, browser state,
-environment and terminal capture were inspected, then correlated with the
-origin's conversation/lifecycle ledgers and native Codex records. At 15:12:14 UTC
-SEND succeeded and the CLI queue was observed. Native interruptions at 15:13:01
-and 15:13:07 followed; the retained receipt is `interrupted`. The native user
-record at 15:15:12 has edited wording, not the original submitted text. A later
-answer cannot prove consumption of that original input. Keeping this explicit,
-dismissible uncertainty follows the CLI-state contract; fuzzy text matching or
-an automatic timeout would discard evidence. No production receipt was edited.
-
-The report's first observable evidence gap is that none of its snapshots
-identified the bubble or its state: the initial SEND also predates the bundled
-window. Thus the old bundle alone cannot prove the precise label rendered at
-report time. The new paired snapshots make browser/server disagreement directly
-inspectable. The native Codex browser suite exercises interruption, reload,
-report submission and persisted metadata without logging message text.
-
 ## Process-owned runtime diagnostics
-
-BUG-20261019-095333-0cd031: the manifest, browser state, environment, all 1,218
-bundled audit rows and terminal capture were correlated with the conversation
-and lifecycle ledgers, native Codex JSONL, native runtime logs and the earlier
-browser audit. No delivery directory existed. The current turn began at
-08:08:44 UTC; its last output was at 08:10:55, with no native ending. At
-08:10:54 the browser selected Stop on a different thread, confirmed at
-08:10:56; the server recorded successful `/api/session/stop` at 08:11:03.
-The shared daemon restarted at 08:11:04 and the affected TUI resumed its thread
-at 08:11:10. At 08:11:38 CHECK observed ready/idle. This sequence and the old
-process-stop implementation support collateral daemon termination, not a
-manual interruption of the reported thread. The process ownership fix already
-landed in `06a7c8f9`; the interruption predates that fix's deployment.
-
-The first retained divergence is loss of the active native turn across that
-daemon restart. The SDK reducer additionally discarded `turn/completed`'s
-interrupted status and painted daemon idle as 就绪; its historical fallback
-also omitted the conversation view's missing-ending inference. The isolated
-[SDK interruption suite](../tests/codex_sdk_interrupted_browser.py) reproduces
-the reducer fault with native RPC events, without restarting production.
-The bridge now retains the last observed terminal outcome, and both views use
-the same CLI observation fallback. No native records or production receipts
-are rewritten. At report time the terminal's first snapshot already contained
-the interruption; a later three-byte browser input cannot explain its origin,
-and byte-count-only auditing does not identify those keys.
 
 The node, detached PTY hosts and resource collector share the metadata writer in
 [`crates/runtime_log.rs`](../crates/runtime_log.rs). This extends ordinary runtime
@@ -504,31 +395,5 @@ cumulative-summary retry and bounded shutdown additionally use the existing
 creates multiple hosts through Chromium, measures per-host scan bytes, injects
 atomic replacement/removal failure, verifies recovery and protected fixtures,
 and reconnects after node restart before checking exited-host maintenance.
-## BUG-20261020-033847-a2d757
 
-2026-10-20 的 Agy SDK 报告已读取 manifest、browser-state、environment 和全部
-980 条浏览器审计事件；没有 terminal.txt 或附件。浏览器 03:28 UTC 显示 SDK 活跃，
-03:31:57 已不活跃，相关 HTTP 请求成功，没有用户停止事件；ResizeObserver 通知
-不能解释执行中断。该 SDK 会话不走 PTY lifecycle 账本。
-
-原生 transcript 与镜像最后保留 03:30:04 的“等待子代理与后台任务”回复，前一步
-工具仍为 RUNNING；镜像 03:30:24 更新为 IDLE。持久输入账本保留消费证据
-`observed`、`stop_requested=false`，最终为 `unknown`，错误明确记录服务重启后
-投递结果未确认。systemd 记录 03:30:35 停止、03:30:37 启动，随后 03:31:25
-再次停止、03:31:32 启动，与部署备份时间相符。
-
-首个已证实的跨层问题是部署在尚未确认 SDK 输入结束时重启了节点服务。
-Agy bridge 的 shutdown 会结束自己持有的 Child；实时快照不跨服务重启。
-现有证据不能还原原生进程的精确退出时刻/退出码，也不能把原生 IDLE 等同于
-审计任务和子代理汇总完成，因此不宣称已证实 CLI 自身崩溃或 OOM。
-
-最初止血补丁的[部署检查](deployment.md)在 Linux staging 和 backup 前检查在途原生输入，
-阻止已知活跃工作被正常发布打断。临时目录的隔离 run_push 验收覆盖 sending、
-accepted、staging 后新增工作、终态/排队回执、缺失/损坏账本、Hub 和 dry-run；
-拒绝路径没有 swap、restart 或 rollback。部署语法、文档链接、AGENTS 检查及
-deploy dry-run 通过。本次仅改部署脚本和文档，未做生产重启或付费 CLI 重放。
-后续架构修复将进程和原始通道移入[独立 SDK 宿主](sdkhost.md)，具体 SDK 协议
-仍在节点服务。节点 shutdown 仅断开通道，重启复接原宿主，补读输出并恢复审批与
-输入去重；明确停止仍终结原进程组。普通发布不替换宿主。旧进程内任务无法原地
-迁移，部署检查继续保护它们，新宿主任务允许节点重启。原生后台任务完成后的
-续跑语义与节点生命周期分开验收，见 [TODO](../TODO.md)。
+特定事故的调查经过见[历史事故与验收记录](history-incidents.md)。

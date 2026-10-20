@@ -25,9 +25,9 @@ A–H 表。结论是公共交互可以统一，原生能力尚非完全等价�
 | 消息菜单与输入恢复 | Codex 已有完整历史消息操作，其他来源存在表 H 的能力或接线差异 | 共用弹窗/菜单基础；原生 fork/revert 与普通会话克隆不合并为同一操作 |
 | 断线、迟到响应与重开 | 共用 generation 隔离、历史错误处理和菜单清理；各协议恢复仍有独立逻辑 | 草稿/缓存可共享；SDK 重连不借 CLI 投递机制自动重发未确认输入 |
 
-本次消除的偏差：Native 从 Codex 对象借通用方法、重复的页面骨架和输入绑定、
-历史刷新丢失展开状态、SDK 发送按钮夺取编辑器焦点、排队正文与历史 Markdown
-呈现不一致。接口合同见 [SDK 界面](sdk-ui.md#公共接口与适配边界)。
+页面骨架、输入绑定和公共呈现由共享接口承担；历史刷新保留展开状态，
+发送保留编辑器焦点，排队正文与历史使用相同的 Markdown 呈现。
+接口合同见 [SDK 界面](sdk-ui.md#公共接口与适配边界)。
 失败/未知回执保留原生恢复说明，审批表单保留专用适配；这些不能仅为减少行数
 而合并成丢失语义的“通用请求”。
 
@@ -316,7 +316,7 @@ ACP 通用 [session modes](https://agentclientprotocol.com/protocol/v1/session-m
 [statusLine](https://www.antigravity.google/docs/cli/statusline/)描述上下文回调，
 [SDK overview](https://www.antigravity.google/docs/sdk/overview/)描述另外一套 Python
 Agent runtime；后者不能作为 CLI 原生 DB 会话可直接恢复、审批或图片输入的证明。
-本次也读了 SDK 的 [持久化](https://www.antigravity.google/docs/sdk/lifecycle)、
+SDK 的 [持久化](https://www.antigravity.google/docs/sdk/lifecycle)、
 [策略/审批](https://www.antigravity.google/docs/sdk/policies)和
 [多模态输入](https://www.antigravity.google/docs/sdk/structured-output)：SDK 本身支持
 审批和图片，持久化可指定 conversation_id/save_dir/app_data_dir。切换底层到这套
@@ -338,7 +338,7 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 | 完整表单、错误重试/压缩状态、toolbar | 既有 form/assistant.retry/compaction 与共用 UI | 不能把条件字段/external 简化成所有字段文本框 |
 
 官网 [SDK](https://opencode.ai/docs/sdk/)和 [Server](https://opencode.ai/docs/server/)
-说明了 server/client 与会话操作，但本次页面仍列 v1 `/session/:id/abort` 等接口。
+说明 server/client 与会话操作；v1 的 `/session/:id/abort` 等路径不属于本表的 v2 合同。
 本表明确使用仓库既有协议实验导出的 **2.0.32 OpenAPI**：不要直接复制官网 v1
 路径覆盖当前 v2 桥接。原生 SSE 直连另需解决默认共享服务的受控连接/认证；
 当前 CLI `api` 会读完整 response.text，不应声称已实时转发原生 SSE。
@@ -367,8 +367,7 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 [User input](https://code.claude.com/docs/en/agent-sdk/user-input)，
 以及固定版本 [Agent SDK 包](https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/0.3.302)
 的 sdk.d.ts 和 [CLI 包](https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/2.1.302)。
-TypeScript 大页面本次抓取超长失败，具体控制字段改以该官方固定包类型核对；
-没有把未读成功的页面当作证据。
+具体控制字段以该官方固定版本包的类型为准。
 
 `rewindFiles` 回滚文件，不是 Codex 的 conversation-only revert；`resumeSessionAt`
 是截断恢复入口，还不能据此承诺活跃同 SID 的原地回退。CLI 的独立 ultrareview

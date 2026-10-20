@@ -52,7 +52,7 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 }
 ```
 
-`roots` 也接受 `claude`、`grok`、`opencode`。输出 `members`、有类型的 `edges` 和
+`roots` 也接受 `claude`、`grok`、`opencode`、`agy`。输出 `members`、有类型的 `edges` 和
 `blockers`，不按侧栏可见性过滤旧 rollout 或子代理。从父、兄弟分支或子代理发起，会得到
 同一个索引连通组。`same_thread`、fork、子代理归属、续接、物理父历史双向展开。
 服务中调用同一个核心时，还会读取快照行上的 `nest_parent`，双向纳入附属组；
@@ -127,10 +127,9 @@ Claude 收集 transcript、会话附属目录、子代理 sidecar 和标准 home
 Grok 收集整个会话目录，包括 updates、压缩记录和不解析的附件。
 已补齐原生代理工具的结构化参数、结果包中的身份指针、Grok ACP 事件以及 Claude 大输出路径。
 Claude 保留 API 响应的 `message.id`，仅重写本地记录身份；改写服务端 ID 会导致原生恢复返回 400。
-原生 Haiku low 实验覆盖真实 fork、子代理、新父会话及分支恢复、新旧组独立续聊；
-实验使用临时 home，未更改日常配置。包内符号链接指向新副本，外部链接保留原语义。
-普通消息及代理答复中的旧 ID 保持原文。所有 checkpoint 格式、Claude 原生恢复与发布事务
-仍未完成，不能将此输出发布为可恢复的生产会话。
+包内符号链接指向新副本，外部链接保留原语义。
+普通消息及代理答复中的旧 ID 保持原文。离线输出是暂存数据，不能直接充当生产会话；
+原生恢复、校验与发布事务由[会话服务](session-move.md)负责。
 
 ## 验证
 
@@ -142,9 +141,3 @@ Claude 保留 API 响应的 `message.id`，仅重写本地记录身份；改写�
 `python3 tests/session_files_browser.py` 构造 Claude 兄弟分支、子代理、工具结果和文件历史备份，
 以及 Grok 父子分支、updates 和压缩文件；验证整组范围与源数据不变，再用 Chromium
 打开移动/复制暂存后的各分支和 Claude 子代理。全部数据与服务使用私有临时目录。
-
-`session_files_grok_real.py`（已于 2026-10-06 随非浏览器测试删除）曾是显式运行的原生隔离实验：使用 `grok-4.6` low
-创建父会话、fork 和子代理，将暂存输出实验性导入同一个临时 home，验证克隆后的父会话及
-子代理按新 ID 续聊，再继续原组并核对两组互不追加。断言原生 chat 记录中的实际模型
-`grok-4.6-build` 和 low 强度、原生关系以及日常配置不变。结果写入
-`target/session-files-grok-report.json`；不代表生产发布或跨机验收通过。

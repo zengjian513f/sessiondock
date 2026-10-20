@@ -25,6 +25,8 @@ the confirmed group/files under their contracts; test those in a synthetic tree.
 问题/修正及未覆盖范围。不能用旧 PASS、套件登记、委派结论或某一次上线证明后续版本。
 具体用例留在浏览器夹具，规则不复制事故原话、逐提交目录、测试计数或临时绕过。
 文档出现冲突时核实最近要求和最终实现，修正原权威段落及引用，不在末尾再加一段相反解释。
+现行文档只写当前规则、合同和操作要求。对过去规则的评价、纠错经过、方案演变和
+历史验收结果只放在明确标注的专门历史文档；当前合同中的兼容行为直接写明适用条件。
 
 ## Never do this
 
@@ -101,7 +103,7 @@ Open the loopback URL printed by SessionDock. `web/` is served directly.
 The injected capabilities describe current runtime support. Conversation SEND
 needs metadata, terminal transport, lifecycle and file writes. File reads are available; file writes track
 terminal operation. A false capability should reflect a truly unavailable
-service rather than an old migration stub.
+service or unsupported operation.
 
 ## 7. Watch a session
 
