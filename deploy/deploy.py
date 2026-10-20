@@ -411,7 +411,7 @@ def rollback_problems(before: ProbeResult, after: ProbeResult, names: list[str],
 def backup_versions(h, backup: str) -> dict[str, str]:
     """Read release markers from a backup; old backups may have none."""
     versions = {}
-    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []) + (["sdkhost"] if h.o.with_sdkhost and h.kind == "linux-node" else []):
+    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []) + (["sdkhost"] if h.o.with_sdkhost and h.kind in ("linux-node", "macos-node") else []):
         if h.kind.startswith("windows"):
             rc, out = h.sh.run(f'type "{backup}\\bin\\{name}.exe.version" 2>nul')
         else:
@@ -730,7 +730,7 @@ def cmd_deploy(args) -> int:
         bins = sorted({b for t in chosen for b in t.binaries}) if not args.web_only else []
         if args.ptyhost and not args.web_only:
             bins.append('ptyhost')
-        if args.sdkhost and not args.web_only and any(t.kind == 'linux-node' for t in chosen):
+        if args.sdkhost and not args.web_only and any(t.kind in ('linux-node', 'macos-node') for t in chosen):
             bins.append('sdkhost')
         print('artifacts: ' + ', '.join(bins + ([] if args.bin_only else ['web'])))
         test_plan(args, ROOT, 'HEAD')

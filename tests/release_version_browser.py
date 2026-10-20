@@ -16,7 +16,7 @@ from history_fixtures import BINARY, Corpus, claude_row
 from node_auth_fixtures import free_port
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy'))
-from sdtargets.base import Artifacts, DeployOptions, Target
+from sdtargets.base import Artifacts, DeployOptions, ShellError, Target
 from sdtargets.linux import LinuxNodeHandler
 
 
@@ -66,6 +66,7 @@ class FixtureNode(LinuxNodeHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--sdkhost', type=Path, default=Path('target/debug/sdkhost'))
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-version-') as tmp, ExitStack() as stack:
         root = Path(tmp)
@@ -115,6 +116,17 @@ def main():
 
         visit(old, 'old')
         node.probe()
+        try:
+            node.stage()
+        except ShellError as error:
+            assert '--with-sdkhost' in error.out, error.out
+        else:
+            raise AssertionError('node release accepted a missing sdkhost dependency')
+        assert not (live / 'bin/sessiondock.new').exists()
+        assert not list(live.glob('backup-deploy-*'))
+        visit(old, 'old')
+        artifact.binaries['sdkhost'] = args.sdkhost.resolve(strict=True)
+        node.o.with_sdkhost = True
         node.stage()
         backup = node.backup()
         node.swap()

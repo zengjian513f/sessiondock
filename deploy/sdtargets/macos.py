@@ -103,6 +103,8 @@ class MacOSNode(TargetHandler):
         names = list(self.t.binaries)
         if self.o.with_ptyhost and "ptyhost" not in names:
             names.append("ptyhost")
+        if self.o.with_sdkhost and "sdkhost" not in names:
+            names.append("sdkhost")
         return names
 
     @property
@@ -200,6 +202,7 @@ class MacOSNode(TargetHandler):
     def stage(self) -> None:
         p = self.prefix
         if self.ship_bin:
+            self.check_sdkhost_dependency(self.bins)
             if not self.a.source_archive:
                 raise RuntimeError("macos-node needs artifacts.source_archive (git archive tar)")
             src = self.source_dir

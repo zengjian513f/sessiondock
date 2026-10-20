@@ -184,6 +184,10 @@ Linux 节点在 stage 前和 backup 前只读检查 `state/native-sdk-inputs.jso
 这只是旧运行时的迁移保护；不能把旧进程内管道在线转移到宿主。
 `--with-sdkhost` 显式构建并发布宿主二进制，普通发布不替换它，也不重启已有实例。
 首次部署须带该参数；后续仅 SDK 业务适配层变更不需要该参数。
+Linux/macOS 节点发布 `sessiondock` 二进制前，若本轮不包含 `sdkhost`，
+工具检查目标 `bin/sdkhost` 可执行；缺失时在上传、备份和重启前报错，提示
+使用 `--with-sdkhost`。该参数在 Linux 和 macOS 都包含宿主，Hub/Windows
+不包含；web-only 不替换或补装宿主。
 账本中的 unknown 仍需要核对，不能自动重发。
 
 测试使用临时清单、模拟 SSH 或回环服务，不连接真实舰队节点；测试结果不依赖节点在线状态。
