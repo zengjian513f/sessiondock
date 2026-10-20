@@ -26,8 +26,11 @@ from pending_create_discard_browser import create_source
 from history_fixtures import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 from private_hosts import private_hosts
 from popups import on_popup
+from session_start_fixtures import choose_mode
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
+CLAUDE_OLD = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e6"
+CLAUDE_NEW = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e7"
 SLOW_SIDS = [f"00000000-0000-4000-8000-{index:012d}" for index in range(8)]
 FAKE_CODEX = """#!/bin/sh
 case "$2" in 00000000-0000-4000-8000-*) exec "$STOP_TEST_PYTHON" "$STOP_TEST_SCRIPT" "$@" ;; esac
@@ -81,15 +84,25 @@ def main():
         corpus.put("synthetic-unrelated-claude", "claude", [
             claude_row("synthetic-unrelated-claude", "user", "u0", None, "Synthetic session without instance"),
             claude_row("synthetic-unrelated-claude", "assistant", "a0", "u0", "Synthetic answer")], [])
+        corpus.put(CLAUDE_OLD, "claude", [
+            claude_row(CLAUDE_OLD, "user", "u0", None, "Old managed continuation", cwd=str(root / "work/codex-area")),
+            claude_row(CLAUDE_OLD, "assistant", "a0", "u0", "Old answer", cwd=str(root / "work/codex-area")),
+            {"type": "continued-in", "continuedInSessionId": CLAUDE_NEW, "sessionId": CLAUDE_OLD}], [])
+        corpus.put(CLAUDE_NEW, "claude", [
+            claude_row(CLAUDE_NEW, "user", "u0", None, "New continued session", cwd=str(root / "work/codex-area")),
+            claude_row(CLAUDE_NEW, "assistant", "a0", "u0", "New answer", cwd=str(root / "work/codex-area"))], [])
         for sid in SLOW_SIDS:
             corpus.put(sid, "codex", [codex_row("session_meta", {"id": sid, "cwd": str(root / "work/codex-area")}),
                 codex_message("user", "Synthetic slow stop " + sid)], [])
         slow_uids = [corpus.uid(sid) for sid in SLOW_SIDS]
         native = {name: path.read_bytes() for name, path in corpus.paths.items()}
         codex_uid = corpus.uid(CODEX_SID)
+        claude_old_uid, claude_new_uid = corpus.uid(CLAUDE_OLD), corpus.uid(CLAUDE_NEW)
         other_uid = corpus.uid("synthetic-unrelated-claude")
         (root / "bin/fake-codex").write_text(FAKE_CODEX)
         (root / "bin/fake-codex").chmod(0o700)
+        (root / "bin/fake-claude").write_text(FAKE_CODEX)
+        (root / "bin/fake-claude").chmod(0o700)
         (root / "bin/slow.py").write_text(SLOW_CODEX)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
@@ -99,7 +112,10 @@ def main():
                  "args": [], "resume_args": ["resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color",
                          "STOP_TEST_PYTHON": sys.executable, "STOP_TEST_SCRIPT": str(root / "bin/slow.py"),
-                         "STOP_TEST_EVENTS": str(root / "events")}}]}))
+                         "STOP_TEST_EVENTS": str(root / "events")}},
+                {"id": "claude-cli-v1", "source": "claude", "executable": str(root / "bin/fake-claude"),
+                 "args": [], "resume_args": ["--resume", "{sid}"],
+                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))
         initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
@@ -125,6 +141,8 @@ def main():
                         on_popup(page, on_dialog)
                         page.goto(base, wait_until="networkidle")
                         assert page.evaluate("SessionDockCapabilities.config.session_stop") is True
+                        choose_mode(page, 'codex', 'cli')
+                        page.locator('#settings-dialog .modal-close').click()
                         return page
 
                     # ---- Desktop: resume, then stop through the header action.
@@ -445,18 +463,57 @@ def main():
                     other_page.close()
                     assert not errors, errors
                     print("PASS duplicate stop: two browser pages, one EOF/escalation sequence for the same instance", flush=True)
+                    # A Claude continuation is displayed in the predecessor's
+                    # guarded console. Stop from the visible continuation row.
+                    started = page.request.post(base + "/api/term/takeover", data={"uid": claude_old_uid})
+                    assert started.ok, started.text()
+                    old_host = started.json()
+                    page.reload(wait_until="networkidle")
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=claude_new_uid)
+                    page.emulate_media(color_scheme='dark')
+                    continued = page.locator(f'#side .item[data-uid="{claude_new_uid}"]')
+                    continued.scroll_into_view_if_needed()
+                    continued.click()
+                    page.wait_for_function("uid => S.sel === uid", arg=claude_new_uid)
+                    assert page.evaluate("uid => linkedTermSession(uid)?.name", claude_new_uid) == old_host['name']
+                    continued.click(button="right")
+                    stop_item = page.locator('#item-menu [data-act="stop"]')
+                    expect(stop_item).to_be_visible()
+                    expect(stop_item).to_have_text('停止会话')
+                    expect(page.locator('#item-menu [data-act="delete"]')).to_have_attribute('aria-disabled', 'true')
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / 'continued-stop-menu-dark.png'))
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
+                        stop_item.click()
+                    result = stopped.value.json()
+                    assert stopped.value.ok and result['stage'] == 'graceful', result
+                    assert stopped.value.request.post_data_json['uid'] == claude_old_uid
+                    assert result['instance_id'] == old_host['instance_id'], result
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=claude_new_uid)
+                    continued.click(button="right")
+                    expect(page.locator('#item-menu [data-act="stop"]')).to_have_text('启动会话')
+                    expect(page.locator('#item-menu [data-act="delete"]')).not_to_have_attribute('aria-disabled', 'true')
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / 'continued-stopped-menu-dark.png'))
+                    assert not errors, errors
+                    print("PASS continued Claude stop: visible continuation stops its guarded predecessor host", flush=True)
                     context.close()
 
                     # ---- Mobile: start through the sidebar, then stop from long press.
                     mobile = browser.new_context(viewport={"width": 390, "height": 844}, color_scheme="dark",
                                                  service_workers="block", has_touch=True)
                     page = watch(mobile)
-                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click(button="right")
+                    mobile_item = page.locator(f'#side .item[data-uid="{codex_uid}"]')
+                    mobile_item.scroll_into_view_if_needed()
+                    mobile_item.dispatch_event("contextmenu", {"bubbles": True})
                     start_item=page.locator('#item-menu [data-act="stop"]')
                     expect(start_item).to_have_text('启动会话')
                     expect(start_item).not_to_have_attribute('aria-disabled','true')
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
-                        start_item.click()
+                        mobile_item.evaluate('''item => {
+                          item.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true}));
+                          document.querySelector('#item-menu [data-act="stop"]').click();
+                        }''')
                     second = taken.value.json()
                     assert taken.value.status == 200 and second["action"] == "started", second
                     assert second["instance_id"] != resumed["instance_id"]

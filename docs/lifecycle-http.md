@@ -443,9 +443,13 @@ to finish so they cannot invalidate in-flight cancellation evidence.
 
 Legacy (`session_stop:true`): the header "停止会话"/"删除会话" action and the
 sidebar menu treat a session as stoppable when `S.live` has it **or** a
-managed instance with this UID is listed (`S.live` is not polled under
+managed instance for this UID (including a verified continued-in predecessor
+console) is listed (`S.live` is not polled under
 `live:false`); the request carries a `request_id`; a confirmed stop drops the UID from
 `S.live` and updates the existing controls without a success notice.
+If a Claude continuation is displayed in its predecessor's still-running
+console, the stop control targets that console's guarded predecessor UID.
+The continuation's native history and draft remain intact.
 DELTA (2026-10-07, requested feedback redesign): single-stop failures and
 uncertain outcomes use the existing acknowledgement dialog (`appAlert`,
 “知道了”); no text-only floating notice remains.
