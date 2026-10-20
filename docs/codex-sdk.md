@@ -310,11 +310,13 @@ behavior; they do not require other sources to expose unsupported controls.
   immediately calls `thread/settings/update`, independently of SEND. The requested
   value stays disabled until native confirmation; rejection restores the last
   confirmed value. Incoming settings from another client remain authoritative.
-  Model/effort/tier changes also call `turn/settings/update` for a known active
-  turn, publishing settings for subsequent native captures without restarting
-  an already captured request. `targetUnavailable` means that turn already ended;
-  the thread setting still applies. Mode and permissions follow their native
-  thread-setting boundary rather than inventing unsupported active-turn fields.
+  Model/effort/tier changes remain available while a turn runs and use the same
+  `thread/settings/update` path as the CLI. They apply to subsequent turns;
+  the running turn retains its captured settings. No extra `turn/settings/update`
+  is sent: that separate experiment requires `step_model_switching`, disabled
+  by default, and its rejection cannot undo an already applied thread change
+  (BUG-20261020-063452-cbef89). Mode and permissions also follow their native
+  thread-setting boundary.
 - DELTA (service tier, BUG-20261018-122932-0e7a3c): the composer toolbar also
   shows the current thread's service tier. Choices use the effective model's
   `model/list.serviceTiers` names, descriptions and native IDs (Fast may use
