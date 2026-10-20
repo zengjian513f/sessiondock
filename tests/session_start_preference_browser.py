@@ -1,6 +1,7 @@
 """Per-agent settings govern report SDK workers and first message handoff on node/Hub."""
 import argparse
 import json
+import re
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,15 +50,78 @@ def exercise(browser, base, source, root, label):
     from session_global_actions_browser import click_action
     click_action(page, '[data-continue-session]')
     page.locator('#continue-session-description').fill('Continue using the configured SDK')
+    # Hold the initial SDK stream snapshot after create/draft persistence.
+    # An open response is not evidence that the SEND controls are connected.
+    held = []
+    turns = []
+    page.route('**/api/*-sdk/events?**', lambda route: held.append(route))
+    page.on('request', lambda request: turns.append(request.post_data_json)
+            if request.method == 'POST' and request.url.endswith('/turn') else None)
+    page.locator('#continue-session-go').click()
+    page.wait_for_function("document.querySelector('#sdk-input')?.value.includes('Continue using the configured SDK')")
+    expect(page.locator('#sdk-send')).to_be_disabled()
+    page.screenshot(path=f'/tmp/sessiondock-preference-{label}-{source}-continuation-wait.png')
+    page.wait_for_timeout(1000)  # Keep the stream behind the completed start/open calls.
+    assert held and not turns, (held, turns)
     with page.expect_response(lambda r: r.url.endswith('/turn') and r.request.method=='POST') as continued:
-        page.locator('#continue-session-go').click()
+        for route in held:
+            route.continue_()
+        page.unroute('**/api/*-sdk/events?**')
     assert continued.value.ok, continued.value.text()
     expect(page.locator('#sdk-input')).to_have_value('')
+    assert len(turns) == 1 and 'Continue using the configured SDK' in turns[0]['text'], turns
+    if label == 'hub':
+        page.set_viewport_size({'width':390,'height':844})
+        page.emulate_media(color_scheme='dark')
+        page.locator('.item.sel').click()
+        expect(page.locator('#sdk-input')).to_be_visible()
+    page.screenshot(path=f'/tmp/sessiondock-preference-{label}-{source}-continuation-sent.png')
+    if label == 'hub':
+        page.set_viewport_size({'width':1280,'height':900})
+        page.emulate_media(color_scheme='light')
     assert page.evaluate('S.sel') != original
     page.wait_for_function("""original => {
       const local = uid => uid.replace(/^([^:]+):[a-f0-9]{32}~/, '$1:');
       return S.sessions.find(row => row.uid === S.sel)?.predecessors?.some(edge => local(edge.session_uid) === local(original));
     }""",arg=original)
+    if source == 'claude' and label == 'node':
+        for cancel in (True, False):
+            page.locator(f'.item[data-uid="{original}"]').click()
+            click_action(page, '[data-continue-session]')
+            text = 'Keep this continuation draft after ' + ('leaving' if cancel else 'open failure')
+            page.locator('#continue-session-description').fill(text)
+            held = []
+            pattern = '**/api/*-sdk/events?**' if cancel else '**/api/*-sdk/open'
+            def intercept(route):
+                if cancel:
+                    held.append(route)
+                else:
+                    route.fulfill(status=503, content_type='application/json',
+                                  body=json.dumps({'error':'synthetic SDK attachment failure'}))
+            page.route(pattern, intercept)
+            before = len(turns)
+            page.locator('#continue-session-go').click()
+            expect(page.locator('#sdk-input')).to_have_value(
+                re.compile('.*' + text, re.S))
+            if cancel:
+                page.wait_for_timeout(1000)
+                assert held
+                cancelled = page.evaluate('S.sel')
+                page.locator(f'.item[data-uid="{original}"]').click()
+                for route in held:
+                    route.abort()
+                page.unroute(pattern)
+                page.wait_for_function('!newSessionCreating')
+                page.locator(f'.item[data-uid="{cancelled}"]').click()
+            else:
+                expect(page.locator('.sdk-status.blocked')).to_have_attribute(
+                    'title', re.compile('.*synthetic SDK attachment failure.*'))
+                page.unroute(pattern)
+            page.wait_for_timeout(300)
+            assert len(turns) == before, turns
+            expect(page.locator('#sdk-input')).to_have_value(
+                re.compile('.*' + text, re.S))
+            page.screenshot(path=f'/tmp/sessiondock-preference-{label}-{source}-continuation-{"cancel" if cancel else "failure"}.png')
     open_report(page)
     page.locator(f'input[name="bug-report-source"][value="{source}"]').check()
     page.locator('#bug-report-description').fill('Launch preference report '+label+' '+source)

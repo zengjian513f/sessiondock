@@ -2339,8 +2339,7 @@ async function createNewSession(e) {
         await openSession(d.uid);
         await SdkView.startSession(d.uid);
         if (origin) {
-          await CodexSdkCompose.states.get(SdkView.active)?.ready;
-          await SdkView.send();
+          await CodexSdkCompose.sendInitial(SdkView.active, d.uid);
         }
       } finally {
         ConsoleUI.busy.delete(d.uid);
