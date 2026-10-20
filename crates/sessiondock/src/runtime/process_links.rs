@@ -1,5 +1,7 @@
 //! Node adapter for the shared process-links protocol. Remote links are held
 //! for the lifetime of an observed process incarnation, not a socket or PID.
+pub(crate) mod sync;
+
 use crate::{
     error::ApiError,
     runtime::procscan::{SessionRow, parse_created},

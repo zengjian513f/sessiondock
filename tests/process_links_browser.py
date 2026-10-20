@@ -4,8 +4,6 @@
 import argparse
 from contextlib import ExitStack, contextmanager
 import json
-from http.client import HTTPConnection
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from pathlib import Path
 import shutil
@@ -23,6 +21,7 @@ from history_fixtures import BINARY, Corpus, codex_row, isolated_server, get_jso
 from hub_fixtures import Hub, scoped
 from node_auth_fixtures import node_env, TOKEN, free_port
 from spawned_by_fixtures import START, proc_pid
+from process_links_fixtures import counted_node
 
 WORKING = re.compile(r'\bturn-working\b')
 START.update({900: 90_000, 910: 91_000, 920: 92_000, 930: 93_000, 940: 94_000})
@@ -36,78 +35,6 @@ def wait_for(function, timeout=20):
             return value
         time.sleep(.15)
     raise AssertionError('SSH attribution timed out')
-
-
-@contextmanager
-def counted_node(node):
-    """Private forwarding fixture: observe Hub polls and fail one publication."""
-    counts = SimpleNamespace(gets=0, posts=0, delivered=0, fail_posts=0, fail_gets=0)
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def forward(self):
-            body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
-            tracked = self.path == '/api/process-links'
-            if tracked and self.command == 'GET' and counts.fail_gets:
-                counts.fail_gets -= 1
-                self.send_response(503)
-                self.send_header('Content-Length', '0')
-                self.end_headers()
-                return
-            if tracked and self.command == 'POST':
-                counts.posts += 1
-                if counts.fail_posts:
-                    counts.fail_posts -= 1
-                    self.send_response(503)
-                    self.send_header('Content-Length', '0')
-                    self.end_headers()
-                    return
-            upstream = HTTPConnection('127.0.0.1', node.port, timeout=5)
-            try:
-                upstream.request(self.command, self.path, body=body,
-                    headers={key: value for key, value in self.headers.items()
-                        if key.lower() not in ('host', 'connection')})
-                response = upstream.getresponse()
-                streaming = 'text/event-stream' in response.getheader('Content-Type', '')
-                payload = None if streaming else response.read()
-                self.send_response(response.status)
-                for key, value in response.getheaders():
-                    if key.lower() not in ('connection', 'transfer-encoding', 'content-length'):
-                        self.send_header(key, value)
-                if payload is not None:
-                    self.send_header('Content-Length', str(len(payload)))
-                self.end_headers()
-                if streaming:
-                    while chunk := response.read1(65536):
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                else:
-                    self.wfile.write(payload)
-                if tracked and response.status == 200:
-                    if self.command == 'GET':
-                        counts.gets += 1
-                    else:
-                        counts.delivered += 1
-            except OSError:
-                # Browser streams may close when the selected session changes.
-                self.close_connection = True
-            finally:
-                upstream.close()
-
-        do_GET = forward
-        do_POST = forward
-
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    worker = Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    try:
-        yield SimpleNamespace(**{**vars(node), 'port': server.server_port}), counts
-    finally:
-        server.shutdown()
-        server.server_close()
-        worker.join(timeout=5)
 
 
 @contextmanager

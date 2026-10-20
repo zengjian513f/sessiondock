@@ -81,7 +81,11 @@ pub fn router() -> Router<AppState> {
         .route("/resources/probe", post(process_links::node_probe))
         .route(
             "/process-links",
-            get(process_links::get).post(process_links::post),
+            get(process_links::get)
+                .post(process_links::post)
+                .layer(axum::Extension(std::sync::Arc::new(
+                    crate::runtime::process_links::sync::Store::default(),
+                ))),
         )
         .route("/meta", get(meta))
         .route("/nodes", get(nodes))

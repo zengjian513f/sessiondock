@@ -3,7 +3,7 @@ use crate::{Binding, Connection, Launch, Process, Session, agent::Catalog, linux
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConnectionRecord {
     pub process: Process,
     pub connection: Connection,

@@ -242,9 +242,36 @@ This avoids serializing and transferring boot-long TCP history on each live read
 Older collectors ignore the optional field; their full replies are still validated
 and skipped without allocating unused records. Old clients continue to receive
 full reports, and catalog/publish mutations and identity checks are unchanged. Full
-`/api/process-links` responses still include every retained connection for the
-coordinator. The Hub also decodes the full report directly on its bounded blocking pool.
+`/api/process-links` responses still include every retained connection.
 Boot-long evidence is retained unchanged.
+
+DELTA: the Hub opts into connection-history transport with
+`GET /api/process-links?connection_sync=1&since=<revision>`. New nodes return
+`X-SessionDock-Connections: 1` and an envelope containing `revision`, `base`,
+`report` and `remove`. With `base: null`, `report` is complete. With a known base,
+`report.connections` contains only added or changed records; `remove` contains
+their identity tuples (process, connection, opened-at timestamp, encoded like
+the record's `opened_at`). Every other report field is a fresh complete observation.
+The Hub reconstructs the complete connection set before correlation; late
+closures, shared-socket observations and session/launch-chain changes are updates,
+not append-only history. Record ordering has no attribution meaning.
+
+Each node listener keeps two connection revisions in memory, sharing unchanged
+records. Node/boot changes, cache eviction, unknown revisions and service restarts
+return a full snapshot. Ordinary callers and old Hubs continue to receive the
+original report; old nodes ignore the opt-in query. A temporary collector failure
+returns the ordinary polling report without replacing the transport baseline.
+Recovery can therefore resume incrementally, while failed polls never use cached
+reports as fresh correlation evidence. Hub caches are scoped to node and target;
+an invalid delta clears its baseline and the next poll resynchronizes. Both node
+diff/serialization and Hub typed decoding/reconstruction run on blocking workers
+(Hub uses its existing bounded pool), without expanding a generic JSON tree.
+The two-second polling interval and collector persistence are unchanged.
+
+[`process_links_sync_browser.py`](../tests/process_links_sync_browser.py) opens
+history through Chromium with a real node and Hub and a large private collector.
+It measures full/delta bytes and covers updates, removals, reordering, collector
+outages, failed polls, old nodes, invalid baselines, Hub/node restarts and boot changes.
 The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py);
 `--legacy-collector` covers collectors that ignore the projection. The real-agent
 [`process_links_browser.py`](../tests/process_links_browser.py) suite with

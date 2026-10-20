@@ -70,7 +70,7 @@ pub struct Session {
 /// One observed launch; nearest launch first in a causal chain. SSH edges use
 /// the launching client; local CLI edges use the launched CLI incarnation and
 /// name its spawner's session. Both survive through descendant bindings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Launch {
     pub process: ProcessKey,
     pub session: Session,
