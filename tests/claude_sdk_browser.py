@@ -17,7 +17,7 @@ import tempfile
 import time
 
 from claude_sdk_fixtures import ClaudeFixture, MonotonicClock, managed_console, native_uid, project_key
-from history_fixtures import BINARY
+from history_fixtures import BINARY, REPO
 
 
 def post(page, method, body, *, ok=True):
@@ -604,7 +604,7 @@ def view_mode_check(fixture, base, screenshots, label):
                     route.continue_()
                 page.unroute('**/api/term/list*')
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
                 uid = page.evaluate('S.sel')
                 assert ('~' in uid) == (label == 'hub'), uid
                 assert not opens, opens
@@ -621,10 +621,10 @@ def view_mode_check(fixture, base, screenshots, label):
 
                 # Explicit terminal choice survives refresh without SDK open.
                 page.locator('#a-term').click()
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
                 page.reload(wait_until='networkidle')
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
                 capture('terminal')
                 assert not opens, opens
                 page.locator('#a-chat').click()
@@ -648,12 +648,12 @@ def view_mode_check(fixture, base, screenshots, label):
                 expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
                 page.locator('#a-term').click()
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
                 choose(other_uid)
                 expect(page.locator('#sdk-input')).to_be_visible()
                 choose(uid)
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
                 assert not [body for body in opens if body['uid'] == uid], opens
                 assert not errors, errors
                 context.close()
@@ -661,7 +661,7 @@ def view_mode_check(fixture, base, screenshots, label):
             browser.close()
 
 
-def view_modes(binary, screenshots):
+def view_modes(binary, screenshots, hub_binary):
     from hub_fixtures import Hub, free_port
     from node_auth_fixtures import TOKEN, node_env
     from types import SimpleNamespace
@@ -676,7 +676,7 @@ def view_modes(binary, screenshots):
                         view_mode_check(fixture, base, screenshots, label)
                     else:
                         hub_root = root / 'hub'; hub_root.mkdir()
-                        hub = Hub(binary.resolve().with_name('sessiondock-hub'), hub_root,
+                        hub = Hub(hub_binary.resolve(), hub_root,
                                   [SimpleNamespace(name='ClaudeViews', token=TOKEN, port=port)])
                         hub.start()
                         try:
@@ -688,9 +688,10 @@ def view_modes(binary, screenshots):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--hub-binary", type=Path, default=REPO / "target/debug/sessiondock-hub")
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
-    view_modes(args.binary, args.screenshots)
+    view_modes(args.binary, args.screenshots, args.hub_binary)
     for kind in ('user', 'approval'):
         with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-hooks-') as temporary:
             startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
