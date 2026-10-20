@@ -693,7 +693,10 @@ async fn actor(
                 )
                 .await;
                 let mut data = live.data.lock().unwrap();
-                data.runtime = if outcome.is_ok() && turn.persistent {
+                let conflict = outcome
+                    .as_ref()
+                    .is_err_and(|error| error.starts_with("agy_sdk_result_conflict:"));
+                data.runtime = if (outcome.is_ok() || conflict) && turn.persistent {
                     runtime.native.as_ref().map(|native| {
                         let mut runtime = turn.clone();
                         runtime.stdout_offset = native.stdout_offset;
@@ -711,24 +714,28 @@ async fn actor(
                 {
                     item["status"] = json!(if outcome.is_ok() {
                         "completed"
+                    } else if conflict {
+                        "unknown"
                     } else {
                         "failed"
                     });
                 }
                 if let Err(error) = outcome {
-                    data.error_kind = Some(
-                        if error.starts_with("agy_sdk_interrupted")
-                            || error.starts_with("agy_sdk_native_INTERRUPTED")
-                        {
-                            "interrupted"
-                        } else if error.starts_with("agy_sdk_native_") {
-                            "turn"
-                        } else {
-                            "transport"
-                        },
-                    );
+                    data.error_kind = Some(if conflict {
+                        "uncertain"
+                    } else if error.starts_with("agy_sdk_interrupted")
+                        || error.starts_with("agy_sdk_native_INTERRUPTED")
+                    {
+                        "interrupted"
+                    } else if error.starts_with("agy_sdk_native_") {
+                        "turn"
+                    } else {
+                        "transport"
+                    });
                     data.error = Some(error.clone());
-                    data.items.push(json!({"id":format!("agy:error:{}",turn.id),"role":"system","content":error,"error":true}));
+                    if !conflict {
+                        data.items.push(json!({"id":format!("agy:error:{}",turn.id),"role":"system","content":error,"error":true}));
+                    }
                 }
                 live.publish(&mut data);
             }
@@ -862,6 +869,10 @@ async fn execute(
                             data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value}));live.publish(&mut data);
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
+                        if !interrupted && transcript::conflicting_result(process,live,turn,value).await {
+                            live.diagnostic(format!("\nAgy result.status=ERROR: {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                            return Err("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
+                        }
                         result=Some(if status=="SUCCESS" {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
                         if turn.persistent {
                             if interrupted { return Err("agy_sdk_interrupted: 已中断当前 Agy 回合。".into()); }
@@ -896,7 +907,12 @@ async fn execute(
         )),
     }
     }.await;
-    if turn.persistent && outcome.is_ok() {
+    if turn.persistent
+        && (outcome.is_ok()
+            || outcome
+                .as_ref()
+                .is_err_and(|error| error.starts_with("agy_sdk_result_conflict:")))
+    {
         return outcome;
     }
     if outcome.is_err() && !shutdown.is_cancelled() {

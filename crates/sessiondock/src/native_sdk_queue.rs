@@ -77,6 +77,12 @@ impl Journal {
             Err(error) => return Err(error),
         };
         for input in rows.values_mut().flatten() {
+            // Older bridges classified execution errors as failed sends even
+            // after observing native consumption. Preserve the evidence and
+            // require explicit reconciliation before any repeat submission.
+            if input.state == "failed" && input.consumption == "observed" {
+                input.state = "unknown".into();
+            }
             if matches!(input.state.as_str(), "sending" | "accepted" | "recovering") {
                 if directory.is_some()
                     && cfg!(unix)

@@ -389,7 +389,7 @@ def restart_output(browser, fixture):
             context.close()
 
 
-def legacy_unknown(browser, fixture, screenshots):
+def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
     """A pre-sdkhost receipt cannot be recovered or resent by opening a page."""
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture)
@@ -401,15 +401,18 @@ def legacy_unknown(browser, fixture, screenshots):
     draft = {'text': text, 'request_id': request, 'attachments': [], 'quotes': []}
     row = {'id': 'bridge:' + request, 'request_id': request, 'delivery_id': request,
            'operation': 'turn', 'target': target, 'draft': draft, 'input': draft,
-           'state': 'unknown', 'consumption': 'observed', 'attempts': 0, 'actions': {},
+           'state': original_state, 'consumption': 'observed', 'attempts': 0, 'actions': {},
            'result': {'accepted': True},
            'error': '服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。'}
+    if original_state == 'failed':
+        row['error'] = 'agy_sdk_native_ERROR: The stream was interrupted. Please continue the task you were working on.'
     scope = json.dumps(['agy', uid, ''], separators=(',', ':'))
     (fixture.root / 'state/native-sdk-inputs.json').write_text(json.dumps({scope: [row]}))
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             state(page, request, 'unknown')
+            assert fixture.entry(request)['error'] == row['error']
             expect(card(page, request)).to_contain_text('原生已读取这条输入，但执行结果尚未确认。')
             assert not fixture.inputs(text)
             follower = send(page, 'continue after checking legacy history')
@@ -428,6 +431,36 @@ def legacy_unknown(browser, fixture, screenshots):
             assert fixture.entry(request)['state'] == 'cancelled'
             assert len(fixture.inputs('continue after checking')) == 1
             print('Agy: consumed legacy unknown stays explicit; cancelling resend sends nothing, removing record unblocks new input once', flush=True)
+        finally:
+            context.close()
+
+
+def restart_conflicting_result(browser, fixture):
+    text = '__RECOVERED_STREAM__'
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            submitted = send(page, text)
+            state(page, submitted['request_id'], 'unknown')
+            expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
+            pid = fixture.native_pid()
+        finally:
+            context.close()
+    assert fixture.alive(pid), 'conflicting result killed the persistent native runtime'
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            state(page, submitted['request_id'], 'unknown')
+            assert fixture.native_pid() == pid and fixture.alive(pid)
+            assert fixture.inputs(text) == [text]
+            card(page, submitted['request_id']).get_by_role('button', name='移除记录', exact=True).click()
+            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            next_input = send(page, 'continue after result reconciliation')
+            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after result reconciliation')
+            gone(page, next_input['request_id'])
+            assert fixture.native_pid() == pid and fixture.inputs(text) == [text]
+            assert len(fixture.inputs('continue after result reconciliation')) == 1
+            print('Agy: conflicting result survives node restart without replay or killing the native runtime', flush=True)
         finally:
             context.close()
 
@@ -584,6 +617,8 @@ def main():
             for source in ('grok', 'agy', 'claude'):
                 fixtures[source] = NativeQueueFixture(root / source, source, args.binary, args.host_binary)
             fixtures['legacy-agy'] = NativeQueueFixture(root / 'legacy-agy', 'agy', args.binary, args.host_binary)
+            fixtures['legacy-failed-agy'] = NativeQueueFixture(root / 'legacy-failed-agy', 'agy', args.binary, args.host_binary)
+            fixtures['conflict-agy'] = NativeQueueFixture(root / 'conflict-agy', 'agy', args.binary, args.host_binary)
             for source in ('grok', 'agy', 'claude'):
                 fixture = fixtures[source]
                 basic_queue(browser, fixture, args.screenshots)
@@ -592,6 +627,8 @@ def main():
             restart_queue(browser, fixtures['claude'], args.screenshots)
             restart_output(browser, fixtures['agy'])
             legacy_unknown(browser, fixtures['legacy-agy'], args.screenshots)
+            legacy_unknown(browser, fixtures['legacy-failed-agy'], args.screenshots, 'failed')
+            restart_conflicting_result(browser, fixtures['conflict-agy'])
             restart_approval(browser, fixtures['claude'])
             restart_approval(browser, fixtures['grok'])
             stop_inherited_pipes(browser, fixtures['agy'])

@@ -878,7 +878,8 @@ impl NativeSdks {
                                 || (entry.stop_requested && raw["error_kind"] == "turn")
                             {
                                 "completed"
-                            } else if raw["error_kind"] == "turn" {
+                            } else if raw["error_kind"] == "turn" && entry.consumption != "observed"
+                            {
                                 "failed"
                             } else {
                                 "unknown"
