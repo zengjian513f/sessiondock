@@ -311,7 +311,7 @@ async fn report_inner(
         }
     };
     let uid = text(&body["uid"], 512);
-    let snapshot = if body["snapshot"].is_object() {
+    let snapshot = if !feature && body["snapshot"].is_object() {
         body["snapshot"].clone()
     } else {
         json!({})
@@ -330,7 +330,17 @@ async fn report_inner(
     if origin.uid.is_empty() {
         origin.uid = uid.clone();
     }
-    let (context, remote_events) = if body["captured"].is_object() {
+    let (context, remote_events) = if feature {
+        // A feature request uses its description/attachments, never diagnostic capture.
+        origin.hostname = String::new();
+        (
+            Context {
+                session: json!({}),
+                terminal_capture: String::new(),
+            },
+            Vec::new(),
+        )
+    } else if body["captured"].is_object() {
         origin.remote = true;
         let captured = &body["captured"];
         origin.capture_error = text(&captured["error"], 2000);
@@ -437,7 +447,7 @@ async fn report_inner(
         let _ = update_manifest(&report.path, json!({"status": "captured"}));
         (
             StatusCode::CREATED,
-            json!({"ok": true, "report_id": report.report_id, "path": report.path, "worker": null}),
+            json!({"ok": true, "report_type": if feature { "feature" } else { "bug" }, "report_id": report.report_id, "path": report.path, "worker": null}),
         )
     } else {
         let launched = if sdk_mode {
@@ -468,12 +478,13 @@ async fn report_inner(
         match launched {
             Ok(worker) => (
                 StatusCode::ACCEPTED,
-                json!({"ok": true, "report_id": report.report_id, "path": report.path,
+                json!({"ok": true, "report_type": if feature { "feature" } else { "bug" }, "report_id": report.report_id, "path": report.path,
                 "worker": worker}),
             ),
             Err(error) => {
                 let message = format!(
-                    "诊断已保存，但 {} 会话启动失败：{error}",
+                    "{}已保存，但 {} 会话启动失败：{error}",
+                    if feature { "需求" } else { "诊断" },
                     source_label(source)
                 );
                 let _ =
