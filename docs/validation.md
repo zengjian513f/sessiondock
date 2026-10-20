@@ -419,11 +419,6 @@ checks the preserved prompt, idempotent report replay and one bundle/launch.
 
 ## Adding a suite
 
-`tests/sdkhost_install_browser.py` 用私有部署目录和假 Claude CLI，验证 Unix
-节点缺少 sdkhost 时发布在上传前失败，以及仅补装宿主后本机/Hub 新建模型目录
-可重试、选择模型与强度。覆盖宽屏明色、窄屏暗色；不创建原生模型回合。
-`--sdkhost PATH` 指定待验证的宿主产物，`--screenshots DIR` 保存完整页面。
-
 `frontend_search_state_browser` 使用合成会话和隔离服务，通过桌面及手机实际输入、
 点击和重载验证搜索的单一状态：本地筛选/全文结果切换、各选项请求与持久化、Esc
 取消后迟到 NDJSON 响应不恢复结果，以及桌面已展开正文的 DOM 和滚动身份保持。
