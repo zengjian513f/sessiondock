@@ -47,4 +47,5 @@ error rather than serving bytes from a different file version.
 
 ## Validation
 
-Synthetic HTTP coverage is in `tests/native_*.py`.
+Synthetic Chromium coverage is in `tests/native_*_browser.py` and
+[`tests/history_browser.py`](../tests/history_browser.py).

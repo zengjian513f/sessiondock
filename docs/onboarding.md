@@ -32,7 +32,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Terminal / lifecycle
 
-- [session-host.md](session-host.md) — Imported ptyhost; always pass a private development `--dir`.
+- [session-host.md](session-host.md) — Independent ptyhost; always pass a private development `--dir`.
 - [terminal-ownership.md](terminal-ownership.md) — Browser lease state machine; existence does not enable endpoints.
 - [terminal-identity.md](terminal-identity.md) — Lease versus instance guard; PID or SID alone is not incarnation proof.
 - [lifecycle-store.md](lifecycle-store.md) — Private creation-intent receipts; no launch or native bind.
@@ -45,13 +45,13 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Conversation SEND
 
-- [conversation.md](conversation.md) — Server-owned drafts, submission identity and CLI echo tracking; the old delivery dispatcher is retired.
+- [conversation.md](conversation.md) — Server-owned drafts, submission identity and CLI echo tracking.
 - [composer-input.md](composer-input.md), [cli-state.md](cli-state.md) — Current terminal input readiness and session CLI state.
 - [delivery-scope.md](delivery-scope.md) — `NativeScope` from the session store.
 
 ### Files, diagnostics, capabilities, security
 
-- [files.md](files.md) — file navigation, attachments, uploads and write operations.
+- [files.md](files.md) — session-reference reads, attachments and optional FileDock navigation.
 - [diagnostics.md](diagnostics.md) — Bounded `POST /api/audit/browser`; unset keeps `audit:false` and 501.
 - [capabilities.md](capabilities.md) — HTML / `/api/meta` flags; a missing key stays allowed.
 - [security-model.md](security-model.md) — Trust boundaries: loopback, fail-closed, not a sandbox.

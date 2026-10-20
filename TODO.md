@@ -8,7 +8,7 @@
 - [ ] 根据 [外部程序启动审计](docs/process-launch-audit.md) 补足共享 tmux/systemd、
   容器/调度器/常驻 RPC 服务的每作业身份或因果证据；无证据时保持未归属。
   不能把启动请求、业务租约释放或自然语言“完成”当作 OS 资源归属/释放证明。
-  本次未访问的节点及历史坏行仍有审计覆盖缺口。
+  节点覆盖与留存坏行的审计仍需补齐。
 
 - [ ] 扩展公共进程归属层的平台覆盖与完整计量：Linux `resource-agent` 已提供
   生命周期事件、CPU/PSS/GPU/proc storage 指标及可选 60 秒 VFS/TCP/NFS 诊断。
@@ -26,7 +26,7 @@
 - [ ] Agy 后台任务/子代理完成后的原生续跑语义仍需专项验收。
   BUG-20261020-033847-a2d757 的节点重启存活由[独立 SDK 宿主](docs/sdkhost.md)承接；
   宿主保留进程与字节通道，不替原生 CLI 决定后台任务完成后的续跑。
-  见[诊断证据](docs/diagnostics.md#bug-20261020-033847-a2d757)。
+  见[诊断证据](docs/history-incidents.md#bug-20261020-033847-a2d757)。
 
 - [ ] 补齐[SDK 能力对照](docs/sdk-feature-audit.md)中的剩余差距：完整历史消息操作/
   输入恢复、子代理专项验收、原生完整 turn 消费对账、Grok/OpenCode 重试事件、
@@ -39,7 +39,7 @@
 
 - [ ] 定位 BUG-20261013-232935-441af3 的具体 PTY 上行中断环节：四条连接首屏正常，
   42 次浏览器输入没有节点写入回执，首个心跳均超时；第五条连接随后自行恢复。
-  [诊断记录](docs/diagnostics.md#bug-20261013-232935-441af3-repeated-pty-upstream-stalls)
+  [诊断记录](docs/history-incidents.md#bug-20261013-232935-441af3-repeated-pty-upstream-stalls)
   已核对原生记录、账本及节点/Hub 日志。同一连接的浏览器发送、Hub 双向转发、
   节点接收/等待/宿主写入及取消最终状态已补充审计，Hub 记录自动复制进节点诊断包。
   再次发生时按这些边界定位；旧包仍不能指定故障代理/网络跳，隔离浏览器回归通过
@@ -51,6 +51,13 @@
 - [ ] Codex SDK 完成实际使用验收后再退役旧对话/终端交互模式；非 Unix 接入仍未实现。
   子代理独立服务端草稿/附件身份待补，不能复用主会话草稿；当前行为见[Codex SDK](docs/codex-sdk.md)。
 
+## Public distribution
+
+- [ ] 补齐公共源码导出清单的 workspace 依赖：`public/manifest.json` 未包含
+  `crates/sdkhost/`、`crates/sdkhost-client/` 及共享的 `crates/runtime_log.rs`。
+  在临时导出树验证 Cargo 元数据、构建和文档；同步核对独立 SDK 宿主的二进制打包与安装说明。
+  未完成前不把公共导出视为可构建发行物。实际缺项以所选提交的依赖闭包为准。
+
 ## Architecture follow-up
 
 - [ ] 搜索控制器已独立管理请求、取消和计时器；继续按职责拆分侧栏、会话同步、
@@ -58,7 +65,7 @@
 - [ ] 测量 Hub→节点的连接/握手开销后评估短请求连接复用；保留字面 IP、认证、
   证书验证、空闲超时及禁止重定向的合同，SSE/WS 独立管理。
 - [ ] 扩展现有浏览器性能记录到大文件首屏、追加与冷搜索，并补充排队、解析、
-  缓存命中和流完成的分阶段观测；不恢复已移除的非浏览器测试体系。
+  缓存命中和流完成的分阶段观测；通过 Chromium 用户操作路径验证。
 
 ## Read-path optimization follow-up
 

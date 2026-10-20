@@ -24,7 +24,7 @@ GROUPS = {
     "会话、历史与文件": {"read-model.md", "history-pages.md", "native-input.md", "append-cache.md", "native-tags.md", "session-clone.md", "session-move.md", "trash.md", "metadata.md", "media.md", "media-pagination-design.md", "files.md", "external-links.md", "delivery-scope.md", "agy.md", "opencode.md", "codex-names.md", "grok-metadata.md", "nesting-regression-audit.md"},
     "终端与生命周期": set(),
     "架构、接口与运行服务": {"architecture.md", "module-map.md", "environment.md", "error-codes.md", "route-ledger.md", "glossary.md", "capabilities.md", "hub.md", "diagnostics.md", "logging.md", "bug-report.md", "security-model.md", "processes.md", "process-links.md", "liveness.md"},
-    "历史资料（按需查阅）": {"perf-methodology.md", "performance.md", "process-launch-audit.md"},
+    "历史资料（按需查阅）": {"perf-methodology.md", "performance.md", "process-launch-audit.md", "history-incidents.md"},
 }
 ORDER = tuple(GROUPS)
 INTRO = """# 文档索引

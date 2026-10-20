@@ -30,7 +30,7 @@ aliases. Historical names belong only in migration records.
 
 **Index (lazy).** The session list source: directory walk + stat + a bounded head (96 KiB, ≤ 40 records) and tail (512 KiB) summary per file, cached by file stamp (dev/ino/size/mtime_ns), read in parallel; no startup parse, no session/byte caps, one file's change never fails the list. Ownership/fork graphs, native ids for the runtime catalog, lifecycle resume and trash file sets come from these summaries. See [read model](read-model.md).
 
-**Row summary.** The per-file result of the bounded head/tail read: title (custom > ai > generated), cwd, branch, created, model, native id, fork/agent relations, `supported` and `migration_warnings`. Derivations mirror the adapters' `list_sessions`. See [read model](read-model.md).
+**Row summary.** The per-file result of bounded head/tail reads plus source-specific scalar scans: title (custom > ai > generated), cwd, branch, created, model, native id, fork/agent relations, `supported` and `migration_warnings`. Derivations mirror the adapters' `list_sessions`. See [read model](read-model.md).
 
 **Logical view.** On-demand projection of one opened session's selected branch/agent: events, parent cuts and native-scope evidence, built only when the session is opened and kept in a bounded LRU; the session list never builds views. See [read model](read-model.md).
 

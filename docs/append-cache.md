@@ -174,66 +174,8 @@ well-formed tree is decoded; if its weight exceeds the budget, it is simply
 not cached.
 
 The view LRU is a separate retention budget: serialized message bytes plus
-resident embedded-image bytes (`Parsed::encoded_bytes`). It is not a 16 MiB
-budget. The former fixed read rejections, including a 64 MiB record ceiling,
-are not applied. The 32 MiB decoded-image limit is still a media-item
+resident embedded-image bytes (`Parsed::encoded_bytes`). A valid history read is not rejected by these retention budgets.
+The 32 MiB decoded-image limit is a media-item
 rejection (HTTP 413 for that image). It is not this cache. The materialized
 image blob cache (128 MiB, 512 entries) only evicts; see
 [media.md](media.md#size-and-cache-behavior).
-
-### Historical measurement (2026-09-15)
-
-The numbers in this section are the saved run described below. They are not a
-current performance result, and the removed tools are not a current check.
-The 32 MiB cache named with the second binary is that binary's budget, not
-the 64 MiB default above.
-
-The former `tests/append_benchmark.py` (removed on 2026-10-06 with the
-non-browser scripts) created fresh synthetic Claude/Codex/Grok servers for
-1k/5k/10k records, measures first window/idle/single append/same-length rewrite,
-and verifies cursor behavior and reloaded text. Rewrites are beyond 4 KiB and
-preserve mtime. Timings include loopback HTTP and Python JSON decoding, exclude
-fixture generation and process startup, and are observations rather than test
-thresholds. A fresh process does not imply a cold operating-system file cache.
-Optional `--rss` reads Linux VmRSS/VmHWM for the exact spawned server PID outside
-the HTTP timing windows. These process figures include all server allocations,
-not only the record cache; they cannot prove a cross-platform or whole-workload
-memory bound. Further timing and memory observations are in [native input](native-input.md).
-
-It was run against saved pre-change and post-change release binaries:
-
-```sh
-python3 tests/append_benchmark.py --binary target/sessiondock-before13 --samples 3
-python3 tests/append_benchmark.py --binary target/release/sessiondock --samples 3
-```
-
-### Release comparison
-
-Adjacent serial runs, three samples per provider/size, passed all 27 cursor cases
-for both binaries. The 10k-record p50 observations in milliseconds were:
-
-| Provider | First window, old → new | Append, old → new | Rewrite, old → new |
-| --- | ---: | ---: | ---: |
-| Claude | 179.343 → 187.400 | 180.549 → 147.089 | 134.029 → 131.996 |
-| Codex | 107.021 → 110.588 | 100.380 → 78.936 | 69.234 → 70.295 |
-| Grok | 75.477 → 89.895 | 76.009 → 70.613 | 50.985 → 49.319 |
-
-Append improved by approximately 18.5%, 21.4% and 7.1%, respectively; first reads
-regressed by approximately 4.5%, 3.3% and 19.1%. Rewrite was within approximately
-3%. At 1k records Grok append was slightly slower (8.159 → 8.361 ms). Idle reads
-were approximately 0.7–1.5 ms. These small-sample smoke measurements do not establish
-statistical significance or an overall speedup. Establishing and weighting the
-cache has a cold-read cost; not every workload benefits.
-
-Measured binary SHA-256: baseline
-`49fd8b8b7ebbdb4cfb40f7edeafe672070dd8a5070c6a107518dea7e8cf1f522`,
-new `2eef6f836142e6b37e96f91b157db9eff6f29ca37d684271f13dcd27e7f74f48`.
-The latter is the 32 MiB cache implementation before the later over-budget
-weight-calculation short-circuit and media text-parity fixes. Those changes were
-validated separately; these numbers are not relabeled as final-binary measurements.
-
-Keep baseline executables local/ignored; do not publish them or run a benchmark
-against production directories. Decode/reuse counters that showed which records
-avoided deserialization lived in the unit tests removed on 2026-10-06 with the
-other non-browser tests. They are not a current check. Wall-clock timing alone
-cannot prove a cache hit.

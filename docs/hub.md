@@ -78,10 +78,6 @@ Hub 的 JSON 阻塞任务完成后复用节点的合并延迟 `malloc_trim(0)`�
 UI 快照和替换基线产生的空闲 heap 页；保留仍被引用的列表、离线缓存和传输语义。
 非 glibc 平台沿用该回收函数的空操作。`hub_scale_browser.py` 用 Chromium 重载大列表，
 检查预热后的 RSS 不随重复投影持续累积，并继续过滤、展开和打开远端子会话。
-BUG-20261014-124811-809df3：两次异常断联对应 Hub 在 12:40:50 / 12:47:44 UTC
-达到 2 GiB cgroup 上限后被 OOM killer 终止；节点 PTY 与原生会话继续运行。
-浏览器 WebSocket 1006、SSE 错误与 HTTP 502 同时出现，节点笼统的 1009 收帧错误
-是上游骤断后的记录，不能据此认定用户发送了超大输入。另一次 4001 是显式接管。
 `/api/sessions` 且 query 只含 `force`/`sig` 的完整答复统一存为 `(nid,"/api/sessions","")`，
 签名变化替换当前列表，不保留每个旧签名对应的完整列表，
 并按 `sig` 变化写 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，0600，`.tmp`+rename，
@@ -184,8 +180,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
 退化成只有 loopback 的服务；两个监听共用同一个关停信号。
 
 验证：`python3 tests/hub_browser.py` 与其它 Hub 浏览器套件经节点监听（`tests/node_auth_fixtures.py`
-提供带凭据的节点环境）打开真实页面；原先的 HTTP 套件 `node_auth_suite`、`check_config_suite`、
-`security_suite`、`meta_capabilities_suite` 已于 2026-10-06 随非浏览器测试删除。
+提供带凭据的节点环境）打开真实页面。
 
 ## 线上命名空间（`namespace.rs`）
 
@@ -214,9 +209,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `public_payload` 把这样的引用原样保留、其余照常改写；要让整个节点答复按
   `invalid_response` 失败，用 `try_public_payload`（返回 `Result`）。非字符串的终端名
   Rust 不动；真实节点只发字符串。
-- 奇偶校验（历史）：曾由 `hub_namespace_parity.py` 用 Python oracle 生成 51 例夹具、
-  再由 Rust 集成测试回放；二者及夹具已于 2026-10-06 删除。Hub 改写行为由
-  `hub_browser.py` 等 Hub 浏览器套件覆盖。
+- Hub 命名空间改写由 `hub_browser.py` 等 Hub 浏览器套件覆盖。
 
 ## 聚合（`aggregate.rs`）
 

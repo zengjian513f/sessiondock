@@ -139,12 +139,6 @@ satisfy this bidirectional check. Closing, replacing or backgrounding the view
 cancels its timer. Quiet CLIs stay connected; recovery never restarts the host
 or replays uncertain keystrokes.
 
-BUG-20260926-025909-1ee07a exposed the missing OPEN-socket liveness check:
-node output receipts continued while the browser had an approximately 14-second
-receive gap, and browser inputs later arrived at the node in a burst with
-negligible host-write latency. Other page traffic and native session work
-continued. The bundle places the stall in the terminal transport but does not
-identify which network/proxy hop caused it. The regression
 `tests/terminal_heartbeat_browser.py` blocks each WebSocket direction separately
 while leaving it OPEN, then types through the recovered grid console;
 it checks that delivered input is not duplicated and undelivered input is not
@@ -152,8 +146,7 @@ replayed.
 
 Control ownership HTTP requests time out after 20 seconds, including reading
 the response body. This covers the Hub's 5-second connect and 10-second upstream
-read waits plus browser/proxy transit; the former 5-second page deadline could
-cancel a request before the node received it. A timeout leaves ownership uncertain:
+read waits plus browser/proxy transit. A timeout leaves ownership uncertain:
 an explicit open closes the failed attempt without automatically retrying or forcing a takeover.
 An already-open console recovering from a transport interruption retries failed
 claims with backoff, including timeouts, using the same page and instance binding.
@@ -181,15 +174,6 @@ Concurrent bootstrap refreshes share this sequence. Unqueried machines' saved
 views are preserved until the full inventory answers; a partial response is not
 proof that their terminals disappeared. Instance checks, CHECK/SEND and explicit
 ownership claims keep their existing contracts.
-
-BUG-20261015-030106-0869b4: browser history finished rendering at 03:00:43.152,
-but the first input CHECK started at 03:00:45.791 and took only 160.6 ms.
-The Hub recorded 4012 ms for the initial `/api/term/list`. The running lifecycle
-record already had a confirmed native binding, and the captured terminal and
-native JSONL showed ongoing work. The first mismatch was making this one
-conversation wait for whole-fleet discovery. The available logs do not identify
-which upstream caused that particular aggregation delay. No delivery directory
-was present in that deployment; opening the conversation did not submit input.
 
 [hub_composer_startup_browser.py](../tests/hub_composer_startup_browser.py)
 opens a deep link through a real isolated Hub with a slow fake peer, types before

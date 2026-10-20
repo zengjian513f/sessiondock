@@ -329,15 +329,7 @@ nodes to the execution list or assign their devices to a guessed session. The
 sidebar, detail view and independent collector session summaries use the same
 rule. Confirmed device sets still deduplicate within each execution node.
 
-BUG-20261006-072955-02f968 exposed this distinction: native command results
-confirmed GPU workloads, while live collector samples contained their device
-UUIDs but no session bindings. The jobs used short SSH launches of detached
-workers; their launch clients had exited before diagnosis. Polling can miss
-that connection evidence, and historical prose cannot safely recreate it.
-This correction preserves the observed attribution gap in server aggregation;
-it does not retroactively restore missing launch links. The event-driven connection
-mechanism described below closes the short-client capture gap for new observed
-launches; it cannot recreate already-missing historical evidence. The browser regression
+The browser regression
 in `tests/resource_probe_browser.py` covers missing remote bindings, process
 incarnation mismatches, positive subtotals, verified recovery and genuine zero.
 
@@ -368,12 +360,6 @@ metric definitions, sampling cadence and partial coverage appear in Chinese tool
 verified process identities, never sidebar nesting or summed child totals.
 GPU UUIDs are deduplicated within each machine. The local agent also publishes
 `sessions` using the same direct aggregation for Node Status consumers.
-BUG-20261007-083559-acc010 exposed a local CLI spawner that was present in
-attribution but absent from `launch_chain`: child GPU samples existed, while
-the parent's inclusive view omitted them. The correction above fixes the
-causal chain, preserving the sidebar's direct ownership scope. The accompanying
-[historical launch audit](process-launch-audit.md) covers other program launches
-and resource-release boundaries.
 Lifecycle events preserve inherited attribution after a parent exits. The default
 collector rechecks retained fork edges against confirmed ancestor bindings when
 immediate fork-time inheritance was unavailable. Those edges are scoped to exact

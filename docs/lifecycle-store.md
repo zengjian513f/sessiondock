@@ -161,4 +161,4 @@ HTTP cancellation.
 ## Validation
 
 Default check is `python3 tests/lifecycle_browser.py`.
-The repository has no unit tests (removed on 2026-10-06).
+The repository has no unit tests.

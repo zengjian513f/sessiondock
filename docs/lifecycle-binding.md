@@ -150,4 +150,4 @@ when the host remains alive and the Web process restarts with an empty registry.
 ## Validation scope
 
 Default check is `python3 tests/lifecycle_browser.py` and
-`python3 tests/lifecycle_browser.py --native-binding`. The repository has no unit tests (removed on 2026-10-06). These suites do not start a model CLI or alter native history.
+`python3 tests/lifecycle_browser.py --native-binding`. The repository has no unit tests. These suites do not start a model CLI or alter native history.

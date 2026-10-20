@@ -7,7 +7,7 @@ the configured lifecycle ledger and CLI profiles. Native association may use an
 explicit operator assertion or the verified process evidence described in
 [lifecycle-http.md](lifecycle-http.md). CLI launch and platform behavior are
 specified in [lifecycle-launcher.md](lifecycle-launcher.md); conversation SEND is
-specified in [conversation.md](conversation.md), without the retired delivery queue.
+specified in [conversation.md](conversation.md).
 
 The implemented prerequisites are documented separately in
 [host launch identity](host-launch-identity.md) and

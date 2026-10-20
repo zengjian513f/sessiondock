@@ -1,6 +1,6 @@
 # Agy（Antigravity CLI）
 
-本页记录 Agy 的接入合同与证据边界，各功能的验证版本和日期见对应章节。
+本页记录 Agy 的接入合同、适用原生版本与验证边界。
 接入范围是 Rust 后端与 legacy 前端。
 
 官方接口依据：[会话管理](https://www.antigravity.google/docs/cli/conversations/)、
@@ -32,12 +32,12 @@
 ID 以强度级别结尾的条目（如 `gemini-3.8-flash-high`、`gemini-3.1-pro-low-thinking`）
 本身就是强度变体，原始目录行的 `efforts` 为空。网页将同一基础模型的强度变体
 合并成左侧一项，右侧 effort 只允许目录中存在的组合，缺失档位置灰禁用。
-提交时映射回对应的原生模型 ID，启动不再另带 `--effort`；原生基础模型行存在时
+选择强度变体时映射回对应原生模型 ID，启动不另带 `--effort`；原生基础模型行存在时
 也提供“CLI 默认”。旧的已保存变体 ID 自动恢复为基础模型及对应强度。
 目录按 profile 缓存在服务内存：CLI 探测（启动及每 5 分钟）在后台预热缺失或超过
 10 分钟的目录；首次请求复用正在预热的查询，过期目录照常返回并只触发一次后台刷新；
 空结果不覆盖已有目录，失败后的重试也遵守刷新间隔。
-选择模型用独立 argv `--model <id>`；可选强度用 `--effort <level>`，提供
+没有强度变体元数据的普通模型使用 `--model <id>`；可选强度用 `--effort <level>`，提供
 low、medium、high、xhigh、max，由 CLI 判断没有强度变体元数据的模型是否接受。
 这些普通模型的 Agy 选择器支持空值
 “CLI 默认”，省略 `--effort`；合成网关的自定义模型测试使用此空值。
@@ -78,8 +78,6 @@ DELTA（BUG-20261020-082043-e49ea2）：该名称写入私有摘要，供列表�
 缺失父会话、歧义及循环沿用已有原生子代理处理；不写 `nest_parent` 或原生文件。
 目录父关系变化和重启重新构图，不从同目录或 `self` 名称猜测父会话。
 
-DELTA（BUG-20261016-142441-359ba6）：此前 Agy 镜像已保存 parent，但摘要丢弃它，
-导致原生子会话错误显示为顶层；现接入现有原生子代理归属图。
 验证：[agy_nesting_browser.py](../tests/agy_nesting_browser.py)，包含无 user 记录的 `self`
 子会话、嵌套代理、父缺失、目录父关系变更、折叠/打开/刷新/增量/重启及宽窄明暗画面。
 
@@ -129,39 +127,33 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   纯文本和不完整包裹保留可见正文。
 - `PLANNER_RESPONSE`：`thinking` 单独投影；无 `tool_calls` 且 status 为 `DONE`
   时正文为 `phase: final`，其他情况为 `progress`。`ERROR_MESSAGE` 投影为可见错误消息。
-- `CHECKPOINT`：**DELTA（2026-10-16 全量遍扫）**，上下文压缩投影为既有的
+- `CHECKPOINT`：**DELTA**，上下文压缩投影为既有的
   “上下文 · 已压缩”事件，不计消息数、不进入工具组；完整摘要用“查看结果”展开并渲染 Markdown。
 - 所有投影消息携带 `native_type`。`GENERIC` 沿用独立工具结果；未知原生步骤仍
-  保留类型名称与原始内容，不猜工具配对或丢弃内容。上述识别覆盖本次报告会话实际
-  出现的记录与包裹，不宣称识别尚未见到的任意 tag。
+  保留类型名称与原始内容，不猜工具配对或丢弃内容。未知 tag 保留原文，不按未验证的结构剥离内容。
 - `tool_calls` 和 `media` 已取得真实 CLI 样本：`view_file` 调用包含 `name` 与 `args`，
   后续 GENERIC 步骤提供文本或图片结果。调用保留 native JSON，结果独立显示；
-  **DELTA（BUG-20261016-084905-94b5af）**：按报告中实际出现的 `args` 字段生成
+  **DELTA（BUG-20261016-084905-94b5af）**：按原生 `args` 字段生成
   `run_command`、`view_file`、`search_web`、`read_url_content` 摘要，其他调用优先使用
   原生 `toolSummary`，复用现有参数展开控件。读取摘要保留 `StartLine` 及
   `EndLine` 对应的行数。`replace_file_content` 仅在
   `TargetFile`、`TargetContent`、`ReplacementContent` 均为字符串时生成既有的片段 diff；
   `write_to_file` 的 `TargetFile`、`CodeContent` 为字符串时显示完整写入内容，原内容
-  标记不可用，不按 `Overwrite` 猜测修改前的文件。上述读取范围与写入呈现为本次遍扫的 DELTA。
+  标记不可用，不按 `Overwrite` 猜测修改前的文件。
   原始调用可在同一卡片展开，缺失字段和未知结构保留普通工具展示。GENERIC 的显示名为
   “工具结果”，不把原生类型名当作正文；`native_type` 仍为 `GENERIC`。错误正文为空时
   回退到原生 `error` 字符串，避免丢失失败记录。全文、分页、增量和搜索使用同一投影。
-  **DELTA（2026-10-16 全量遍扫）**：GENERIC 只有在原生 `Created At`、`Completed At`
+  **DELTA**：GENERIC 只有在原生 `Created At`、`Completed At`
   时间头及紧随其后的 `The command exited with code N.` 结构成立时投影 `exit_code`，
   非零码标记失败；输出正文内的同名句子保留普通文本，不反推工具配对。
   已识别的命令和文件结果头默认收进“原始记录”，首屏保留退出状态或读取行范围及
   有效输出预览；原始记录可展开，不删除字段或时间。正文输出不重复铺原生行号说明。
-  完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
-  已验证其他工具、并行工具或可靠的调用/结果配对。
+  缺少跨步骤 call ID 的记录不按位置猜测调用/结果配对。
 - 图片按 `media[].mime_type` 和 `uri` 接入既有媒体授权/文件校验，其他媒体类型显示
-  跳过提示。真实 CLI 读取临时 PNG 后写出的绝对路径 `media.uri`，已通过 Chromium
-  实际打开会话、展开工具结果并加载图片；不只依赖合成 schema 夹具。
+  跳过提示。浏览器套件实际打开会话、展开工具结果并加载图片。
 
-工具验收仍使用本机合成网关，不使用账号或付费模型。未知自定义模型名的原有实验
-没有导出工具；本次用 CLI 已知的 `gemini-3.1-pro-low-thinking` 元数据，显式启动
-该模型并核对请求中的映射名 `gemini-3.1-pro-preview`，网关只返回两次读取临时文件
-的 `view_file`。模型名用于选取 CLI 能力元数据，所有请求仍由 loopback 网关响应。
-测试设置仅写临时 HOME，不改变日常模型或网关配置。
+工具验收使用本机合成网关，私有 HOME 与临时文件，不改变日常模型或网关配置。
+用 CLI 已知模型元数据选择工具能力，核对映射后的请求模型；所有模型请求由 loopback 网关响应。
 
 `instance.busy` 从已识别编辑区下方的原生状态判断：running 后台任务栏或左侧
 `esc to cancel` 为忙碌；没有任务栏时，`? for shortcuts` 为闲置，非空草稿下只剩
@@ -178,17 +170,10 @@ PLANNER_RESPONSE 仍为 DONE，与正常完成无法仅凭这些字段区分；�
 缩进及区内光标，底部为单行页脚，或 1.2.17 的后台任务栏（带时间的 `●` running 行、
 同宽分隔线与 `/tasks` 页脚）。默认页脚下可叠加任意正文的自定义 statusline，
 包括多行及折行；后台任务栏与 statusline 可同时存在，不按模型名子串授权发送。
-BUG-20261005-150140-776952：后台命令已在原生记录中进入 RUNNING，终端仍有空编辑区，
-旧识别器因下方超过一行而使 CHECK 返回 409。任务栏现参与同一 CHECK/SEND 识别，
-并令 `instance.busy` 为 true；任意正文、缺失分隔线及框外光标仍不恢复编辑区。
-[菜单浏览器套件](../tests/cli_menus_browser.py) 用私有假 CLI 重放该布局，覆盖网页发送、
-终端已有草稿、任务结束及菜单拒发。
-BUG-20261006-041817-f7cf23：原生最后一条回复已 DONE、宿主仍 running，报告终端保留
-完整空编辑框及默认页脚，其下多出自定义额度栏。浏览器恢复会话后的首个 CHECK
-（2026-10-06 04:07:37 UTC）返回 409；旧识别器把所有多行页脚当作后台任务面板，
-导致编辑区变成 unknown。现在从任务行结构识别面板，再独立定位默认页脚；其后的
-自定义文本不参与输入正文或 busy 判断。同一浏览器套件覆盖叠加状态栏的 CHECK、
-实际点击 SEND、忙碌/后台任务、原生草稿和框外光标；不修改原生会话或状态栏脚本。
+任务栏参与同一 CHECK/SEND 识别，并令 `instance.busy` 为 true。任务面板按任务行结构
+识别，默认页脚独立定位，其后的自定义文本不参与输入正文或 busy 判断。
+[菜单浏览器套件](../tests/cli_menus_browser.py) 用私有假 CLI 重放布局，覆盖 CHECK、
+实际 SEND、后台任务、原生草稿及框外光标。
 空编辑区可进入普通 CHECK/SEND，非空编辑区返回 `cli_input_pending` 保留输入。
 可见正文写入 `cli.editor.text`；原生 user 镜像用于 SEND 回显确认，多行发送复用
 粘贴后画面再检。真实 CLI 浏览器覆盖普通正文、多行正文以及完整问题报告正文。
@@ -212,10 +197,8 @@ Escape 中断。文件创建审批保留路径、可见 diff 与允许/拒绝选
 help、resume 的复杂列表操作）、Amend 文本与完整 diff 视图保留原生终端路径。
 编辑区未识别时拒发并保留网页草稿，不把未知画面当普通输入框。
 
-BUG-20261005-092243-45bf46：原生 `run_command` 已进入 Command 审批，绑定正常，
-浏览器 CHECK 随后返回 409；旧解析器只接受 Keyboard/model、trust、scope 的页脚，
-没有识别 `↑/↓ Navigate · tab Amend · ctrl+g edit/expand command`，因此未提供题卡。
-修复位于服务端画面投影，同一结果用于 CHECK、题卡与 SEND 门控，不修改原生记录。
+Command 审批识别 `↑/↓ Navigate · tab Amend · ctrl+g edit/expand command` 页脚。
+服务端画面投影同时供 CHECK、题卡与 SEND 门控使用，不修改原生记录。
 
 ## 操作、更新与问题报告
 
@@ -236,15 +219,9 @@ SQLite、删除镜像冒充删除，或按标题/列表位置猜目标。
 brain 目录均已不存在的残留时，只登记删除回执；不启动 CLI 恢复空壳，不改写原生索引。
 HTTP 断开不取消已经开始的原生操作；正常结束或失败均停止该次私有工作进程。服务日志记录 `agy.delete_started/completed/failed`。
 
-本次现场在原生删除成功后约 56 秒重新出现旧索引行，但数据库与正文仍不存在。
-已确认异常从原生索引重新出现开始；未确定具体哪个 Agy 进程回写。
-真实隔离双 CLI 保持另一会话运行并继续发送，观察 70 秒未重现该回写；常规浏览器
-测试显式重放旧索引重新出现，验证刷新、服务重启、空壳删除与实际原生载体恢复。
-
-真实 Agy 1.4.0、1.4.2 在私有 HOME、合成 loopback 模型网关中验证上述路径；常规浏览器测试
-使用假 CLI，覆盖节点、Hub、批量、取消、身份不符与原生失败。更早版本、修改过的
-快捷键和未知菜单尚未获得本次实机验收，不绕过原生确认。移动、克隆及整树删除仍不
-支持，整组操作保留阻碍项，不能忽略 Agy 成员或仅迁移文本镜像。
+删除验证使用私有 HOME、合成 loopback 网关和假 CLI，覆盖节点、Hub、批量、取消、
+身份不符与原生失败。未知快捷键或菜单保留失败，不绕过原生确认。移动、克隆及整树删除
+不支持；整组操作保留 Agy 阻碍项，不能仅迁移文本镜像。
 
 `--version` 输出纯版本号。客户端 latest 已实现读取官方 updater 的平台 manifest
 `version`（OS/arch，Linux musl 使用对应后缀），沿用后台缓存；手动更新执行

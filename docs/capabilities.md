@@ -15,7 +15,7 @@ storage namespace. A present tag must
 files:false, configuration_error:true}` so the page does not start unsupported
 background work. Only then does `#backend-notice` appear, saying
 “能力配置无效，请检查服务配置。” — a healthy SessionDock page has no
-standing banner (it is the replacement, not a development build).
+standing banner.
 
 `storage_namespace` is `"sessiondock."` on a node and `"sessiondock.hub."` on
 the Hub, independent of its proxy mount path. The parser uses a configured

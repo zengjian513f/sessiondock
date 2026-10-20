@@ -43,7 +43,7 @@ some diagnostic detail for predictable redaction.
 
 `probe(name)` adds a read-only `HostObservation`: safe summary, `exited`, optional
 launcher `instance_id`, and `AssociationState::{Missing,Invalid,Declared}`. The
-declared association accepts only exact source (`claude`/`codex`/`grok`/`opencode`) and full
+declared association accepts only exact source (`claude`/`codex`/`grok`/`opencode`/`agy`) and full
 SID and/or source-prefixed UID. IDs are bounded ASCII identifiers; instance nonces
 are 16–128 characters. It verifies the private identity tuple before the Info
 request, in the reply, and after a record reread. Changes to identity, endpoint,
@@ -180,13 +180,11 @@ frame may already have reached the host. Drop both halves and reconnect if neede
 **Never blindly retry input after an error.** Even control timeout/EOF can happen
 after the PTY accepted the write. Current SEND uses the application's conversation
 draft/submission service and CLI echo tracking; see [conversation.md](../../docs/conversation.md).
-The old delivery dispatcher is retired. Dropping an
-attach connection is separate from terminating its host/CLI process.
+Dropping an attach connection is separate from terminating its host/CLI process.
 
 ## Validation and remaining work
 
-The crate has no unit tests (all repository unit tests were removed on
-2026-10-06). Its protocol is exercised end to end by SessionDock's lifecycle and
+The crate’s protocol is exercised end to end by SessionDock's lifecycle and
 terminal browser suites against private ptyhost directories.
 
 Application-owned concerns remain process startup/platform lifetimes, leases,

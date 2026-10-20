@@ -1,11 +1,8 @@
 # 现有前端用户可见功能清单
 
-`web/`（`/sessiondock/`）是唯一的前端。2026-10-05 起它不再包含 Vue 代码，也不依赖
-任何构建；曾经的独立 Vue 前端已从仓库移除。
+`web/`（`/sessiondock/`）是唯一的前端，使用原生 JavaScript 静态资源，无构建步骤。
 
-`grok-4.7 high headless 产出，人工审阅`
-
-这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为，当时已发布提交为 `2552436`；之后已接受的 legacy 修复按各节补充。
+本清单描述当前用户可见行为、入口与对应浏览器路径。
 
 设置对话框各页由 `app.js` 直接驱动现有 DOM。`tests/frontend_framework_browser.py` 通过用户操作覆盖这些设置。
 
@@ -151,7 +148,7 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 - 新上屏的目录先取首选色（存储的 `timelineDirectoryColors`）；首选色已被同屏目录占用时，取最久没上屏的空闲色，作为临时色，不覆盖首选色。首次上色的颜色即首选色，刷新页面后沿用。
 - [`tests/sidebar_directory_colors_browser.py`](../tests/sidebar_directory_colors_browser.py) 覆盖同屏不重复、同名目录多染一级、滚动保色、回到顶部和刷新恢复、设置中切换路径显示及其持久化、单击目录不改变显示方式、标题栏目录与左栏同色且显示完整路径、明暗主题与后 16 色启用条件。
 
-逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染，行为与以前相同。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
+逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
 
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
 
@@ -252,8 +249,6 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 已确认原生绑定的启动记录不再显示「新建会话 / 等待首条消息」。按需目录没加载所属分支，
 不代表原生记录尚未生成；关闭分支或宿主退出也不撤销已确认的关联。原生会话遵守正常的
 子会话折叠规则，展开所属分支后显示它的真实标题；尚未确认的启动仍保留等待行。
-BUG-20261008-120649-69fc59 的终端、原生历史和账本绑定一致，首个偏差是紧凑目录缺少
-子会话时，浏览器把已绑定的启动重新投影成等待行，点击后却打开原生历史。
 [`tests/child_modes_browser.py`](../tests/child_modes_browser.py) 覆盖桌面和手机的模式切换、
 真实历史打开、折叠、已退出绑定及未确认绑定。
 
@@ -375,7 +370,7 @@ DELTA（BUG-20261012-054602-f0bb43）：Markdown 同类列表条目之间的空�
 
 ### Claude 时间线固定
 
-Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题下通知「已同步终端里的回滚，显示到回滚点为止」，没有取消按钮；下一条原生输入后通知消失。页面上没有发起回滚或固定显示的入口（原「回到此处」已于 2026-10-07 删除）。
+Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题下通知「已同步终端里的回滚，显示到回滚点为止」，没有取消按钮；下一条原生输入后通知消失。页面上没有发起回滚或固定显示的入口。
 
 [`tests/rewind_cli_browser.py`](../tests/rewind_cli_browser.py) 覆盖 CLI 自己回滚后对话跟着变。
 
@@ -432,7 +427,7 @@ DELTA：四联视图之后按星标／过程折叠／搜索、运行控制（启
 - 手机返回列表。
 - 有子代理时，标题是下拉，切换主会话/子代理。
 - 父会话链或子会话菜单。
-- 四联视图入口按「对话、终端、信息、资源」排列，复用顶栏分段按钮。对话与终端是明确选择，重复点击终端不会切回对话；信息与资源统一占满会话标题栏下方的内容区，保留侧栏和四联切换入口；切回对话或终端不丢弃会话状态。信息复用既有信息页的嵌入模式，资源复用统计视图并在离开时释放探测租约。DELTA（2026-10-15）：四联入口不再跳转整页或弹出模态框；侧栏资源格只显示摘要，不启动探测。待落盘或能力未开放时保留信息入口并解释不可用原因。DELTA（BUG-20261015-122122-e6a37e）：替代原单一控制台切换按钮及资源右侧抽屉。控制台连接（`bindConsoleButton`）不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
+- 四联视图入口按「对话、终端、信息、资源」排列，复用顶栏分段按钮。对话与终端是明确选择，重复点击终端不会切回对话；信息与资源统一占满会话标题栏下方的内容区，保留侧栏和四联切换入口；切回对话或终端不丢弃会话状态。信息复用既有信息页的嵌入模式，资源复用统计视图并在离开时释放探测租约。DELTA（2026-10-15）：四联入口不再跳转整页或弹出模态框；侧栏资源格只显示摘要，不启动探测。待落盘或能力未开放时保留信息入口并解释不可用原因。DELTA（BUG-20261015-122122-e6a37e）：替代原单一控制台切换按钮及资源右侧抽屉。控制台连接（`bindConsoleButton`）不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉。
 - 星标、展开/折叠过程、搜索导航。
 - 冻结现场 / 恢复运行（`renderSessionFreeze`）。需要 `session_freeze`、已加载的终端列表、以及可验证的 `instance_id`。否则按钮在，但是不可用，原因分别是：正在读取、当前节点不支持、状态已失效、没有可验证实例。成功后会话区覆盖「会话已暂停」和恢复按钮，不放进全局浮层。`POST api/session/freeze`。[`tests/session_freeze_browser.py`](../tests/session_freeze_browser.py)。
 - 报告当前会话问题。
@@ -466,7 +461,7 @@ Codex 主会话默认打开 SDK，旧对话和终端视图保留为退役过渡�
 
 `#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
 
-DELTA（BUG-20261012-075426-889b9d，替代 BUG-20261008-123158-ee0ab5 的旧目录默认与置顶规则）：每次打开新建弹窗，默认使用当前会话所在机器和工作目录（包括尚未落盘的启动会话），当前会话机器优先于列表机器筛选及上次新建机器；没有当前会话时，沿用机器选择回退规则，目录留空。打开及切换机器共用目录存在性检查：目录在所选机器仍存在就原样保留，否则（包括空值及无法确认存在）清空，不填入该机器的默认目录或近期目录。检查使用去除首尾空白后的路径，保留时不改写原输入。当前会话目录不再单独置顶或补入推荐列表，沿用普通最近使用与常用排序、路径去重及存在性检查。检查期间的新输入、再次切换机器或重新打开弹窗使旧结果失效；候选列表更新不改写输入。输入框右侧「×」清空目录并将焦点留在输入框，重新显示最近目录；空目录直接提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
+DELTA（新建默认目录）：每次打开新建弹窗，默认使用当前会话所在机器和工作目录（包括尚未落盘的启动会话），当前会话机器优先于列表机器筛选及上次新建机器；没有当前会话时，沿用机器选择回退规则，目录留空。打开及切换机器共用目录存在性检查：目录在所选机器仍存在就原样保留，否则（包括空值及无法确认存在）清空，不填入该机器的默认目录或近期目录。检查使用去除首尾空白后的路径，保留时不改写原输入。当前会话目录不再单独置顶或补入推荐列表，沿用普通最近使用与常用排序、路径去重及存在性检查。检查期间的新输入、再次切换机器或重新打开弹窗使旧结果失效；候选列表更新不改写输入。输入框右侧「×」清空目录并将焦点留在输入框，重新显示最近目录；空目录直接提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
 
 DELTA（BUG-20261014-151919-677616）：启动目录为空时仅显示「输入或选择目录」操作提示，不显示看似已填入的示例路径；占位文字不是目录值，空值提交仍提示选择目录。清空、切换机器及当前会话目录继承规则不变。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
 
@@ -538,7 +533,7 @@ DELTA（BUG-20261015-153714-49d7c5）：最近目录的会话来源排除附属�
 
 连接时的快照只带最近 2000 行历史，宿主最多留 10_000 行。滚轮、拖动滚动条或滚动条按键把视口滚到离本地最旧一行 40 行以内时，`loadOlderTermHistory` 用本页租约 `GET api/term/grid/history` 往前取 500 行，插到最前面，画面不跳；接缝按重叠行比对，对不上就停止分页而不插错行。浏览器回滚上限 100_000 行。只在活的连接上取：录制回放、已结束、被接管时不发请求；令牌过期（409）或其它失败时本次连接安静地停止分页，重连后重新开始。空闲时不发请求。[`tests/terminal_history_paging_browser.py`](../tests/terminal_history_paging_browser.py)。
 
-原先未链接的独立 `grid.html` 已删除，网格只在主控制台里使用。[`tests/terminal_grid_browser.py`](../tests/terminal_grid_browser.py) 在主控制台里点控制台按钮连接网格，覆盖输入、PTY 尺寸与视口缩放跟随、剪贴板粘贴和第二个页面确认后接管。
+网格只在主控制台里使用。[`tests/terminal_grid_browser.py`](../tests/terminal_grid_browser.py) 在主控制台里点控制台按钮连接网格，覆盖输入、PTY 尺寸与视口缩放跟随、剪贴板粘贴和第二个页面确认后接管。
 
 ### 归属与连接
 
@@ -570,7 +565,7 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 ### 最终画面
 
-SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最终画面（`startShellFinalScreen` / `showFinalScreen`，`GET api/term/final`），含回滚历史；终端下方一行状态写明退出码。不 claim、不发输入、不建 WebSocket。刷新或从别处打开已结束的行也显示它，直到删除。原先的录像回放和时间轴已于 2026-10-06 删除（[terminal-final-screen.md](terminal-final-screen.md)）。
+SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最终画面（`startShellFinalScreen` / `showFinalScreen`，`GET api/term/final`），含回滚历史；终端下方一行状态写明退出码。不 claim、不发输入、不建 WebSocket。刷新或从别处打开已结束的行也显示它，直到删除。具体合同见 [terminal-final-screen.md](terminal-final-screen.md)。
 
 [`tests/terminal_final_screen_browser.py`](../tests/terminal_final_screen_browser.py) 覆盖：退出后原地切换、新页面经节点和 Hub 打开、只读、窄窗口适配。
 
@@ -578,7 +573,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ## 7. 辅助页：文件
 
-这些页和主站共用主题前缀与字体，采用独立 HTML。迁移时它们仍是用户能打开的入口，不是内部调试页。原先未链接的网格终端 `grid.html` 和录制页 `records.html` 已删除；网格和录制回放只在主控制台里使用（第 6 节）。
+文件入口和主站共用主题前缀与字体，采用独立 HTML。终端网格与只读最终画面位于主控制台（第 6 节）。
 
 ### 文件入口 `file.html` 与 `files.html`
 
@@ -602,7 +597,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 [`web/pwa-install.js`](../web/pwa-install.js) 接 `beforeinstallprompt`。按钮文案：「安装到桌面」；已是独立窗口或已安装时「已安装」并禁用；浏览器还没给安装事件时禁用，标题「浏览器尚未提供安装能力」。脚本标签上有 `data-storage-key="sessiondock.pwa-install-dismissed"`，当前这个脚本不读、不写该键。没有单独的「以后再说」存储。
 
-页面不再注册 Service Worker。`index.html` 末尾会注销已有 registration，并删掉名前缀 `sessiondock-shell-` 的 Cache Storage。原因写在页面注释里：避免旧页面卡死时新标签也被 Service Worker 拖住。离线壳不是当前行为。
+页面不注册 Service Worker。`index.html` 末尾会注销已有 registration，并删掉名前缀 `sessiondock-shell-` 的 Cache Storage。页面不提供离线壳。
 
 版本：每 30 秒 `GET api/meta`。`build` 与页面 `sessiondock-build` 不一致时 `markStaleBuild`：暂停自动同步，浮动卡「SessionDock 已更新」，「仍可编辑并自动保存草稿；发送前请重新加载。」「重新加载」直接 `location.reload()`；未保存输入或未上传 File 由浏览器离页确认提供留下/继续选择，不再由页面取消刷新，见[版本刷新 DELTA](conversation.md)。「稍后」只藏起卡片，发送和添加附件保持禁用，回到前台再显示。
 
@@ -622,7 +617,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ### 其它现有浏览器锚点
 
-不重复归类、但迁移时仍会碰到的脚本：
+其他共用脚本：
 
 - [`tests/legacy_browser.py`](../tests/legacy_browser.py)：现有页面垂直切片。
 - [`tests/hub_browser.py`](../tests/hub_browser.py)：Hub 与多节点。
@@ -677,7 +672,6 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 | `bugReportNode` / `bugReportDraftNode` | `''` | 报告节点 |
 | `reportDraftId.<node>` | 新 UUID | 报告提交身份 |
 | 模型与 effort | 按 CLI 键 | 新建和报告的选择器 |
-| `records-fit` | 关（裸字符串 `'true'`） | 仅录制页 |
 
 一次性导入后删除：`queuedMessages`、`composerDraft.<uid>`、`composerDraftUids`，以及 IndexedDB `<prefix>composer-drafts`。当前草稿在服务端。
 
@@ -699,36 +693,18 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 机器与其它：`api/nodes`、`api/nodes/order`、`api/clients`、`api/clients/update`、`api/shell-env`、`api/shell-env/restart`、`api/resources/summary`、`api/session/resources`、`api/session/resources/probe`、`api/audit/browser`、`api/bug-report`。
 
-文件跳转目标固定为同源 `/files/?node&path`，没有换源配置。
-
-## 基线盘点时的浏览器覆盖核对项
-
-以下记录迁移开始时仅凭套件名称或文件头无法判断覆盖的用户路径，属于基线盘点；当前实现和验收边界见文末。这里不宣称既有套件缺少全部覆盖。
-
-- 双指界面缩放的完整手势（滑块本身在设置套件里）。
-- 机器调色板、保存失败回退；改名、排序和启用操作已有 Hub 浏览器覆盖。
-- 登录环境变化表的分支覆盖；重启和忽略已有专门浏览器套件。
-- 单机多选拖选、资源六格的数字格式。
-- 搜索的 AND/OR、大小写、全词在会话正文高亮上的逐项操作。
-- KaTeX 公式、输入历史 ↑ 面板、512 MiB 与离页提醒文案；Codex 侧线程提示已有垂直切片覆盖。
-- 回收站的恢复、彻底删除、清空。
-- 报告对话框里的模型、推理强度和描述键入（上传补救已有套件）。
-- 控制台「粘贴文件」打开后的粘贴。
-- 主控制台录制条的倍速和拖动进度。
-- PWA 安装提示；版本卡片已有 popup/draft 浏览器覆盖。
-
-`tests/terminal_grid_render_browser.py` 含像素断言。迁移验收沿用会点击、输入、提交的现有套件，不把截图像素当成新标准。
+文件跳转目标来自 `SESSIONDOCK_FILEDOCK_URL`，未配置时使用单文件预览或目录未配置提示，见[文件合同](files.md)。
 
 ## 入口与验收边界
 
-前端只有 `web/`，按提交原样发布。`2552436` 记录迁移开始时的行为基线。
+前端只有 `web/`，按提交原样发布。
 
 视觉复用现有 `style.css`、`typography.css`、
 `session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，
 不增加单元测试或产品检查。FileDock、ptyhost 线协议及克隆/移动的字节身份改写
-继续按各自合同执行；已注销的 Service Worker 离线壳不会因重构恢复。
+继续按各自合同执行。
 
-### DELTA：纯文字反馈不再悬浮（2026-10-07）
+### DELTA：纯文字反馈呈现
 
 按用户要求，正常 CLI 退出（含 Ctrl+D）、停止成功、此前已退出、整组复制／移动完成只更新原界面。停止／冻结／恢复／启动失败、单次停止结果不确定、主动打开／接管终端失败用现有 `appAlert` 确认框；后台自动重连不弹框。批量停止继续用按钮旁的进度和展开错误详情。
 

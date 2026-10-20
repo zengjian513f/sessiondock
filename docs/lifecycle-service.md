@@ -4,8 +4,7 @@
 store, explicit [launcher](lifecycle-launcher.md), guarded ptyhost client and the
 application's shared `Arc<TerminalService>`. It does not infer native SID/UID,
 authorize a model CLI by source name, or establish reliable-send acknowledgement.
-This is a local, explicitly configured create/status/cancel chain, not completion
-of the lifecycle migration.
+This is a local, explicitly configured create/status/cancel chain.
 
 ## Public library contract
 
@@ -162,4 +161,4 @@ claims exactly-once external execution or support for arbitrary filesystems.
 ## Validation
 
 Default check is `python3 tests/lifecycle_browser.py`. The repository
-has no unit tests (removed on 2026-10-06).
+has no unit tests.

@@ -67,10 +67,8 @@ so inherited titles do not make distinct generations look like duplicate rows.
 The fork-chain menu still opens, shows and hides each ancestor independently;
 labels never change saved visibility or native transcripts.
 
-DELTA: the Python baseline stored activity stops (`网页发送 Escape`, inferred
-terminal-exit or idle stops) and pending rewinds per session. SessionDock never
-applied them; their structures were removed on 2026-10-07 and such fields in an
-existing metadata file are ignored and dropped by the next metadata write.
+DELTA: activity-stop and pending-rewind fields in existing metadata are ignored
+and dropped by the next metadata write.
 
 ## Timeline pins
 
@@ -81,9 +79,8 @@ is shown; the pin's `tip` is its parent, matching Claude's own "resume before
 this input" selector) and stores it with `cli: true` through
 `with_timeline_pin` (a repeated identical pin is a no-op that keeps
 `pinned_at` and revision). There is no HTTP route that sets or clears a pin.
-DELTA: the operator's display-only "回到此处" pin and `POST
-/api/session/rewind` were removed on 2026-10-07; pins stored without `cli`
-by that action stay in the metadata file but are no longer applied.
+DELTA: only pins with `cli: true` affect the read model; other stored pins remain
+in the metadata file without changing the displayed history.
 
 The read model applies a pin purely as parser options — `declared_tip = tip`,
 `abandoned_after = stale_end` (the committed byte length frozen at pin time) —
@@ -141,8 +138,7 @@ Verified SSH initiators also initialize the same parent, with the remote node ID
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second
 relationship or a public row field. Existing manual parents always win. Legacy
-`nest_independent: true` migrates to a decided empty parent. Older versions that
-erased a cleared row left no durable detach decision to recover.
+`nest_independent: true` migrates to a decided empty parent. Absent decision markers do not establish a prior user attach/detach choice.
 
 ### `spawned_by`
 
@@ -262,11 +258,11 @@ markers persist even when all groups are deleted. Simultaneous independent
 operations converge by stamp; they do not establish a global causal order until
 nodes communicate.
 
-Session tags have been removed from the UI, API and metadata model. Old
+Session tags are not exposed in the UI, API or metadata model. Legacy
 `label_catalog` documents are read only to preserve their groups; obsolete tag
 fields are ignored and disappear on the next metadata write. The Hub likewise
 reads the groups from its previous `labels.json` cache if the new cache is absent.
-Tags are never converted into groups. Old tag API routes are no longer served.
+Tags are never converted into groups. Tag API routes are not served.
 
 Validation: `python3 tests/groups_browser.py --binary target/release/sessiondock` exercises two independent nodes
 and a real Hub, sidebar and menu inline creation/cancellation, Enter creation and

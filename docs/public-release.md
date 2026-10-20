@@ -25,6 +25,10 @@ Without a root `LICENSE`, `LICENSE.md` or `LICENSE.txt`, only `--draft` is allow
 Draft snapshots carry `PUBLICATION-DRAFT.txt`. Once licensing is settled, export
 again without `--draft`; do not merely delete that marker from an unreviewed tree.
 
+Require every workspace member and shared source dependency to be present in the
+exported tree; check Cargo metadata before building. Outstanding distribution work
+is tracked in [TODO](../TODO.md#public-distribution).
+
 Validate the exported tree independently using its README build command and
 browser suites. For a first public repository, `--init-git` optionally initializes
 an empty Git repository on `main`; it creates no commit or remote and copies no

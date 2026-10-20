@@ -17,11 +17,11 @@
 | [deploy-macos.md](deploy-macos.md) | macOS 节点原生构建与 launchd 部署 |
 | [deploy-windows.md](deploy-windows.md) | Windows 节点原生构建与滚动部署 |
 | [deployment.md](deployment.md) | 舰队部署工具 `deploy/deploy.py` |
-| [network-topology.md](network-topology.md) | 运维：两套 WireGuard 不得混用身份 |
+| [network-topology.md](network-topology.md) | 运维：节点身份与网络边界 |
 | [onboarding.md](onboarding.md) | SessionDock onboarding |
 | [public-release.md](public-release.md) | Public source snapshots |
 | [release.md](release.md) | Release package and CI |
-| [replacement-checklist.md](replacement-checklist.md) | 替换完成后的运行与回退清单 |
+| [replacement-checklist.md](replacement-checklist.md) | 运行与回退清单 |
 | [runbook-dev.md](runbook-dev.md) | Local developer runbook |
 | [validation.md](validation.md) | Validation suites |
 
@@ -94,7 +94,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [architecture.md](architecture.md) | 架构边界 |
-| [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) |
+| [bug-report.md](bug-report.md) | Bug reports and their workers (M7) |
 | [capabilities.md](capabilities.md) | Capability flags |
 | [diagnostics.md](diagnostics.md) | Browser diagnostics |
 | [environment.md](environment.md) | Environment variables |
@@ -108,6 +108,7 @@
 | [processes.md](processes.md) | Controlled process observations |
 | [resource-agent.md](resource-agent.md) | Optional Linux resource collector |
 | [route-ledger.md](route-ledger.md) | HTTP route ledger |
+| [sdkhost.md](sdkhost.md) | 独立 SDK 进程宿主 |
 | [security-model.md](security-model.md) | SessionDock trust boundaries |
 | [session-transfer-tool.md](session-transfer-tool.md) | 整组操作：离线计划与暂存工具 |
 | [session-transport.md](session-transport.md) | 会话迁移传输层 |
@@ -117,6 +118,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [history-incidents.md](history-incidents.md) | 历史事故与验收记录 |
 | [perf-methodology.md](perf-methodology.md) | Performance measurement methodology |
-| [performance.md](performance.md) | 读模型性能：真实读根与合成规模 |
+| [performance.md](performance.md) | 历史性能记录：真实读根与合成规模 |
 | [process-launch-audit.md](process-launch-audit.md) | 外部程序启动与资源释放审计（2026-10-07） |

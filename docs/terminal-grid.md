@@ -7,8 +7,7 @@ An exited SSH session's [final screen](terminal-final-screen.md) is saved as
 one snapshot of this protocol.
 
 The client is the main console (`term.js` through `web/grid/facade.js`,
-see [Main console](#main-console)); the former standalone `grid.html` page was
-removed. It uses the same claim and attach lease as the byte console
+see [Main console](#main-console)). It uses the same claim and attach lease as the byte console
 ([terminal ownership](terminal-ownership.md),
 [raw terminal input](terminal-input.md)). On a hub page, calls for a node's
 session are prefixed with `/api/nodes/{nid}/api/` ([hub](hub.md)).

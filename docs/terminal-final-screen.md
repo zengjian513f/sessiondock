@@ -12,12 +12,9 @@ transcript, so the launcher starts every non-shell host with `--no-record`
 (`Launcher::command`, [lifecycle launcher](lifecycle-launcher.md)) and its
 exited console says 实例已退出.
 
-History: until 2026-10-06 hosts recorded every SSH session as segmented
-output logs under `records/`, replayed with a timeline. That was removed as
-unused. The service deletes such recordings once their host is gone
-(`final_screen::remove_legacy_recordings` at startup) and 删除 removes them
-with the session; a host that started before the change keeps recording until
-it exits and leaves no final screen.
+For hosts that produce legacy recordings under `records/`, the service removes
+those recordings only after their host is gone (`final_screen::remove_legacy_recordings`
+at startup), or when the session is deleted. Such hosts may leave no final screen.
 
 ## On-disk layout
 
@@ -54,9 +51,8 @@ default) and `history_total` equal to its length. `meta.json`:
 ptyhost [--dir DIR] run --name N […] [--no-record] -- CMD...
 ```
 
-The host keeps a final screen by default; `--no-record` turns it off (the name
-predates final screens; the launcher probes whether a configured host binary
-accepts it and omits it for one that does not). At exit the host first drains
+The host keeps a final screen by default; `--no-record` turns it off. The launcher probes whether a configured host binary
+accepts it and omits it for one that does not. At exit the host first drains
 the model of every published byte, then writes the final screen, then sends
 the exit frame to attached clients, so a page that observes the exit can read
 it at once. A failed write prints one `ptyhost: 最终画面保存失败` line and does

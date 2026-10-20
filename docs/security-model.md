@@ -39,13 +39,13 @@ out of public errors. See [hub.md](hub.md).
 
 ## Explicit configuration
 
-Native Claude, Codex, Grok and OpenCode inputs and the ptyhost directory remain explicit;
+Native Claude, Codex, Grok, OpenCode and Agy inputs and the ptyhost directory remain explicit;
 there is no CLI-home discovery. State, lifecycle, launcher, audit,
 trash, node and Hub variables select their corresponding stores or services.
 Use `sessiondock --check-config` to inspect the effective configuration.
 
-The file read API follows the operator file-manager behavior and is always
-available. File writes are available when terminal operation is enabled. A
+The single-file API resolves the selected session’s references and checked grants.
+Attachment writes are available when terminal operation is enabled. A
 launcher cwd is an execution choice, not file authorization. Configuration does
 not require unrelated paths to be disjoint or require state/metadata directories
 to have a Rust-only mode.
@@ -57,12 +57,11 @@ lock or permanent uncertain/frozen state. See [metadata.md](metadata.md).
 
 ## File access
 
-File reads, navigation, attachments, uploads and enabled mutations follow the
-file-manager routes. Paths are resolved with normal OS permissions and
-the existing selected-session context used for presentation; cwd itself grants
-no special authority. Uploads are streamed rather than encoded into JSON.
-Symlink, rename, delete, trash and replacement behavior is documented in
-[files.md](files.md) and [trash.md](trash.md).
+Single-file reads use selected-session references and checked grants, with normal
+OS permissions. A request cwd alone grants no file access. Attachments stream
+through the existing upload contract. Directory navigation and file management
+belong to optional FileDock. Session clone, move and trash retain their explicit
+confirmation contracts; see [files.md](files.md) and [trash.md](trash.md).
 
 ## Media tokens
 
@@ -100,23 +99,20 @@ documented in [diagnostics.md](diagnostics.md) and [bug-report.md](bug-report.md
 Their configuration controls persistence, without changing the accepted shapes
 of unrelated APIs.
 
-## 501 ledger (unimplemented writes)
+## Capability failures
 
-Predecessor-only routes are not kept as migration stubs. Conversation SEND,
-terminal input, attachments and file upload, trash operations,
-external and managed stop, and forced takeover have concrete handlers. A 501 is
-reserved for a capability that truly needs an unconfigured service, such as an
-audit or bug-report backend that has not been enabled. Unknown routes remain 404
-and malformed input remains 400. The old send/retry/discard routes and delivery
-dispatcher are retired; retained migration evidence is read-only. Current drafts,
-submission identities and CLI echo tracking follow [conversation.md](conversation.md).
+Conversation SEND, terminal input, attachments, trash, stop and takeover have
+concrete handlers. A 501 identifies an unsupported operation or a required
+service that is not configured. Unknown routes return 404 and malformed input
+returns 400. Drafts, submission identities and CLI echo tracking follow
+[conversation.md](conversation.md).
 
 ## Assumption → enforcement → test
 
 | Boundary | Enforcement | Coverage |
 | --- | --- | --- |
-| Ordinary listener stays local and browser-origin checked | `config.rs`, `security.rs` | HTTP/security suites |
-| Node traffic requires peer, protocol and token | `api/node_auth.rs` | node-auth suites |
+| Ordinary listener stays local and browser-origin checked | `config.rs`, `security.rs` | `hub_browser.py`, `files_browser.py` |
+| Node traffic requires peer, protocol and token | `api/node_auth.rs` | `hub_browser.py` with node-auth fixtures |
 | Ordinary reads preserve native history; explicit transfer/trash follows its own contract | sessions readers, transfer and trash services | history and transfer/trash suites |
 | Browser terminal writes require the current lease and instance | terminal ownership/service | terminal suites |
 | Hub URLs remain literal IPs inside configured networks | hub registry/client | Hub suites |

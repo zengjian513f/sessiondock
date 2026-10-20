@@ -12,8 +12,7 @@ claim/WS传输。受控host匹配full SID/UID，缺少/冲突证据保留unknown
 关联快照本身不授权控制，claim重新观察唯一关联并固定instance，随后只使用
 guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，发送走服务端会话服务。
 `web/` 是纯 JS 静态资源，按提交原样部署；设置对话框各页由 `app.js` 驱动
-`index.html` 中的控件。legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有消息
-正文；子代理名称更新已经过无列表刷新、无reload的实际SSE/DOM回归。
+`index.html` 中的控件。
 
 `search-controller.js` 独立管理搜索输入、全文请求、取消代际、输入防抖与 NDJSON
 进度/结果展示；`app.js` 显式传入视图状态和渲染适配函数。请求计数、计时器和
@@ -41,9 +40,9 @@ pending租约不升级，衍生native租约仍受launch退休及持久取消约�
 读工作池 `SESSIONDOCK_READ_WORKERS`（默认 `clamp(核数/2, 8, 32)`）个 blocking
 worker；请求排队直到取得许可或自身取消。探测、
 历史页/媒体/文件写/生命周期响应池按比例派生（表见
-[performance.md](performance.md#并发预算)）；搜索不占读池。
+[environment.md](environment.md)）；搜索不占读池。
 同一文件版本复用解析结果。`/api/meta` 声明 `stage:"replacement"`、
-`read_only:false`——这是替代服务，前端没有常驻横幅。
+`read_only:false`；前端不显示常驻只读横幅。
 `observe::WatchHub` 为每个 `(uid,agent)` 共享一次500ms版本读取，最多2个后台
 工作准入；Tokio watch只保留最新不可变快照，每个浏览器按自己的checkpoint
 生成增量，慢读者不堆积旧版本。首次并发订阅合并、最后订阅回收、错误重试
@@ -56,9 +55,10 @@ checkpoint仍核对投影。
 
 设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图）：
 
-- `sessions/index`：列表只做目录遍历、`stat` 与每文件有界头/尾摘要（头 96 KiB
-  ≤ 40 条、尾 512 KiB，与 `list_sessions` 同一推导），按 stamp 缓存，
-  并行读取；没有启动解析，没有会话数/总字节上限，单个文件的变化只影响它自己。
+- `sessions/index`：目录遍历、`stat` 与每文件摘要按 stamp 缓存并行读取。头窗口
+  96 KiB（Claude ≤ 40 条、Codex ≤ 120 条），尾窗口 512 KiB；Codex 模型、轮次和
+  用户活动时间按独立标量扫描补全，不受头尾窗口限制，也不构造消息视图。
+  没有启动时的完整历史投影，没有会话数/总字节上限，单个文件变化只影响自身。
 - `sessions/views`：只在打开会话时经 `records`/`native_input`/`providers` 流式
   解析这一个文件，增量续读，进有界 LRU；游标、锚点、pin、原生输入证据等每视图
   契约不变（[history-pages.md](history-pages.md)、[native-input.md](native-input.md)）。
@@ -101,8 +101,8 @@ checkpoint仍核对投影。
 
 可选的 `MetadataStore`：每次操作重读当前文件，并以原子替换持久化。
 列表、详情、搜索和 SSE 从同一元数据版本装饰读模型；偏好变化不修改消息 anchor。
-legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有消息正文；子代理名称
-更新已经过无列表刷新、无reload的实际SSE/DOM回归。
+legacy 增量中的元数据变化只更新缓存和标题栏，不重绘已有消息正文。
+子代理名称通过 SSE 更新，无需刷新列表或重新加载页面。
 
 1. HTTP / SSE / WebSocket 是传输层，不承担 CLI 历史解释或发送确认逻辑。
 2. 接口 DTO 和业务状态分开；缺失字段与显式 null 必须有明确含义。

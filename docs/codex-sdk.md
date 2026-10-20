@@ -204,10 +204,7 @@ invented, and the composer draft is preserved. Reload recovers live questions
 from the snapshot and historical async tool arguments after the latest user
 message, deduplicated by native call/item ID; ordinary user replies supersede
 those earlier cards. `accepted: true` is the tool acknowledgment, not an answer.
-The report's native event at 05:02:55 UTC contained the structured questions,
-while the SDK item-to-message conversion discarded them; its terminal capture
-showed one queued question. Browser audit had no SDK reply attempt. Coverage:
-[async question browser suite](../tests/codex_sdk_questions_browser.py).
+Validation: [async question browser suite](../tests/codex_sdk_questions_browser.py).
 
 ## Creation
 
@@ -435,10 +432,6 @@ behavior; they do not require other sources to expose unsupported controls.
   alongside open, replaces recorded values on success and retains them on failure.
   Fresh reads/notifications are never replaced by the recorded fallback. Missing
   native fields stay unknown; compaction still invalidates earlier context counts.
-  The report had native weekly usage of 9% while the server logged a 2.6-second
-  account read and a later 3.2-second rejected read. Previously the page discarded
-  open's summary and waited for SSE plus the separate account round trip. Browser
-  audit did not record SDK RPCs, so it cannot establish the exact first paint time.
   [SDK browser coverage](../tests/codex_sdk_browser.py) holds both the live read and
   SSE, verifies recorded gauges, then exercises failed refresh and recovery.
 - 重置卡: shown when `rateLimitResetCredits.availableCount > 0`; a selector lists

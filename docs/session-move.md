@@ -377,13 +377,6 @@ Hub 按操作加锁，节点按相关会话身份加锁。其他会话的发送�
 回收站字节、源锁重启保持、再次移回，以及目标 ready 重启、部分清理中断和新增外部引用保护。
 去掉 `--preserve` 验证移动同时改身份；去掉 `--peer` 验证共享存储拒绝。
 
-`session_clone_service_real.py --production-peer <SSH 别名>`（已于 2026-10-06 随非浏览器测试删除）当时从真实 Codex 的可见孙分支经 Chromium
-迁移整个五会话组；加 `--new-ids` 验证身份重写。Codex 0.159.2 / Luna low 实测包含分页 fork、
-归档兄弟、revert 多代 rollout 和 code-mode 子代理，两种身份模式均通过目标原生列表、完整
-分页历史、当前文件、名称/置顶/项目/归档元数据及分支/子代理续聊检查。目标 CLI 自行初始化
-临时数据库，生产导入不调用测试 SQL 导入器；两端无关会话和日常默认配置保持不变，源端会话行
-与历史清理完成。该验证不代表跨版本或所有工具/附件格式已经完成；运行回执使用下述合成浏览器验证。
-
 | 状态 | 处理 |
 |---|---|
 | `session-metadata.json` 的行（星标、fork 可见性、`nest_parent`、私有初始化决定） | 移动写入目标，切换后从源删除；克隆保留源行，并按新 uid 重建组内关系，组外展示挂靠不冒充新组的父关系 |
@@ -521,37 +514,10 @@ Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
 
 ## 交付验收
 
-以下是 2026-10-01 收尾时核对的验收结果。浏览器套件使用临时合成会话和真实节点/Hub，
-实际点击入口、选择操作、确认并打开目标历史；原生测试另使用隔离 home 和规定的低成本模型。
-未用生产会话做测试。早期章节中的单项实验限制只描述当时样本，不替代本表后续证据。
-
-本表保留当次验收回执。当前 `session_mixed_clone_browser.py` 的损坏暂存样例会在发布前
-返回 `move_plan_stale` 并撤回旧计划，不再进入历史版本所测的发布后补偿分支；
-现行套件覆盖范围见上面的[验证](#验证)，发布后故障与恢复继续由相应 transfer 套件覆盖。
-
-| 要求 | 已核对证据与结果 |
-|---|---|
-| 同机整组复制，Codex 分页 fork、多代 rollout、归档和 code-mode 子代理 | [session_clone_browser.py](../tests/session_clone_browser.py) 页面操作通过；`session_clone_service_real.py`（已于 2026-10-06 随非浏览器测试删除） 原生完整分页、列表、当前版本、元数据及新旧组分别续聊通过 |
-| Claude/Grok 分支、子代理、跨父会话代理引用 | [session_files_clone_browser.py](../tests/session_files_clone_browser.py) 页面整组复制、历史打开、源文件不变、失败补偿和重启重试通过；最后一次包含 Grok 检查点依赖，共 9 项 PASS |
-| 混合来源连通组、同 SID 不同来源、跨来源归属 | [session_mixed_clone_browser.py](../tests/session_mixed_clone_browser.py) 十四会话组、发布失败补偿和重启重试通过 |
-| 跨机移动/复制 × 保留/改变身份 | [session_mixed_bundle_browser.py](../tests/session_mixed_bundle_browser.py) 在两台主机的独立临时存储完成四种组合；目标三种历史与关系、源端保留/清理、Codex 同 SID 两代 rollout 均通过 |
-| 真实复杂会话迁移后恢复 | [session_native_transfer.py](../tests/session_native_transfer.py) 的原生迁移路径：Codex 五会话组、Claude/Grok 各三会话组，分别完成保留与重写身份；原生恢复与续聊、源端清理、无关会话保留、日常配置不变通过。Claude 为跨机往返后在最终目标续聊 |
-| 目标已有副本、前缀扩展和失败恢复 | [session_prefix_browser.py](../tests/session_prefix_browser.py) 三种来源复制/移动及文件、原生行、显示设置恢复通过；[session_bundle_browser.py](../tests/session_bundle_browser.py) 相同目标复用与续写后重试不覆盖通过 |
-| 停写、交接、清理与中断恢复 | [session_bundle_browser.py](../tests/session_bundle_browser.py) 覆盖源锁、部分清理、新外部引用、移回、旧回执、草稿别名、Hub/节点重启；保留和重写身份的移动均通过 |
-| cwd 存在、外部附件及共享存储 | 同一双机套件 `--dependencies` 覆盖三种来源外部图片/结果/链接的缺失与异内容；独立本地存储和共享 NFS 探针实测通过；共享会话存储拒绝移动，不执行源端删除 |
-| 原生 goal、附件关联、实时历史 | [session_clone_browser.py](../tests/session_clone_browser.py) 结构与映射验证通过；[session_goals_native_browser.py](../tests/session_goals_native_browser.py) 原生读取 goal/附件并独立修改克隆通过。实时连接不迁移 |
-| Claude 原生文件回退 | [session_claude_rewind_browser.py](../tests/session_claude_rewind_browser.py) 原生 Edit、浏览器复制、新检查点回退及文件原字节恢复通过 |
-| Grok 原生压缩检查点 | [session_grok_checkpoint_browser.py](../tests/session_grok_checkpoint_browser.py) Grok 1.0.44 原生压缩、浏览器复制、加载、回退和续聊读回标记通过；源文件和日常配置不变 |
-| 目标 CLI 与动态工具提示 | [session_transfer_environment_browser.py](../tests/session_transfer_environment_browser.py) 缺 CLI、版本较旧/未知、切换目标后迟到响应及执行器未核验提示通过 |
-| 步骤内部实时计数与进度条 | [session_large_manifest_browser.py](../tests/session_large_manifest_browser.py) 的 `--progress --peer` 模式，真实跨机移动、关联大历史与超 64 MiB 原生清单；记录页面更新间隔并核对源清理、目标原生数据 |
-| 表格、机器与身份选择、禁用提示、窄屏及任务进度 | [session_clone_browser.py](../tests/session_clone_browser.py) 控件与 tooltip 通过；双机套件覆盖持久进度、刷新恢复和窄屏入口 |
-| 交付 | 实现及测试已提交、推送；官方 `deploy --all` 已更新六个在线应用目标并通过健康检查，现有 ptyhost 保留。Cetus 离线跳过，未宣称该目标已更新 |
-
-原生 Codex 证据覆盖 0.159.0 的克隆与 0.159.2 的复杂迁移；Grok 检查点证据为 1.0.44。
-这些结果不构成所有 CLI 版本组合的兼容承诺。导入按实际原生 schema 核对，不创建或升级
-CLI 数据库，不覆盖目标整库；不匹配时保留现场并报错。动态工具定义可迁移，但执行器、
-认证及外部服务仍属于目标环境，页面会明确标为未核验。第一版 Linux、相同 CLI 根和 cwd
-范围，以及不迁移进程/PTY、不复制工作目录的边界保持不变。
+按上面的[验证](#验证)选择当前浏览器路径，并记录所验证的 CLI 版本、平台、身份模式与
+恢复范围。导入按实际原生 schema 核对，不创建或升级 CLI 数据库，不覆盖目标整库；
+不匹配时保留现场并报错。动态工具定义可迁移，执行器、认证及外部服务属于目标环境，
+页面标为未核验。进程、PTY 和工作目录内容不属于迁移数据。
 
 ## 风险清单
 
