@@ -66,6 +66,12 @@ def exercise(browser, base, source, shots, label):
         assert abs(boxes[0]['y'] - boxes[1]['y']) < 1, boxes
         assert boxes[1]['x'] > boxes[0]['x'], boxes
         assert boxes[2]['y'] > boxes[0]['y'], boxes
+        if width > 480:
+            for i in range(5):
+                label_box = choices.nth(i).locator('span').bounding_box()
+                select = choices.nth(i).locator('select').bounding_box()
+                assert 7 <= select['x'] - label_box['x'] - label_box['width'] <= 9, (label_box, select)
+
         page.locator('#agent-start-settings-title').scroll_into_view_if_needed()
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings.png'))
         page.locator('#agent-start-settings [data-agent-start-mode]').last.scroll_into_view_if_needed()
