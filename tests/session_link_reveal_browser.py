@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, isolated_server
@@ -67,6 +67,9 @@ def check_links(browser, base, data, output, node=None):
                         expect(selected).to_be_in_viewport()
                     if navigation == 'initial':
                         page.screenshot(path=str(output / f'{"hub" if node else "node"}-{width}-{mode}-{"agent" if agent else "session"}.png'))
+                        if width == 390:
+                            # Reload the detail route, not the list reached by Back.
+                            selected.click()
                 # Explicitly folding the selected row's ancestor remains a user
                 # choice; normal polling must not force it back open.
                 if mode == 'hidden':
@@ -87,6 +90,68 @@ def check_links(browser, base, data, output, node=None):
                 assert not errors, errors
                 context.close()
                 print(f'PASS {"hub" if node else "node"} {width}px {theme} {mode} {sid}: reveal, selection, reload and folds', flush=True)
+
+
+def check_mobile_list_reload(browser, base, data, output, node=None):
+    prefix = 'sessiondock.hub./.' if node else 'sessiondock.'
+    host = 'hub' if node else 'node'
+    for width, theme in ((390, 'light'), (675, 'dark')):
+        with browser.new_context(viewport={'width': width, 'height': 846},
+                                 service_workers='block') as context:
+            context.add_init_script("""window.EventSource=undefined;
+                Object.defineProperty(navigator, 'standalone', {value:true});""")
+            page = context.new_page()
+            page.goto(base)
+            # Seed only visual preferences; all navigation is through user actions.
+            page.evaluate("""([prefix, theme]) => {
+                localStorage.setItem(prefix + 'theme', JSON.stringify(theme));
+                localStorage.setItem(prefix + 'childMode', JSON.stringify('flat'));
+            }""", [prefix, theme])
+            for sid, text in (
+                ('codex:nest-grandchild-c', 'reply Grandchild C'),
+                ('claude:nest-root-a', 'reply Root A'),
+                ('grok:nest-child-b', 'reply Child B'),
+                ('claude:nest-root-a/agent:x', 'Agent X still working answer'),
+            ):
+                query = {'sid': sid, 'keep': 'list-refresh'}
+                if node:
+                    query['node'] = node.nid
+                url = base + '/?' + urlencode(query) + '#navigation'
+                # Explicit links must override a previously saved list preference.
+                page.goto(url, wait_until='networkidle')
+                expect(page.locator('#msgs')).to_contain_text(text)
+                label = f'{host}-{width}-{sid.replace(":", "-").replace("/", "-")}'
+                page.screenshot(path=str(output / f'{label}-detail.png'), full_page=True)
+                page.locator('#detail .mobile-back').click()
+                expect(page.locator('#side')).to_be_visible()
+                page.screenshot(path=str(output / f'{label}-list-before-reload.png'), full_page=True)
+                # A real browser reload must remain on the list from the first frame.
+                page.reload(wait_until='networkidle')
+                page.screenshot(path=str(output / f'{label}-list-after-reload.png'), full_page=True)
+                expect(page.locator('#side')).to_be_visible()
+                expect(page.locator('#right')).to_be_hidden()
+                assert page.evaluate('document.documentElement.dataset.bootPage') is None
+                query_after = parse_qs(urlsplit(page.url).query)
+                assert query_after == {'keep': ['list-refresh']}, query_after
+                assert urlsplit(page.url).fragment == 'navigation'
+                # The preceding history entry still identifies the detail page.
+                page.go_back(wait_until='networkidle')
+                expect(page.locator('#msgs')).to_contain_text(text)
+                expect(page.locator('#right')).to_be_visible()
+                page.go_forward(wait_until='networkidle')
+                expect(page.locator('#side')).to_be_visible()
+                expect(page.locator('#right')).to_be_hidden()
+                # Reopen from the list, then use the application's refresh button.
+                page.locator('#side .item[data-uid]').first.click()
+                expect(page.locator('#detail .mobile-back')).to_be_visible()
+                page.locator('#detail .mobile-back').click()
+                if not page.locator('#page-reload').is_visible():
+                    page.locator('#header-more-btn').click()
+                with page.expect_navigation(wait_until='networkidle'):
+                    page.locator('#page-reload').click()
+                expect(page.locator('#side')).to_be_visible()
+                expect(page.locator('#right')).to_be_hidden()
+                print(f'PASS {host} {width}px {theme} {sid}: list reload, app refresh, Back/Forward and explicit link', flush=True)
 
 
 def main():
@@ -111,6 +176,8 @@ def main():
         stack.callback(hub.stop)
         browser = pw.chromium.launch(headless=True)
         stack.callback(browser.close)
+        check_mobile_list_reload(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)
+        check_mobile_list_reload(browser, base, data, args.output)
         check_links(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)
         check_links(browser, base, data, args.output)
     (args.output/'result.json').write_text(json.dumps({'passed':['explicit links, reload, mobile back, ancestor fold and browser back on private node/Hub'],

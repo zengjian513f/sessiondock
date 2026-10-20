@@ -1027,7 +1027,17 @@ function showMobileList() {
   SessionContentView.close();
   if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
   document.body.classList.remove('mobile-detail');
-  if (MOBILE.matches) store.set('mobilePage', 'list');
+  if (MOBILE.matches) {
+    store.set('mobilePage', 'list');
+    // The visible list is no longer a session deep link. Keep the detail entry
+    // behind it for browser Back, and preserve unrelated query/hash state.
+    const url = new URL(location.href);
+    if (url.searchParams.has('sid')) {
+      url.searchParams.delete('sid');
+      url.searchParams.delete('node');
+      history.pushState(history.state, '', url);
+    }
+  }
   layoutSessionHead();
   layoutHeader();
   syncSessionNotices();
@@ -11680,7 +11690,11 @@ async function openExternalSession(spec, historyMode = 'replace') {
   return true;
 }
 addEventListener('popstate', () => {
-  void openExternalSession(new URL(location.href).searchParams.get('sid') || '', 'none');
+  const sid = new URL(location.href).searchParams.get('sid') || '';
+  if (!sid && MOBILE.matches) {
+    ++deepLinkSequence;
+    showMobileList();
+  } else void openExternalSession(sid, 'none');
 });
 // index.html 在首帧前就按上次停留的页面进了手机会话页；列表回来前先占位，
 // 恢复不了（列表失败、会话已不在）时退回列表，不写 mobilePage，下次刷新照旧恢复。

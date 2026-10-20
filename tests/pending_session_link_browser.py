@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
+from frontend_framework_browser import open_settings, select_tab
 from history_fixtures import BINARY, Corpus, batch35_meta, codex_message, isolated_server
 from hub_fixtures import Hub, free_port
 from hub_send_browser import prepare
@@ -24,6 +25,11 @@ def selected(page, uid):
 def create(page, root, source):
     if page.viewport_size['width'] == 390 and page.locator('#detail .mobile-back').is_visible():
         page.locator('#detail .mobile-back').click()
+    # This suite creates private fake CLIs; the product's default is SDK.
+    open_settings(page)
+    select_tab(page, 'features')
+    page.locator(f'[data-agent-start-mode="{source}"]').select_option('cli')
+    page.keyboard.press('Escape')
     if not page.locator('#new-session').is_visible():
         page.locator('#header-more-btn').click()
     page.locator('#new-session').click()
@@ -84,8 +90,9 @@ def check(browser, base, root, node_id, width):
     if width == 390:
         page.locator('#detail .mobile-back').click()
         page.reload()
-        selected(page, uid)  # The explicit link wins over saved list mode.
-        page.locator('#detail .mobile-back').click()
+        expect(page.locator('#left')).to_be_visible()
+        expect(page.locator('#right')).to_be_hidden()
+        assert parse_qs(urlsplit(page.url).query) == {'keep': ['yes']}
         page.goto(base, wait_until='networkidle')
         assert page.evaluate('S.sel') is None
         page.goto(link)
