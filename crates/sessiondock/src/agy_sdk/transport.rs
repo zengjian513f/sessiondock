@@ -620,6 +620,31 @@ impl Native {
         }
     }
 
+    /// Inspect an ended output stream without waiting for a still-running child.
+    pub async fn exit_status(&mut self) -> Result<Option<ExitStatus>, String> {
+        #[cfg(unix)]
+        if let Some(host) = &self.host {
+            use std::os::unix::process::ExitStatusExt;
+            return host
+                .status()
+                .await
+                .map(|status| {
+                    status.exit.map(|exit| {
+                        ExitStatus::from_raw(
+                            exit.code
+                                .map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8),
+                        )
+                    })
+                })
+                .map_err(|error| format!("agy_sdk_status: {error}"));
+        }
+        self.child
+            .as_mut()
+            .ok_or("agy_sdk_child_missing")?
+            .try_wait()
+            .map_err(|error| format!("agy_sdk_status: {error}"))
+    }
+
     pub async fn diagnostics(&mut self) -> String {
         if let Some(host) = &self.host {
             let mut bytes = Vec::new();

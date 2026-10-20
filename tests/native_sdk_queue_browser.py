@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import signal
 import tempfile
 import time
 
@@ -130,7 +131,10 @@ def pictures(page, uid, folder, prefix, *, all_sizes=False):
         if width < 500 and page.evaluate("!document.body.classList.contains('mobile-detail')"):
             page.locator(f'#side .item[data-uid="{uid}"]').click()
         expect(page.locator('#sdk-input')).to_be_visible()
-        page.locator('.sdk-queue').scroll_into_view_if_needed()
+        if page.locator('.sdk-queue').is_visible():
+            page.locator('.sdk-queue').scroll_into_view_if_needed()
+        else:
+            page.locator('.sdk-live .msg').last.scroll_into_view_if_needed()
         page.screenshot(path=str(folder / f'{prefix}-{width}-{theme}.png'), full_page=True)
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.emulate_media(color_scheme='light')
@@ -465,6 +469,72 @@ def restart_conflicting_result(browser, fixture):
             context.close()
 
 
+def closed_runtime_result(browser, fixture, screenshots, *, conflict=True, dismissed=False):
+    """Replay a completed receipt from an exited host, as with pre-fix Agy bindings."""
+    text = '__RECOVERED_STREAM__' if conflict else 'completed before runtime exit'
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            submitted = send(page, text)
+            request = submitted['request_id']
+            if conflict:
+                state(page, request, 'unknown')
+                expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
+                if dismissed:
+                    card(page, request).get_by_role('button', name='移除记录', exact=True).click()
+                    page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+                    gone(page, request)
+            else:
+                gone(page, request)
+                expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + text)
+            pid = fixture.native_pid()
+        finally:
+            context.close()
+    # Terminate only this private fixture's retained native process, while the
+    # node is offline. Its original output and input receipts remain intact.
+    path = next(path for path in fixture.host_sockets()
+                if fixture.host_rpc(path, 'Status')['pid'] == pid)
+    host_pid = int((path.parent / 'host.pid').read_text())
+    fixture.host_rpc(path, {'Signal': {'signal': signal.SIGKILL}})
+    fixture.wait_exited(pid)
+    fixture.wait_exited(host_pid)
+    for restart in range(2):
+        with fixture.server() as base:
+            context, page, uid = open_page(browser, base, fixture, accept_popups=False)
+            try:
+                page.wait_for_function("""NativeSdkView.raw?.diagnostics?.includes('agy_sdk_runtime_closed') ||
+                    NativeSdkView.raw?.error?.startsWith('agy_sdk_runtime_closed:')""")
+                raw = page.evaluate('NativeSdkView.raw')
+                assert raw['error_kind'] == ('uncertain' if conflict else 'transport'), raw
+                assert 'signal: 9' in raw['diagnostics'], raw['diagnostics']
+                assert raw['error'].startswith('agy_sdk_result_conflict:' if conflict else 'agy_sdk_runtime_closed:'), raw['error']
+                expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('结果待核对' if conflict else '错误')
+                assert fixture.inputs(text) == [text], 'opening/restarting resent the old input'
+                assert fixture.entry(request)['state'] == ('cancelled' if dismissed else 'unknown' if conflict else 'completed')
+                assert fixture.entry(request)['consumption'] == 'observed'
+                if restart == 1:
+                    pictures(page, uid, screenshots, f'agy-closed-{conflict}-{dismissed}')
+                    if conflict and not dismissed:
+                        card(page, request).get_by_role('button', name='移除记录', exact=True).click()
+                        page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+                        gone(page, request)
+                    fresh = send(page, 'new input after closed runtime')
+                    expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: new input after closed runtime')
+                    gone(page, fresh['request_id'])
+                    assert fixture.native_pid() != pid
+                    assert fixture.inputs(text) == [text]
+                    assert len(fixture.inputs('new input after closed runtime')) == 1
+                    assert all(row['sid'] == fixture.sid for row in fixture.peer.inputs())
+                    assert page.evaluate('NativeSdkView.raw.error') is None
+            except Exception:
+                if screenshots:
+                    page.screenshot(path=str(screenshots / 'agy-closed-failure.png'), full_page=True)
+                raise
+            finally:
+                context.close()
+    print(f'Agy: exited host replay preserves result (conflict={conflict}, dismissed={dismissed}), exit diagnostic, and new-input-only recovery', flush=True)
+
+
 def restart_approval(browser, fixture):
     with fixture.server() as base:
         context, page, _ = open_page(browser, base, fixture)
@@ -629,6 +699,10 @@ def main():
             legacy_unknown(browser, fixtures['legacy-agy'], args.screenshots)
             legacy_unknown(browser, fixtures['legacy-failed-agy'], args.screenshots, 'failed')
             restart_conflicting_result(browser, fixtures['conflict-agy'])
+            for conflict, dismissed in ((True, False), (True, True), (False, False)):
+                name = f'closed-agy-{conflict}-{dismissed}'
+                fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)
+                closed_runtime_result(browser, fixtures[name], args.screenshots, conflict=conflict, dismissed=dismissed)
             restart_approval(browser, fixtures['claude'])
             restart_approval(browser, fixtures['grok'])
             stop_inherited_pipes(browser, fixtures['agy'])
