@@ -242,38 +242,44 @@ impl Bridge {
     }
 
     pub(super) fn command(&self, cwd: &str) -> Command {
+        self.command_with_engine(cwd, false)
+    }
+
+    pub(super) fn command_with_engine(&self, cwd: &str, force_v2: bool) -> Command {
         let mut args = self.profile.args.clone();
         if !args.iter().any(|a| a == "acp") {
             args.push("acp".to_string());
         }
-        let has_engine = args
-            .iter()
-            .any(|a| a == "--agent-engine" || a.starts_with("--agent-engine="));
-        if !has_engine {
-            if let Some(custom_engine) = self
-                .profile
-                .new_args
+        if !force_v2 {
+            let has_engine = args
                 .iter()
-                .find(|a| a.starts_with("--agent-engine="))
-            {
-                args.push(custom_engine.clone());
-            } else {
-                args.push("--agent-engine=v3".to_string());
+                .any(|a| a == "--agent-engine" || a.starts_with("--agent-engine="));
+            if !has_engine {
+                if let Some(custom_engine) = self
+                    .profile
+                    .new_args
+                    .iter()
+                    .find(|a| a.starts_with("--agent-engine="))
+                {
+                    args.push(custom_engine.clone());
+                } else {
+                    args.push("--agent-engine=v3".to_string());
+                }
             }
-        }
-        let has_auth = args
-            .iter()
-            .any(|a| a == "--auth-method" || a.starts_with("--auth-method="));
-        if !has_auth {
-            if let Some(custom_auth) = self
-                .profile
-                .new_args
+            let has_auth = args
                 .iter()
-                .find(|a| a.starts_with("--auth-method="))
-            {
-                args.push(custom_auth.clone());
-            } else {
-                args.push("--auth-method=cli".to_string());
+                .any(|a| a == "--auth-method" || a.starts_with("--auth-method="));
+            if !has_auth {
+                if let Some(custom_auth) = self
+                    .profile
+                    .new_args
+                    .iter()
+                    .find(|a| a.starts_with("--auth-method="))
+                {
+                    args.push(custom_auth.clone());
+                } else {
+                    args.push("--auth-method=cli".to_string());
+                }
             }
         }
 
@@ -601,9 +607,14 @@ impl Bridge {
             .filter(|s| !s.is_empty())
             .ok_or("kiro session/new did not return sessionId")?
             .to_string();
+        let default_dir = if self.root.file_name().and_then(|n| n.to_str()) == Some("cli") {
+            self.root.clone()
+        } else {
+            self.root.join("cli")
+        };
         let path = crate::sessions::index::summary::kiro::locate_session_file(&self.root, &sid)
             .map(|p| p.canonicalize().unwrap_or(p))
-            .unwrap_or_else(|| self.root.join("cli").join(format!("{sid}.json")));
+            .unwrap_or_else(|| default_dir.join(format!("{sid}.json")));
         let uid = crate::sessions::uid_for("kiro", &path);
         session.set_uid(&uid);
         *session.session_id.lock().unwrap() = sid.clone();
@@ -683,7 +694,9 @@ impl Bridge {
             uid: uid.to_string(),
         };
 
-        let cmd = self.command(cwd);
+        let disk_loc = actions::locate_kiro_session(&self.root, &sid);
+        let is_v2_file = matches!(disk_loc, Some(actions::KiroDiskSession::V2File { .. }));
+        let cmd = self.command_with_engine(cwd, is_v2_file);
         let host_key = sanitize_host_key(uid);
         let spawned = Session::spawn_or_attach(
             self.host.as_deref(),
