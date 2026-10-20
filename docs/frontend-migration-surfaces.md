@@ -604,9 +604,9 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 页面不再注册 Service Worker。`index.html` 末尾会注销已有 registration，并删掉名前缀 `sessiondock-shell-` 的 Cache Storage。原因写在页面注释里：避免旧页面卡死时新标签也被 Service Worker 拖住。离线壳不是当前行为。
 
-版本：每 30 秒 `GET api/meta`。`build` 与页面 `sessiondock-build` 不一致时 `markStaleBuild`：暂停自动同步，浮动卡「SessionDock 已更新」，「仍可编辑并自动保存草稿；发送前请重新加载。」「重新加载」先 `prepareComposerReload`，草稿或附件未完成则取消刷新并说明。「稍后」只藏起卡片，发送和添加附件保持禁用，回到前台再显示。
+版本：每 30 秒 `GET api/meta`。`build` 与页面 `sessiondock-build` 不一致时 `markStaleBuild`：暂停自动同步，浮动卡「SessionDock 已更新」，「仍可编辑并自动保存草稿；发送前请重新加载。」「重新加载」直接 `location.reload()`；未保存输入或未上传 File 由浏览器离页确认提供留下/继续选择，不再由页面取消刷新，见[版本刷新 DELTA](conversation.md)。「稍后」只藏起卡片，发送和添加附件保持禁用，回到前台再显示。
 
-[`tests/popup_browser.py`](../tests/popup_browser.py) 覆盖版本卡片及「稍后」，[`tests/draft_sync_browser.py`](../tests/draft_sync_browser.py) 覆盖保存失败时取消重新加载。PWA 安装流程覆盖待核对。设置页按钮的禁用态随 `frontend_framework_browser` 的外观页一起存在，但那不是安装流程。
+[`tests/popup_browser.py`](../tests/popup_browser.py) 覆盖版本卡片、「稍后」与实际重新加载，[`tests/draft_sync_browser.py`](../tests/draft_sync_browser.py) 覆盖读取失败不拦刷新、未保存输入/附件的离页选择和已保存草稿恢复。PWA 安装流程覆盖待核对。设置页按钮的禁用态随 `frontend_framework_browser` 的外观页一起存在，但那不是安装流程。
 
 ### 休眠
 

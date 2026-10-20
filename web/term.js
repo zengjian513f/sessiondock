@@ -4525,22 +4525,12 @@ addEventListener('online', recoverComposerDrafts);
 const composerUnloadWarning = event => {event.preventDefault(); event.returnValue = '';};
 let composerUnloadProtected = false;
 function syncComposerUnloadProtection() {
-  const pending = [...composerDrafts.values()].some(draft => draft.storageError
-    || draft.editVersion > draft.savedVersion
+  const pending = [...composerDrafts.values()].some(draft => draft.editVersion > draft.savedVersion
     || draft.attachments.some(item => !item.uploaded?.upload_id && item.file instanceof Blob));
   if (pending === composerUnloadProtected) return;
   composerUnloadProtected = pending;
   if (pending) window.addEventListener('beforeunload', composerUnloadWarning);
   else window.removeEventListener('beforeunload', composerUnloadWarning);
-}
-// Wait for every editor (including the report dialog), then recheck edits
-// made during the await. Never reload over unsaved text or local File bytes.
-async function prepareComposerReload() {
-  await Promise.all([...composerDrafts].map(([uid, draft]) =>
-    composerSaving.has(draft) ? composerSaveQueues.get(draft)
-      : draft.editVersion > draft.savedVersion ? persistComposerDraft(uid) : null));
-  syncComposerUnloadProtection();
-  return !composerUnloadProtected && !composerSending && !bugReportSending;
 }
 function renderSavedComposerInputs(box, draft) {
   const prior = box.querySelector(':scope > .draft-send-error');
