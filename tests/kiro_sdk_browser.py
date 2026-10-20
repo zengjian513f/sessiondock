@@ -2,21 +2,16 @@
 """Kiro dual-mode (ACP SDK + CLI PTY) validation through real HTTP/SSE and Chromium.
 
 Exercises:
-- V3 (`session.json` + `messages.jsonl`) and V2 (`cli/<uuid>.json`) session list & history
-- Dual-mode view bar (`#a-chat` hidden, only `#a-sdk` and `#a-console` visible for Kiro)
-- Read-only session open without auto-spawning `kiro-cli acp`
-- Empty Kiro session `"新建 Kiro 会话"` title and trash/delete
-- New Kiro SDK session creation with model & effort configuration
-- Streaming thought, tool_call, permission approval (`session/request_permission`),
-  user input question (`_kiro/userInput`), settings, compact, usage, rename, fork, cancel
-- Mutual exclusion between CLI PTY mode and ACP SDK mode (including stale `.lock` cleanup)
+- Official paginated session/list discovery without reading native files
+- Cached read-only selection, explicit load replay and durable history projection
+- SDK creation/configuration, streaming, approval/question, cancel and CLI exclusion
+- Capability-gated rename, official fork/delete without native-file trash or lock cleanup
 """
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-import os
 import tempfile
 from types import SimpleNamespace
 
@@ -76,15 +71,6 @@ def select_sdk(page, uid: str):
     expect(page.locator("#a-sdk")).to_be_visible()
     expect(page.locator("#a-term")).to_be_visible()
     page.locator("#a-sdk").click()
-    page.wait_for_function(
-        "document.querySelector('#sdk-input')?.getClientRects().length || "
-        "(document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话' && "
-        "!document.querySelector('#a-session-toggle').disabled)"
-    )
-    if not page.locator("#sdk-input").is_visible() or page.locator("#sdk-input").is_disabled():
-        toggle = page.locator('#a-session-toggle[aria-label="启动会话"]')
-        if toggle.is_visible():
-            toggle.click()
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#sdk-input")).to_be_enabled()
 
@@ -102,63 +88,73 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
 
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
+    page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(row => row.sid === sid); }", arg=fixture.empty_sid, polling=500, timeout=30000)
     rows = page.evaluate("S.sessions")
     kiro_rows = [r for r in rows if r.get("source") == "kiro"]
-    assert len(kiro_rows) == 3, kiro_rows
-
+    assert len(kiro_rows) == 2, kiro_rows
+    assert not any(r.get("sid") == fixture.v2_sid for r in rows), "Private legacy files leaked into official catalog"
     v3_row = next(r for r in kiro_rows if r.get("sid") == fixture.sid)
-    v2_row = next(r for r in kiro_rows if r.get("sid") == fixture.v2_sid)
     empty_row = next(r for r in kiro_rows if r.get("sid") == fixture.empty_sid)
-
     assert v3_row["title"] == "Synthetic Kiro V3 Session", v3_row
     assert v3_row["model"] == "claude-haiku-4.5", v3_row
-    assert v2_row["title"] == "Synthetic Kiro V2 Legacy", v2_row
-    assert v2_row["model"] == "claude-sonnet-4.5", v2_row
     assert empty_row["title"] == "新建 Kiro 会话", empty_row
+    uid, empty_uid = v3_row["uid"], empty_row["uid"]
+    assert any(r.get("params", {}).get("cursor") == "fixture-second-page" for r in fixture.received("session/list"))
 
-    uid = v3_row["uid"]
-    v2_uid = v2_row["uid"]
-    empty_uid = empty_row["uid"]
-
-    # 1. Read-only open: clicking V2 and V3 sessions shows history without spawning kiro-cli acp
-    page.locator(f'#side .item[data-uid="{v2_uid}"]').click()
-    expect(page.locator("#a-chat")).to_be_hidden()
-    expect(page.locator("#msgs")).to_contain_text("Hello from Kiro V2 legacy")
-    expect(page.locator("#msgs")).to_contain_text("Kiro V2 legacy response ready.")
-    assert not fixture.received("session/load"), "Clicking session auto-spawned kiro-cli acp!"
-
+    # Selection uses only the app projection. It must not silently activate native SDK.
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#a-chat")).to_be_hidden()
-    expect(page.locator("#msgs")).to_contain_text("Explain Kiro V3 ACP architecture")
-    expect(page.locator("#msgs")).to_contain_text("Kiro V3 uses ACP over JSON-RPC 2.0.")
-    assert not fixture.received("session/load"), "Clicking V3 session auto-spawned kiro-cli acp!"
+    expect(page.locator(".native-history-warning")).to_contain_text("Kiro 历史尚未同步")
+    if screenshots:
+        page.screenshot(path=str(screenshots / "kiro-history-not-synced.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 900})
+        page.evaluate("showMobileDetail()")
+        page.emulate_media(color_scheme="dark")
+        page.screenshot(path=str(screenshots / "kiro-history-not-synced-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.emulate_media(color_scheme="light")
+    assert not fixture.received("session/load"), "Read-only selection loaded the native session"
+    assert not fixture.received("_kiro/session/history"), "Read-only selection initialized native history"
 
-    # 2. Empty Kiro session trash/delete and restore (e4e3a5ae)
-    trash_res = page.evaluate(
-        """async uid => {
-          const r = await fetch('/api/sessions/delete', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({uids: [uid], force: true}),
-          });
-          return {status: r.status, body: await r.json()};
-        }""",
-        empty_uid,
-    )
-    assert trash_res["status"] == 200 and len(trash_res["body"].get("deleted", [])) == 1, trash_res
-    trash_id = trash_res["body"]["deleted"][0]["entry_id"]
-    restore_res = page.evaluate(
-        """async id => {
-          const r = await fetch('/api/trash/restore', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id}),
-          });
-          return {status: r.status, body: await r.json()};
-        }""",
-        trash_id,
-    )
-    assert restore_res["status"] == 200 and restore_res["body"].get("ok") is True, restore_res
+    # Official deletion does not load a session or manufacture a restorable native trash entry.
+    loads_before = len(fixture.received("session/load"))
+    page.locator(f'#side .item[data-uid="{empty_uid}"]').click()
+    expect(page.locator(f'.dhead[data-uid="{empty_uid}"]')).to_be_visible()
+    page.wait_for_function("uid => NativeSdkView.uid === uid && NativeSdkView.historyData && !NativeSdkView.historyReady", arg=empty_uid)
+    delete_button = page.locator("#a-session-action")
+    if not delete_button.is_visible():
+        page.locator("#a-more").click()
+    # A real background catalog metadata update must not close an open action menu.
+    page.evaluate("""uid => {
+      S.sessions = S.sessions.map(row => row.uid === uid ? {...row, starred: !row.starred} : row);
+      refreshSessionMeta();
+    }""", empty_uid)
+    expect(page.locator("#session-actions-menu")).to_be_visible()
+    expect(page.locator("#a-more")).to_have_attribute("aria-expanded", "true")
+    delete_button.click()
+    popup = page.locator("dialog.app-popup")
+    expect(popup).to_contain_text("Kiro 会话会通过原生接口永久删除，不进回收站，无法恢复。")
+    if screenshots:
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            for theme in ("light", "dark"):
+                page.emulate_media(color_scheme=theme)
+                page.screenshot(path=str(screenshots / f"kiro-delete-confirm-{width}-{theme}.png"), full_page=True)
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.emulate_media(color_scheme="light")
+    popup.get_by_role("button", name="取消", exact=True).click()
+    assert not fixture.received("session/delete"), "Cancel issued a native delete"
+    if not delete_button.is_visible():
+        page.locator("#a-more").click()
+    delete_button.click()
+    with page.expect_response(lambda r: r.request.method == "DELETE" and "/api/session/" in r.url) as deleted:
+        page.locator("dialog.app-popup").get_by_role("button", name="确定", exact=True).click()
+    assert deleted.value.status == 200, deleted.value.text()
+    expect(page.locator("#detail")).to_contain_text("会话已从 Kiro 删除")
+    expect(page.locator("#detail-open-trash")).to_have_count(0)
+    assert len(fixture.received("session/load")) == loads_before
+    assert fixture.received("session/delete")[-1]["params"]["sessionId"] == fixture.empty_sid
+    assert not list((fixture.root / "trash").glob("**/session.json")), "Native files were put in app trash"
 
     # 3. Create new Kiro SDK session from #new-session modal
     page.locator("#new-session").click()
@@ -183,14 +179,19 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-sdk-new-session.png"), full_page=True)
 
-    # 4. Open existing V3 session in SDK mode & verify replay deduplication
+    # 4. Merely choosing SDK stays read-only. A real composer click starts it.
     select_sdk(page, uid)
-    opened = api(page, "open", {"uid": uid})
+    assert not fixture.received("session/load"), "Choosing SDK silently loaded the existing session"
+    with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open") and r.request.method == "POST") as opened_response:
+        page.locator("#sdk-input").click()
+    assert opened_response.value.ok, opened_response.value.text()
+    opened = opened_response.value.json()
     assert opened["session_id"] == fixture.sid, opened
-    assert not any(
-        "Replay chunk during session/load" in (item.get("content") or "")
-        for item in opened["raw"]["items"]
-    ), opened["raw"]["items"]
+    assert len(fixture.received("session/load")) == 1, "Composer click must load the selected native SID once"
+    assert fixture.received("session/load")[0]["params"]["sessionId"] == fixture.sid
+    replay_items = opened["raw"]["items"]
+    assert sum("Explain Kiro V3 ACP architecture" in (item.get("content") or "") for item in replay_items) == 1, replay_items
+    assert sum("Kiro V3 uses ACP over JSON-RPC 2.0." in (item.get("content") or "") for item in replay_items) == 1, replay_items
     watch(page, uid)
 
     # 5. Standard streaming turn (thought + tool_call + message + metadata)
@@ -273,14 +274,22 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     usage_res = api(page, "usage", {"uid": uid})
     assert usage_res["context_usage"]["percent"] is not None, usage_res
 
-    rename_res = api(page, "rename", {"uid": uid, "title": "Renamed Kiro V3 Session"})
-    assert rename_res["title"] == "Renamed Kiro V3 Session"
-    disk_meta = json.loads((fixture.v3_dir / "session.json").read_text())
-    assert disk_meta["title"] == "Renamed Kiro V3 Session"
+    # No rename extension is advertised; neither title nor private native bytes may be changed.
+    native_before = (fixture.v3_dir / "session.json").read_bytes()
+    rename_res = api_raw(page, "rename", {"uid": uid, "title": "Unsupported rename"})
+    assert rename_res["status"] >= 400 or rename_res["body"].get("ok") is False, rename_res
+    assert (fixture.v3_dir / "session.json").read_bytes() == native_before
+    assert not fixture.received("_kiro/session/rename")
+    assert not fixture.received("_kiro/account/getUsage"), "Unadvertised account RPC was guessed"
 
     fork_res = api(page, "fork", {"uid": uid, "cwd": str(fixture.work), "request_id": "kiro-fork-1"})
     assert fork_res["uid"] != uid and fork_res["session_id"] != fixture.sid, fork_res
-    assert (fixture.sessions / "bucket_v3" / fork_res["session_id"] / "session.json").is_file()
+    assert fixture.received("session/fork")[-1]["params"]["sessionId"] == fixture.sid
+    forks_after_first = len(fixture.received("session/fork"))
+    fork_retry = api(page, "fork", {"uid": uid, "cwd": str(fixture.work), "request_id": "kiro-fork-1"})
+    assert fork_retry["uid"] == fork_res["uid"] and fork_retry["session_id"] == fork_res["session_id"], (fork_retry, fork_res)
+    assert len(fixture.received("session/fork")) == forks_after_first, "Retry forked the native session twice"
+    assert (fixture.v3_dir / "session.json").read_bytes() == native_before
 
     # 10. Interrupt / Cancel (`session/cancel`) preserves interrupted state
     page.locator("#sdk-input").fill("wait-for-cancel")
@@ -307,27 +316,30 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert cli_spawn_while_sdk["status"] == 409, cli_spawn_while_sdk
     assert cli_spawn_while_sdk["body"].get("code") == "sdk_session_busy", cli_spawn_while_sdk
 
-    # 12. Stop SDK session -> test stale .lock cleanup vs live .lock conflict
+    # Private lock-looking files are opaque: no detection, deletion or stale-lock repair.
     api(page, "stop", {"uid": uid})
     lock_path = fixture.sessions / "cli" / f"{fixture.sid}.lock"
-
-    # Stale lock (dead PID 999991 not in /proc) -> automatically cleaned up on open
     lock_path.write_text("999991")
     reopened = api(page, "open", {"uid": uid})
     assert reopened["session_id"] == fixture.sid
-    assert not lock_path.exists(), "Stale .lock file was not cleaned up!"
+    assert lock_path.read_text() == "999991", "Private native lock was inspected or mutated"
     api(page, "stop", {"uid": uid})
 
-    # Live lock (PID 888881 present in fixture.proc) -> refused with kiro_sdk_session_busy
-    live_pid = 888881
-    proc_dir = fixture.proc / str(live_pid)
-    proc_dir.mkdir(exist_ok=True)
-    (proc_dir / "stat").write_text(f"{live_pid} (kiro-cli) S 1 " + "0 " * 30 + "\n")
-    lock_path.write_text(str(live_pid))
-    busy_open = api_raw(page, "open", {"uid": uid})
-    assert busy_open["status"] >= 400 or busy_open["body"].get("ok") is False, busy_open
-    assert "kiro_sdk_session_busy" in json.dumps(busy_open["body"]), busy_open
-    lock_path.unlink(missing_ok=True)
+    loads_before_reload = len(fixture.received("session/load"))
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("T.listLoaded")
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    expect(page.locator("#msgs")).to_contain_text("Explain Kiro V3 ACP architecture")
+    expect(page.locator("#msgs")).to_contain_text("Kiro ACP V3 final answer for: Verify Kiro V3 streaming turn")
+    assert len(fixture.received("session/load")) == loads_before_reload, "Reloading cached history activated native SDK"
+
+    # Sidebar deletion uses the bulk route even for one row; it must show the same native semantics.
+    page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")
+    page.locator('#item-menu [data-act="delete"]').click()
+    expect(page.locator("dialog.app-popup")).to_contain_text("Kiro 会话会通过原生接口永久删除，不进回收站，无法恢复。")
+    deletes_before = len(fixture.received("session/delete"))
+    page.locator("dialog.app-popup").get_by_role("button", name="取消", exact=True).click()
+    assert len(fixture.received("session/delete")) == deletes_before
 
     if screenshots:
         for width in (1280, 390):
@@ -341,6 +353,11 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
                     full_page=True,
                 )
 
+    for row in fixture.received():
+        if "fixture_start" in row:
+            argv = row["fixture_start"]["argv"]
+            assert "--agent-engine=v3" in argv and "--auth-method=cli" in argv, argv
+    assert not (fixture.home / ".kiro" / "sessions").exists(), "Service created the opaque native scope path"
     assert not failures, failures
     context.close()
 

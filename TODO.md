@@ -3,6 +3,13 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
+## Kiro integration
+
+- [ ] 补真实非空分页历史、审批／问答、取消、fork/delete/compact、设置回读与消费
+  对账证据。当前能力来自已认证 initialize，相关恢复路径有合成 Chromium 验证；
+  不能以合成事件替代原生高级能力验收。普通历史暂只读自有缓存，显式 SDK load
+  同步 replay；默认 history 空响应不作为完整历史证明。见 [Kiro](docs/kiro.md)。
+
 ## Runtime and platform coverage
 
 - [ ] 根据 [外部程序启动审计](docs/process-launch-audit.md) 补足共享 tmux/systemd、

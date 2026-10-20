@@ -57,6 +57,13 @@ impl Plan {
                 "Agy 使用原生 CLI 永久删除，不支持文件回收站或整树删除；请使用删除当前会话",
             ));
         }
+        if source == "kiro" {
+            return Err(TrashError::new(
+                409,
+                "kiro_native_delete_required",
+                "Kiro 使用官方会话删除接口，不支持文件回收站或整树删除",
+            ));
+        }
         let origin = PathBuf::from(text(row, "path"));
         if origin.as_os_str().is_empty() {
             return Err(TrashError::new(
@@ -65,16 +72,10 @@ impl Plan {
                 "索引行没有记录原生路径",
             ));
         }
-        let inferred_kiro_root = if source == "kiro" && roots.kiro.is_none() {
-            infer_kiro_root(&origin)
-        } else {
-            None
-        };
         let root = match source.as_str() {
             "claude" => roots.claude.as_ref(),
             "codex" => roots.codex.as_ref(),
             "grok" => roots.grok.as_ref(),
-            "kiro" => roots.kiro.as_ref().or(inferred_kiro_root.as_ref()),
             _ => None,
         }
         .ok_or_else(|| {
@@ -131,9 +132,6 @@ impl Plan {
                 // two files the index reads.
                 push(origin.clone(), FileRole::Directory)?;
             }
-            "kiro" => {
-                plan_kiro_files(&origin, row, &mut push)?;
-            }
             _ => return Err(TrashError::new(409, "unknown_source", "未知的会话来源")),
         }
         Ok(Self {
@@ -150,58 +148,4 @@ impl Plan {
             sessions: Vec::new(),
         })
     }
-}
-
-fn infer_kiro_root(origin: &std::path::Path) -> Option<PathBuf> {
-    for ancestor in origin.ancestors() {
-        if ancestor.file_name().and_then(|n| n.to_str()) == Some("sessions") {
-            return Some(ancestor.to_path_buf());
-        }
-    }
-    if origin.file_name().and_then(|n| n.to_str()) == Some("session.json") {
-        origin.parent().and_then(|p| p.parent()).map(PathBuf::from)
-    } else {
-        origin.parent().map(PathBuf::from)
-    }
-}
-
-fn plan_kiro_files(
-    origin: &std::path::Path,
-    row: &Value,
-    push: &mut dyn FnMut(PathBuf, FileRole) -> Result<(), TrashError>,
-) -> Result<(), TrashError> {
-    if origin.file_name().and_then(|n| n.to_str()) == Some("session.json") {
-        let dir = origin
-            .parent()
-            .ok_or_else(|| TrashError::new(409, "path_missing", "Kiro V3 会话缺少父目录路径"))?;
-        push(dir.to_path_buf(), FileRole::Directory)?;
-    } else {
-        push(origin.to_path_buf(), FileRole::Data)?;
-        for ext in ["jsonl", "history", "lock"] {
-            let companion = origin.with_extension(ext);
-            if fs::symlink_metadata(&companion).is_ok() {
-                push(companion, FileRole::Data)?;
-            }
-        }
-    }
-    for item in row["agent_items"].as_array().into_iter().flatten() {
-        let agent_path = PathBuf::from(text(item, "path"));
-        if agent_path.as_os_str().is_empty() {
-            continue;
-        }
-        if agent_path.file_name().and_then(|n| n.to_str()) == Some("session.json") {
-            if let Some(dir) = agent_path.parent() {
-                push(dir.to_path_buf(), FileRole::Directory)?;
-            }
-        } else {
-            push(agent_path.clone(), FileRole::Agent)?;
-            for ext in ["jsonl", "history", "lock"] {
-                let companion = agent_path.with_extension(ext);
-                if fs::symlink_metadata(&companion).is_ok() {
-                    push(companion, FileRole::AgentMeta)?;
-                }
-            }
-        }
-    }
-    Ok(())
 }

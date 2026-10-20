@@ -1,14 +1,14 @@
 //! Native SDK bridge for Kiro CLI via ACP (`kiro-cli acp`) over JSON-RPC 2.0.
-//! Supports V3 (`--agent-engine=v3`, `configOptions`) primary and V2 (`modes`/`models`)
-//! fallback through `sdkhost` (with legacy stdio fallback when `state_dir` is `None`).
+//! V3 only; identities and history come from ACP and SessionDock-owned state.
 
 mod actions;
+mod checkpoint;
 mod live;
 mod transport;
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,11 +19,11 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::lifecycle::launcher::{CliProfile, DENIED_ENV};
-use crate::lifecycle::model::Source;
+use crate::lifecycle::launcher::CliProfile;
+use crate::sessions::kiro::{Catalog, digest, random_key, save};
 
-use actions::{build_prompt_blocks, read_disk_session_metadata};
-use transport::{Session, SpawnedSession, now_secs, sanitize_host_key};
+use actions::build_prompt_blocks;
+use transport::{Session, SpawnedSession, now_secs};
 
 const IDLE_TIMEOUT_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
@@ -35,6 +35,9 @@ pub(crate) struct CachedModels {
 }
 
 pub struct Bridge {
+    pub(super) catalog: Arc<Catalog>,
+    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    creating: Mutex<HashMap<String, Arc<Session>>>,
     pub(super) profile: CliProfile,
     pub(super) root: PathBuf,
     pub(super) proc_root: PathBuf,
@@ -58,66 +61,29 @@ impl Drop for StartingGuard<'_> {
     }
 }
 
-fn home_for_root(root: &Path) -> Option<PathBuf> {
-    if root.file_name().and_then(|n| n.to_str()) == Some("cli")
-        && let Some(sessions_dir) = root.parent()
-        && sessions_dir.file_name().and_then(|n| n.to_str()) == Some("sessions")
-        && let Some(dot_kiro) = sessions_dir.parent()
-        && dot_kiro.file_name().and_then(|n| n.to_str()) == Some(".kiro")
-    {
-        return dot_kiro.parent().map(Path::to_path_buf);
-    }
-    if root.file_name().and_then(|n| n.to_str()) == Some("sessions")
-        && let Some(dot_kiro) = root.parent()
-        && dot_kiro.file_name().and_then(|n| n.to_str()) == Some(".kiro")
-    {
-        return dot_kiro.parent().map(Path::to_path_buf);
-    }
-    if root.file_name().and_then(|n| n.to_str()) == Some(".kiro") {
-        return root.parent().map(Path::to_path_buf);
-    }
-    None
-}
-
-pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Arc<Bridge>>> {
+pub fn new(
+    config: &Config,
+    shutdown: CancellationToken,
+    catalog: Option<Arc<Catalog>>,
+) -> io::Result<Option<Arc<Bridge>>> {
     if !config.native_sdk_enabled {
         return Ok(None);
     }
-    let (Some(root), Some(launcher_path)) = (&config.roots.kiro, &config.launcher_config) else {
+    let Some(catalog) = catalog else {
         return Ok(None);
     };
-    let launcher = crate::lifecycle::launcher::read_config(launcher_path).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "kiro_sdk: launcher configuration unavailable",
-        )
-    })?;
-    let mut iter = launcher
-        .profiles
-        .into_iter()
-        .filter(|p| p.source == Source::Kiro);
-    let Some(profile) = iter.next() else {
-        return Ok(None);
-    };
-    if iter.next().is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "kiro_sdk: ambiguous Kiro launcher profiles",
-        ));
-    }
-    let host = config
-        .state_dir
-        .as_ref()
-        .filter(|_| cfg!(unix))
-        .map(|dir| dir.join("sdkhost"));
-    let canonical_root = root
-        .canonicalize()
-        .unwrap_or_else(|_| std::path::absolute(root).unwrap_or_else(|_| root.clone()));
     let bridge = Arc::new(Bridge {
-        profile,
-        root: canonical_root,
+        profile: catalog.profile.clone(),
+        root: catalog.root.clone(),
+        catalog,
+        locks: Mutex::new(HashMap::new()),
+        creating: Mutex::new(HashMap::new()),
         proc_root: config.proc_root.clone(),
-        host,
+        host: config
+            .state_dir
+            .as_ref()
+            .filter(|_| cfg!(unix))
+            .map(|dir| dir.join("sdkhost")),
         sessions: Mutex::new(HashMap::new()),
         starting: Mutex::new(HashSet::new()),
         models_cache: Mutex::new(None),
@@ -154,8 +120,16 @@ impl Bridge {
         };
 
         for (uid, session) in candidates {
-            if session.dead.load(Ordering::Acquire) {
-                self.sessions.lock().unwrap().remove(&uid);
+            let lock = self.lock_for(&uid);
+            let _guard = lock.lock().await;
+            // A concurrent explicit open may have installed a new generation.
+            if !self
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&uid)
+                .is_some_and(|current| Arc::ptr_eq(current, &session))
+            {
                 continue;
             }
             let last = session.last_active.load(Ordering::Acquire);
@@ -172,8 +146,11 @@ impl Bridge {
             if busy {
                 continue;
             }
-            self.sessions.lock().unwrap().remove(&uid);
-            session.kill().await;
+            if session.kill().await.is_ok() {
+                if self.catalog.bind_host(&uid, None).is_ok() {
+                    self.sessions.lock().unwrap().remove(&uid);
+                }
+            }
         }
     }
 
@@ -195,32 +172,29 @@ impl Bridge {
     }
 
     pub async fn stop(&self, uid: &str) -> Result<bool, String> {
-        let removed = self.sessions.lock().unwrap().remove(uid);
-        if let Some(session) = removed {
-            {
-                let st = session.state.lock().unwrap();
-                let _ = st
-                    .events
-                    .send(Arc::from(json!({"method": "bridge/stopped"}).to_string()));
-            }
-            session.kill().await;
-            return Ok(true);
-        }
-        if let Some(ref dir) = self.host
-            && cfg!(unix)
-        {
-            let key = sanitize_host_key(uid);
-            if let Ok(client) = sdkhost_client::Client::attach(dir, &key).await {
-                #[cfg(unix)]
-                {
-                    let _ = client.signal(libc::SIGKILL).await;
-                }
-                let _ = client.wait().await;
-                let _ = client.remove().await;
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        let lock = self.lock_for(uid);
+        let _guard = lock.lock().await;
+        let existing = self.sessions.lock().unwrap().get(uid).cloned();
+        let session = if let Some(session) = existing {
+            session
+        } else {
+            let Some(key) = self.catalog.resolve_uid(uid)?.host_key else {
+                return Ok(false);
+            };
+            let dir = self
+                .host
+                .as_deref()
+                .ok_or("kiro_sdk_stop_unknown: no host directory")?;
+            Session::attach_existing(dir, &key, uid, "", "", self.shutdown.clone()).await?
+        };
+        session.kill().await?;
+        self.catalog.bind_host(uid, None)?;
+        self.sessions.lock().unwrap().remove(uid);
+        let st = session.state.lock().unwrap();
+        let _ = st
+            .events
+            .send(Arc::from(json!({"method":"bridge/stopped"}).to_string()));
+        Ok(true)
     }
 
     pub fn subscribe(&self, key: &str) -> Result<(Value, broadcast::Receiver<Arc<str>>), String> {
@@ -238,134 +212,40 @@ impl Bridge {
         Ok((snap, rx))
     }
 
+    pub(super) fn lock_for(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks
+            .lock()
+            .unwrap()
+            .entry(key.into())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+    pub(super) fn host_key_for(&self, uid: &str) -> Result<String, String> {
+        self.catalog
+            .resolve_uid(uid)?
+            .host_key
+            .ok_or_else(|| "kiro_sdk_recovery_unknown: no persistent host binding".into())
+    }
     pub(super) fn command(&self, cwd: &str) -> Command {
-        self.command_with_engine(cwd, false)
+        self.catalog.command(cwd)
     }
-
-    pub(super) fn command_with_engine(&self, cwd: &str, force_v2: bool) -> Command {
-        let mut args = self.profile.args.clone();
-        if !args.iter().any(|a| a == "acp") {
-            args.push("acp".to_string());
-        }
-        if !force_v2 {
-            let has_engine = args
-                .iter()
-                .any(|a| a == "--agent-engine" || a.starts_with("--agent-engine="));
-            if !has_engine {
-                if let Some(custom_engine) = self
-                    .profile
-                    .new_args
-                    .iter()
-                    .find(|a| a.starts_with("--agent-engine="))
-                {
-                    args.push(custom_engine.clone());
-                } else {
-                    args.push("--agent-engine=v3".to_string());
-                }
-            }
-            let has_auth = args
-                .iter()
-                .any(|a| a == "--auth-method" || a.starts_with("--auth-method="));
-            if !has_auth {
-                if let Some(custom_auth) = self
-                    .profile
-                    .new_args
-                    .iter()
-                    .find(|a| a.starts_with("--auth-method="))
-                {
-                    args.push(custom_auth.clone());
-                } else {
-                    args.push("--auth-method=cli".to_string());
-                }
-            }
-        }
-
-        let mut command = Command::new(&self.profile.executable);
-        command.args(&args).current_dir(cwd);
-        for name in &self.profile.env_remove {
-            command.env_remove(name);
-        }
-        for name in DENIED_ENV {
-            command.env_remove(name);
-        }
-        command.envs(&self.profile.env);
-        if !self.profile.env.contains_key("HOME")
-            && let Some(home) = home_for_root(&self.root)
-        {
-            command.env("HOME", home);
-        }
-        if !self.profile.env.contains_key("SESSIONDOCK_KIRO_ROOT") {
-            command.env("SESSIONDOCK_KIRO_ROOT", &self.root);
-        }
-        command
+    pub(super) fn resolve_sid(&self, uid: &str, _target: &Value, _payload: &Value) -> String {
+        self.catalog
+            .resolve_uid(uid)
+            .map(|e| e.sid)
+            .unwrap_or_default()
     }
-
-    pub(super) fn resolve_sid(&self, uid: &str, target: &Value, payload: &Value) -> String {
-        for val in [target, payload] {
-            for key in ["session_id", "sid", "sessionId"] {
-                if let Some(s) = val[key].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                    return s.to_string();
-                }
-            }
-        }
-        if !uid.is_empty()
-            && let Some(session) = self.sessions.lock().unwrap().get(uid).cloned()
-        {
-            let sid = session.session_id.lock().unwrap().clone();
-            if !sid.is_empty() {
-                return sid;
-            }
-        }
-        for val in [target, payload] {
-            if let Some(path_str) = val["path"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                let path = Path::new(path_str);
-                if let Some(sid) = crate::sessions::index::summary::kiro::sid_for_path(path) {
-                    return sid;
-                }
-            }
-        }
-        if !uid.is_empty()
-            && let Some((_, sid)) =
-                crate::sessions::index::summary::kiro::locate_session_file_by_uid_or_sid(
-                    &self.root, uid,
-                )
-            && !sid.is_empty()
-        {
-            return sid;
-        }
-        uid.strip_prefix("kiro:").unwrap_or(uid).to_string()
-    }
-
     fn resolve_cwd(&self, target: &Value) -> String {
-        for key in ["cwd", "folder", "project"] {
-            if let Some(s) = target[key].as_str() {
-                let t = s.trim();
-                if !t.is_empty() && Path::new(t).is_dir() {
-                    return t.to_string();
-                }
-            }
-        }
         if let Some(uid) = target["uid"].as_str() {
-            let sid = self.resolve_sid(uid, target, &Value::Null);
-            if let Some(disk) = read_disk_session_metadata(&self.root, &sid) {
-                for key in ["cwd", "workspaceDirectory", "workingDirectory"] {
-                    if let Some(s) = disk[key].as_str() {
-                        let t = s.trim();
-                        if !t.is_empty() && Path::new(t).is_dir() {
-                            return t.to_string();
-                        }
-                    }
-                }
+            if let Ok(entry) = self.catalog.resolve_uid(uid) {
+                return entry.cwd;
             }
         }
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/tmp".to_string())
+        target["cwd"]
+            .as_str()
+            .or_else(|| target["folder"].as_str())
+            .unwrap_or("")
+            .to_owned()
     }
 
     pub async fn call(
@@ -384,27 +264,40 @@ impl Bridge {
         let cwd = self.resolve_cwd(if target.is_null() { &payload } else { &target });
 
         match method {
-            "reattach" => {
-                if !uid.starts_with("kiro:") {
-                    return Ok(json!({ "attached": false }));
-                }
-                let Some(ref dir) = self.host else {
-                    return Ok(json!({ "attached": false }));
+            "reattach" | "recover" => {
+                let lock = self.lock_for(uid);
+                let _guard = lock.lock().await;
+                let existing = self.sessions.lock().unwrap().get(uid).cloned();
+                let session = if let Some(session) = existing {
+                    session
+                } else {
+                    let key = self.host_key_for(uid)?;
+                    let dir = self
+                        .host
+                        .as_deref()
+                        .ok_or("kiro_sdk_recovery_unknown: no host directory")?;
+                    let sid = self.resolve_sid(uid, &target, &payload);
+                    let session =
+                        Session::attach_existing(dir, &key, uid, &sid, &cwd, self.shutdown.clone())
+                            .await?;
+                    session.set_projection(self.catalog.clone())?;
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .insert(uid.to_string(), session.clone());
+                    session
                 };
-                let key = sanitize_host_key(uid);
-                if sdkhost_client::Client::attach(dir, &key).await.is_err() {
-                    return Ok(json!({ "attached": false }));
+                if method == "recover" {
+                    session.recover_delivery(
+                        payload["request_id"]
+                            .as_str()
+                            .ok_or("kiro_sdk_recovery_unknown: no delivery id")?,
+                    )
+                } else {
+                    let mut snap = session.snapshot();
+                    snap["attached"] = json!(true);
+                    Ok(snap)
                 }
-                let session = self.ensure_open(uid, &cwd, &target).await?;
-                let mut snap = session.snapshot();
-                snap["attached"] = json!(true);
-                Ok(snap)
-            }
-            "recover" => {
-                let session = self.ensure_open(uid, &cwd, &target).await?;
-                let mut snap = session.snapshot();
-                snap["accepted"] = json!(true);
-                Ok(snap)
             }
             "create" => self.create_session(&cwd, &payload).await,
             "open" => {
@@ -413,22 +306,19 @@ impl Bridge {
             }
             "turn" => self.turn(uid, &cwd, &target, &payload).await,
             "interrupt" => {
-                let session = self.get_session(uid)?;
-                let sid = session.session_id.lock().unwrap().clone();
-                let _ = session
-                    .notify("session/cancel", json!({ "sessionId": sid }))
-                    .await;
-                session.state.lock().unwrap().mark_interrupted();
-                let mut snap = session.snapshot();
-                snap["accepted"] = json!(true);
-                Ok(snap)
+                let lock = self.lock_for(uid);
+                let _guard = lock.lock().await;
+                self.get_session(uid)?.cancel_turn().await
             }
             "steer" => self.steer(uid, &payload).await,
             "input_queue" => self.handle_queue_action(uid, &payload).await,
             "respond" => self.respond(uid, &payload).await,
-            "models" => self.models_action(uid, &cwd, &target).await,
+            "models" => {
+                let refresh = payload["refresh"] == true;
+                self.models_action(uid, &cwd, &target, refresh).await
+            }
             "settings" => {
-                let session = self.ensure_open(uid, &cwd, &target).await?;
+                let session = self.get_session(uid)?;
                 if let (Some(cid), Some(val)) =
                     (payload["configId"].as_str(), payload["value"].as_str())
                 {
@@ -459,76 +349,21 @@ impl Bridge {
                 Ok(session.snapshot())
             }
             "usage" | "billing" => {
-                let existing_session = (!uid.is_empty())
-                    .then(|| self.sessions.lock().unwrap().get(uid).cloned())
-                    .flatten();
-                if let Some(session) = existing_session {
-                    let sid = self.resolve_sid(uid, &target, &payload);
-                    let need_rpc = {
-                        let st = session.state.lock().unwrap();
-                        st.context_usage.is_none() || st.billing.is_none()
-                    };
-                    if need_rpc && !session.dead.load(Ordering::Acquire) {
-                        if let Ok(ctx_res) = session
-                            .request("_kiro/session/context", json!({ "sessionId": sid }))
-                            .await
-                        {
-                            session.state.lock().unwrap().apply_metadata(&ctx_res);
-                        }
-                        if let Ok(acct_res) =
-                            session.request("_kiro/account/getUsage", json!({})).await
-                        {
-                            session.state.lock().unwrap().apply_metadata(&acct_res);
-                        }
-                    }
-                    {
-                        let mut st = session.state.lock().unwrap();
-                        if st.context_usage.is_none() && st.billing.is_none() {
-                            if let Some(disk) = read_disk_session_metadata(&self.root, &sid) {
-                                st.apply_disk_metadata(&disk);
-                            }
-                        }
-                    }
-                    let snap = session.snapshot();
-                    let raw = &snap["raw"];
-                    return Ok(json!({
-                        "usage": raw["usage"],
-                        "billing": raw["billing"],
-                        "context_usage": raw["context_usage"],
-                        "capabilities": snap["capabilities"],
-                        "raw": raw,
-                    }));
+                if let Ok(session) = self.get_session(uid) {
+                    let raw = session.snapshot()["raw"].clone();
+                    Ok(
+                        json!({"usage":raw["usage"],"billing":raw["billing"],"context_usage":raw["context_usage"],"raw":raw}),
+                    )
+                } else {
+                    Ok(json!({"usage":null,"billing":null,"context_usage":null}))
                 }
-                if !uid.is_empty() {
-                    let sid = self.resolve_sid(uid, &target, &payload);
-                    if let Some(disk) = read_disk_session_metadata(&self.root, &sid) {
-                        let mut temp = live::LiveState::new();
-                        temp.uid = uid.to_string();
-                        temp.cwd = cwd.clone();
-                        temp.session_id = sid;
-                        temp.apply_disk_metadata(&disk);
-                        let snap = temp.snapshot(uid, &cwd);
-                        let raw = &snap["raw"];
-                        return Ok(json!({
-                            "usage": raw["usage"],
-                            "billing": raw["billing"],
-                            "context_usage": raw["context_usage"],
-                            "capabilities": snap["capabilities"],
-                            "raw": raw,
-                        }));
-                    }
-                }
-                Ok(json!({
-                    "usage": Value::Null,
-                    "billing": Value::Null,
-                    "context_usage": Value::Null,
-                }))
             }
             "compact" => self.compact(uid, &cwd, &target).await,
             "rename" => self.rename_session(uid, &target, &payload).await,
             "fork" => self.fork_session(uid, &cwd, &target, &payload).await,
-            "stop" | "close" | "discard" => {
-                let _ = self.stop(uid).await;
+            "discard" => self.delete_session(uid).await,
+            "stop" | "close" => {
+                self.stop(uid).await?;
                 Ok(json!({
                     "uid": uid,
                     "stopped": true,
@@ -540,269 +375,428 @@ impl Bridge {
         }
     }
 
-    async fn create_session(&self, cwd: &str, payload: &Value) -> Result<Value, String> {
-        let cmd = self.command(cwd);
-        let host_key = sanitize_host_key(&format!("kiro_new_{}", actions::generate_uuid_v4()));
-        let spawned = Session::spawn_or_attach(
-            self.host.as_deref(),
-            Some(&host_key),
-            "",
-            "",
-            cwd,
-            cmd,
-            self.shutdown.clone(),
-        )
-        .await?;
-        let session = match spawned {
-            SpawnedSession::Fresh(s) | SpawnedSession::Reused(s) => s,
+    /// Mutations use their own durable host so a lost HTTP/RPC response never
+    /// causes a second fork/delete. This connection never loads the parent.
+    pub(super) async fn mutate_once(
+        &self,
+        operation_id: &str,
+        method: &str,
+        cwd: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let key = format!("mutation:{operation_id}");
+        let lock = self.lock_for(&key);
+        let _guard = lock.lock().await;
+        let path = self
+            .root
+            .join("mutations")
+            .join(format!("{}.json", digest(operation_id)));
+        let (mut intent, fresh) = match std::fs::read(&path) {
+            Ok(bytes) => (
+                serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())?,
+                false,
+            ),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (
+                json!({"method":method,"params":params,"cwd":cwd,"host_key":format!("kiro_mutation_{}",random_key()?)}),
+                true,
+            ),
+            Err(e) => return Err(e.to_string()),
         };
-        let init_res = match session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": 1,
-                    "clientInfo": { "name": "sessiondock", "version": env!("CARGO_PKG_VERSION") },
-                    "clientCapabilities": {
-                        "_meta": {
-                            "kiro": {
-                                "userInput": true
-                            }
-                        }
-                    }
-                }),
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                session.kill().await;
-                return Err(err);
+        if intent["method"] != method || intent["params"] != params || intent["cwd"] != cwd {
+            return Err("Kiro mutation request reused with different arguments".into());
+        }
+        if intent["stopped"] == true {
+            if let Some(result) = intent.get("result") {
+                return Ok(result.clone());
             }
-        };
-
-        let new_res = match session
-            .request(
-                "session/new",
-                json!({
-                    "cwd": cwd,
-                    "mcpServers": [],
-                }),
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                session.kill().await;
-                return Err(err);
-            }
-        };
-
-        let sid = new_res["sessionId"]
+        }
+        if fresh {
+            save(&path, &intent)?;
+        }
+        let host_key = intent["host_key"]
             .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or("kiro session/new did not return sessionId")?
-            .to_string();
-        let default_dir = if self.root.file_name().and_then(|n| n.to_str()) == Some("cli") {
-            self.root.clone()
+            .ok_or("Kiro mutation host missing")?;
+        let existing = self.creating.lock().unwrap().get(&key).cloned();
+        let session = if let Some(session) = existing {
+            session
+        } else if fresh {
+            match Session::spawn_or_attach(
+                self.host.as_deref(),
+                Some(host_key),
+                "",
+                "",
+                cwd,
+                self.command(cwd),
+                self.shutdown.clone(),
+            )
+            .await?
+            {
+                SpawnedSession::Fresh(session) | SpawnedSession::Reused(session) => session,
+            }
         } else {
-            self.root.join("cli")
+            Session::attach_existing(
+                self.host
+                    .as_deref()
+                    .ok_or("Kiro mutation recovery requires host")?,
+                host_key,
+                "",
+                "",
+                cwd,
+                self.shutdown.clone(),
+            )
+            .await?
         };
-        let path = crate::sessions::index::summary::kiro::locate_session_file(&self.root, &sid)
-            .map(|p| p.canonicalize().unwrap_or(p))
-            .unwrap_or_else(|| default_dir.join(format!("{sid}.json")));
-        let uid = crate::sessions::uid_for("kiro", &path);
-        session.set_uid(&uid);
-        *session.session_id.lock().unwrap() = sid.clone();
-        {
-            let mut st = session.state.lock().unwrap();
-            st.apply_initialize_result(&init_res);
-            st.apply_open_result(&sid, &new_res);
+        self.creating
+            .lock()
+            .unwrap()
+            .insert(key.clone(), session.clone());
+        let init=session.request_once("mutation:initialize","initialize",json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}})).await?;
+        let advertised = if let Some(name) = method.strip_prefix("session/") {
+            init["agentCapabilities"]["sessionCapabilities"][name].is_object()
+        } else {
+            init["agentCapabilities"]["_meta"]["kiro"]["extensionMethods"]
+                .as_array()
+                .is_some_and(|methods| methods.iter().any(|value| value == method))
+        };
+        if !advertised {
+            let _ = session.kill().await;
+            return Err(format!("Kiro 未广告 {method} 能力"));
         }
+        let result = session
+            .request_once("mutation:execute", method, params)
+            .await?;
+        intent["result"] = result.clone();
+        save(&path, &intent)?;
+        session.kill().await?;
+        intent["stopped"] = json!(true);
+        save(&path, &intent)?;
+        self.creating.lock().unwrap().remove(&key);
+        Ok(result)
+    }
 
-        if let Some(m) = payload["model"].as_str().filter(|s| !s.is_empty()) {
-            let _ = self.apply_setting(&session, "model", m).await;
-        }
-        if let Some(e) = payload["effort"]
+    fn create_intent_path(&self, request_id: &str) -> PathBuf {
+        self.root
+            .join("creates")
+            .join(format!("{}.json", digest(request_id)))
+    }
+    async fn create_session(&self, cwd: &str, payload: &Value) -> Result<Value, String> {
+        let request_id = payload["request_id"]
             .as_str()
-            .or_else(|| payload["effortLevel"].as_str())
-            .filter(|s| !s.is_empty())
-        {
-            let _ = self.apply_setting(&session, "effort", e).await;
+            .filter(|id| !id.is_empty())
+            .ok_or("Kiro 创建请求缺少稳定 request_id")?;
+        let lock = self.lock_for(&format!("create:{request_id}"));
+        let _guard = lock.lock().await;
+        let path = self.create_intent_path(request_id);
+        let choices = json!({"model":payload["model"],"effort":payload["effort"],"mode":payload["mode"],"autopilot":payload["autopilot"]});
+        let (mut intent, fresh) = match std::fs::read(&path) {
+            Ok(bytes) => (
+                serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())?,
+                false,
+            ),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (
+                json!({"request_id":request_id,"cwd":cwd,"choices":choices,"host_key":format!("kiro_create_{}",random_key()?),"phase":"prepared"}),
+                true,
+            ),
+            Err(e) => return Err(e.to_string()),
+        };
+        if intent["cwd"] != cwd || intent["choices"] != choices {
+            return Err("同一 Kiro 创建请求不能变更目录或选项".into());
         }
-        if let Some(mode) = payload["mode"].as_str().filter(|s| !s.is_empty()) {
-            let _ = self.apply_setting(&session, "mode", mode).await;
+        if intent["result"].is_object() {
+            return Ok(intent["result"].clone());
         }
-        if let Some(pm) = payload["permission_mode"]
+        if fresh {
+            save(&path, &intent)?;
+        }
+        let host_key = intent["host_key"]
             .as_str()
-            .or_else(|| payload["autopilot"].as_str())
-            .filter(|s| !s.is_empty())
-        {
-            let _ = self.apply_setting(&session, "permission_mode", pm).await;
-        } else if let Some(ap) = payload["autopilot"].as_bool() {
-            let _ = self
-                .apply_setting(&session, "autopilot", if ap { "true" } else { "false" })
-                .await;
+            .ok_or("Kiro 创建宿主绑定缺失")?
+            .to_owned();
+        let existing_create = self.creating.lock().unwrap().get(request_id).cloned();
+        let session = if let Some(session) = existing_create {
+            session
+        } else if fresh {
+            match Session::spawn_or_attach(
+                self.host.as_deref(),
+                Some(&host_key),
+                "",
+                "",
+                cwd,
+                self.command(cwd),
+                self.shutdown.clone(),
+            )
+            .await?
+            {
+                SpawnedSession::Fresh(session) | SpawnedSession::Reused(session) => session,
+            }
+        } else {
+            let dir = self
+                .host
+                .as_deref()
+                .ok_or("Kiro 创建结果待核对，缺少持久宿主")?;
+            Session::attach_existing(dir, &host_key, "", "", cwd, self.shutdown.clone()).await?
+        };
+        self.creating
+            .lock()
+            .unwrap()
+            .insert(request_id.into(), session.clone());
+        session.request_once("create:initialize","initialize",json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{"_meta":{"kiro":{"userInput":true}}}})).await?;
+        let mut settings = json!({});
+        for (from, to) in [
+            ("model", "modelId"),
+            ("effort", "effortLevel"),
+            ("mode", "modeId"),
+        ] {
+            if let Some(value) = payload[from].as_str().filter(|s| !s.is_empty()) {
+                settings[to] = json!(value);
+            }
         }
-
+        let new_params = json!({"cwd":cwd,"mcpServers":[],"_meta":{"kiro":settings}});
+        let mut result = match session.creation_result() {
+            Some(result) => result?,
+            None => {
+                session
+                    .request_once("create:new", "session/new", new_params)
+                    .await?
+            }
+        };
+        if let Some(wanted) = payload["model"].as_str().filter(|value| !value.is_empty()) {
+            let actual = result["configOptions"]
+                .as_array()
+                .and_then(|options| options.iter().find(|option| option["id"] == "model"))
+                .and_then(|option| option["currentValue"].as_str())
+                .or_else(|| result["_meta"]["modelId"].as_str());
+            if actual != Some(wanted) {
+                let sid = result["sessionId"].as_str().ok_or("Kiro new missing SID")?;
+                let confirmed = session
+                    .request_once(
+                        "create:model",
+                        "session/set_config_option",
+                        json!({"sessionId":sid,"configId":"model","value":wanted}),
+                    )
+                    .await?;
+                let actual = confirmed["configOptions"]
+                    .as_array()
+                    .and_then(|options| options.iter().find(|option| option["id"] == "model"))
+                    .and_then(|option| option["currentValue"].as_str());
+                if actual != Some(wanted) {
+                    return Err("Kiro 未确认所选模型，原会话身份已保留，请勿改请求 ID 重建".into());
+                }
+                result["configOptions"] = confirmed["configOptions"].clone();
+            }
+        }
+        let sid = result["sessionId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or("Kiro session/new did not return sessionId")?;
+        let metadata = json!({"sessionId":sid,"cwd":cwd,"title":result["_meta"]["title"].as_str().unwrap_or("新建 Kiro 会话"),"_meta":{"kiro":{"modelId":settings["modelId"],"createdAt":result["_meta"]["createdAt"]}}});
+        let entry = self.catalog.remember_native(sid, &metadata, None)?;
+        self.catalog.bind_host(&entry.uid, Some(host_key))?;
+        session.bind_identity(&entry.uid, sid)?;
+        session.set_projection(self.catalog.clone())?;
         self.sessions
             .lock()
             .unwrap()
-            .insert(uid.clone(), session.clone());
+            .insert(entry.uid.clone(), session.clone());
         let mut snap = session.snapshot();
-        snap["session"] = json!({
-            "uid": uid,
-            "source": "kiro",
-            "session_id": sid,
-            "sid": sid,
-            "cwd": cwd,
-            "path": path,
-            "title": "新建 Kiro 会话",
-            "sdk": true,
-        });
+        snap["session"] = json!({"uid":entry.uid,"source":"kiro","session_id":sid,"sid":sid,"cwd":cwd,"path":entry.path,"title":metadata["title"],"sdk":true});
+        // Save the original identity response before returning, including when the
+        // public HTTP receipt is lost. A retry never creates another session.
+        intent["uid"] = json!(entry.uid);
+        intent["sid"] = json!(sid);
+        intent["phase"] = json!("created");
+        intent["result"] = snap.clone();
+        save(&path, &intent)?;
+        self.creating.lock().unwrap().remove(request_id);
         Ok(snap)
+    }
+
+    pub async fn release_created(&self, request_id: &str, uid: &str) -> Result<Value, String> {
+        let lock = self.lock_for(&format!("create:{request_id}"));
+        let _guard = lock.lock().await;
+        let path = self.create_intent_path(request_id);
+        let mut intent: Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        if intent["uid"] != uid {
+            return Err("Kiro CLI 移交身份不匹配".into());
+        }
+        if intent["phase"] == "released" {
+            return Ok(json!({"uid":uid,"released":true,"released_now":false}));
+        }
+        let uid_lock = self.lock_for(uid);
+        let _uid_guard = uid_lock.lock().await;
+        let key = intent["host_key"].as_str().ok_or("Kiro 创建宿主缺失")?;
+        let dir = self.host.as_deref().ok_or("Kiro CLI 移交需要持久宿主")?;
+        let is_current = self.host_key_for(uid).ok().as_deref() == Some(key);
+        let existing = if is_current {
+            self.sessions.lock().unwrap().get(uid).cloned()
+        } else {
+            None
+        };
+        let session = if let Some(session) = existing {
+            session
+        } else {
+            Session::attach_existing(
+                dir,
+                key,
+                uid,
+                intent["sid"].as_str().unwrap_or(""),
+                intent["cwd"].as_str().unwrap_or(""),
+                self.shutdown.clone(),
+            )
+            .await?
+        };
+        session.kill().await?;
+        if is_current {
+            self.sessions.lock().unwrap().remove(uid);
+            self.catalog.bind_host(uid, None)?;
+        }
+        intent["phase"] = json!("released");
+        save(&path, &intent)?;
+        Ok(json!({"uid":uid,"released":true,"released_now":true}))
+    }
+
+    async fn finish_open_setup(
+        &self,
+        session: &Arc<Session>,
+        uid: &str,
+        sid: &str,
+        cwd: &str,
+    ) -> Result<(), String> {
+        if session.unavailable.load(Ordering::Acquire) {
+            return Err("kiro_sdk_transport_unavailable: original host retained".into());
+        }
+        // Only explicit open reaches this function. Startup reattachment merely
+        // observes the original journal and must not load a native session.
+        let initialize = {
+            let st = session.state.lock().unwrap();
+            if st.initialized {
+                None
+            } else {
+                Some(
+                    st.journal
+                        .iter()
+                        .find(|rpc| rpc.frame["method"] == "initialize")
+                        .cloned(),
+                )
+            }
+        };
+        if let Some(existing) = initialize {
+            let (key, params) = existing.map(|rpc| (rpc.key, rpc.frame["params"].clone())).unwrap_or_else(|| (
+                "open:initialize".into(), json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{"_meta":{"kiro":{"userInput":true}}}})));
+            session.request_once(&key, "initialize", params).await?;
+        }
+        let created = session
+            .state
+            .lock()
+            .unwrap()
+            .journal
+            .iter()
+            .find(|rpc| rpc.frame["method"] == "session/new")
+            .cloned();
+        if let Some(rpc) = created {
+            let result = session
+                .request_once(&rpc.key, "session/new", rpc.frame["params"].clone())
+                .await?;
+            if result["sessionId"].as_str() != Some(sid) {
+                return Err("kiro_sdk_identity_mismatch".into());
+            }
+        } else {
+            let existing = session
+                .state
+                .lock()
+                .unwrap()
+                .journal
+                .iter()
+                .find(|rpc| rpc.frame["method"] == "session/load")
+                .cloned();
+            let (key, params) = existing
+                .map(|rpc| (rpc.key, rpc.frame["params"].clone()))
+                .unwrap_or_else(|| {
+                    (
+                        "open:load".into(),
+                        json!({"sessionId":sid,"cwd":cwd,"mcpServers":[]}),
+                    )
+                });
+            session.request_once(&key, "session/load", params).await?;
+        }
+        session.bind_identity(uid, sid)?;
+        session.set_projection(self.catalog.clone())?;
+        Ok(())
     }
 
     pub(super) async fn ensure_open(
         &self,
         uid: &str,
-        cwd: &str,
-        target: &Value,
+        _cwd: &str,
+        _target: &Value,
     ) -> Result<Arc<Session>, String> {
-        if uid.is_empty() {
-            return Err("missing kiro session uid".into());
-        }
+        let lock = self.lock_for(uid);
+        let _guard = lock.lock().await;
+        let entry = self.catalog.resolve_uid(uid)?;
         let existing = self.sessions.lock().unwrap().get(uid).cloned();
-        if let Some(existing) = existing {
-            if !existing.dead.load(Ordering::Acquire) {
-                existing.touch();
-                return Ok(existing);
-            }
-            self.sessions.lock().unwrap().remove(uid);
+        if let Some(session) = existing
+            .filter(|s| !s.dead.load(Ordering::Acquire) && !s.unavailable.load(Ordering::Acquire))
+        {
+            self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+                .await?;
+            session.touch();
+            return Ok(session);
         }
-
-        let sid = self.resolve_sid(uid, target, &Value::Null);
-        self.check_conflict(&sid, None)?;
-
-        self.starting.lock().unwrap().insert(uid.to_string());
-        let _starting_guard = StartingGuard {
+        self.check_conflict(&entry.sid, None)?;
+        self.starting.lock().unwrap().insert(uid.into());
+        let _starting = StartingGuard {
             set: &self.starting,
-            uid: uid.to_string(),
+            uid: uid.into(),
         };
-
-        let disk_loc = actions::locate_kiro_session(&self.root, &sid);
-        let is_v2_file = matches!(disk_loc, Some(actions::KiroDiskSession::V2File { .. }));
-        let cmd = self.command_with_engine(cwd, is_v2_file);
-        let host_key = sanitize_host_key(uid);
-        let spawned = Session::spawn_or_attach(
-            self.host.as_deref(),
-            Some(&host_key),
-            uid,
-            &sid,
-            cwd,
-            cmd,
-            self.shutdown.clone(),
-        )
-        .await?;
-
-        let session = match spawned {
-            SpawnedSession::Reused(session) => {
-                if let Some(disk) = read_disk_session_metadata(&self.root, &sid) {
-                    session.state.lock().unwrap().apply_disk_metadata(&disk);
-                }
-                if let Some(obs) = target["observed_model"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    let mut st = session.state.lock().unwrap();
-                    if st.model.is_none() {
-                        st.model = Some(obs.to_string());
-                        st.model_observed = true;
-                    }
-                }
+        if let Some(key) = entry.host_key.as_deref() {
+            let dir = self
+                .host
+                .as_deref()
+                .ok_or("kiro_sdk_recovery_unknown: no host directory")?;
+            let session = Session::attach_existing(
+                dir,
+                key,
+                uid,
+                &entry.sid,
+                &entry.cwd,
+                self.shutdown.clone(),
+            )
+            .await?;
+            if !session.dead.load(Ordering::Acquire) {
                 self.sessions
                     .lock()
                     .unwrap()
-                    .insert(uid.to_string(), session.clone());
+                    .insert(uid.into(), session.clone());
+                self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+                    .await?;
                 return Ok(session);
             }
-            SpawnedSession::Fresh(session) => session,
+            self.catalog.bind_host(uid, None)?;
+        }
+        let key = format!("kiro_open_{}", random_key()?);
+        self.catalog.bind_host(uid, Some(key.clone()))?;
+        let session = match Session::spawn_or_attach(
+            self.host.as_deref(),
+            Some(&key),
+            uid,
+            &entry.sid,
+            &entry.cwd,
+            self.command(&entry.cwd),
+            self.shutdown.clone(),
+        )
+        .await?
+        {
+            SpawnedSession::Fresh(session) | SpawnedSession::Reused(session) => session,
         };
-
-        if let Some(disk) = read_disk_session_metadata(&self.root, &sid) {
-            session.state.lock().unwrap().apply_disk_metadata(&disk);
-        }
-        if let Some(obs) = target["observed_model"]
-            .as_str()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let mut st = session.state.lock().unwrap();
-            if st.model.is_none() {
-                st.model = Some(obs.to_string());
-                st.model_observed = true;
-            }
-        }
-
-        let init_res = match session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": 1,
-                    "clientInfo": { "name": "sessiondock", "version": env!("CARGO_PKG_VERSION") },
-                    "clientCapabilities": {
-                        "_meta": {
-                            "kiro": {
-                                "userInput": true
-                            }
-                        }
-                    }
-                }),
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                session.kill().await;
-                return Err(err);
-            }
-        };
-
-        {
-            let mut st = session.state.lock().unwrap();
-            st.apply_initialize_result(&init_res);
-            st.loading = true;
-        }
-        let load_res = session
-            .request(
-                "session/load",
-                json!({
-                    "sessionId": sid,
-                    "cwd": cwd,
-                    "mcpServers": [],
-                }),
-            )
-            .await;
-        session.state.lock().unwrap().loading = false;
-
-        let res = match load_res {
-            Ok(v) => v,
-            Err(err) => {
-                session.kill().await;
-                return Err(format!("kiro session/load failed: {err}"));
-            }
-        };
-
-        *session.session_id.lock().unwrap() = sid.clone();
-        {
-            let mut st = session.state.lock().unwrap();
-            st.apply_open_result(&sid, &res);
-        }
-
+        // Keep the actor if setup fails, so a retry cannot introduce a second reader.
         self.sessions
             .lock()
             .unwrap()
-            .insert(uid.to_string(), session.clone());
+            .insert(uid.into(), session.clone());
+        self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+            .await?;
         Ok(session)
     }
 
@@ -830,6 +824,8 @@ impl Bridge {
             self.ensure_open(uid, cwd, target).await?
         };
 
+        let lock = self.lock_for(&session.uid());
+        let _guard = lock.lock().await;
         let text = payload["text"].as_str().unwrap_or("").trim().to_string();
         let attachments = payload["attachments"]
             .as_array()
@@ -852,38 +848,11 @@ impl Bridge {
 
         let request_id = payload["request_id"].as_str();
         let (content, display_text) = build_prompt_blocks(&text, &attachments, &quotes);
-        {
-            let mut st = session.state.lock().unwrap();
-            if st.running {
-                session.prompt_starting.store(false, Ordering::Release);
-                return Err("kiro_sdk_session_busy: session is already running a turn".into());
-            }
-            // Do NOT pass picker model/effort overrides here so turn never overwrites
-            // the session's active model/effort. Model/effort changes use `settings`.
-            st.begin_turn(&display_text, request_id, None, None);
-        }
+        let prompt_params = json!({ "sessionId": sid, "prompt": content });
+        let result = session
+            .begin_prompt(prompt_params, &display_text, request_id)
+            .await;
         session.prompt_starting.store(false, Ordering::Release);
-
-        let prompt_params = json!({
-            "sessionId": sid,
-            "prompt": content,
-        });
-
-        let s = session.clone();
-        tokio::spawn(async move {
-            let res = s.request("session/prompt", prompt_params).await;
-            let mut st = s.state.lock().unwrap();
-            match res {
-                Ok(val) => st.finish_turn(&val),
-                Err(err) => st.fail_turn(&err),
-            }
-        });
-
-        let mut snap = session.snapshot();
-        snap["accepted"] = json!(true);
-        if let Some(rid) = request_id {
-            snap["request_id"] = json!(rid);
-        }
-        Ok(snap)
+        result
     }
 }

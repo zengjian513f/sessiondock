@@ -22,8 +22,6 @@ const AGY_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 const KIRO_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Agy's documented `--effort` levels; model compatibility stays with the CLI.
 const AGY_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-/// Kiro's documented `--effort` (`--thinking-effort`) levels.
-const KIRO_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's documented `--effort` levels.
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's `--model` aliases for the latest model of each family.
@@ -571,8 +569,7 @@ pub(crate) fn agy_variant(id: &str) -> bool {
 }
 
 /// `kiro-cli chat --list-models -f json`: JSON model catalog (`models` +
-/// `default_model`) with Kiro's `--effort` levels (`low`, `medium`, `high`,
-/// `xhigh`, `max`).
+/// `default_model`). Only native advertised effort choices are exposed.
 fn kiro(profile: &CliProfile) -> Catalog {
     let cwd = cli_home(profile, "HOME", "");
     let args: &[&str] = if profile.args.iter().any(|arg| arg == "chat") {
@@ -585,10 +582,7 @@ fn kiro(profile: &CliProfile) -> Catalog {
 }
 
 pub(crate) fn kiro_json(output: &str) -> Catalog {
-    let efforts: Vec<String> = KIRO_EFFORTS
-        .iter()
-        .map(|effort| (*effort).to_owned())
-        .collect();
+    let efforts = Vec::new();
     let trimmed = output.trim();
     let value: Option<serde_json::Value> = serde_json::from_str(trimmed).ok().or_else(|| {
         let start = trimmed.find(['{', '['])?;
@@ -607,7 +601,7 @@ pub(crate) fn kiro_json(output: &str) -> Catalog {
         .and_then(serde_json::Value::as_array)
         .or_else(|| value.as_array());
     let mut seen = std::collections::BTreeSet::new();
-    let models = list
+    let models: Vec<Model> = list
         .into_iter()
         .flatten()
         .filter_map(|item| {
@@ -621,7 +615,7 @@ pub(crate) fn kiro_json(output: &str) -> Catalog {
                 .or_else(|| text(item, "name"))
                 .or_else(|| text(item, "display_name"))
                 .unwrap_or_else(|| id.clone());
-            let model_efforts = item
+            let mut model_efforts = item
                 .get("efforts")
                 .or_else(|| item.get("supportedEfforts"))
                 .and_then(serde_json::Value::as_array)
@@ -632,8 +626,10 @@ pub(crate) fn kiro_json(output: &str) -> Catalog {
                         .map(str::to_owned)
                         .collect::<Vec<_>>()
                 })
-                .filter(|arr| !arr.is_empty())
-                .unwrap_or_else(|| efforts.clone());
+                .unwrap_or_default();
+            if item["hasEffort"] == false || item["_meta"]["kiro"]["hasEffort"] == false {
+                model_efforts.clear();
+            }
             let default_effort = text(item, "default_effort")
                 .or_else(|| text(item, "defaultEffort"))
                 .filter(|e| model_efforts.contains(e));
@@ -649,6 +645,12 @@ pub(crate) fn kiro_json(output: &str) -> Catalog {
         .or_else(|| text(&value, "defaultModel"))
         .or_else(|| text(&value, "currentModelId"))
         .filter(|m| valid_choice(m));
+    let efforts = models
+        .iter()
+        .flat_map(|model| model.efforts.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Catalog {
         models,
         efforts,

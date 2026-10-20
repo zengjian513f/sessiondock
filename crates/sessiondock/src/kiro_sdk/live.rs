@@ -1,4 +1,7 @@
+use super::checkpoint::{self, Rpc};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -6,12 +9,40 @@ use tokio::sync::broadcast;
 
 use super::transport::{Session, now_secs};
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct PendingRequest {
     pub(super) rpc_id: Value,
     pub(super) card: Value,
 }
 
+#[derive(Serialize, Deserialize)]
 pub(super) struct LiveState {
+    #[serde(default)]
+    pub(super) journal: Vec<Rpc>,
+    #[serde(default)]
+    pub(super) next_rpc: u64,
+    #[serde(default)]
+    pub(super) next_request_id: u64,
+    #[serde(default)]
+    pub(super) active_prompt: Option<u64>,
+    #[serde(default)]
+    pub(super) stdout_offset: u64,
+    #[serde(default)]
+    pub(super) stderr_offset: u64,
+    #[serde(default)]
+    pub(super) stderr_tail: Vec<String>,
+    #[serde(default)]
+    pub(super) initialized: bool,
+    #[serde(default)]
+    pub(super) error: Option<String>,
+    #[serde(default)]
+    pub(super) error_kind: Option<String>,
+    #[serde(skip)]
+    pub(super) checkpoint: Option<PathBuf>,
+    #[serde(skip)]
+    pub(super) checkpoint_error: Option<String>,
+    #[serde(skip)]
+    pub(super) observing: bool,
     pub(super) uid: String,
     pub(super) cwd: String,
     pub(super) session_id: String,
@@ -41,6 +72,7 @@ pub(super) struct LiveState {
     pub(super) context_usage: Option<Value>,
     pub(super) agent_capabilities: Value,
     pub(super) seq: u64,
+    #[serde(skip, default = "events")]
     pub(super) events: broadcast::Sender<Arc<str>>,
     next_item_id: u64,
     pub(super) current_assistant_id: Option<String>,
@@ -50,10 +82,27 @@ pub(super) struct LiveState {
     replay_ids: HashSet<String>,
 }
 
+fn events() -> broadcast::Sender<Arc<str>> {
+    broadcast::channel(256).0
+}
+
 impl LiveState {
     pub(super) fn new() -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
+            journal: Vec::new(),
+            next_rpc: 1,
+            next_request_id: 0,
+            active_prompt: None,
+            stdout_offset: 0,
+            stderr_offset: 0,
+            stderr_tail: Vec::new(),
+            initialized: false,
+            error: None,
+            error_kind: None,
+            checkpoint: None,
+            checkpoint_error: None,
+            observing: false,
             uid: String::new(),
             cwd: String::new(),
             session_id: String::new(),
@@ -99,15 +148,48 @@ impl LiveState {
         id
     }
 
+    pub(super) fn persist(&mut self) -> Result<(), String> {
+        if let Some(path) = self.checkpoint.clone() {
+            if let Err(error) = checkpoint::save(&path, self) {
+                self.checkpoint_error = Some(error.clone());
+                self.runtime_error = Some(error.clone());
+                return Err(error);
+            }
+        }
+        self.checkpoint_error = None;
+        Ok(())
+    }
+
     pub(super) fn publish(&mut self) {
         self.seq += 1;
-        let uid = self.uid.clone();
-        let cwd = self.cwd.clone();
-        let snap = self.snapshot(&uid, &cwd);
+        if self.observing {
+            return;
+        }
+        if self.persist().is_err() {
+            return;
+        }
+        self.broadcast();
+    }
+
+    pub(super) fn broadcast(&self) {
+        let snap = self.snapshot(&self.uid, &self.cwd);
         let _ = self.events.send(Arc::from(snap.to_string()));
     }
 
+    pub(super) fn supports_method(&self, method: &str) -> bool {
+        if let Some(name) = method.strip_prefix("session/") {
+            if matches!(name, "list" | "fork" | "delete" | "rename") {
+                return self.agent_capabilities["sessionCapabilities"][name].is_object();
+            }
+        }
+        self.agent_capabilities
+            .pointer("/_meta/kiro/extensionMethods")
+            .and_then(Value::as_array)
+            .is_some_and(|methods| methods.iter().any(|entry| entry.as_str() == Some(method)))
+    }
+
     pub(super) fn apply_initialize_result(&mut self, res: &Value) {
+        self.initialized = true;
         if let Some(caps) = res.get("agentCapabilities") {
             self.agent_capabilities = caps.clone();
         }
@@ -154,79 +236,15 @@ impl LiveState {
         self.publish();
     }
 
-    pub(super) fn apply_disk_metadata(&mut self, disk: &Value) {
-        if self.model.is_none() {
-            if let Some(m) = disk["modelId"]
-                .as_str()
-                .or_else(|| disk["model"].as_str())
-                .or_else(|| disk["currentModelId"].as_str())
-                .or_else(|| {
-                    disk.pointer("/session_state/rts_model_state/model_info/model_id")
-                        .and_then(|v| v.as_str())
-                })
-                .or_else(|| {
-                    disk.pointer("/session_state/rts_model_state/model_info/modelId")
-                        .and_then(|v| v.as_str())
-                })
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                self.model = Some(m.to_string());
-                self.model_observed = true;
-            }
-        }
-        if self.autopilot.is_none() {
-            if let Some(ap) = disk["autopilot"].as_bool() {
-                self.autopilot = Some(ap);
-                self.permission_mode = Some(if ap { "autopilot" } else { "default" }.into());
-            }
-        }
-        if self.effort.is_none() {
-            if let Some(e) = disk["effortLevel"]
-                .as_str()
-                .or_else(|| disk["effort"].as_str())
-                .or_else(|| disk["reasoningEffort"].as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                self.effort = Some(e.to_string());
-            }
-        }
-        if self.mode.is_none() {
-            if let Some(m) = disk["mode"]
-                .as_str()
-                .or_else(|| disk["currentModeId"].as_str())
-                .or_else(|| disk["agentMode"].as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                self.mode = Some(m.to_string());
-            }
-        }
-        if self.title.is_none() {
-            if let Some(t) = disk["title"]
-                .as_str()
-                .or_else(|| disk["name"].as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                self.title = Some(t.to_string());
-            }
-        }
-        if let Some(arr) = disk.get("configOptions").and_then(|v| v.as_array())
-            && self.config_options.is_empty()
-        {
-            self.apply_config_options(arr);
-        }
-        self.apply_metadata(disk);
-    }
-
     pub(super) fn apply_config_options(&mut self, arr: &[Value]) {
         self.config_options = arr.to_vec();
         self.sync_from_config_options();
     }
 
     pub(super) fn sync_from_config_options(&mut self) {
+        // Config options are the native authority; an omitted control must not
+        // retain an effort value from a previous model or creation draft.
+        self.effort = None;
         let opts = self.config_options.clone();
         for opt in &opts {
             let id = opt["id"]
@@ -319,6 +337,36 @@ impl LiveState {
                 self.permission_mode = Some(if enabled { "autopilot" } else { "default" }.into());
             }
         }
+        if !self.effort_supported() {
+            self.effort = None;
+        }
+    }
+
+    pub(super) fn effort_supported(&self) -> bool {
+        let advertised = self.config_options.iter().any(|option| {
+            let id = option["id"]
+                .as_str()
+                .or_else(|| option["configId"].as_str())
+                .unwrap_or("");
+            let category = option["category"].as_str().unwrap_or("");
+            ["effortLevel", "effort", "reasoningEffort"]
+                .iter()
+                .any(|name| id.eq_ignore_ascii_case(name))
+                || ["thought_level", "effort"]
+                    .iter()
+                    .any(|name| category.eq_ignore_ascii_case(name))
+        });
+        advertised
+            && !self
+                .config_options
+                .iter()
+                .filter_map(|option| option["options"].as_array())
+                .flatten()
+                .any(|option| {
+                    option["value"].as_str().or_else(|| option["id"].as_str())
+                        == self.model.as_deref()
+                        && option["_meta"]["kiro"]["hasEffort"] == false
+                })
     }
 
     pub(super) fn update_config_option_value(&mut self, config_id: &str, value: &str) {
@@ -403,12 +451,14 @@ impl LiveState {
         self.running = true;
         self.interrupted_turn = false;
         self.runtime_error = None;
+        self.error = None;
+        self.error_kind = None;
         self.retry = None;
         if let Some(m) = model.filter(|s| !s.is_empty()) {
             self.model = Some(m);
             self.model_observed = false;
         }
-        if let Some(e) = effort.filter(|s| !s.is_empty()) {
+        if let Some(e) = effort.filter(|s| !s.is_empty() && self.effort_supported()) {
             self.effort = Some(e);
         }
         let user_id = self.alloc_item_id("user");
@@ -432,11 +482,32 @@ impl LiveState {
 
     pub(super) fn finish_turn(&mut self, result: &Value) {
         self.running = false;
-        let stop = result["stopReason"].as_str().unwrap_or("end_turn");
-        let is_interrupted = self.interrupted_turn || stop == "cancelled" || stop == "interrupted";
+        let stop = result["stopReason"].as_str().unwrap_or("unknown");
+        let is_interrupted = stop == "cancelled" || stop == "interrupted";
+        let status = if is_interrupted {
+            "interrupted"
+        } else {
+            match stop {
+                "end_turn" => "completed",
+                "max_tokens" | "max_turn_requests" | "refusal" => "incomplete",
+                _ => "unknown",
+            }
+        };
+        if status != "completed" {
+            self.error = Some(format!("Kiro prompt stopped: {stop}"));
+            self.error_kind = Some(
+                if is_interrupted {
+                    "interrupted"
+                } else {
+                    status
+                }
+                .into(),
+            );
+        }
         self.last_turn = Some(json!({
-            "status": if is_interrupted { "interrupted" } else { "completed" },
+            "status": status,
             "stopReason": stop,
+            "turn_id": self.active_prompt,
         }));
         if let Some(meta) = result.get("metadata").or_else(|| result.get("_meta")) {
             self.apply_metadata(meta);
@@ -466,11 +537,10 @@ impl LiveState {
 
     pub(super) fn fail_turn(&mut self, err: &str) {
         self.running = false;
-        if self.interrupted_turn
-            || err.contains("cancelled")
-            || err.contains("interrupted")
-            || err.contains("Canceled")
-        {
+        self.error = Some(err.to_string());
+        self.error_kind = Some("turn".into());
+        if err.contains("cancelled") || err.contains("interrupted") || err.contains("Canceled") {
+            self.error_kind = Some("interrupted".into());
             self.last_turn = Some(json!({
                 "status": "interrupted",
                 "stopReason": "cancelled",
@@ -479,6 +549,7 @@ impl LiveState {
             self.last_turn = Some(json!({
                 "status": "failed",
                 "error": err,
+                "turn_id": self.active_prompt,
             }));
         }
         self.current_assistant_id = None;
@@ -487,18 +558,18 @@ impl LiveState {
     }
 
     pub(super) fn mark_interrupted(&mut self) {
-        self.running = false;
+        // A cancellation request is an intent; only this prompt's response ends it.
         self.interrupted_turn = true;
-        self.last_turn = Some(json!({
-            "status": "interrupted",
-            "stopReason": "cancelled",
-        }));
-        self.current_assistant_id = None;
-        self.current_thinking_id = None;
         self.publish();
     }
 
     pub(super) fn handle_notification(&mut self, method: &str, params: &Value) {
+        if params["sessionId"]
+            .as_str()
+            .is_some_and(|sid| !self.session_id.is_empty() && sid != self.session_id)
+        {
+            return;
+        }
         match method {
             "_kiro.dev/metadata" | "_kiro/metadata" | "kiro/metadata" | "session/metadata"
             | "usage/update" => {
@@ -529,6 +600,8 @@ impl LiveState {
             .or_else(|| u["type"].as_str())
             .unwrap_or("");
         let is_replay = self.loading
+            || params["_meta"]["kiro"]["replay"].as_bool() == Some(true)
+            || u["_meta"]["kiro"]["replay"].as_bool() == Some(true)
             || params["_meta"]["isReplay"].as_bool() == Some(true)
             || u["_meta"]["isReplay"].as_bool() == Some(true)
             || params["isReplay"].as_bool() == Some(true)
@@ -538,33 +611,22 @@ impl LiveState {
             .as_str()
             .or_else(|| u["content"]["messageId"].as_str())
             .or_else(|| params["messageId"].as_str())
-            .map(str::to_string);
-        let tool_id = u["toolCallId"]
-            .as_str()
-            .or_else(|| u["id"].as_str())
+            .or_else(|| u["_meta"]["kiro"]["messageId"].as_str())
+            .or_else(|| params["_meta"]["kiro"]["messageId"].as_str())
             .map(str::to_string);
 
         match kind {
             "user_message_chunk" => {
-                if is_replay {
-                    if let Some(id) = msg_id {
-                        self.replay_ids.insert(id);
+                if is_replay || !self.running {
+                    let text = extract_chunk_text(u);
+                    if !text.is_empty() {
+                        self.append_chunk("user", &text, msg_id.as_deref());
+                        self.publish();
                     }
                 }
                 return;
             }
             "agent_message_chunk" => {
-                if is_replay {
-                    if let Some(id) = msg_id {
-                        self.replay_ids.insert(id);
-                    }
-                    return;
-                }
-                if let Some(ref id) = msg_id
-                    && self.replay_ids.contains(id)
-                {
-                    return;
-                }
                 let text = extract_chunk_text(u);
                 if !text.is_empty() {
                     self.append_chunk("assistant", &text, msg_id.as_deref());
@@ -573,17 +635,6 @@ impl LiveState {
                 return;
             }
             "agent_thought_chunk" => {
-                if is_replay {
-                    if let Some(id) = msg_id {
-                        self.replay_ids.insert(id);
-                    }
-                    return;
-                }
-                if let Some(ref id) = msg_id
-                    && self.replay_ids.contains(id)
-                {
-                    return;
-                }
                 let text = extract_chunk_text(u);
                 if !text.is_empty() {
                     self.append_chunk("thinking", &text, msg_id.as_deref());
@@ -592,25 +643,11 @@ impl LiveState {
                 return;
             }
             "tool_call" | "tool_call_update" => {
-                if is_replay {
-                    if let Some(id) = tool_id {
-                        self.replay_ids.insert(id);
-                    }
-                    return;
-                }
-                if let Some(ref id) = tool_id
-                    && self.replay_ids.contains(id)
-                {
-                    return;
-                }
                 self.upsert_tool(u);
                 self.publish();
                 return;
             }
             "plan" => {
-                if is_replay {
-                    return;
-                }
                 self.upsert_plan(u);
                 self.publish();
                 return;
@@ -655,20 +692,8 @@ impl LiveState {
                 self.apply_metadata(u);
                 self.publish();
             }
-            "turn_end" => {
-                if is_replay {
-                    return;
-                }
-                self.running = false;
-                let stop = u["stopReason"].as_str().unwrap_or("end_turn");
-                let is_interrupted =
-                    self.interrupted_turn || stop == "cancelled" || stop == "interrupted";
-                self.last_turn = Some(json!({
-                    "status": if is_interrupted { "interrupted" } else { "completed" },
-                    "stopReason": stop,
-                }));
-                self.publish();
-            }
+            // Uncorrelated notifications cannot complete a newer prompt.
+            "turn_end" => {}
             _ => {
                 if u.get("contextUsagePercentage").is_some()
                     || u.get("credits").is_some()
@@ -683,6 +708,9 @@ impl LiveState {
     }
 
     pub(super) fn apply_metadata(&mut self, u: &Value) {
+        if let Some(meta) = u.pointer("/_meta/kiro").or_else(|| u.get("kiro")) {
+            self.apply_metadata(meta);
+        }
         if let Some(m) = u["modelId"]
             .as_str()
             .or_else(|| u["currentModelId"].as_str())
@@ -691,7 +719,10 @@ impl LiveState {
             self.model = Some(m.to_string());
             self.model_observed = false;
         }
-        if let Some(e) = u["effortLevel"].as_str().filter(|s| !s.trim().is_empty()) {
+        if let Some(e) = u["effortLevel"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && self.effort_supported())
+        {
             self.effort = Some(e.to_string());
         }
         if let Some(mode) = u["currentModeId"]
@@ -731,6 +762,7 @@ impl LiveState {
         let raw_ctx_pct = u["contextUsagePercentage"]
             .as_f64()
             .or_else(|| ctx_obj["contextUsagePercentage"].as_f64())
+            .or_else(|| ctx_obj["usagePercentage"].as_f64())
             .or_else(|| ctx_obj["percentage"].as_f64())
             .or_else(|| ctx_obj["percent"].as_f64())
             .or_else(|| {
@@ -743,7 +775,14 @@ impl LiveState {
                 }
             });
 
-        if let Some(pct) = raw_ctx_pct {
+        let context_evidence = u.get("contextUsage").is_some()
+            || u.get("context_usage").is_some()
+            || u.get("context").is_some()
+            || u.get("contextUsagePercentage").is_some()
+            || u["kind"] == "context_usage"
+            || used_tokens.is_some()
+            || max_tokens.is_some();
+        if let Some(pct) = raw_ctx_pct.filter(|_| context_evidence) {
             let mut ctx = json!({
                 "percent": (pct * 10.0).round() / 10.0,
                 "percentage": pct,
@@ -805,7 +844,15 @@ impl LiveState {
         let normalized_reset = normalize_reset_value(raw_reset);
         let reset_remaining = format_reset_remaining(raw_reset);
 
-        if cred_pct.is_some() || cred_used.is_some() || cred_limit.is_some() {
+        let billing_evidence = u.get("credits").is_some()
+            || u.get("creditUsage").is_some()
+            || u.get("billing").is_some()
+            || u.pointer("/usage/credits").is_some()
+            || u.get("creditUsagePercent").is_some()
+            || u.get("creditUsagePercentage").is_some()
+            || u.get("creditsUsed").is_some()
+            || u.get("creditsLimit").is_some();
+        if billing_evidence && (cred_pct.is_some() || cred_used.is_some() || cred_limit.is_some()) {
             let pct = cred_pct.unwrap_or(0.0);
             let mut billing = json!({
                 "creditUsagePercent": (pct * 10.0).round() / 10.0,
@@ -854,12 +901,23 @@ impl LiveState {
     ) -> Option<Value> {
         let id_str = match &id {
             Value::Number(n) => n.to_string(),
-            Value::String(s) => s.clone(),
+            Value::String(s) => format!("s-{s}"),
             _ => "0".to_string(),
         };
+        // The native peer may reuse a JSON-RPC id after its previous request
+        // finishes. UI answers belong to this particular request occurrence.
+        if self.requests.values().any(|pending| pending.rpc_id == id) {
+            return None;
+        }
+        self.next_request_id += 1;
+        let scoped_id = format!(
+            "{}-{}-{id_str}",
+            self.active_prompt.unwrap_or(0),
+            self.next_request_id
+        );
         match method {
             "session/request_permission" => {
-                let key = format!("perm-{id_str}");
+                let key = format!("perm-{scoped_id}");
                 let title = params["toolCall"]["title"]
                     .as_str()
                     .or_else(|| params["toolCall"]["name"].as_str())
@@ -873,7 +931,7 @@ impl LiveState {
                     .or_else(|| params["toolCall"].get("input"))
                     .or_else(|| params.get("input"))
                     .cloned();
-                let mut options: Vec<Value> = params["options"]
+                let options: Vec<Value> = params["options"]
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -888,6 +946,7 @@ impl LiveState {
                                     .unwrap_or(oid);
                                 let kind = o["kind"].as_str().unwrap_or("");
                                 Some(json!({
+                                    "_meta": o["_meta"],
                                     "id": oid,
                                     "optionId": oid,
                                     "label": label,
@@ -899,18 +958,12 @@ impl LiveState {
                             .collect()
                     })
                     .unwrap_or_default();
-                if options.is_empty() {
-                    options = vec![
-                        json!({"id": "allow_once", "optionId": "allow_once", "label": "允许一次", "value": "allow_once", "kind": "allow_once"}),
-                        json!({"id": "allow_always", "optionId": "allow_always", "label": "始终允许", "value": "allow_always", "kind": "allow_always"}),
-                        json!({"id": "reject_once", "optionId": "reject_once", "label": "拒绝", "value": "reject_once", "kind": "reject_once"}),
-                    ];
-                }
                 let mut card = json!({
                     "key": key,
                     "type": "approval",
                     "title": title,
                     "options": options,
+                    "_meta": params["_meta"],
                 });
                 if let Some(d) = desc {
                     card["description"] = json!(d);
@@ -929,7 +982,7 @@ impl LiveState {
                 None
             }
             "_kiro/userInput" | "_kiro.dev/userInput" | "kiro/userInput" | "elicitation/create" => {
-                let key = format!("user-{id_str}");
+                let key = format!("user-{scoped_id}");
                 let title = params["title"]
                     .as_str()
                     .or_else(|| params["question"].as_str())
@@ -1046,6 +1099,39 @@ impl LiveState {
             return;
         }
 
+        if role == "user" {
+            self.current_assistant_id = None;
+            self.current_thinking_id = None;
+            let existing = if message_id.is_none() {
+                self.items
+                    .last_mut()
+                    .filter(|item| item["role"] == "user" && item.get("message_id").is_none())
+            } else {
+                None
+            };
+            if let Some(item) = existing {
+                let text = format!("{}{chunk}", item["text"].as_str().unwrap_or(""));
+                item["text"] = json!(text);
+                item["content"] = json!(text);
+            } else {
+                let id = self.alloc_item_id("user");
+                let mut item = json!({"id":id,"role":"user","text":chunk,"content":chunk});
+                if let Some(mid) = message_id {
+                    item["message_id"] = json!(mid);
+                    self.message_item_ids.insert(mid.into(), id);
+                }
+                self.items.push(item);
+            }
+            return;
+        }
+        if message_id.is_some() {
+            // An unseen native message ID starts a new item, even when text matches.
+            if role == "thinking" {
+                self.current_thinking_id = None;
+            } else {
+                self.current_assistant_id = None;
+            }
+        }
         let target_id = if role == "thinking" {
             if let Some(ref id) = self.current_thinking_id {
                 id.clone()
@@ -1221,15 +1307,18 @@ impl LiveState {
         requests.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
         let capabilities = json!({
             "send": true,
-            "models": true,
-            "settings": true,
-            "usage": true,
-            "billing": true,
+            "models": !self.config_options.is_empty() || !self.models.is_null(),
+            "settings": !self.config_options.is_empty() || !self.modes.is_null(),
+            "effort": self.effort_supported(),
+            "usage": self.supports_method("_kiro/session/context") || !self.usage.is_null(),
+            "billing": self.billing.is_some(),
             "interrupt": true,
-            "steer": true,
-            "compact": true,
-            "fork": true,
-            "rename": true,
+            "steer": self.supports_method("_session/steer") || self.supports_method("session/steer"),
+            "compact": self.supports_method("_kiro/session/compact"),
+            "fork": self.supports_method("session/fork"),
+            "rename": self.supports_method("session/rename") || self.supports_method("_kiro/session/rename"),
+            "history": self.supports_method("_kiro/session/history"),
+            "export": self.supports_method("_kiro/session/export"),
             "revert": false,
             "rewind": false,
             "permissions": true,
@@ -1243,10 +1332,14 @@ impl LiveState {
             "session_id": self.session_id,
             "cwd": cwd,
             "running": self.running,
+            "loading": self.loading,
             "items": self.items,
             "requests": requests,
             "last_turn": self.last_turn,
             "runtime_error": self.runtime_error,
+            "error": self.error,
+            "error_kind": self.error_kind,
+            "cancel_requested": self.interrupted_turn,
             "retry": self.retry,
             "compact": self.compact,
             "configOptions": self.config_options,
@@ -1254,12 +1347,12 @@ impl LiveState {
             "mode": self.mode,
             "model": self.model,
             "model_observed": self.model_observed,
-            "effort": self.effort,
+            "effort": self.effort.as_ref().filter(|_| self.effort_supported()),
             "permission_mode": self.permission_mode,
             "autopilot": self.autopilot,
             "settings": {
                 "model": self.model,
-                "effort": self.effort,
+                "effort": self.effort.as_ref().filter(|_| self.effort_supported()),
                 "mode": self.mode,
                 "permission_mode": self.permission_mode,
                 "autopilot": self.autopilot,
@@ -1429,80 +1522,14 @@ fn format_reset_remaining(raw: Option<&Value>) -> Option<String> {
     }
 }
 
-pub(super) fn handle_line(session: &Arc<Session>, line: &str) {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    let Ok(val) = serde_json::from_str::<Value>(trimmed) else {
-        return;
-    };
-    session.touch();
-
-    // JSON-RPC response to a request we sent
-    if val.get("method").is_none()
-        && let Some(id) = val.get("id").and_then(|v| v.as_u64())
-    {
-        if let Some(tx) = session.pending.lock().unwrap().remove(&id) {
-            if let Some(err) = val.get("error") {
-                let msg = err["message"]
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| err.to_string());
-                let _ = tx.send(Err(msg));
-            } else {
-                let _ = tx.send(Ok(val.get("result").cloned().unwrap_or(Value::Null)));
-            }
-        }
-        return;
-    }
-
-    // Incoming JSON-RPC request from agent (has both id and method)
-    if let (Some(id), Some(method)) = (
-        val.get("id").cloned(),
-        val.get("method").and_then(|v| v.as_str()),
-    ) {
-        let params = val.get("params").cloned().unwrap_or(Value::Null);
-        let auto_reply = {
-            let mut st = session.state.lock().unwrap();
-            st.handle_incoming_request(id.clone(), method, &params)
-        };
-        if let Some(reply) = auto_reply {
-            let s = session.clone();
-            tokio::spawn(async move {
-                let _ = s.respond_rpc(id, reply).await;
-            });
-        }
-        return;
-    }
-
-    // Incoming JSON-RPC notification from agent
-    if let Some(method) = val.get("method").and_then(|v| v.as_str()) {
-        let params = val.get("params").cloned().unwrap_or(Value::Null);
-        let mut st = session.state.lock().unwrap();
-        st.handle_notification(method, &params);
-    }
-}
-
 pub(super) fn mark_exit(session: &Arc<Session>, reason: &str) {
-    let pending: Vec<_> = session
-        .pending
-        .lock()
-        .unwrap()
-        .drain()
-        .map(|(_, tx)| tx)
-        .collect();
-    for tx in pending {
-        let _ = tx.send(Err(reason.to_string()));
-    }
     let mut st = session.state.lock().unwrap();
     if st.running {
-        st.running = false;
-        st.last_turn = Some(json!({
-            "status": "failed",
-            "error": reason,
-        }));
+        st.fail_turn(reason);
+        st.error_kind = Some("kiro_sdk_process_exited".into());
+        st.active_prompt = None;
     }
+    st.requests.clear();
     st.runtime_error = Some(reason.to_string());
     st.publish();
 }

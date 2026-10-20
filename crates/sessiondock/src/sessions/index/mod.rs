@@ -208,6 +208,7 @@ pub(crate) fn codex_rollout_id<'a>(path: &'a Path, sid: &str) -> Option<&'a str>
 pub struct IndexSnapshot {
     document: Value,
     candidates: BTreeMap<String, CandidateRef>,
+    aliases: BTreeMap<String, String>,
     /// (source, native sid) → uids of every entry declaring it.
     threads: BTreeMap<(String, String), Vec<String>>,
     /// Immutable Codex rollout UUID → all matching physical entries.
@@ -228,7 +229,11 @@ impl IndexSnapshot {
         self.document["sig"].as_str().unwrap_or("")
     }
     pub fn candidate(&self, uid: &str) -> Option<&CandidateRef> {
-        self.candidates.get(uid)
+        self.candidates.get(uid).or_else(|| {
+            self.aliases
+                .get(uid)
+                .and_then(|canonical| self.candidates.get(canonical))
+        })
     }
     pub fn candidates(&self) -> impl Iterator<Item = &CandidateRef> {
         self.candidates.values()
@@ -598,11 +603,31 @@ impl Index {
         }
 
         let mut entries = BTreeMap::new();
+        let mut aliases = BTreeMap::new();
         for candidate in discovered {
             let Some(cached) = cache.get(&candidate.path) else {
                 continue;
             };
-            let uid = uid_for(candidate.source, &candidate.path);
+            let uid = if candidate.source == "kiro" {
+                let Some((uid, old_uids)) = candidate
+                    .path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|key| {
+                        crate::sessions::kiro::identity_for_projection(&candidate.root, key)
+                    })
+                else {
+                    continue;
+                };
+                for alias in old_uids {
+                    if alias != uid {
+                        aliases.insert(alias, uid.clone());
+                    }
+                }
+                uid
+            } else {
+                uid_for(candidate.source, &candidate.path)
+            };
             entries.insert(
                 uid.clone(),
                 CandidateRef {
@@ -667,11 +692,24 @@ impl Index {
         if let Some(names) = &names {
             names.enrich(&mut rows, &entries);
         }
+        for row in &mut rows {
+            if row["source"] == "kiro" {
+                let uid = row["uid"].as_str().unwrap_or("");
+                let previous: Vec<&str> = aliases
+                    .iter()
+                    .filter_map(|(alias, canonical)| (canonical == uid).then_some(alias.as_str()))
+                    .collect();
+                if !previous.is_empty() {
+                    row["aliases"] = json!(previous);
+                }
+            }
+        }
         let document = signed_document(rows);
         let snapshot = Arc::new(IndexSnapshot {
             document,
             rollouts: graph::rollout_index(&entries),
             candidates: entries,
+            aliases,
             threads,
             agents,
             catalog: built.catalog,
@@ -810,7 +848,7 @@ impl Index {
                 "claude" => walk.claude(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
                 "opencode" | "agy" => walk.database_mirror(&dir, source)?,
-                "kiro" => walk.kiro(&dir)?,
+                "kiro" => walk.database_mirror(&dir, "kiro")?,
                 _ => walk.grok(&dir)?,
             }
         }
@@ -1146,135 +1184,6 @@ impl Walk<'_> {
         }
         Ok(())
     }
-
-    /// Kiro sessions under `<root>`:
-    /// 1. V3 KAS direct: `<root>/<sess_id>/session.json` (+ optional `messages.jsonl`)
-    /// 2. V3 KAS bucket: `<root>/<workspace_hash>/<sess_id>/session.json` (+ optional `messages.jsonl`)
-    /// 3. V2 legacy CLI: `<root>/cli/<uuid>.json` (+ optional `<uuid>.jsonl`)
-    /// 4. V2 direct: `<root>/<uuid>.json` (+ optional `<uuid>.jsonl`)
-    fn kiro(&mut self, root: &Dir) -> Result<(), SessionError> {
-        // Direct V2 JSON files in `<root>/<uuid>.json`
-        self.kiro_v2_files(root, self.root);
-
-        for child in subdirectories(root, self.root) {
-            let Ok(child_dir) = root.open_dir_nofollow(&child) else {
-                continue;
-            };
-            let child_path = self.root.join(&child);
-            if child == "cli" {
-                self.kiro_v2_files(&child_dir, &child_path);
-            }
-            // Check if `<root>/<child>/session.json` exists (Direct V3 layout)
-            let direct_session_json = child_path.join("session.json");
-            if let Ok(summary) = file_metadata(&direct_session_json)
-                && summary.is_file()
-            {
-                let (data, stamp) = kiro_v3_data_file(&child_path);
-                self.found.push(Discovered {
-                    source: "kiro",
-                    root: self.root.to_path_buf(),
-                    summary_path: Some(direct_session_json.clone()),
-                    data,
-                    path: direct_session_json,
-                    stamp,
-                    summary_stamp: Some(Stamp::of(&summary)),
-                    events_stamp: None,
-                    agent_id: None,
-                });
-                continue;
-            }
-            // Otherwise treat `<child>` as a workspace bucket `<root>/<bucket>/<sess_id>/session.json`
-            // (including `<root>/cli/<sess_id>/session.json`)
-            for session in subdirectories(&child_dir, &child_path) {
-                let Ok(_session_dir) = child_dir.open_dir_nofollow(&session) else {
-                    continue;
-                };
-                let session_dir_path = child_path.join(&session);
-                let session_json = session_dir_path.join("session.json");
-                let Ok(summary) = file_metadata(&session_json) else {
-                    continue;
-                };
-                if !summary.is_file() {
-                    continue;
-                }
-                let (data, stamp) = kiro_v3_data_file(&session_dir_path);
-                self.found.push(Discovered {
-                    source: "kiro",
-                    root: self.root.to_path_buf(),
-                    summary_path: Some(session_json.clone()),
-                    data,
-                    path: session_json,
-                    stamp,
-                    summary_stamp: Some(Stamp::of(&summary)),
-                    events_stamp: None,
-                    agent_id: None,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn kiro_v2_files(&mut self, dir: &Dir, dir_path: &Path) {
-        let Ok(entries) = dir.entries() else {
-            return;
-        };
-        let mut names: Vec<std::ffi::OsString> = entries
-            .filter_map(|e| e.ok().map(|e| e.file_name()))
-            .collect();
-        names.sort();
-        for name in names {
-            let Some(name_str) = name.to_str() else {
-                continue;
-            };
-            if !name_str.ends_with(".json")
-                || name_str == "session.json"
-                || name_str == "index.json"
-                || name_str.ends_with(".meta.json")
-            {
-                continue;
-            }
-            let json_path = dir_path.join(&name);
-            let Ok(summary) = file_metadata(&json_path) else {
-                continue;
-            };
-            if !summary.is_file() {
-                continue;
-            }
-            let stem = &name_str[..name_str.len() - ".json".len()];
-            let data = dir_path.join(format!("{stem}.jsonl"));
-            let stamp = file_metadata(&data)
-                .ok()
-                .filter(|meta| meta.is_file())
-                .map(|meta| Stamp::of(&meta));
-            self.found.push(Discovered {
-                source: "kiro",
-                root: self.root.to_path_buf(),
-                summary_path: Some(json_path.clone()),
-                data,
-                path: json_path,
-                stamp,
-                summary_stamp: Some(Stamp::of(&summary)),
-                events_stamp: None,
-                agent_id: None,
-            });
-        }
-    }
-}
-
-fn kiro_v3_data_file(session_dir: &Path) -> (PathBuf, Option<Stamp>) {
-    let messages = session_dir.join("messages.jsonl");
-    if let Ok(meta) = file_metadata(&messages)
-        && meta.is_file()
-    {
-        return (messages, Some(Stamp::of(&meta)));
-    }
-    let events = session_dir.join("events.jsonl");
-    if let Ok(meta) = file_metadata(&events)
-        && meta.is_file()
-    {
-        return (events, Some(Stamp::of(&meta)));
-    }
-    (messages, None)
 }
 
 /// The bytes of every regular
@@ -1520,7 +1429,7 @@ fn read_candidate(
             } else if candidate.source == "agy" {
                 "Agy summary.json "
             } else if candidate.source == "kiro" {
-                "Kiro session.json "
+                "Kiro projection summary.json "
             } else {
                 "子代理元数据 (meta.json) "
             };

@@ -351,6 +351,10 @@ terminal/files/trash/live/audit 都不声明，页面按每台机器的 `/api/te
 capabilities.js 读取前把路径补进 `storage_namespace`（按 `location.pathname` 区分
 不同挂载点的 hub）。
 
+Hub 声明其支持转发的原生 SDK 来源，包括 Kiro；显示 SDK 入口还须所选节点
+同时声明该来源可用。Kiro 在可用节点上保留顶部 SDK／CLI 联排按钮；节点未安装
+Kiro 时，不能仅凭 Hub 的转发能力开放 SDK。
+
 **分发（`api/hub.rs::dispatch`，对照 `HubHandler.dispatch`）**：一个网关 + 一个分发器。网关
 （`hub_gate`）在任何 handler 前：loopback Host 或 `SESSIONDOCK_PUBLIC_HOSTS` 列出的反向代理权威（与节点同一规则 `security::host_allowed`；否则 403 `local_only`）、拒绝任何 hub 协议/token
 头（403 `hub_unsupported`）、`/api/` 的跨站（403 `cross_site`）与不同源写（403，文案

@@ -178,9 +178,9 @@ async fn run_delete(
     let (rows, liveness) = frozen_liveness(state).await?;
     let catalog = rows.clone();
     // Native database sessions use their CLI deletion adapters, not the file recycle bin.
-    let (native, uids): (Vec<String>, Vec<String>) = uids
-        .into_iter()
-        .partition(|uid| uid.starts_with("opencode:") || uid.starts_with("agy:"));
+    let (native, uids): (Vec<String>, Vec<String>) = uids.into_iter().partition(|uid| {
+        uid.starts_with("opencode:") || uid.starts_with("agy:") || uid.starts_with("kiro:")
+    });
     let removed = delete_native(state, &rows, &liveness, native).await;
     let outcome = state
         .reader
@@ -286,6 +286,36 @@ async fn delete_native(
                 detail,
             },
         };
+        if row["source"] == "kiro" {
+            match state
+                .native_sdks
+                .discard_native(
+                    "kiro",
+                    json!({
+                        "source":"kiro","uid":uid,"session_id":row["sid"],"cwd":row["cwd"]
+                    }),
+                )
+                .await
+            {
+                Ok(_) => outcome.deleted.push(Deleted {
+                    uid: uid.clone(),
+                    title: title.clone(),
+                    entry_id: String::new(),
+                    trash: String::new(),
+                    files: 0,
+                    bytes: 0,
+                    run_state: note,
+                    forced: false,
+                    deferred: false,
+                }),
+                Err(error) => {
+                    outcome
+                        .failed
+                        .push(refused("kiro_remove_failed", &error, Some(note)))
+                }
+            }
+            continue;
+        }
         let (Some(lifecycle), Some(sid)) = (&state.lifecycle, row["sid"].as_str()) else {
             outcome.failed.push(refused(
                 "root_unconfigured",

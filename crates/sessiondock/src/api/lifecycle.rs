@@ -338,7 +338,9 @@ fn launch_for(entry: &Entry, resume: Option<(String, String)>) -> Launch {
     match resume {
         Some((sid, uid)) => Launch::Resume { sid, uid },
         None if !entry.profile || entry.source == Source::Shell => Launch::Fixed,
-        None if !matches!(entry.source, Source::Codex | Source::Agy) => Launch::NewAssigned,
+        None if !matches!(entry.source, Source::Codex | Source::Agy | Source::Kiro) => {
+            Launch::NewAssigned
+        }
         None => Launch::NewPending,
     }
 }
@@ -629,6 +631,7 @@ pub async fn create(
     let request_id = request_id(body.request_id, true)?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let entry = select_entry(service, body.source, body.resume_uid.is_some())?.clone();
+    let mut _kiro_mode = None;
     let resume = match body.resume_uid {
         Some(uid) => {
             let (scope, _) = resolve_resume(&state, uid).await?;
@@ -638,6 +641,15 @@ pub async fn create(
                     "launch_source",
                     "续接会话的数据源与请求来源不一致",
                 ));
+            }
+            if body.source == Source::Kiro {
+                _kiro_mode = Some(
+                    state
+                        .native_sdks
+                        .kiro_mode_lock(&scope.uid)
+                        .lock_owned()
+                        .await,
+                );
             }
             if body.source == Source::Kiro && state.native_sdks.loaded_uids().contains(&scope.uid) {
                 return Err(ApiError::new(
@@ -691,6 +703,77 @@ pub async fn create(
         hub.is_some(),
     )
     .await?;
+    let spec = if new && entry.source == Source::Kiro {
+        // The native creation journal, exact-host release receipt, and lifecycle
+        // request receipt form one resumable handoff. Replaying this request never
+        // creates another SID or stops a later SDK instance opened by the user.
+        let target = json!({"source":"kiro","cwd":cwd});
+        let slot = state.native_sdks.submission(&target, &request_id);
+        let _handoff = slot.lock().await;
+        let native = state
+            .native_sdks
+            .call(
+                "kiro",
+                "create",
+                target,
+                json!({
+                    "request_id":request_id,"model":spec.model(),"effort":spec.effort()
+                }),
+            )
+            .await
+            .map_err(|error| ApiError::new(StatusCode::CONFLICT, "kiro_cli_prepare", error))?;
+        let uid = native["uid"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "kiro_cli_identity",
+                    "Kiro 未返回原生会话身份",
+                )
+            })?;
+        let sid = native["session_id"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "kiro_cli_identity",
+                    "Kiro 未返回原生会话 ID",
+                )
+            })?;
+        state
+            .native_sdks
+            .release_created_for_cli("kiro", &request_id, uid)
+            .await
+            .map_err(|error| ApiError::new(StatusCode::CONFLICT, "kiro_cli_release", error))?;
+        _kiro_mode = Some(state.native_sdks.kiro_mode_lock(uid).lock_owned().await);
+        if state
+            .native_sdks
+            .loaded_uids()
+            .iter()
+            .any(|loaded| loaded == uid)
+        {
+            // An existing CLI receipt may be replayed after the user has switched
+            // back to SDK. A new launch must never interrupt that later instance.
+            let replay = service
+                .list(0, usize::MAX)
+                .await
+                .map_err(failure)?
+                .iter()
+                .any(|record| record.request_id() == request_id);
+            if !replay {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "sdk_session_busy",
+                    "该 Kiro 会话已在 SDK 模式中打开，请先停止再启动 CLI 终端",
+                ));
+            }
+        }
+        build_spec(&entry, &cwd, Some((sid.to_owned(), uid.to_owned())))?
+    } else {
+        spec
+    };
     let spec = spec.with_continuation(continuation);
     let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
@@ -730,6 +813,17 @@ pub async fn takeover(
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let (scope, cwd) = resolve_resume(&state, body.uid).await?;
     let source = source_of(&scope).ok_or_else(invalid)?;
+    let _kiro_mode = if source == Source::Kiro {
+        Some(
+            state
+                .native_sdks
+                .kiro_mode_lock(&scope.uid)
+                .lock_owned()
+                .await,
+        )
+    } else {
+        None
+    };
     if source == Source::Kiro && state.native_sdks.loaded_uids().contains(&scope.uid) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -1082,6 +1176,11 @@ pub async fn stop(
         }
     })?;
     let uid = body.uid;
+    let _kiro_mode = if uid.starts_with("kiro:") {
+        Some(state.native_sdks.kiro_mode_lock(&uid).lock_owned().await)
+    } else {
+        None
+    };
     // Index catalog: an unknown UID is 404 ("会话不存在").
     // Subagent/unsupported/ambiguous rows proceed to the runtime lookup, which
     // can only ever match a verified main-session scope.

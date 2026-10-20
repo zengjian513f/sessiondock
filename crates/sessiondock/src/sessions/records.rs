@@ -1,7 +1,7 @@
 //! Bounded, disposable JSON AST reuse. Never an incremental timeline parser.
 //! Ownership moves out of the cache while projecting, avoiding deep AST clones
 //! and preventing old ViewSnapshot Arcs from pinning cache entries indefinitely.
-use super::{Candidate, Parsed, SessionError, budgets, native_input::RawIndex, uid_for};
+use super::{Candidate, Parsed, SessionError, budgets, native_input::RawIndex};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -203,7 +203,7 @@ impl RecordCache {
         previous: Option<&Parsed>,
         mut scan: impl FnMut(&mut Decoder, Option<u64>) -> Result<RawIndex, SessionError>,
     ) -> Result<(Batch, RawIndex), SessionError> {
-        let key = uid_for(candidate.source, &candidate.path);
+        let key = candidate.uid.clone();
         let prior = self.entries.remove(&key);
         if let Some(entry) = &prior {
             self.weight -= entry.weight;
@@ -245,7 +245,7 @@ impl RecordCache {
         if batch.error.is_some() {
             return;
         }
-        let key = uid_for(candidate.source, &candidate.path);
+        let key = candidate.uid.clone();
         let mut discarded = Vec::new();
         self.insert_entry(
             key,

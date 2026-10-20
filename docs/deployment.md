@@ -89,6 +89,16 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - 目标若在本地清单里声明 `extra.frontend` 为 `legacy` 以外的值，发布阶段跳过它（`--bin-only` 除外）。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
+## Kiro 目录升级前保留身份
+
+从旧版原生文件目录切换到 ACP 自有目录前，先在仍运行旧版的每个节点执行
+`python3 deploy/kiro_identities.py --targets <全部节点名称>`（可先 `--dry-run`）。
+工具核对目标 hostname，读取服务自己的目录 API，只将 UID、SID、cwd 的明确关联
+原子保存到私有 `state/kiro-legacy-identities.json`，不读取原生正文、不重启服务。
+Hub 和资源代理没有本地 Kiro 目录，排除。捕获失败的节点先修复捕获再升级；
+离线节点补发时同样先执行捕获。新目录只在初始配置作用域导入一次，不按路径、
+标题或时间猜测身份；后续 scope 切换不能重复导入其他账号的数据。
+
 ## 并发部署锁
 
 `build`、`deploy`、`push`、`rollback` 启动后先获取 Git common directory 下的

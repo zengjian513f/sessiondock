@@ -180,11 +180,20 @@ const NativeSdkView = {
     }
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !modelName;
-    const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
+    const kiroEffortUnavailable = this.uid.startsWith('kiro:') &&
+      (this.raw?.capabilities?.effort !== true || selected?.hasEffort === false);
+    const efforts = kiroEffortUnavailable ? [] : selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
     effort.replaceChildren();
     for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id != null && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(id ? UsageUI.effort(id) : 'CLI 默认', id)); }
-    let chosen=sdkSettingValue(this,'effort',this.nativeEffort || '');
+    // A native config may remove this control while accepting a settings
+    // request. Observe that normalization so its receipt can release the draft.
+    if (kiroEffortUnavailable && this.raw?.capabilities?.effort === false) {
+      const pending = this.settingChoices.get('effort');
+      if (pending) pending.observed = true;
+    }
+    let chosen=sdkSettingValue(this,'effort',kiroEffortUnavailable ? '' : this.nativeEffort || '');
+    if (kiroEffortUnavailable) chosen='';
     if (variants) chosen = Object.entries(variants).find(([,id])=>id===modelId)?.[0] || '';
     if(chosen && ![...effort.options].some(option=>option.value===chosen)){
       if(modelName!==this.nativeModel && !this.settingChoices.has('effort'))chosen='';
@@ -216,16 +225,19 @@ const NativeSdkView = {
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
+    const effortCapabilityChanged = this.uid.startsWith('kiro:') && this.raw?.capabilities?.effort !== raw.capabilities?.effort;
+    const kiroConfigChanged = this.uid.startsWith('kiro:') && JSON.stringify(this.raw?.configOptions) !== JSON.stringify(raw.configOptions);
     this.raw = raw;
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
       ? `${raw.model.providerID}/${raw.model.id}` : raw.model?.id || raw.model?.modelID || null;
     const effort = raw.effort || null;
-    if (model !== this.nativeModel || effort !== this.nativeEffort || observedModelChanged) {
+    if (model !== this.nativeModel || effort !== this.nativeEffort || observedModelChanged || effortCapabilityChanged) {
       this.nativeModel = model; this.nativeEffort = effort; this.paintPickers();
     }
     this.openFailed = !!raw.error;
     this.capabilities = {...this.capabilities, ...raw.capabilities};
+    if (kiroConfigChanged) void this.loadModels(this.generation);
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     this.items = (this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
@@ -354,6 +366,11 @@ const NativeSdkView = {
         return request.questions ? {answers} : {answer:answers};
       });
       if (request.questions) add('拒绝', {behavior:'deny'});
+      body.append(actions); return card;
+    }
+    if (request.type === 'approval' && this.uid.startsWith('kiro:') && !(request.options || []).length) {
+      body.append(el('p', 'sdk-control-note', 'Kiro 未提供可选的审批项，无法批准此请求。'));
+      add('取消', 'cancelled');
       body.append(actions); return card;
     }
     for (const option of request.options || []) add(option.label || option.name || String(option.value), option.value ?? option.id ?? option.label);

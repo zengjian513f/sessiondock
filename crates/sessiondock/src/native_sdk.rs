@@ -36,6 +36,7 @@ macro_rules! dispatch {
 pub struct NativeSdks {
     providers: BTreeMap<&'static str, Provider>,
     lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
+    kiro_catalog: Option<Arc<crate::sessions::kiro::Catalog>>,
     unavailable: BTreeMap<&'static str, String>,
     receipts: Mutex<BTreeMap<String, Value>>,
     submissions: Mutex<BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<Submission>>>>,
@@ -53,10 +54,11 @@ pub struct NativeSdks {
 pub(crate) struct Submission;
 
 impl NativeSdks {
-    pub fn new(
+    pub(crate) fn new(
         config: &crate::config::Config,
         lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
         shutdown: CancellationToken,
+        kiro_catalog: Option<Arc<crate::sessions::kiro::Catalog>>,
     ) -> io::Result<Arc<Self>> {
         let mut providers = BTreeMap::new();
         let mut unavailable = BTreeMap::new();
@@ -83,7 +85,15 @@ impl NativeSdks {
         register!("agy", agy_sdk, Agy);
         register!("opencode", opencode_sdk, OpenCode);
         register!("claude", claude_sdk, Claude);
-        register!("kiro", kiro_sdk, Kiro);
+        match crate::kiro_sdk::new(config, shutdown.clone(), kiro_catalog.clone()) {
+            Ok(Some(bridge)) => {
+                providers.insert("kiro", Provider::Kiro(bridge));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                unavailable.insert("kiro", error.to_string());
+            }
+        }
         let path = config
             .state_dir
             .as_ref()
@@ -106,6 +116,7 @@ impl NativeSdks {
         let sdks = Arc::new(Self {
             providers,
             lifecycle,
+            kiro_catalog,
             unavailable,
             receipts: Mutex::new(receipts),
             submissions: Mutex::new(BTreeMap::new()),
@@ -167,6 +178,64 @@ impl NativeSdks {
         lock
     }
 
+    pub(crate) fn canonical_target(&self, target: &Value) -> Value {
+        let mut target = target.clone();
+        if target["source"] == "kiro"
+            && let Some(entry) = target["uid"].as_str().and_then(|uid| {
+                self.kiro_catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.resolve_uid(uid).ok())
+            })
+        {
+            target["uid"] = json!(entry.uid);
+            target["session_id"] = json!(entry.sid);
+            target["cwd"] = json!(entry.cwd);
+        }
+        target
+    }
+
+    /// One UID gate shared by SDK admission, CLI launch and mode stop.
+    pub(crate) fn kiro_mode_lock(&self, uid: &str) -> Arc<tokio::sync::Mutex<Submission>> {
+        self.submission(
+            &self.canonical_target(&json!({"source":"kiro","uid":uid})),
+            "kiro-mode",
+        )
+    }
+
+    async fn guard_kiro_cli(&self, source: &str, target: &Value) -> Result<(), String> {
+        if source != "kiro" {
+            return Ok(());
+        }
+        let Some(uid) = target["uid"].as_str().filter(|uid| !uid.is_empty()) else {
+            return Ok(());
+        };
+        let Some(service) = &self.lifecycle else {
+            return Ok(());
+        };
+        use crate::lifecycle::model::{BindingState, Source, State};
+        let records = service
+            .list(0, usize::MAX)
+            .await
+            .map_err(|_| "kiro_sdk_session_busy: 无法核对受管 CLI 状态，请稍后重试")?;
+        for record in records
+            .iter()
+            .filter(|record| record.spec().source() == Source::Kiro)
+        {
+            let owns = record.declared_uid() == Some(uid)
+                || record.binding().is_some_and(|binding| {
+                    binding.state() == BindingState::Confirmed && binding.spec().uid() == uid
+                });
+            if owns && !matches!(record.state(), State::Exited | State::Failed) {
+                return Err(if record.state() == State::Uncertain {
+                    "kiro_sdk_session_busy: 受管 CLI 状态尚未确认，请先核对或停止该终端"
+                } else {
+                    "kiro_sdk_session_busy: 该 Kiro 会话正在 CLI 终端中运行，请先停止 CLI 终端再启动 SDK 模式。"
+                }.into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn loaded_uids(&self) -> Vec<String> {
         self.providers
             .values()
@@ -175,8 +244,15 @@ impl NativeSdks {
     }
 
     pub async fn stop(&self, target: &Value) -> Result<bool, String> {
+        let target = self.canonical_target(target);
+        let target = &target;
         let source = target["source"].as_str().unwrap_or_default();
         let uid = target["uid"].as_str().ok_or("SDK 缺少 UID")?;
+        let _mode = if source == "kiro" {
+            Some(self.kiro_mode_lock(uid).lock_owned().await)
+        } else {
+            None
+        };
         let key = target["agent"]
             .as_str()
             .filter(|agent| !agent.is_empty())
@@ -197,6 +273,66 @@ impl NativeSdks {
         Ok(result)
     }
 
+    /// Management deletion remains available after an explicit SDK stop.
+    /// Provider confirmation precedes removal of SessionDock's own receipts.
+    pub async fn discard_native(
+        self: &Arc<Self>,
+        source: &str,
+        target: Value,
+    ) -> Result<Value, String> {
+        let target = self.canonical_target(&target);
+        if source != "kiro" {
+            return Err("此来源没有原生删除适配器".into());
+        }
+        let _mode = self
+            .kiro_mode_lock(target["uid"].as_str().unwrap_or_default())
+            .lock_owned()
+            .await;
+        self.guard_kiro_cli(source, &target).await?;
+        let provider = self
+            .providers
+            .get(source)
+            .ok_or("此机器未配置 Kiro SDK 模式")?;
+        let result = dispatch!(
+            provider,
+            bridge,
+            bridge.call("discard", target.clone(), json!({})).await
+        )?;
+        let scope = input_queue::scope(&target);
+        self.stopped
+            .lock()
+            .expect("SDK stopped scopes")
+            .insert(scope.clone());
+        self.input_queue.stop(&scope)?;
+        self.remember_binding(&target, false)?;
+        let mut rows = self.receipts.lock().expect("SDK receipts");
+        let mut next = rows.clone();
+        next.remove(target["uid"].as_str().unwrap_or_default());
+        self.save(&next)?;
+        *rows = next;
+        Ok(result)
+    }
+
+    /// Releases only the ACP instance recorded by this native creation intent.
+    /// The bridge durably remembers completion, so retries cannot stop a later open.
+    pub async fn release_created_for_cli(
+        self: &Arc<Self>,
+        source: &str,
+        request_id: &str,
+        uid: &str,
+    ) -> Result<Value, String> {
+        let Some(Provider::Kiro(bridge)) = self.providers.get(source) else {
+            return Err("此机器未配置 Kiro SDK 模式".into());
+        };
+        let _mode = self.kiro_mode_lock(uid).lock_owned().await;
+        let result = bridge.release_created(request_id, uid).await?;
+        let target = json!({"source":source,"uid":uid});
+        if result["released_now"].as_bool() == Some(true) {
+            self.remember_binding(&target, false)?;
+        }
+        Ok(result)
+    }
+
     pub fn unavailable(&self) -> Value {
         let mut reasons = self.unavailable.clone();
         for source in self
@@ -209,6 +345,15 @@ impl NativeSdks {
         json!(reasons)
     }
 
+    fn current_scope(&self, row: &Value) -> bool {
+        row["source"] != "kiro"
+            || row["uid"].as_str().is_some_and(|uid| {
+                self.kiro_catalog
+                    .as_ref()
+                    .is_some_and(|catalog| catalog.resolve_uid(uid).is_ok())
+            })
+    }
+
     pub fn pending(&self) -> Vec<Value> {
         self.receipts
             .lock()
@@ -216,6 +361,7 @@ impl NativeSdks {
             .values()
             .filter(|row| {
                 row["sdk_persisted"] != true
+                    && self.current_scope(row)
                     && row["source"]
                         .as_str()
                         .is_some_and(|source| self.providers.contains_key(source))
@@ -229,7 +375,7 @@ impl NativeSdks {
             .lock()
             .expect("SDK receipts")
             .get(uid)
-            .filter(|row| row["sdk_persisted"] != true)
+            .filter(|row| row["sdk_persisted"] != true && self.current_scope(row))
             .cloned()
     }
 
@@ -252,6 +398,7 @@ impl NativeSdks {
             ) {
                 for receipt in next.values_mut() {
                     if receipt["sdk_persisted"] != true
+                        && self.current_scope(receipt)
                         && receipt["source"].as_str() == Some(source)
                         && receipt["sid"].as_str() == Some(sid)
                     {
@@ -327,6 +474,9 @@ impl NativeSdks {
             .cloned()
             .collect();
         for target in targets {
+            if !self.current_scope(&target) {
+                continue;
+            }
             if self.shutdown.is_cancelled() {
                 return;
             }
@@ -348,6 +498,30 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        let target = self.canonical_target(&target);
+        if source == "kiro" && method == "discard" {
+            return self.discard_native(source, target).await;
+        }
+        let mut _mode = if source == "kiro"
+            && !target["uid"].as_str().unwrap_or_default().is_empty()
+            && matches!(
+                method,
+                "open" | "turn" | "settings" | "compact" | "fork" | "stop" | "close" | "reattach"
+            ) {
+            Some(
+                self.kiro_mode_lock(target["uid"].as_str().unwrap())
+                    .lock_owned()
+                    .await,
+            )
+        } else {
+            None
+        };
+        if !matches!(
+            method,
+            "stop" | "close" | "models" | "usage" | "billing" | "rename"
+        ) {
+            self.guard_kiro_cli(source, &target).await?;
+        }
         let scope = input_queue::scope(&target);
         if method == "open" {
             self.stopped
@@ -373,6 +547,7 @@ impl NativeSdks {
             let rows = self.receipts.lock().expect("SDK receipts");
             if let Some(row) = rows.values().find(|row| {
                 row["source"] == source
+                    && self.current_scope(row)
                     && row["sdk_operation"].as_str().unwrap_or("create") == method
                     && (method != "fork" || row["sdk_parent"] == target["uid"])
                     && row["request_id"] == input["request_id"]
@@ -381,10 +556,28 @@ impl NativeSdks {
                 if row["cwd"] != target["cwd"] {
                     return Err("此创建请求已用于不同的目录".into());
                 }
+                if source == "kiro"
+                    && ["model", "effort", "mode", "autopilot"]
+                        .iter()
+                        .any(|key| row["creation_choices"][*key] != input[*key])
+                {
+                    return Err("此创建请求已用于不同的模型、推理强度或运行模式".into());
+                }
                 return Ok(
                     json!({"uid":row["uid"],"session_id":row["sid"],"cwd":row["cwd"],"session":row}),
                 );
             }
+        }
+        if source == "kiro" && matches!(method, "compact" | "settings") {
+            dispatch!(
+                bridge,
+                bridge,
+                bridge.call("open", target.clone(), json!({})).await
+            )?;
+            self.remember_binding(&target, true)?;
+            // The registered session now blocks CLI startup. Release the mode
+            // gate before a possibly long native request so stop can kill it.
+            _mode = None;
         }
         let result = match dispatch!(
             bridge,
@@ -446,6 +639,9 @@ impl NativeSdks {
                 row["updated"] = row["created"].clone();
             }
             row["request_id"] = input["request_id"].clone();
+            if source == "kiro" {
+                row["creation_choices"] = json!({"model":input["model"],"effort":input["effort"],"mode":input["mode"],"autopilot":input["autopilot"]});
+            }
             row["sdk_operation"] = json!(method);
             if method == "fork" {
                 row["sdk_parent"] = target["uid"].clone();
@@ -498,6 +694,8 @@ impl NativeSdks {
         source: &str,
         key: &str,
     ) -> Result<(Value, broadcast::Receiver<Arc<str>>), String> {
+        let canonical = self.canonical_target(&json!({"source":source,"uid":key}));
+        let key = canonical["uid"].as_str().unwrap_or(key);
         let bridge = self
             .providers
             .get(source)
@@ -699,6 +897,17 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        let target = self.canonical_target(&target);
+        let _mode = if source == "kiro" {
+            Some(
+                self.kiro_mode_lock(target["uid"].as_str().unwrap_or_default())
+                    .lock_owned()
+                    .await,
+            )
+        } else {
+            None
+        };
+        self.guard_kiro_cli(source, &target).await?;
         if self
             .stopped
             .lock()
@@ -720,6 +929,9 @@ impl NativeSdks {
         loop {
             tokio::select! {_=self.shutdown.cancelled()=>return,_=tick.tick()=>{},_=self.queue_wake.notified()=>{}}
             for (key, target) in self.input_queue.runnable() {
+                if !self.current_scope(&target) {
+                    continue;
+                }
                 if !self
                     .queue_workers
                     .lock()
@@ -807,18 +1019,22 @@ impl NativeSdks {
                 return;
             }
         }
-        if let Err(error) = self
-            .provider_call(source, "open", target.clone(), json!({}))
-            .await
-        {
-            let _ = self.input_queue.change(key, &first.id, |row| {
-                if row.state == "queued" {
-                    row.state = "failed".into();
-                    row.error = Some(error);
-                }
-                Ok(())
-            });
-            return;
+        // A restored Kiro receipt belongs to its original host generation.
+        // Opening here could replace an exited host and hide its final result.
+        if !(source == "kiro" && matches!(first.state.as_str(), "recovering" | "accepted")) {
+            if let Err(error) = self
+                .provider_call(source, "open", target.clone(), json!({}))
+                .await
+            {
+                let _ = self.input_queue.change(key, &first.id, |row| {
+                    if row.state == "queued" {
+                        row.state = "failed".into();
+                        row.error = Some(error);
+                    }
+                    Ok(())
+                });
+                return;
+            }
         }
         // This receiver is also the provider's active-work lease. It is retained
         // while waiting behind another turn, sending and observing the result.
