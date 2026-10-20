@@ -11,7 +11,7 @@ def exercise_start(browser, base, screenshots, label):
     from session_start_fixtures import choose_mode
     from popups import on_popup
     for width, theme in [(1280, 'light'), (390, 'dark')]:
-        context = browser.new_context(viewport={'width': width, 'height': 850}, color_scheme=theme)
+        context = browser.new_context(viewport={'width': width, 'height': 850}, color_scheme=theme, has_touch=width < 720)
         page = context.new_page()
         errors, launches = [], []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -20,9 +20,11 @@ def exercise_start(browser, base, screenshots, label):
         on_popup(page, lambda dialog: dialog.accept())
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
-        choose_mode(page, 'codex', 'cli')
+        # Clicking the ordinary editor starts CLI even with the SDK preference.
+        choose_mode(page, 'codex', 'sdk')
         page.locator('#settings-dialog .modal-close').click()
         page.locator('#side .item[data-uid^="codex:"]').first.click()
+        page.locator('#a-chat').click()
         expect(page.locator('#composer')).to_be_visible()
         expect(page.locator('#csend')).to_be_disabled()
         draft = f'Preserved before CLI start {width}'
@@ -30,31 +32,45 @@ def exercise_start(browser, base, screenshots, label):
                                   and response.request.method == 'POST'):
             page.locator('#cinput').fill(draft)
         assert not launches
+        expect(page.locator('.footer-session-toggle')).to_have_count(0)
         with page.expect_response(lambda response: '/api/term/takeover' in response.url) as started:
-            page.locator('#conversation-status .footer-session-toggle').click()
+            editor = page.locator('#cinput')
+            (editor.tap if width < 720 else editor.click)()
+            editor.click()
         assert started.value.ok, started.value.text()
-        expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-        page.wait_for_function(r"""() => [...T.views.values()].some(view => {
-            const b = view.term?.buffer?.active;
-            return b && Array.from({length:b.length},(_,i)=>b.getLine(i)?.translateToString()).join('\n').includes('RS_SHELL_READY');
-        })""")
-        assert len(launches) == 1, launches
-        page.locator('#a-chat').click()
+        page.wait_for_function('takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#cinput')).to_be_focused()
         expect(page.locator('#cinput')).to_have_value(draft)
-        power = page.locator('#conversation-status .footer-session-toggle')
-        expect(power).to_have_attribute('aria-label', '停止会话')
+        page.locator('#cinput').press('End')
+        page.locator('#cinput').press_sequentially(' after start')
+        expect(page.locator('#cinput')).to_have_value(draft + ' after start')
+        assert len(launches) == 1, launches
+        button = page.locator('#a-session-toggle')
+        expect(button).to_have_attribute('aria-label', '停止会话')
         page.screenshot(path=str(screenshots/f'{label}-{width}-cli-started.png'))
-        power.click()
-        expect(power).to_have_attribute('aria-label', '启动会话')
-        expect(power).to_be_enabled()
+        if not button.is_visible(): page.locator('#a-more').click()
+        button.click()
+        expect(button).to_have_attribute('aria-label', '启动会话')
+        page.wait_for_function('!ConsoleUI.busy.has(S.sel)')
         expect(page.locator('#composer')).to_be_visible()
         expect(page.locator('#csend')).to_be_disabled()
         expect(page.locator('#cesc')).to_be_disabled()
-        expect(page.locator('#cinput')).to_have_value(draft)
+        expect(page.locator('#cinput')).to_have_value(draft + ' after start')
         page.screenshot(path=str(screenshots/f'{label}-{width}-cli-stopped.png'))
+        with page.expect_response(lambda response: '/api/term/takeover' in response.url):
+            page.locator('#cinput').click()
+        page.wait_for_function('takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#cinput')).to_be_focused()
+        expect(page.locator('#cinput')).to_have_value(draft + ' after start')
+        assert len(launches) == 2, launches
+        if not button.is_visible(): page.locator('#a-more').click()
+        button.click()
+        page.wait_for_function('!takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
         assert not errors, errors
         context.close()
-        print('PASS conversation footer CLI start/stop and saved draft', label, width, flush=True)
+        print('PASS conversation input CLI start/header stop and saved draft', label, width, flush=True)
 
 
 def main():
@@ -74,7 +90,7 @@ def main():
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             for width, theme in [(1280, 'light'), (1280, 'dark'), (390, 'light'), (390, 'dark')]:
-                context = browser.new_context(viewport={'width': width, 'height': 850}, color_scheme=theme)
+                context = browser.new_context(viewport={'width': width, 'height': 850}, color_scheme=theme, has_touch=width < 720)
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda e: errors.append(str(e)))
@@ -92,7 +108,7 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#cesc')).to_be_disabled()
                 expect(page.locator('#conversation-status')).to_be_visible()
-                expect(page.locator('#conversation-status .footer-session-toggle')).to_be_visible()
+                expect(page.locator('.footer-session-toggle')).to_have_count(0)
                 page.screenshot(path=str(args.screenshots / f'{width}-{theme}-not-started.png'))
                 select(active)
                 expect(page.locator('#cinput')).to_be_visible()

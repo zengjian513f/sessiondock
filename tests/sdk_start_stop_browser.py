@@ -9,7 +9,7 @@ def exercise(browser, base, source, screenshots, label):
     for width, theme in [(1280, 'light'), (390, 'dark')]:
         print(f'{label} {source} {width} {theme}', flush=True)
         context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme,
-                                      service_workers='block')
+                                      service_workers='block', has_touch=width < 720)
         page = context.new_page()
         page.set_default_timeout(15000)
         on_popup(page, lambda dialog: dialog.accept())
@@ -90,6 +90,11 @@ def exercise(browser, base, source, screenshots, label):
         after = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         assert after == before, {'before':before, 'after':after, 'opens':opens}
         assert page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)') == order
+        draft = f'draft for input click {label} {source} {width}'
+        with page.expect_response(lambda response: response.request.method == 'POST'
+                                  and response.url.endswith('/api/session/conversation')):
+            page.locator('#sdk-input').fill(draft)
+        assert not opens, opens
 
         def connected():
             try:
@@ -99,33 +104,39 @@ def exercise(browser, base, source, screenshots, label):
                 page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-connection-failed.png'))
                 raise
 
-        def power():
-            button = page.locator('#sdk-composer .footer-session-toggle')
-            stopping = button.get_attribute('data-run-intent') == 'stop'
-            button.click()
-            if stopping:
-                page.wait_for_function('SdkView.readOnly === true')
-                expect(button).to_have_attribute('aria-label', '启动会话')
-                expect(button).to_be_enabled()
+        def start(repeat=True):
+            editor = page.locator('#sdk-input')
+            # A real pointer/touch click starts, even when the editor already
+            # has programmatic focus. Repeated clicks must not duplicate opens.
+            (editor.tap if width < 720 else editor.click)()
+            if repeat: editor.click()
 
-        # The persistent footer starts the existing SDK through its normal lifecycle.
+        def stop():
+            button = page.locator('#a-session-toggle')
+            if not button.is_visible(): page.locator('#a-more').click()
+            button.click()
+            page.wait_for_function('SdkView.readOnly === true && !ConsoleUI.busy.has(S.sel)')
+            expect(button).to_have_attribute('aria-label', '启动会话')
+
         expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('未运行')
-        expect(page.locator('#sdk-composer .footer-session-toggle')).to_be_enabled()
+        expect(page.locator('.footer-session-toggle')).to_have_count(0)
         if label == 'node' and width == 1280 and source == 'codex':
             endpoint = '**/api/codex-sdk/open'
             page.route(endpoint, lambda route: route.fulfill(status=503, json={'error':'Synthetic startup failure'}), times=1)
-            power()
+            start(repeat=False)
             expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('无法打开')
             expect(page.locator('#sdk-send')).to_be_disabled()
-            expect(page.locator('#sdk-composer .footer-session-toggle')).to_be_enabled()
+            page.wait_for_function('!ConsoleUI.busy.has(S.sel)')
             page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-failed.png'))
             opens.clear()
-        power()
+        start()
 
         expect(page.locator('#sdk-input')).to_be_visible()
         connected()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
         assert len(opens) == 1, opens
+        expect(page.locator('#sdk-input')).to_be_focused()
+        expect(page.locator('#sdk-input')).to_have_value(draft)
         if source in ('claude', 'grok', 'agy'):
             expect(page.locator('#a-term')).to_have_attribute('aria-disabled', 'true')
             expect(page.locator('#a-term')).to_have_attribute('aria-description', '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。')
@@ -172,7 +183,7 @@ def exercise(browser, base, source, screenshots, label):
             second.screenshot(path=str(screenshots/f'{label}-{source}-{width}-second-failed.png'))
             raise
         running_snapshot = page.request.get(base+'/api/live?force=1').json()
-        power()
+        stop()
         expect(page.locator('#sdk-composer')).to_be_visible()
         expect(page.locator('#sdk-send')).to_be_disabled()
         expect(second.locator('#sdk-composer')).to_be_visible()
@@ -194,7 +205,7 @@ def exercise(browser, base, source, screenshots, label):
         expect(page.locator('#sdk-send')).to_be_disabled()
         assert len(opens) == count, opens
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-stopped.png'))
-        power()
+        start()
         connected()
         expect(page.locator('#sdk-input')).to_be_visible()
         if label == 'node' and width == 1280:
@@ -204,15 +215,15 @@ def exercise(browser, base, source, screenshots, label):
             page.locator('#sdk-send').click()
             expect(page.locator('#sdk-stop')).to_be_visible()
             page.locator('#sdk-input').fill('unsent draft after stop')
-        power()
+        stop()
         expect(page.locator('#sdk-composer')).to_be_visible()
         expect(page.locator('#sdk-send')).to_be_disabled()
         assert uid not in page.request.get(base+'/api/live?force=1').json().get('sdk_uids', [])
         if label == 'node' and width == 1280:
-            power()
+            start()
             connected()
             expect(page.locator('#sdk-input')).to_have_value('unsent draft after stop')
-            power()
+            stop()
             expect(page.locator('#sdk-composer')).to_be_visible()
             expect(page.locator('#sdk-send')).to_be_disabled()
         assert not errors, errors
@@ -246,11 +257,11 @@ def child_check(browser, root, binary, screenshots):
         expect(page.locator('#csend')).to_be_disabled()
         page.screenshot(path=str(screenshots/'codex-child-conversation.png'))
         page.locator('#a-sdk').click()
-        page.locator('#sdk-composer .footer-session-toggle').click()
+        page.locator('#sdk-input').click()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
         page.screenshot(path=str(screenshots/'codex-child-started.png'))
-        page.locator('#sdk-composer .footer-session-toggle').click()
+        page.locator('#a-session-toggle').click()
         expect(page.locator('#sdk-composer')).to_be_visible()
         expect(page.locator('#sdk-send')).to_be_disabled()
         assert [m['params']['threadId'] for m in fake.methods('thread/resume')] == [CHILD]

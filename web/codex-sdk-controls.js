@@ -271,7 +271,4 @@ function sdkSyncSettings(view) {
   button.disabled = unavailable || pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
   const refresh = view.pane.querySelector('#native-usage-refresh');
   if (refresh) refresh.disabled = unavailable || !!view.loadingUsage;
-  const row = sessionRunRow(view.uid);
-  paintSessionRunControl(view.pane.querySelector('.footer-session-toggle'),
-    view.agent ? {...row, uid: view.uid, agent_id: view.agent} : row);
 }

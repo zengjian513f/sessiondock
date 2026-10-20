@@ -2545,11 +2545,6 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-gauges > * { flex-shrink: 0; }
 .sdk-status-row .sdk-quota-group, .sdk-status-row .sdk-quota-windows { flex-wrap: nowrap; max-width: none; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
-.sdk-status-row > .footer-session-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  flex: none; width: 24px; height: 24px; min-height: 24px; padding: 0;
-}
-.footer-session-toggle.danger { color: var(--danger); }
 .sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
   padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sdk-status-color); font: inherit; }
