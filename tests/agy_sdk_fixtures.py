@@ -87,7 +87,10 @@ def interrupted(*_):
     sys.exit(0)
 signal.signal(signal.SIGINT,interrupted)
 init_sid='a7600000-0000-4000-8000-999999999999' if (root/'wrong-sid').exists() else sid
-emit({'event':'init','conversation_id':init_sid,'init':dict(cwd=os.getcwd(),model=option('--model'),permission_mode='request-review',tools=['view_file','run_command'])})
+init=dict(cwd=os.getcwd(),permission_mode='request-review',tools=['view_file','run_command'])
+model=option('--model') or ((root/'init-model').read_text() if (root/'init-model').exists() else None)
+if model:init['model']=model
+emit({'event':'init','conversation_id':init_sid,'init':init})
 first_input=True
 for line in sys.stdin:
     message=json.loads(line)
@@ -95,7 +98,10 @@ for line in sys.stdin:
     text=message['message']['content']
     record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
     resumed=index>0
-    native_record('USER_INPUT','<USER_REQUEST>\n'+text+'\n</USER_REQUEST>')
+    content='<USER_REQUEST>\n'+text+'\n</USER_REQUEST>'
+    if (root/'model-notice').exists():
+        content+='\n<USER_SETTINGS_CHANGE>\n'+(root/'model-notice').read_text()+'\n</USER_SETTINGS_CHANGE>'
+    native_record('USER_INPUT',content)
     step('user_input',state='DONE');advance()
     if first_input and resumed:
         native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] Native runtime restarted; background tasks have stopped.\n</SYSTEM_MESSAGE>')

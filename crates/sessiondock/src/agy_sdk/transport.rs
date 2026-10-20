@@ -249,6 +249,7 @@ pub(super) struct Native {
     stderr: Option<JoinHandle<String>>,
     pub sid: String,
     pub cwd: String,
+    pub model: Option<String>,
     process: Arc<ProcessConfig>,
     pid: u32,
 }
@@ -412,6 +413,7 @@ impl Native {
             pump,
             sid: String::new(),
             cwd: String::new(),
+            model: None,
             process: process.clone(),
             pid,
         };
@@ -460,6 +462,7 @@ impl Native {
             }
             native.sid = actual_sid.to_owned();
             native.cwd = actual_cwd.to_owned();
+            native.model = super::choice(&init["init"], "model");
             Ok(())
         })();
         if let Err(error) = result {

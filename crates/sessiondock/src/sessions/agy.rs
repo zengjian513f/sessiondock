@@ -40,6 +40,39 @@ pub(super) fn user_envelope(text: &str) -> Option<(&str, &str)> {
         })
 }
 
+/// The CLI's model notice outside the user's request, never quoted/tool text.
+fn user_model(text: &str) -> Option<String> {
+    let (_, tail) = user_envelope(text)?;
+    super::providers::envelopes::fields(tail)?
+        .into_iter()
+        .filter(|(tag, _)| *tag == "USER_SETTINGS_CHANGE")
+        .filter_map(|(_, body)| {
+            let change = body
+                .trim()
+                .strip_prefix("The user changed setting `Model Selection` from ")?;
+            let (_, next) = change.split_once(" to ")?;
+            let (model, _) = next.split_once(". No need to comment on this change")?;
+            (!model.is_empty() && model != "None").then(|| model.to_owned())
+        })
+        .next_back()
+}
+
+pub(crate) fn record_model(record: &Value) -> Option<String> {
+    (record["type"] == "USER_INPUT" && record["status"] == "DONE")
+        .then(|| user_model(record["content"].as_str()?))
+        .flatten()
+}
+
+/// Latest complete native model notice; a partial line is not yet evidence.
+pub(crate) fn transcript_model(bytes: &[u8]) -> Option<String> {
+    bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .rev()
+        .filter(|line| line.ends_with(b"\n"))
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find_map(|record| record_model(&record))
+}
+
 /// Agy's exact system injection envelope; ordinary user/code tags are never
 /// passed here. Unrecognized or incomplete layouts stay verbatim.
 pub(crate) fn system_message(text: &str) -> (String, Value) {
@@ -314,6 +347,10 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["time_created"].clone())
             .unwrap_or(Value::Null);
+        value["model"] = previous
+            .as_ref()
+            .map(|v| v["session"]["model"].clone())
+            .unwrap_or(Value::Null);
         if (current.is_some() && self.exported.get(sid) != Some(&current)) || !messages.is_file() {
             let bytes = if current.is_some() {
                 fs::read(&native)?
@@ -339,6 +376,9 @@ impl Mirror {
                     complete += last + 1;
                 }
             }
+            value["model"] = transcript_model(&bytes[..complete])
+                .map(|name| json!({"id":name}))
+                .unwrap_or(Value::Null);
             publish(&messages, &bytes[..complete], true)?;
             self.exported.insert(sid.to_owned(), current);
         }
