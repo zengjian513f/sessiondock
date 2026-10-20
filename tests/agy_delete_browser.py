@@ -10,7 +10,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
-from agy_delete_fixtures import FAKE, IDS, seed
+from agy_delete_fixtures import FAKE, IDS, EMPTY_IDS, seed, seed_empty, retain_native_steps
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from hub_fixtures import Hub, free_port
 from send_browser import initialize
@@ -26,7 +26,7 @@ def main():
     print('ROOT',root,flush=True)
     for n in ('home','host','ledger','state','work','bin','claude','codex','grok','opencode','mirror','proc','hub'):
         (root/n).mkdir(mode=0o700)
-    native=root/'native';seed(native,root/'work')
+    native=root/'native';seed(native,root/'work');seed_empty(native,root/'work')
     with sqlite3.connect(native/'conversation_summaries.db') as c:
         deleted_row=c.execute('SELECT * FROM conversation_summaries WHERE conversation_id=?',(IDS[0],)).fetchone()
     fake=root/'bin/agy';fake.write_text('#!'+str(Path(sys.executable).resolve())+'\n'+FAKE);fake.chmod(0o700)
@@ -59,12 +59,41 @@ def main():
                 if not item.is_visible() and page.locator('#detail .mobile-back:visible').count():
                     page.locator('#detail .mobile-back:visible').click()
                 item.click()
-                expect(page.locator('#msgs')).to_contain_text('fixture '+sid)
+                if sid in EMPTY_IDS:
+                    expect(page.locator('#detail')).to_contain_text('仅找到 Agy 的会话索引')
+                else:
+                    expect(page.locator('#msgs')).to_contain_text('fixture '+sid)
                 return uid
             def menu():
                 if not page.locator('#a-session-action').is_visible():page.locator('#a-more').click()
                 page.locator('#a-session-action').click()
                 popup=page.locator('dialog.app-popup[open]');expect(popup).to_contain_text('Agy 会话会永久删除');return popup
+            for url,sid in zip((base,f'http://127.0.0.1:{hub.port}'),EMPTY_IDS):
+                uid=open_sid(url,sid)
+                for width,theme in ((1280,'light'),(390,'light'),(1280,'dark'),(390,'dark')):
+                    page.set_viewport_size({'width':width,'height':900})
+                    open_sid(url,sid)
+                    page.evaluate('theme => document.documentElement.dataset.theme=theme',theme)
+                    popup=menu()
+                    page.screenshot(path=str(root/f'empty-{sid[-2:]}-{width}-{theme}.png'),full_page=True)
+                    popup.locator('[data-popup-action="cancel"]').click()
+                assert (native/'conversations'/(sid+'.db')).exists()
+                page.set_viewport_size({'width':1280,'height':900})
+                open_sid(url,sid)
+                popup=menu()
+                with page.expect_response(lambda r:r.request.method=='DELETE') as response:
+                    popup.locator('[data-popup-action="ok"]').click()
+                assert response.value.status==200,response.value.text()
+                expect(page.locator('#detail')).to_contain_text('会话已从 Agy 删除')
+                page.screenshot(path=str(root/f'empty-deleted-{sid[-2:]}.png'),full_page=True)
+                assert exists(sid), 'empty cleanup must not rewrite the shared native index'
+                assert not (native/'conversations'/(sid+'.db')).exists()
+                assert not (native/'brain'/sid).exists()
+                assert (root/'mirror/deleted'/sid).is_file()
+                assert not (root/'calls.jsonl').exists(), 'empty deletion must not start/resume a CLI'
+                page.reload();page.wait_for_function('T.listLoaded')
+                assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',sid)
+            print('PASS zero-step native carriers: node/Hub confirm, cancel, delete, refresh; no CLI launch',flush=True)
             uid=open_sid(base,IDS[0])
             for width in (1280,390):
                 page.set_viewport_size({'width':width,'height':900})
@@ -90,10 +119,19 @@ def main():
             page.wait_for_timeout(1600)
             page.reload();page.wait_for_function('T.listLoaded')
             assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',IDS[0])
+            for sid in EMPTY_IDS[:2]:
+                assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',sid)
             assert not (root/'mirror/cli'/IDS[0]).exists()
             assert exists(IDS[0]), 'the mirror must not rewrite native catalog data'
             print('PASS stale native index does not resurrect a confirmed deletion',flush=True)
+            open_sid(base,IDS[1])  # Cache history before its native transcript disappears.
+            retain_native_steps(native,IDS[1])
             for mode,sid in [('trust',IDS[1]),('wrong',IDS[1]),('refuse',IDS[2])]:
+                if mode=='wrong':
+                    # Inherited native history is not an empty conversation either.
+                    with sqlite3.connect(native/'conversations'/(sid+'.db')) as c:
+                        c.execute('DELETE FROM steps')
+                        c.execute("INSERT INTO parent_references VALUES (0, X'0102')")
                 (native/'mode').write_text(mode);open_sid(base,sid);popup=menu()
                 with page.expect_response(lambda r:r.request.method=='DELETE',timeout=10000 if mode=='trust' else 40000) as response:popup.locator('[data-popup-action="ok"]').click()
                 assert response.value.status==500 and response.value.json()['code']=='agy_remove_failed',response.value.text()
@@ -107,11 +145,15 @@ def main():
                     page.set_viewport_size({'width':1280,'height':900})
                 page.locator('dialog.app-popup[open] [data-popup-action="ok"]').click()
                 assert exists(sid) and (native/'conversations'/(sid+'.db')).exists()
+                if sid==IDS[1]:
+                    with sqlite3.connect(native/'conversations'/(sid+'.db')) as c:
+                        table='steps' if mode=='trust' else 'parent_references'
+                        assert c.execute('SELECT COUNT(*) FROM '+table).fetchone()[0]==1
                 calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
                 if mode in ('trust','wrong'):assert not any(c.get('sid')==sid and c.get('input') in ('\x1bOS','y') for c in calls)
                 if mode=='trust':assert not any(c.get('sid')==sid and 'input' in c for c in calls)
                 assert not list((root/'host').glob('.agy-delete-*'))
-                print('PASS',mode,'preserves native session and cleans worker',flush=True)
+                print('PASS',mode,'preserves native session (including missing transcript with real steps) and cleans worker',flush=True)
             (native/'mode').unlink()
             hub_url=f'http://127.0.0.1:{hub.port}'
             (native/'conversations'/(IDS[3]+'.db')).unlink()
@@ -128,6 +170,8 @@ def main():
             page.locator('#item-menu [data-act="pick"]').click()
             uid2=page.evaluate('sid => S.sessions.find(r=>r.sid===sid).uid',IDS[5])
             page.locator(f'#side .item[data-uid="{uid2}"] .t').click()
+            empty_uid=page.evaluate('sid => S.sessions.find(r=>r.sid===sid).uid',EMPTY_IDS[2])
+            page.locator(f'#side .item[data-uid="{empty_uid}"] .t').click()
             page.locator('#side-pick-delete').click();popup=page.locator('dialog.app-popup[open]')
             expect(popup).to_contain_text('Agy 会话会永久删除')
             with page.expect_response(lambda r:'/api/sessions/delete' in r.url,timeout=40000) as response:popup.locator('[data-popup-action="ok"]').click()
@@ -135,12 +179,16 @@ def main():
             expect(page.locator('#detail')).to_contain_text('会话已从 Agy 删除')
             expect(page.locator('#detail-open-trash')).to_have_count(0)
             assert not exists(IDS[4]) and not exists(IDS[5])
+            assert exists(EMPTY_IDS[2]) and (root/'mirror/deleted'/EMPTY_IDS[2]).is_file()
+            assert not (native/'conversations'/(EMPTY_IDS[2]+'.db')).exists()
+            assert not (native/'brain'/EMPTY_IDS[2]).exists()
             assert exists(IDS[1]) and exists(IDS[2])
             page.reload();page.wait_for_function('T.listLoaded')
             assert not list((root/'host').glob('.agy-delete-*'))
             calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
             assert all(not process_alive(c['pid']) for c in calls if 'start' in c)
-            print('PASS Hub batch deletes both selected SIDs, keeps failures, refresh and worker cleanup',flush=True)
+            assert not any(c.get('start') in EMPTY_IDS for c in calls)
+            print('PASS Hub batch deletes selected normal/empty SIDs, keeps failures, refresh and worker cleanup',flush=True)
         finally:
             browser.close();hub.stop()
     with isolated_server(Corpus(root),args.binary,host_dir=root/'host',lifecycle_dir=root/'ledger',
@@ -149,6 +197,8 @@ def main():
         try:
             page=browser.new_page();page.goto(base);page.wait_for_function('T.listLoaded')
             assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',IDS[0])
+            for sid in EMPTY_IDS:
+                assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',sid)
             # A real native payload appearing again overrides the old receipt.
             (native/'conversations'/(IDS[0]+'.db')).write_bytes(b'restored native fixture')
             page.wait_for_function('sid => S.sessions.some(r=>r.sid===sid)',arg=IDS[0],timeout=20000)

@@ -15,12 +15,16 @@ Moves support different filesystems by publishing a complete copy before removin
 the source. Named symlinks move as links. Later file changes remain part of the
 selected entry.
 
-Agy single and batch deletion uses the native CLI's resume picker, with an
+Agy single and batch deletion normally uses the native CLI's resume picker, with an
 explicit permanent-deletion confirmation and no recycle-bin entry or undo.
 The worker selects the complete SID and verifies the native current-session
 marker and confirmation before submitting. It verifies native removal before
 refreshing the mirror and retiring launch receipts. Running sessions remain
-protected; failures remain visible. See [Agy](agy.md) for the verified interface
+protected; failures remain visible. Confirmed zero-step sessions omitted by the
+native picker use the [Agy empty-session contract](agy.md#操作更新与问题报告):
+read-only native evidence precedes removal of that SID's carriers and a durable
+deletion receipt, without starting a CLI or rewriting the shared index.
+See [Agy](agy.md) for the verified interface
 and its evidence boundary. Whole-tree deletion remains unsupported for Agy.
 
 DELTA: deleting a fork parent marks it **待删除**, hides it from the ordinary
