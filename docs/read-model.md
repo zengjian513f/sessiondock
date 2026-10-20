@@ -77,7 +77,7 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   （残行丢弃）；推导 `title`
   （custom-title > 最新 ai-title > 首条用户输入生成；Claude 都没有时为
   `新建 Claude 会话`，Python 回退为文件名前 8 位，DELTA）、`cwd`（头部优先，尾部
-  计数兜底）、`branch`、`created`、`updated`（`mtime`）、`size`、`model`、
+  计数兜底）、`branch`、`created`、`updated`（各来源的活动时间）、`size`、`model`、
   Codex `session_meta`/`history_base`、Claude `sessionId`/fork 来源、Grok
   `summary.json` 字段。Grok 的 `size`：会话目录内全部普通
   文件字节之和（递归、不进入链接目录、没有额外深度或条目数门槛），与
@@ -88,6 +88,16 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   `跳过重复的Codex session_meta ×N`）：公开列表行（含 `agent_items`）只在
   `supported:false` 时带 `migration_warnings`（前端不消费，
   真实根上它占了列表载荷的一半以上）。
+- **Codex 活动时间**（DELTA，BUG-20261020-085512-56b058）：主会话与子代理的
+  `updated` 使用最后一条有有效时间戳的对话活动记录：用户／assistant／工具消息、
+  推理、工具调用与结果、回合开始／完成／中断及压缩；没有活动记录时使用创建时间。
+  SDK 连接可能追加 `thread_settings_applied`，设置、`turn_context`、用量和其它
+  元数据写入以及单纯文件 mtime 变化均不刷新活动时间。它们仍正常更新文件大小、
+  游标和模型；真实新活动仍参与排序。列表、详情、搜索和嵌套父行共用此字段。
+  与模型／回合标量复用反向冷读及追加扫描，不受摘要头尾窗口限制；重写、替换及
+  截断重建，不通过前端冻结行序或修改原生文件掩盖问题。
+  [`tests/codex_activity_browser.py`](../tests/codex_activity_browser.py) 验证已运行旧会话
+  在节点／Hub 上点击连接后的顺序、子代理、真实活动、搜索、详情及重启冷读。
 - **当前模型**（BUG-20261003-110654-be9964）：Claude 取最近一条有效 assistant
   的 `message.model`，Codex 取最近一条有效 `turn_context.payload.model`。
   主会话跳过 Claude sidechain；子代理只读自己的文件；空值和 `<synthetic>`

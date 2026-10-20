@@ -1,5 +1,5 @@
-//! Scalar Codex turn and Claude/Codex model state, independent of head/tail windows.
-//! Cold reads walk backwards to the latest model/turn boundary; appends
+//! Scalar Codex activity/turn and Claude/Codex model state, independent of head/tail windows.
+//! Cold reads walk backwards to the latest activity/model/turn boundary; appends
 //! inspect only new complete lines. No message projection is retained.
 
 use std::{borrow::Cow, io};
@@ -16,6 +16,7 @@ pub(super) struct Scan {
     pub turn: Option<&'static str>,
     pub turn_at: Option<String>,
     pub model: Value,
+    pub activity_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -42,6 +43,44 @@ struct Payload {
     error: Value,
     #[serde(default)]
     model: Value,
+    #[serde(default)]
+    role: String,
+}
+
+impl Record {
+    fn codex_activity(&self) -> bool {
+        match self.kind.as_str() {
+            "response_item" => match self.payload.kind.as_str() {
+                "message" => matches!(
+                    self.payload.role.as_str(),
+                    "" | "user" | "assistant" | "tool"
+                ),
+                "reasoning"
+                | "function_call"
+                | "function_call_output"
+                | "custom_tool_call"
+                | "custom_tool_call_output"
+                | "local_shell_call"
+                | "local_shell_call_output"
+                | "web_search_call"
+                | "tool_search_call" => true,
+                _ => false,
+            },
+            "event_msg" => matches!(
+                self.payload.kind.as_str(),
+                "task_started"
+                    | "turn_started"
+                    | "task_complete"
+                    | "turn_complete"
+                    | "turn_aborted"
+                    | "user_message"
+                    | "agent_message"
+                    | "agent_reasoning"
+            ),
+            "compacted" => true,
+            _ => false,
+        }
+    }
 }
 
 pub(super) fn read(
@@ -65,6 +104,7 @@ pub(super) fn read(
     let mut boundary = None;
     let mut turn_at = None;
     let mut model = None;
+    let mut activity_at = None;
     'chunks: while position > floor {
         let start = position.saturating_sub(TAIL_BYTES).max(floor);
         let bytes = file.read_range(start, position - start)?;
@@ -90,9 +130,16 @@ pub(super) fn read(
                     if (memchr::memmem::find(&raw, b"event_msg").is_some()
                         || memchr::memmem::find(&raw, b"response_item").is_some()
                         || memchr::memmem::find(&raw, b"assistant").is_some()
+                        || memchr::memmem::find(&raw, b"compacted").is_some()
                         || memchr::memmem::find(&raw, b"turn_context").is_some())
                         && let Ok(record) = serde_json::from_slice::<Record>(&raw)
                     {
+                        // Resuming an already running thread can append settings
+                        // and telemetry without a new turn. Those writes must not
+                        // make simply opening its history change sidebar order.
+                        if source == "codex" && activity_at.is_none() && record.codex_activity() {
+                            activity_at = super::summary::norm_ts(&record.timestamp);
+                        }
                         let seen = match source {
                             "codex" if record.kind == "turn_context" => &record.payload.model,
                             "claude"
@@ -134,7 +181,9 @@ pub(super) fn read(
                                 turn_at = super::summary::norm_ts(&record.timestamp);
                             }
                         }
-                        if model.is_some() && (source != "codex" || boundary.is_some()) {
+                        if model.is_some()
+                            && (source != "codex" || (boundary.is_some() && activity_at.is_some()))
+                        {
                             break 'chunks;
                         }
                     }
@@ -175,5 +224,6 @@ pub(super) fn read(
         model: model
             .or_else(|| previous.map(|scan| scan.model.clone()))
             .unwrap_or(Value::Null),
+        activity_at: activity_at.or_else(|| previous.and_then(|scan| scan.activity_at.clone())),
     })
 }
