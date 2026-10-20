@@ -42,12 +42,36 @@ const CodexSdkCompose = {
   close(view) {
     const state = this.states.get(view);
     if (!state) return;
+    state.initialSendReady?.(false);
     clearInterval(state.timer);
     window.removeEventListener('focus', state.follow);
     window.removeEventListener('online', state.follow);
     document.removeEventListener('visibilitychange', state.follow);
     state.unbind?.abort();
     this.states.delete(view);
+  },
+
+  async sendInitial(view, uid) {
+    const state = this.states.get(view);
+    if (state?.uid !== uid) return;
+    await state?.ready;
+    if (!state || this.states.get(view) !== state) return;
+    // Creating/opening an SDK instance does not await its first event snapshot.
+    // Keep the saved continuation until the ordinary SEND controls are ready.
+    const ready = await new Promise(resolve => {
+      state.initialSendReady = (active = true) => {
+        if (!active || view.openFailed || view.stopped || view.readOnly) {
+          delete state.initialSendReady;
+          resolve(false);
+        } else if (view.connected && !state.input.disabled
+            && !state.pane.querySelector('#sdk-send').disabled) {
+          delete state.initialSendReady;
+          resolve(true);
+        }
+      };
+      state.initialSendReady();
+    });
+    if (ready && this.states.get(view) === state) await view.send();
   },
 
   controls(view, state) {
