@@ -56,7 +56,11 @@ pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
         index += 1;
     }
     let decoded = String::from_utf8_lossy(&decoded);
-    let value = if let Some(rest) = decoded.strip_prefix("file://") {
+    let value = if let Some(rest) = decoded
+        .get(..7)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("file://"))
+        .map(|_| &decoded[7..])
+    {
         #[cfg(windows)]
         let windows_path = rest.starts_with('\\')
             || (rest.as_bytes().get(1) == Some(&b':') && rest.as_bytes()[0].is_ascii_alphabetic());
@@ -105,6 +109,15 @@ pub fn clean_ref(value: &str) -> Result<String, FileError> {
             "文件引用为空、过长或包含空字符",
         ));
     }
+    // Native agents use file:// links for artifacts on their own node. Keep
+    // them within the same semantic-reference grant as a plain local path.
+    let normalized;
+    let value = if value.trim().to_ascii_lowercase().starts_with("file://") {
+        normalized = normalize_media_ref(value)?;
+        normalized.as_str()
+    } else {
+        value
+    };
     let clean = LINE
         .replace(value.trim().trim_matches(['<', '>']), "")
         .into_owned();

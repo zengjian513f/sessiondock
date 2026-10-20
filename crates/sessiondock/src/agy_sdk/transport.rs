@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     task::JoinHandle,
 };
@@ -242,7 +242,10 @@ pub(super) struct Native {
     host: Option<sdkhost_client::Client>,
     pump: Option<JoinHandle<()>>,
     pub input: Option<ChildStdin>,
-    pub output: Lines<BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>>,
+    output: BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>,
+    line: Vec<u8>,
+    pub stdout_offset: u64,
+    pub key: Option<String>,
     stderr: Option<JoinHandle<String>>,
     pub sid: String,
     pub cwd: String,
@@ -283,7 +286,7 @@ impl Native {
         effort: Option<&str>,
         mode: Option<&str>,
         shutdown: CancellationToken,
-        binding: Option<(&str, bool)>,
+        binding: Option<(&str, bool, u64)>,
     ) -> Result<Self, String> {
         if shutdown.is_cancelled() {
             return Err("agy_sdk_shutdown".into());
@@ -312,7 +315,7 @@ impl Native {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let (child, host, input, stdout, stderr, pump, pid): NativeStreams =
-            if let (Some(dir), Some((key, recovering))) = (&process.host_dir, binding) {
+            if let (Some(dir), Some((key, recovering, start))) = (&process.host_dir, binding) {
                 let host = if recovering {
                     sdkhost_client::Client::attach(dir, key).await
                 } else {
@@ -327,7 +330,32 @@ impl Native {
                 let (reader, mut writer) = tokio::io::duplex(65536);
                 let stream_host = host.clone();
                 let pump = tokio::spawn(async move {
-                    let mut offset = 0;
+                    // Reuse the original init for identity checks, then resume
+                    // at the durable beginning of the selected input's output.
+                    if start > 0 {
+                        let mut init = Vec::new();
+                        let mut offset = 0;
+                        loop {
+                            let Ok(chunk) = stream_host
+                                .read(sdkhost_client::Stream::Stdout, offset)
+                                .await
+                            else {
+                                return;
+                            };
+                            offset = chunk.next_offset;
+                            init.extend(&chunk.bytes);
+                            if let Some(end) = init.iter().position(|byte| *byte == b'\n') {
+                                if writer.write_all(&init[..=end]).await.is_err() {
+                                    return;
+                                }
+                                break;
+                            }
+                            if chunk.eof {
+                                return;
+                            }
+                        }
+                    }
+                    let mut offset = start;
                     while let Ok(chunk) = stream_host
                         .read(sdkhost_client::Stream::Stdout, offset)
                         .await
@@ -376,7 +404,10 @@ impl Native {
             child,
             host,
             input,
-            output: BufReader::new(stdout).lines(),
+            output: BufReader::new(stdout),
+            line: Vec::new(),
+            stdout_offset: 0,
+            key: binding.map(|(key, _, _)| key.to_owned()),
             stderr,
             pump,
             sid: String::new(),
@@ -386,7 +417,7 @@ impl Native {
         };
         let init = tokio::select! {
             _=shutdown.cancelled()=>Err("agy_sdk_shutdown".to_owned()),
-            line=tokio::time::timeout(Duration::from_secs(20),native.output.next_line())=>match line {
+            line=tokio::time::timeout(Duration::from_secs(20),native.next_line())=>match line {
                 Ok(Ok(Some(line)))=>serde_json::from_str::<Value>(&line).map_err(|_|"agy_sdk_invalid_init_json".to_owned()),
                 Ok(Ok(None))=>Err("agy_sdk_no_init".into()),
                 Ok(Err(error))=>Err(format!("agy_sdk_init_read: {error}")),
@@ -442,22 +473,43 @@ impl Native {
                 format!("{error}; {diagnostic}")
             });
         }
+        if let Some((_, _, offset)) = binding.filter(|(_, _, offset)| *offset > 0) {
+            native.stdout_offset = offset;
+        }
         Ok(native)
     }
 
-    pub async fn send(&mut self, text: &str) -> Result<(), String> {
+    pub async fn next_line(&mut self) -> io::Result<Option<String>> {
+        let read = self.output.read_until(b'\n', &mut self.line).await?;
+        if read == 0 && self.line.is_empty() {
+            return Ok(None);
+        }
+        let mut bytes = std::mem::take(&mut self.line);
+        self.stdout_offset += bytes.len() as u64;
+        if bytes.last() == Some(&b'\n') {
+            bytes.pop();
+        }
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+
+    pub async fn send(&mut self, text: &str, request: &str) -> Result<(), String> {
         let mut bytes = serde_json::to_vec(&json!({"event":"user","message":{"content":text}}))
             .map_err(|_| "agy_sdk_encode")?;
         bytes.push(b'\n');
         if let Some(host) = &self.host {
             let receipt = match host
-                .receipt("input")
+                .receipt(request)
                 .await
                 .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?
             {
                 Some(receipt) => receipt,
                 None => host
-                    .write("input", &bytes)
+                    .write(request, &bytes)
                     .await
                     .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?,
             };

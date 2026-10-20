@@ -81,6 +81,16 @@ def send(page, text):
     return event.value.json()
 
 
+def resize_sdk(page, uid, width):
+    page.set_viewport_size({'width':width,'height':900})
+    # Let the responsive media-query handler finish before deciding whether
+    # the mobile list needs an actual session-row click.
+    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    if width <= 720 and not page.locator('.native-sdk-pane').is_visible():
+        page.locator(f'#side .item[data-uid="{uid}"]').click()
+    expect(page.locator('.native-sdk-pane')).to_be_visible()
+
+
 def exercise(browser, base, fixture, screenshots=None):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
@@ -216,6 +226,60 @@ def exercise(browser, base, fixture, screenshots=None):
         ids = [item['id'] for item in snapshot['raw']['items']]
         assert len(ids) == len(set(ids)), ids
 
+        first_pid=fixture.inputs('SDK 中文\nsecond line')[0]['pid']
+        initial_notices=page.locator('.sdk-live').inner_text().count('Native runtime restarted')
+        send(page,'__ARTIFACT__');idle(page)
+        assert fixture.inputs('__ARTIFACT__')[0]['pid']==first_pid, 'ordinary next turn restarted the native runtime'
+        assert page.locator('.sdk-live').inner_text().count('Native runtime restarted')==initial_notices
+        document=page.locator('.sdk-live a[data-file-ref^="file://"]').last
+        expect(document).to_have_text('SessionDock 全量代码审计报告 (codebase_audit_report.md)')
+        if screenshots:
+            document.scroll_into_view_if_needed()
+            page.screenshot(path=str(screenshots/'agy-artifact-link-wide.png'),full_page=True)
+            resize_sdk(page,uid,390)
+            page.emulate_media(color_scheme='dark')
+            expect(page.locator('.native-sdk-pane')).to_be_visible()
+            document.scroll_into_view_if_needed()
+            page.screenshot(path=str(screenshots/'agy-artifact-link-narrow.png'),full_page=True)
+            resize_sdk(page,uid,1280)
+            page.emulate_media(color_scheme='light')
+        # The real referenced native transcript must grant this file before
+        # the same user-facing link opens its built-in preview.
+        page.wait_for_function('''uid=>{
+          if(!window.__artifactHistoryPending){
+            window.__artifactHistoryPending=true;
+            fetch('/api/messages/'+encodeURIComponent(uid)+'?window=1').then(r=>r.json())
+              .then(view=>window.__artifactHistoryReady=view.messages.some(m=>(m.text||'').includes('完整报告：')))
+              .finally(()=>window.__artifactHistoryPending=false);
+          }
+          return window.__artifactHistoryReady===true;
+        }''',arg=uid,polling=100)
+        with context.expect_page() as opened:document.click()
+        preview=opened.value
+        expect(preview.locator('#file-content')).to_contain_text('完整报告正文：保留运行中的子代理，修复文档链接。')
+        if screenshots:preview.screenshot(path=str(screenshots/'agy-artifact-preview.png'),full_page=True)
+        preview.close()
+        print('Agy: consecutive rounds retain PID/background runtime; file URI artifact opens the actual document',flush=True)
+        send(page,'__BACKGROUND__');idle(page)
+        before_background=len(fixture.inputs())
+        fixture.release('background')
+        expect(page.locator('.sdk-live')).to_contain_text('后台子代理已完成审计，运行时未重启。')
+        expect(page.locator('.sdk-live')).to_contain_text('回合结束后补齐的原生系统正文。')
+        assert len(fixture.inputs())==before_background and fixture.inputs()[-1]['pid']==first_pid
+
+        # Only an explicit setting change rebuilds the native argv/runtime.
+        if not page.locator('#sdk-effort').is_visible():page.locator('#sdk-more').click()
+        page.locator('#sdk-effort').select_option('low')
+        page.wait_for_function('NativeSdkView.nativeEffort === "low"')
+        page.keyboard.press('Escape')
+        send(page,'after explicit effort change');idle(page)
+        changed=fixture.inputs('after explicit effort change')[0]
+        assert changed['pid']!=first_pid and changed['effort']=='low'
+        notices=page.locator('.sdk-live').inner_text().count('Native runtime restarted')
+        send(page,'same runtime after explicit setting');idle(page)
+        assert fixture.inputs('same runtime after explicit setting')[0]['pid']==changed['pid']
+        assert page.locator('.sdk-live').inner_text().count('Native runtime restarted')==notices
+
         print('Agy: metadata-only notifications hydrate native system/thinking/reply text without empty bubbles', flush=True)
         send(page, '__METADATA_ONLY__')
         expect(page.locator('.sdk-live')).to_contain_text('服务重启后，请核对子代理状态再继续审计。')
@@ -228,13 +292,11 @@ def exercise(browser, base, fixture, screenshots=None):
         assert page.locator('.sdk-live .msg[data-role="assistant"]').evaluate_all('(nodes)=>nodes.every(node=>node.textContent.trim().length>0)')
         if screenshots:
             for width, theme in ((1280,'light'),(390,'light'),(390,'dark')):
-                page.set_viewport_size({'width':width,'height':900})
+                resize_sdk(page,uid,width)
                 page.emulate_media(color_scheme=theme)
-                if not page.locator('.native-sdk-pane').is_visible():
-                    page.locator(f'#side .item[data-uid="{uid}"]').click()
                 expect(page.locator('.native-sdk-pane')).to_be_visible()
                 page.screenshot(path=str(screenshots / f'agy-metadata-{width}-{theme}.png'), full_page=True)
-            page.set_viewport_size({'width':1280,'height':900})
+            resize_sdk(page,uid,1280)
             page.emulate_media(color_scheme='light')
         page.reload(wait_until='domcontentloaded')
         select_sdk(page, uid);watch(page,uid)
@@ -341,10 +403,7 @@ def exercise(browser, base, fixture, screenshots=None):
         if screenshots:
             screenshots.mkdir(parents=True, exist_ok=True)
             for width in (1280, 390, 320):
-                page.set_viewport_size({'width': width, 'height': 900})
-                if width < 500 and not page.locator('#sdk-input').is_visible():
-                    selected = page.evaluate('S.sel')
-                    page.locator(f'#side .item[data-uid="{selected}"]').click()
+                resize_sdk(page,page.evaluate('S.sel'),width)
                 expect(page.locator('#sdk-input')).to_be_visible()
                 for theme in ('light', 'dark'):
                     page.emulate_media(color_scheme=theme)
@@ -359,6 +418,9 @@ def exercise(browser, base, fixture, screenshots=None):
                     page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
                     page.locator('#sdk-more').click()
         assert not errors, errors
+    except Exception:
+        if screenshots:page.screenshot(path=str(screenshots/'agy-failure.png'),full_page=True)
+        raise
     finally:
         context.close()
 

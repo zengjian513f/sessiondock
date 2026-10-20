@@ -73,6 +73,9 @@ and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive
 letters are file references rather than URL schemes. Resolution remains scoped
 to the selected session and happens on its node; copying a file's parent preserves
 the drive-root separator (`X:\` or `X:/`).
+原生回复中的 `file://` 文档链接同样通过所选会话、所属节点的引用解析和文件接口
+打开，不交给浏览器访问本机文件。Markdown 标签保持原样，编码的空格与中文路径
+正常解码；文件必须仍有该会话的原生引用证据。
 
 Web addresses beginning with `http://`, `https://` or `www.` are clickable in
 ordinary prose, including bold and italic text. Emphasis markers and trailing

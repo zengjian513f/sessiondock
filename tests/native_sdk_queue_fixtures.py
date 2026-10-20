@@ -91,6 +91,8 @@ class NativeQueueFixture:
         return live[0]
 
     def initialization_count(self):
+        if self.source == 'agy':
+            return sum('--input-format' in row.get('argv',[]) for row in self.peer.events() if row['kind']=='launch')
         if self.source == 'claude':
             return sum(frame.get('request', {}).get('subtype') == 'initialize'
                        for frame in self.peer.frames('control_request'))
