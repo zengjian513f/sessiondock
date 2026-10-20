@@ -246,6 +246,17 @@ class TargetHandler:
         self.backup_dir: str | None = None
         self.before: ProbeResult | None = None
 
+    def check_sdkhost_dependency(self, binaries: list[str]) -> None:
+        """A node upgrade must not leave its stdio SDKs without their host."""
+        if self.kind not in ("linux-node", "macos-node") or "sessiondock" not in binaries or "sdkhost" in binaries:
+            return
+        path = self.t.prefix.rstrip("/") + "/bin/sdkhost"
+        self.sh.run(
+            f"test -x {shlex.quote(path)} || "
+            "{ echo 'sdkhost is missing or not executable; repeat the node deployment with --with-sdkhost' >&2; exit 1; }",
+            timeout=30, check=True,
+        )
+
     # steps ---------------------------------------------------------------------
     def probe(self) -> ProbeResult:
         raise NotImplementedError

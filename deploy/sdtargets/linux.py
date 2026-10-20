@@ -206,6 +206,7 @@ if active:
         )
 
     def stage(self) -> None:
+        self.check_sdkhost_dependency(self.binaries())
         self.check_native_work()
         try:
             for name in self.binaries():
