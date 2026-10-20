@@ -94,6 +94,11 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   截断重建，不通过前端冻结行序或修改原生文件掩盖问题。
   [`tests/codex_activity_browser.py`](../tests/codex_activity_browser.py) 验证已运行旧会话
   在节点／Hub 上点击连接后的顺序、子代理、真实活动、搜索、详情及重启冷读。
+- **活动通知**：节点／Hub 的 UI 事件将 `updated`、`size` 与列表游标一并发送。
+  处理中的会话持续追加时，即使回合状态没有变化，未选中行及子代理也按新活动时间
+  更新排序；详情仍按需读取。点击只改变选中项，不补做已通知活动的排序。
+  [`tests/ui_events_browser.py`](../tests/ui_events_browser.py) 覆盖无手动刷新的追加、
+  未读、活动排序及点击稳定性，同时约束不增加未选中正文或整表请求。
 - **当前模型**（BUG-20261003-110654-be9964）：Claude 取最近一条有效 assistant
   的 `message.model`，Codex 取最近一条有效 `turn_context.payload.model`。
   主会话跳过 Claude sidechain；子代理只读自己的文件；空值和 `<synthetic>`

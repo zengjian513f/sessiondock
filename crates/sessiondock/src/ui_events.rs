@@ -56,11 +56,15 @@ fn stable(value: &mut Value) {
 }
 fn row_metadata(row: &mut Value) {
     if let Some(object) = row.as_object_mut() {
+        // Cursor notifications carry these row fields together. Rows without
+        // cursors still need a list invalidation when their activity changes.
+        if object.get("cursor").is_some_and(Value::is_object) {
+            object.remove("updated");
+            object.remove("size");
+        }
         for key in [
             "cursor",
-            "size",
             "mtime",
-            "updated",
             "updated_at",
             "last_active",
             "last_active_at",
@@ -89,7 +93,8 @@ impl Snapshot {
                 if row["cursor"].is_object() {
                     cursors.insert(
                         (uid.clone(), String::new()),
-                        json!({"uid":uid,"agent":null,"cursor":row["cursor"]}),
+                        json!({"uid":uid,"agent":null,"cursor":row["cursor"],
+                               "updated":row["updated"],"size":row["size"]}),
                     );
                 }
                 for item in row["agent_items"].as_array().into_iter().flatten() {
@@ -97,7 +102,8 @@ impl Snapshot {
                         let agent = item["id"].as_str().unwrap_or_default().to_owned();
                         cursors.insert(
                             (uid.clone(), agent.clone()),
-                            json!({"uid":uid,"agent":agent,"cursor":item["cursor"]}),
+                            json!({"uid":uid,"agent":agent,"cursor":item["cursor"],
+                                   "updated":item["updated"],"size":item["size"]}),
                         );
                     }
                 }
