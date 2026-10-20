@@ -13,7 +13,7 @@ def main():
  with tempfile.TemporaryDirectory(prefix='sessiondock-filedock-') as t:
   corpus=build_corpus(Path(t));directory=corpus.root/'files';directory.mkdir();file=directory/'文档 with spaces.md';file.write_text('# linked file')
   image=directory/'preview.png';image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=='))
-  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`.',cwd=str(directory))],[])
+  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`. **[完整报告]({file.as_uri()})**',cwd=str(directory))],[])
   # A prior mention of another project's same-named file must not override cwd.
   current=directory/'SCREENING.md';current.write_text('# current project')
   other=directory/'other';other.mkdir();(other/current.name).write_text('# other project')
@@ -84,6 +84,9 @@ def main():
     page=context.new_page();page.goto(base);page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
     with context.expect_page() as opened:page.locator(f'#msgs a[data-file-ref={json.dumps(str(file),ensure_ascii=False)}]').click()
     preview=opened.value;expect(preview.locator('h1')).to_have_text('FileDock destination')
+    assert destinations[-1]=={'node':[NODE],'path':[str(file)]},destinations
+    with context.expect_page() as opened:page.locator('#msgs').get_by_role('link',name='完整报告',exact=True).click()
+    expect(opened.value.locator('h1')).to_have_text('FileDock destination')
     assert destinations[-1]=={'node':[NODE],'path':[str(file)]},destinations
     with context.expect_page() as opened:page.locator('#msgs a[data-file-ref="missing.txt"]').click()
     missing=opened.value;expect(missing.locator('#file-retry')).to_be_visible();assert 'FileDock destination' not in missing.locator('body').inner_text()

@@ -513,7 +513,7 @@ def restart_idle_registry(browser, fixture):
         context, page, uid = open_page(browser, base, fixture)
         try:
             submitted = send(page, text)
-            final = 'Claude synthetic final ' + text if fixture.source == 'claude' else 'Grok final answer'
+            final = 'Claude synthetic final ' + text if fixture.source == 'claude' else 'Synthetic Agy reply: ' + text if fixture.source == 'agy' else 'Grok final answer'
             expect(page.locator('.sdk-live')).to_contain_text(final)
             page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
             gone(page, submitted['request_id'])
@@ -554,6 +554,12 @@ def restart_idle_registry(browser, fixture):
             assert fixture.native_pid() == pid
             assert fixture.initialization_count() == initializations
             assert fixture.inputs() == inputs
+            if fixture.source == 'agy':
+                notices=page.locator('.sdk-live').inner_text().count('Native runtime restarted')
+                second=send(page,'continue in the same native runtime')
+                gone(page,second['request_id'])
+                assert fixture.native_pid()==pid and fixture.inputs().count(text)==1
+                assert page.locator('.sdk-live').inner_text().count('Native runtime restarted')==notices
             print(f'{fixture.source}: idle host rediscovered by list before SDK open, same PID and no repeated initialization/input', flush=True)
         finally:
             context.close()
@@ -591,6 +597,7 @@ def main():
             stop_inherited_pipes(browser, fixtures['agy'])
             restart_idle_registry(browser, fixtures['claude'])
             restart_idle_registry(browser, fixtures['grok'])
+            restart_idle_registry(browser, fixtures['agy'])
         finally:
             browser.close()
             for fixture in fixtures.values():

@@ -52,7 +52,7 @@ sid=option('--conversation') or str(uuid.uuid4())
 path=native/'conversations'/f'{sid}.db'
 assert '--conversation' not in args or path.exists(), 'resume must not fabricate missing native store'
 (native/'conversations').mkdir(parents=True,exist_ok=True)
-connection=sqlite3.connect(path)
+connection=sqlite3.connect(path,check_same_thread=False)
 connection.execute('CREATE TABLE IF NOT EXISTS fixture_steps (next_index INTEGER)')
 if not connection.execute('SELECT count(*) FROM fixture_steps').fetchone()[0]:
     connection.execute('INSERT INTO fixture_steps VALUES (0)')
@@ -88,13 +88,19 @@ def interrupted(*_):
 signal.signal(signal.SIGINT,interrupted)
 init_sid='a7600000-0000-4000-8000-999999999999' if (root/'wrong-sid').exists() else sid
 emit({'event':'init','conversation_id':init_sid,'init':dict(cwd=os.getcwd(),model=option('--model'),permission_mode='request-review',tools=['view_file','run_command'])})
+first_input=True
 for line in sys.stdin:
     message=json.loads(line)
     assert message['event']=='user',message
     text=message['message']['content']
     record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
+    resumed=index>0
     native_record('USER_INPUT','<USER_REQUEST>\n'+text+'\n</USER_REQUEST>')
     step('user_input',state='DONE');advance()
+    if first_input and resumed:
+        native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] Native runtime restarted; background tasks have stopped.\n</SYSTEM_MESSAGE>')
+        step('system_message',state='DONE');advance()
+    first_input=False
     if text=='__DESCENDANT_PIPE__':
         descendant=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'])
         record({'kind':'descendant','sid':sid,'pid':descendant.pid,'parent_pid':os.getpid()})
@@ -103,6 +109,30 @@ for line in sys.stdin:
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)
         result('ERROR',error='synthetic native error');continue
+    if text=='__ARTIFACT__':
+        artifact=native/'brain'/sid/'codebase_audit_report.md'
+        artifact.write_text('# SessionDock 全量代码审计报告\n\n## 审计结论\n\n完整报告正文：保留运行中的子代理，修复文档链接。\n')
+        answer='完整报告：**[SessionDock 全量代码审计报告 (codebase_audit_report.md)]('+artifact.as_uri()+')**'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        result('SUCCESS',answer)
+        continue
+    if text=='__BACKGROUND__':
+        native_record('PLANNER_RESPONSE','后台任务已启动。')
+        step('agent_response',state='DONE');advance()
+        delayed_index=index
+        step('system_message',state='DONE');advance()
+        result('SUCCESS','后台任务已启动。')
+        def background():
+            deadline=time.monotonic()+25
+            while not (root/'release/background').exists():
+                if time.monotonic()>deadline:return
+                threading.Event().wait(0.02)
+            native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=fixture-subagent priority=MESSAGE_PRIORITY_LOW content=回合结束后补齐的原生系统正文。\n</SYSTEM_MESSAGE>',step_index=delayed_index)
+            native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=fixture-subagent priority=MESSAGE_PRIORITY_HIGH content=后台子代理已完成审计，运行时未重启。\n</SYSTEM_MESSAGE>')
+            step('system_message',state='DONE');advance()
+        threading.Thread(target=background,daemon=True).start()
+        continue
     if text=='__METADATA_ONLY__':
         # Real Agy can emit only a step identity/status, with all body text in
         # the native transcript. Persist one body after its notification too.

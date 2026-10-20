@@ -10102,12 +10102,13 @@ function referenceLink(ref, label, context, explicit = false) {
     // references present in this session, through its authenticated API.
     const withoutLine = ref.replace(/(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)$/, '');
     const windowsDrive = isWindowsDrivePath(withoutLine);
-    if (!context.uid || (!windowsDrive && /^[a-z][a-z0-9+.-]*:/i.test(withoutLine)) || ref.startsWith('//')) return '';
+    const fileUri = /^file:\/\//i.test(withoutLine);
+    if (!context.uid || (!windowsDrive && !fileUri && /^[a-z][a-z0-9+.-]*:/i.test(withoutLine)) || ref.startsWith('//')) return '';
     if (/^[A-Z0-9]+(?:\/[A-Z0-9]+)+$/.test(ref)) return '';
     // Rendering is lexical only. Resolve history, existence and ambiguity on
     // explicit navigation/menu actions, never once per render or SSE update.
     const filename = /^[^\s/<>"'`=;|{}\[\]]+\.[a-zA-Z][\w.-]*$/.test(withoutLine);
-    const path = windowsDrive || /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
+    const path = windowsDrive || fileUri || /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
       || (!/[\s<>"'`=;|{}\[\]]/.test(withoutLine) && withoutLine.includes('/')
           && (withoutLine.endsWith('/') || /^[^/]+\.[a-zA-Z][\w.-]*$/.test(withoutLine.split('/').pop())))
       || filename;

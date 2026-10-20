@@ -27,11 +27,11 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
   发出 `result.status=ERROR`、`error=interrupted`，随后能恢复同一 SID。
   不假设 SIGINT 一定输出 INTERRUPTED，也不将网络请求中断等同于工具子进程清理验收。
 
-桥接每轮启动 `agy --input-format stream-json --output-format stream-json
---conversation <SID>`，写入一条原生 user 消息并关闭 stdin。原生协议规定 EOF
-在当前回合完成后结束进程；下一轮用同一 SID 恢复。这样 model/effort 可以逐轮通过
-独立 argv 传入，无需虚构在线设置 RPC。CLI 的持久多轮协议也已观察到，但桥接采用
-逐轮恢复，承担启动开销，不宣称共享一个常驻 TUI 运行时。
+桥接启动 `agy --input-format stream-json --output-format stream-json
+--conversation <SID>` 后保持 stdin 打开，以原生 `result` 分隔回合。普通连续输入
+复用同一进程及子代理／后台任务运行时，不再因每轮 EOF 产生原生服务重启通知。
+显式更改 model/effort/mode 在当前轮完成后关闭旧进程、按新 argv 启动下一轮；
+这是原生没有在线设置协议的边界，会重建子代理／后台任务运行时。独立 TUI 仍不共享此进程。
 
 输出处理：`step_update` 按原生 SID/step index 累积 `text_delta`；工具保留
 `tool_info.parameters/output/error`，后续稀疏 DONE 事件不会擦掉先前参数。
@@ -108,7 +108,9 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
 广播 lag 后 facade 应使用 bridge/reset 触发重新订阅，不能把缺口解释为任务结束。
-配置持久 state dir 时，实时消息从宿主输出重建，正在执行的 child 跨节点服务重启。共享 facade 的
+配置持久 state dir 时，实时消息从宿主输出重建，正在执行及闲置的 child 跨节点服务重启。
+绑定记录运行时及当前输入的输出起点；各输入使用独立传输 ID，恢复只回放该输入的
+既有输出并核对原回执，不重新提交。旧的每轮 EOF 绑定仍按原语义完成，之后的新轮使用持久进程。共享 facade 的
 [持久输入账本](native-sdk.md#持久输入与失败恢复) 保存尚未投递的队列、提交去重与
 失败/未知回执；在途工作重启后先核对原宿主绑定，失败才标未知，不自动重发。关联的原生 user_input 提供
 消费证据，不能把准入当消费。原生历史仍由既有 inventory/read-model 读取。

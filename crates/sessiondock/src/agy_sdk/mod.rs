@@ -52,6 +52,7 @@ struct Data {
     usage: Value,
     step_usage: Value,
     mode: Option<String>,
+    runtime: Option<Turn>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -63,6 +64,12 @@ struct Turn {
     mode: Option<String>,
     #[serde(default)]
     recovering: bool,
+    #[serde(default)]
+    persistent: bool,
+    #[serde(default)]
+    runtime_id: String,
+    #[serde(default)]
+    stdout_offset: u64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -119,7 +126,7 @@ fn capabilities() -> Value {
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
-        "每轮原生 headless 恢复同一 SID；实时快照仅保存在当前服务进程。"]})
+        "连续回合复用同一原生 headless 进程；显式更改模型、强度或模式在下一轮重建进程。"]})
 }
 
 fn text(value: &Value, field: &str) -> Result<String, String> {
@@ -252,7 +259,15 @@ impl Bridge {
                 let turn = Turn { id: request.clone(), text: content.clone(),
                     model: choice(&input,"model").or_else(|| data.model.clone()),
                     effort: choice(&input,"effort").or_else(|| data.effort.clone()),
-                    mode: choice(&input,"mode").or_else(|| data.mode.clone()), recovering: false };
+                    mode: choice(&input,"mode").or_else(|| data.mode.clone()), recovering: false,
+                    persistent:true, runtime_id:request.clone(), stdout_offset:0 };
+                let mut turn = turn;
+                if let Some(runtime) = &data.runtime
+                    && runtime.model == turn.model && runtime.effort == turn.effort && runtime.mode == turn.mode
+                {
+                    turn.runtime_id = runtime.runtime_id.clone();
+                    turn.stdout_offset = runtime.stdout_offset;
+                }
                 let receipt = json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
                 self.save_binding(&live, &turn)?;
                 live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
@@ -307,7 +322,12 @@ impl Bridge {
                 return Err("agy_sdk_identity_changed".into());
             }
             if let Some(dir) = &self.process.host_dir {
-                let host = sdkhost_client::Client::attach(dir, &host_key(&sid, &binding.turn.id))
+                let runtime = if binding.turn.runtime_id.is_empty() {
+                    &binding.turn.id
+                } else {
+                    &binding.turn.runtime_id
+                };
+                let host = sdkhost_client::Client::attach(dir, &host_key(&sid, runtime))
                     .await
                     .map_err(|e| format!("agy_sdk_recovery_missing: {e}"))?;
                 let status = host
@@ -440,6 +460,7 @@ impl Bridge {
                 usage: Value::Null,
                 step_usage: Value::Null,
                 mode: None,
+                runtime: None,
             }),
         });
         sessions.native.insert(sid, live.clone());
@@ -546,6 +567,12 @@ impl Live {
     }
 }
 
+#[derive(Default)]
+struct Runtime {
+    native: Option<Native>,
+    transcript: transcript::Pending,
+}
+
 async fn actor(
     process: Arc<ProcessConfig>,
     live: Arc<Live>,
@@ -553,6 +580,7 @@ async fn actor(
     shutdown: CancellationToken,
 ) {
     let mut pending = std::collections::VecDeque::new();
+    let mut runtime = Runtime::default();
     loop {
         if shutdown.is_cancelled() || live.stop.is_cancelled() {
             break;
@@ -560,7 +588,58 @@ async fn actor(
         let command = if let Some(turn) = pending.pop_front() {
             Some(Command::Turn(turn))
         } else {
-            tokio::select! { _=shutdown.cancelled()=>None, _=live.stop.cancelled()=>None, command=receiver.recv()=>command }
+            tokio::select! {
+                _=shutdown.cancelled()=>None,
+                _=live.stop.cancelled()=>None,
+                command=receiver.recv()=>command,
+                line=async {
+                    match runtime.native.as_mut() {
+                        Some(native) => native.next_line().await,
+                        None => std::future::pending().await,
+                    }
+                }=>{
+                    match line {
+                        Ok(Some(line))=>{
+                            let turn=live.data.lock().unwrap().runtime.clone();
+                            if let Some(turn)=turn && let Ok(event)=serde_json::from_str::<Value>(&line)
+                                && runtime.native.as_ref().unwrap().check_event(&event).is_ok()
+                            {
+                                if event["event"]=="step_update" {
+                                    project(&live,&turn,&event["step_update"]);
+                                    runtime.transcript.observe(&event["step_update"]);
+                                    runtime.transcript.refresh(&process,&live,&turn).await;
+                                } else if event["event"]=="result" {
+                                    let mut data=live.data.lock().unwrap();
+                                    if event["result"]["usage"].is_object() { data.usage=event["result"]["usage"].clone(); }
+                                    if event["result"]["status"]!="SUCCESS" {
+                                        data.error=Some(format!("agy_sdk_native_{}: {}",event["result"]["status"],process.redact(event["result"]["error"].as_str().unwrap_or("原生后台任务失败"))));
+                                        data.error_kind=Some("turn");
+                                    }
+                                    live.publish(&mut data);
+                                }
+                                let runtime_native_offset=runtime.native.as_ref().unwrap().stdout_offset;
+                                if let Some(runtime)=live.data.lock().unwrap().runtime.as_mut() {
+                                    runtime.stdout_offset=runtime_native_offset;
+                                }
+                            }
+                        }
+                        Ok(None)|Err(_)=>{
+                            runtime.native=None;
+                            let mut data=live.data.lock().unwrap();
+                            data.runtime=None;
+                            data.error=Some("agy_sdk_runtime_closed: 原生输出已结束；下次发送将启动同一会话的新运行实例。".into());
+                            data.error_kind=Some("transport");
+                            live.publish(&mut data);
+                        }
+                    }
+                    continue;
+                },
+                _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !runtime.transcript.is_empty()=>{
+                    let turn=live.data.lock().unwrap().runtime.clone();
+                    if let Some(turn)=turn { runtime.transcript.refresh(&process,&live,&turn).await; }
+                    continue;
+                }
+            }
         };
         let Some(command) = command else {
             break;
@@ -592,10 +671,20 @@ async fn actor(
                     &turn,
                     &mut receiver,
                     &mut pending,
+                    &mut runtime,
                     shutdown.clone(),
                 )
                 .await;
                 let mut data = live.data.lock().unwrap();
+                data.runtime = if outcome.is_ok() && turn.persistent {
+                    runtime.native.as_ref().map(|native| {
+                        let mut runtime = turn.clone();
+                        runtime.stdout_offset = native.stdout_offset;
+                        runtime
+                    })
+                } else {
+                    None
+                };
                 data.active = None;
                 data.outstanding = data.outstanding.saturating_sub(1);
                 if let Some(item) = data
@@ -634,6 +723,9 @@ async fn actor(
     if shutdown.is_cancelled() {
         return;
     }
+    if let Some(mut native) = runtime.native {
+        native.terminate().await;
+    }
     let mut data = live.data.lock().unwrap();
     if data.outstanding > 0 {
         data.error_kind = Some("transport");
@@ -650,32 +742,68 @@ async fn execute(
     turn: &Turn,
     receiver: &mut mpsc::UnboundedReceiver<Command>,
     pending: &mut std::collections::VecDeque<Turn>,
+    runtime: &mut Runtime,
     shutdown: CancellationToken,
 ) -> Result<(), String> {
+    let Runtime {
+        native: slot,
+        transcript,
+    } = runtime;
     process.check_available(live.sid.clone()).await?;
-    let mut native = Native::start(
-        process.clone(),
-        Some(&live.sid),
-        std::path::Path::new(&live.cwd),
-        turn.model.as_deref(),
-        turn.effort.as_deref(),
-        turn.mode.as_deref(),
-        shutdown.clone(),
-        Some((&host_key(&live.sid, &turn.id), turn.recovering)),
-    )
-    .await?;
+    let runtime = if turn.runtime_id.is_empty() {
+        &turn.id
+    } else {
+        &turn.runtime_id
+    };
+    let key = host_key(&live.sid, runtime);
+    if slot
+        .as_ref()
+        .is_some_and(|native| native.key.as_deref() != Some(&key))
+    {
+        let mut previous = slot.take().unwrap();
+        previous.close_input().await?;
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            previous.finish(shutdown.clone()),
+        )
+        .await
+        {
+            Ok(result) => {
+                result?;
+            }
+            Err(_) => {
+                previous.terminate().await;
+                return Err("agy_sdk_settings_close_timeout".into());
+            }
+        }
+    }
+    if slot.is_none() {
+        *slot = Some(
+            Native::start(
+                process.clone(),
+                Some(&live.sid),
+                std::path::Path::new(&live.cwd),
+                turn.model.as_deref(),
+                turn.effort.as_deref(),
+                turn.mode.as_deref(),
+                shutdown.clone(),
+                Some((&key, turn.recovering, turn.stdout_offset)),
+            )
+            .await?,
+        );
+    }
+    let native = slot.as_mut().unwrap();
     let outcome=async {
     tokio::select! {
         _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
-        sent=native.send(&turn.text)=>sent?,
+        sent=native.send(&turn.text, if turn.persistent { &turn.id } else { "input" })=>sent?,
     }
-    // EOF means finish this turn and exit, rather than cancel. Next turn resumes the same SID.
-    native.close_input().await?;
+    // Preserve EOF completion only for bindings created before persistent runtimes.
+    if !turn.persistent { native.close_input().await?; }
     let mut result = None;
     let mut interrupted = false;
     let mut interrupt_deadline = None;
     let mut saw_assistant = false;
-    let mut transcript = transcript::Pending::default();
     loop {
         tokio::select! {
             _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty()=>{
@@ -695,7 +823,7 @@ async fn execute(
                 }
                 None=>{ native.terminate().await;return Err("agy_sdk_shutdown".into()); }
             },
-            line=native.output.next_line()=>{
+            line=native.next_line()=>{
                 let line=match line { Ok(Some(line))=>line, Ok(None)=>break, Err(error)=>{ native.terminate().await;return Err(format!("agy_sdk_read: {error}")); } };
                 let event:Value=match serde_json::from_str(&line) {Ok(event)=>event,Err(_)=>{native.terminate().await;return Err("agy_sdk_invalid_ndjson".into());}};
                 if let Err(error)=native.check_event(&event) {native.terminate().await;return Err(error);}
@@ -717,6 +845,10 @@ async fn execute(
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
                         result=Some(if status=="SUCCESS" {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
+                        if turn.persistent {
+                            if interrupted { return Err("agy_sdk_interrupted: 已中断当前 Agy 回合。".into()); }
+                            return result.take().unwrap();
+                        }
                     }
                     _=>{
                         let mut data=live.data.lock().unwrap();
@@ -746,10 +878,16 @@ async fn execute(
         )),
     }
     }.await;
+    if turn.persistent && outcome.is_ok() {
+        return outcome;
+    }
     if outcome.is_err() && !shutdown.is_cancelled() {
         native.terminate().await;
     }
     live.diagnostic(native.diagnostics().await);
+    if !shutdown.is_cancelled() {
+        *slot = None;
+    }
     outcome
 }
 
