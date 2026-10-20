@@ -38,17 +38,26 @@
   workflow authority for this repository; command examples, historical delivery
   records and tool defaults do not expand the current task. Apply mixed changes
   as the union of their affected scopes, not an automatic full release.
+  Determine artifacts and target coverage separately: limiting which artifacts
+  change does not permit sampling machines. Inventory every enabled target in
+  the deployment configuration and include every instance of each affected
+  component. Shared frontend or session behavior (including list, history,
+  search and SDK interaction) covers all SessionDock nodes AND the Hub.
+  Do not select targets by the bug report's machine, the development machine,
+  convenience, or a minimum success count. Before deployment, state the complete
+  target set and explain exclusions by component scope or explicit user limits.
   - Frontend-only changes run the affected Chromium suites and visual checks,
-    then deploy with `--web-only --targets <affected-node-and-hub-targets>`.
-    Select only targets that serve the frontend; exclude resource-agent targets.
+    then deploy with `--web-only --targets <all-affected-node-and-hub-targets>`.
+    Select every target that serves the affected frontend; exclude resource-agent targets.
     Do not rebuild or replace backend/ptyhost binaries, restart resource agents,
     or run unrelated suites for a frontend fix. Keep the required web-service
     restart, health check and rollback through the deployment tool.
   - Rules/docs-only changes run doc checks, commit and push; no production
     build, deployment or restart. Test-only and deploy-script-only changes also
     do not publish unchanged runtime artifacts; validate their affected scope.
-  - Backend or resource-agent changes build, validate and deploy only affected
-    artifacts and targets. Full-fleet publication is not the default.
+  - Backend or resource-agent changes build, validate and deploy the affected
+    artifacts to every instance in scope. Component-specific changes cover all
+    instances of that component; do not restart unrelated components.
   - Inspect the scoped plan with `deploy --dry-run`. Use `--test-suites` for the
     affected behavior in shared files; `--test full` is explicit. Already completed
     checks can use `--test none` with the actual validation recorded.
@@ -57,14 +66,20 @@
     configuration, not docs-only work. Tests and service files use the same
     committed snapshot as the published artifacts.
 - Runtime releases include build as applicable, validation, push, deployment,
-  restart and health check. Shared frontend/service releases require at least one
-  SessionDock node AND the Hub successfully deployed, restarted and healthy.
-  A change confined to the Hub, node service or collector requires a healthy
-  deployment of that affected component, not restarts of unrelated components.
-  Other offline or unsuccessful targets are recorded
-  for later delivery; they do not block engineering completion or its goal.
-  Do not require every machine to succeed or keep polling remaining targets.
-  If the minimum is not yet met, continue other actionable engineering work.
+  restart and health check. Attempt every target in the complete scope, including
+  targets reported unreachable by the preliminary fleet check. Targets already
+  verified healthy on the same runtime artifacts need no repeat restart.
+  Report each target as deployed and healthy, already current, offline, failed,
+  disabled, or excluded with its scope reason. Never call unattempted in-scope
+  targets complete or omit them after a subset succeeds.
+  After all in-scope targets have an outcome, offline or unsuccessful targets
+  may remain explicitly pending without blocking engineering completion or its
+  goal. Shared frontend/service releases still require at least one SessionDock
+  node AND the Hub successfully deployed, restarted and healthy; component-only
+  releases require a healthy instance of that component. These are fallback
+  completion thresholds after all targets were attempted, never target-selection
+  rules. Do not keep polling offline targets. If the minimum is not yet met,
+  continue other actionable engineering work.
   Deploy the committed HEAD unless the user names another source; the build
   ignores other sessions' uncommitted edits (`--allow-dirty PATH` names extras).
   Preserve sessions, state and concurrent changes; keep a rollback.
