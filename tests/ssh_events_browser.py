@@ -201,7 +201,7 @@ def synthetic(fixture,pw):
     wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
     assert any(b['process']['pid']==300 and b['session']['sid']=='parent'
                for b in fixture.report(0)['bindings'])
-    item.locator('.item-resources').click()
+    page.locator('#a-resources').click()
     page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length===2")
     sampled_at = request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at']
     wait_for(lambda: request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at'] > sampled_at)
@@ -211,7 +211,7 @@ def synthetic(fixture,pw):
     finish_readers()
     assert len(reads) >= 3
     print('PASS browser resources remain fresh with 30000 retained SSH spans and concurrent report readers', flush=True)
-    page.get_by_role('button',name='关闭资源面板').click()
+    page.locator('#a-chat').click()
     fixture.hub.stop()
     fixture.restart_agents()
     fixture.hub.start()
@@ -347,9 +347,9 @@ for line in sys.stdin:
     wait_for(lambda:{first,second} <= {b['process']['pid'] for b in fixture.bindings()})
     page.evaluate('SessionDockSidebarResources.refresh()')
     wait_for(lambda:item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
-    item.locator('.item-resources').click()
+    page.locator('#a-resources').click()
     page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length===2")
-    page.get_by_role('button',name='关闭资源面板').click()
+    page.locator('#a-chat').click()
     print('PASS real BPF IPv4/IPv6 short SSH, delayed orphan grandchildren, no live-client snapshot, saved evidence before Hub startup and browser resource ownership',flush=True)
     control=root/'control'
     run([*common,'-M','-S',str(control),'-f','-N',f'{user}@127.0.0.1'])
@@ -427,10 +427,10 @@ if __name__=='__main__':
                                     if b['session']['sid']=='parent'})
     page.evaluate('SessionDockSidebarResources.refresh()')
     wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked)))
-    item.locator('.item-resources').click()
+    page.locator('#a-resources').click()
     page.get_by_role('button', name='仅当前会话', exact=True).click()
     page.get_by_role('button', name='刷新资源').click()
-    page.get_by_role('button', name='关闭资源面板').click()
+    page.locator('#a-chat').click()
     print('PASS real background/nohup/setsid/double-fork/env-clear/Popen/multiprocessing launch attribution', flush=True)
 
     # Daemon-mediated requests are not process ancestry. An existing private

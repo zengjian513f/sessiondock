@@ -1,8 +1,43 @@
+use crate::runtime::process_links::sync;
 use crate::{error::ApiError, state::AppState};
 use axum::{Extension, Json, extract::State, http::StatusCode};
+use axum::{
+    extract::Query,
+    response::{IntoResponse, Response},
+};
+use std::sync::Arc;
 
-pub async fn get(State(state): State<AppState>) -> Result<Json<process_links::Report>, ApiError> {
-    Ok(Json(crate::runtime::process_links::report(&state).await?))
+#[derive(Default, serde::Deserialize)]
+pub struct SyncQuery {
+    connection_sync: Option<String>,
+    since: Option<String>,
+}
+
+pub async fn get(
+    State(state): State<AppState>,
+    Extension(store): Extension<Arc<sync::Store>>,
+    Query(query): Query<SyncQuery>,
+) -> Result<Response, ApiError> {
+    let report = crate::runtime::process_links::report(&state).await?;
+    // Large first snapshots and diffs must not serialize on an async worker.
+    tokio::task::spawn_blocking(move || {
+        if query.connection_sync.as_deref() == Some("1") {
+            match store.update(report, query.since.as_deref()) {
+                Ok(update) => ([(sync::HEADER, "1")], Json(update)).into_response(),
+                Err(report) => Json(report).into_response(),
+            }
+        } else {
+            Json(report).into_response()
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "process_report_failed",
+            "进程关联报告失败",
+        )
+    })
 }
 
 pub async fn post(
