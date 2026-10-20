@@ -38,6 +38,7 @@ struct Session {
 
 pub struct Bridge {
     root: PathBuf,
+    state_dir: Option<PathBuf>,
     home: PathBuf,
     profile: CliProfile,
     proc_root: PathBuf,
@@ -114,8 +115,19 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         .grok_active
         .clone()
         .unwrap_or_else(|| home.join("active_sessions.json"));
+    let saved_attempts = |name: &str| -> io::Result<HashMap<String, Result<Value, String>>> {
+        let Some(root) = &config.state_dir else {
+            return Ok(HashMap::new());
+        };
+        match std::fs::read(root.join("sdk-adapters/grok").join(name)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
+            Err(e) => Err(e),
+        }
+    };
     let bridge = Arc::new(Bridge {
         root,
+        state_dir: config.state_dir.clone().filter(|_| cfg!(unix)),
         home,
         profile,
         proc_root: config.proc_root.clone(),
@@ -123,14 +135,100 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         shutdown,
         sessions: Mutex::new(HashMap::new()),
         attach: AsyncMutex::new(()),
-        creates: AsyncMutex::new(HashMap::new()),
-        mutations: AsyncMutex::new(HashMap::new()),
+        creates: AsyncMutex::new(saved_attempts("creates.json")?),
+        mutations: AsyncMutex::new(saved_attempts("mutations.json")?),
     });
     bridge.start_idle_reaper();
     Ok(Some(bridge))
 }
 
 impl Bridge {
+    fn save_attempts(
+        &self,
+        name: &str,
+        attempts: &HashMap<String, Result<Value, String>>,
+    ) -> Result<(), String> {
+        if self.state_dir.is_none() {
+            return Ok(());
+        }
+        let root = self
+            .state_dir
+            .as_ref()
+            .ok_or("grok_sdk_host: state directory unavailable")?
+            .join("sdk-adapters/grok");
+        transport::private_dir(&root).map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+        transport::save(&root.join(name), attempts).map_err(|e| format!("grok_sdk_checkpoint: {e}"))
+    }
+    fn checkpoint_path(&self, identity: &str) -> Result<PathBuf, String> {
+        let root = self
+            .state_dir
+            .as_ref()
+            .ok_or("grok_sdk_host: state directory unavailable")?
+            .join("sdk-adapters/grok");
+        transport::private_dir(&root).map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+        let key: String = identity
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        Ok(root.join(format!("{key}.json")))
+    }
+    async fn reattach(&self, target: &Value) -> Result<Value, String> {
+        if self.state_dir.is_none() {
+            return Ok(json!({"attached":false}));
+        }
+        let key = target_key(target)?;
+        let bytes = match std::fs::read(self.checkpoint_path(&key)?) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(json!({"attached":false})),
+            Err(e) => return Err(format!("grok_sdk_checkpoint: {e}")),
+        };
+        let saved: Live =
+            serde_json::from_slice(&bytes).map_err(|_| "grok_sdk_recovery_invalid")?;
+        if saved.host_key.is_none() {
+            return Ok(json!({"attached":false}));
+        }
+        let session = match self.open_with_spawn(target, false).await {
+            Ok(session) => session,
+            Err(error) if error == "grok_sdk_recovery_missing" => {
+                return Ok(json!({"attached":false}));
+            }
+            Err(error) => return Err(error),
+        };
+        let mut receipt = self.receipt(&session);
+        receipt["attached"] = json!(true);
+        Ok(receipt)
+    }
+    async fn recover(&self, target: &Value, input: &Value) -> Result<Value, String> {
+        if self.state_dir.is_none() {
+            return Err("grok_sdk_recovery_missing".into());
+        }
+        let key = target_key(target)?;
+        let request_id = required(input, "request_id")?;
+        let bytes =
+            std::fs::read(self.checkpoint_path(&key)?).map_err(|_| "grok_sdk_recovery_missing")?;
+        let saved: Live =
+            serde_json::from_slice(&bytes).map_err(|_| "grok_sdk_recovery_invalid")?;
+        if saved.sid != required(target, "session_id")? {
+            return Err("grok_sdk_identity_mismatch".into());
+        }
+        if saved.host_key.is_none() {
+            return saved
+                .receipts
+                .get(request_id)
+                .cloned()
+                .ok_or_else(|| "grok_sdk_recovery_missing".into());
+        }
+        // open recognizes the saved host identity and only attaches, with no
+        // initialize/load or prompt replay. Missing/dead hosts remain errors.
+        let session = self.open_with_spawn(target, false).await?;
+        let state = session.live.lock().unwrap();
+        state
+            .receipts
+            .get(request_id)
+            .cloned()
+            .ok_or_else(|| "grok_sdk_recovery_missing".into())
+    }
     pub async fn stop(&self, uid: &str) -> Result<bool, String> {
         let _gate = self.attach.lock().await;
         let session = self.sessions.lock().unwrap().remove(uid);
@@ -203,13 +301,19 @@ impl Bridge {
         if self.shutdown.is_cancelled() {
             return Err("grok_sdk_shutdown".into());
         }
+        if method == "reattach" {
+            return self.reattach(&target).await;
+        }
+        if method == "recover" {
+            return self.recover(&target, &input).await;
+        }
         if method == "create" {
             return self.create(&target, &input).await;
         }
         if method == "models" && target["uid"].as_str().is_none() {
             let cwd = required(&target, "cwd")?;
             let live = Arc::new(Mutex::new(Live::new(String::new())));
-            let connection = self.connection(cwd, live).await?;
+            let connection = self.connection(cwd, live, None).await?;
             let initialized = connection.initialized.lock().unwrap().clone();
             connection.stop.cancel();
             let models = &initialized["_meta"]["modelState"];
@@ -311,12 +415,32 @@ impl Bridge {
         &self,
         cwd: &str,
         live: Arc<Mutex<Live>>,
+        identity: Option<&str>,
     ) -> Result<Arc<Connection>, String> {
-        let connection = Connection::spawn(
-            self.command(cwd)?,
-            live.clone(),
-            self.shutdown.child_token(),
-        )?;
+        let connection = if let Some(root) = &self.state_dir {
+            let checkpoint = self.checkpoint_path(identity.unwrap_or(&fresh_id()))?;
+            Connection::spawn(
+                self.command(cwd)?,
+                live.clone(),
+                self.shutdown.clone(),
+                root,
+                checkpoint,
+            )
+            .await?
+        } else {
+            Connection::spawn_legacy(
+                self.command(cwd)?,
+                live.clone(),
+                self.shutdown.child_token(),
+            )?
+        };
+        if connection.resumed {
+            let initialized = live.lock().unwrap().initialized.clone();
+            if initialized["protocolVersion"] != 1 {
+                return Err("grok_sdk_initialize_unknown".into());
+            }
+            return Ok(connection);
+        }
         let result = connection
             .request(
                 "initialize",
@@ -342,6 +466,13 @@ impl Bridge {
     }
 
     async fn open(&self, target: &Value) -> Result<Arc<Session>, String> {
+        self.open_with_spawn(target, true).await
+    }
+    async fn open_with_spawn(
+        &self,
+        target: &Value,
+        allow_spawn: bool,
+    ) -> Result<Arc<Session>, String> {
         let key = target_key(target)?;
         let sid = required(target, "session_id")?;
         let cwd = required(target, "cwd")?;
@@ -363,25 +494,56 @@ impl Bridge {
         {
             return Err("grok_sdk_identity_mismatch".into());
         }
-        self.check_conflict(sid, &path, None).await?;
         let old = self.sessions.lock().unwrap().get(&key).cloned();
+        if let Some(previous) = &old
+            && !previous.connection.alive.load(Ordering::Acquire)
+        {
+            previous.connection.done.cancelled().await;
+        }
         let live = old
             .as_ref()
             .map(|s| s.live.clone())
             .unwrap_or_else(|| Arc::new(Mutex::new(Live::new(sid.to_owned()))));
-        let connection = self.connection(cwd, live.clone()).await?;
-        let loaded = connection
-            .request(
-                "session/load",
-                json!({"sessionId":sid,"cwd":cwd,"mcpServers":[],
+        if old.is_none() && self.state_dir.is_some() {
+            let checkpoint = self.checkpoint_path(&key)?;
+            match std::fs::read(&checkpoint) {
+                Ok(bytes) => {
+                    let mut restored: Live = serde_json::from_slice(&bytes)
+                        .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+                    if restored.sid != sid {
+                        return Err("grok_sdk_identity_mismatch".into());
+                    }
+                    restored.checkpoint = Some(checkpoint);
+                    *live.lock().unwrap() = restored;
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("grok_sdk_checkpoint: {e}")),
+            }
+        }
+        let hosted = live.lock().unwrap().host_key.is_some();
+        if !hosted && !allow_spawn {
+            return Err("grok_sdk_recovery_missing".into());
+        }
+        if !hosted {
+            self.check_conflict(sid, &path, None).await?;
+        }
+        let connection = self.connection(cwd, live.clone(), Some(&key)).await?;
+        let result = if connection.resumed {
+            Value::Null
+        } else {
+            let loaded = connection
+                .request(
+                    "session/load",
+                    json!({"sessionId":sid,"cwd":cwd,"mcpServers":[],
             "_meta":{"yoloMode":false,"autoMode":false}}),
-            )
-            .await;
-        let result = match loaded {
-            Ok(result) => result,
-            Err(error) => {
-                connection.stop.cancel();
-                return Err(error);
+                )
+                .await;
+            match loaded {
+                Ok(result) => result,
+                Err(error) => {
+                    connection.stop.cancel();
+                    return Err(error);
+                }
             }
         };
         if result["_meta"]["currentWorkingDirectory"]
@@ -431,15 +593,21 @@ impl Bridge {
         }
         // The full outcome, including an uncertain native error, is cached:
         // retrying a lost response never creates a second native session.
+        attempts.insert(
+            request_id.clone(),
+            Err("grok_sdk_create_unknown: operation dispatched before service restart".into()),
+        );
+        self.save_attempts("creates.json", &attempts)?;
         let result = self.create_once(cwd, input).await;
         attempts.insert(request_id, result.clone());
+        self.save_attempts("creates.json", &attempts)?;
         result
     }
 
     async fn create_once(&self, cwd: &str, input: &Value) -> Result<Value, String> {
         let _gate = self.attach.lock().await;
         let live = Arc::new(Mutex::new(Live::new(String::new())));
-        let connection = self.connection(cwd, live.clone()).await?;
+        let connection = self.connection(cwd, live.clone(), None).await?;
         let result = connection
             .request(
                 "session/new",
@@ -462,8 +630,8 @@ impl Bridge {
             { let mut state = live.lock().unwrap(); state.sid = sid.clone(); state.settings(&result); }
             self.configure(&connection, &sid, input, &live).await?;
             let session = Arc::new(Session { uid:uid.clone(), sid, cwd:actual_cwd, path, live:live.clone(), connection:connection.clone(), turns:Arc::new(AsyncMutex::new(())), steer_gate:AsyncMutex::new(()) });
-            self.sessions.lock().unwrap().insert(uid, session.clone());
-            session.live.lock().unwrap().publish();
+            self.sessions.lock().unwrap().insert(uid.clone(), session.clone());
+            {let mut state=session.live.lock().unwrap();if self.state_dir.is_some(){state.checkpoint=Some(self.checkpoint_path(&uid)?);}state.publish();}
             let mut receipt = self.receipt(&session);
             receipt["session"] = json!({"uid":session.uid,"source":"grok","session_id":session.sid,"sid":session.sid,
                 "cwd":session.cwd,"title":"新建 Grok 会话","path":session.path,"sdk":true});
@@ -563,110 +731,148 @@ impl Bridge {
             required(input, "text")?
         }
         .to_owned();
-        let mut prompt = vec![json!({"type":"text","text":text})];
-        if shell {
-            // Native direct shell path bypasses the model, preserving its own
-            // execution/permission semantics. Never send a model instruction.
-            prompt[0]["_meta"] = json!({"bash_command":text});
-        }
         let request_id = input["request_id"]
             .as_str()
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(fresh_id);
-        {
-            let state = session.live.lock().unwrap();
-            if let Some(receipt) = state.receipts.get(&request_id) {
-                return Ok(receipt.clone());
-            }
+        if let Some(receipt) = session.live.lock().unwrap().receipts.get(&request_id) {
+            return Ok(receipt.clone());
         }
         let operation = session.turns.clone().lock_owned().await;
+        // A surviving prompt has no old HTTP future to hold this mutex after
+        // restart; its durable projection is the admission gate until ACP ends it.
+        loop {
+            {
+                let state = session.live.lock().unwrap();
+                if let Some(receipt) = state.receipts.get(&request_id) {
+                    return Ok(receipt.clone());
+                }
+                if !state.running {
+                    break;
+                }
+            }
+            if self.shutdown.is_cancelled() || !session.connection.alive.load(Ordering::Acquire) {
+                return Err("grok_sdk_disconnected".into());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
         self.check_conflict(&session.sid, &session.path, Some(session.connection.pid))
             .await?;
-        let receipt = {
+        // Configuration is visible and interruptible before prompt acceptance.
+        // Persist that boundary so recovery never invents an accepted prompt.
+        {
             let mut state = session.live.lock().unwrap();
-            if let Some(receipt) = state.receipts.get(&request_id) {
-                return Ok(receipt.clone());
+            state.running = true;
+            state.prompt_started = false;
+            state.cancel_requested = false;
+            state.setup_pending = true;
+            state.error = None;
+            state.error_kind = None;
+            state.publish();
+            state
+                .save_checkpoint()
+                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+        }
+        if let Err(error) = self
+            .configure(&session.connection, &session.sid, input, &session.live)
+            .await
+        {
+            if self.shutdown.is_cancelled() {
+                return Err(error);
             }
+            let mut state = session.live.lock().unwrap();
+            let receipt = json!({"accepted":true,"sdkhost":session.connection.hosted(),"request_id":request_id,"session_id":session.sid});
+            state.receipts.insert(request_id.clone(), receipt.clone());
+            state.turn += 1;
+            state.error = Some(error);
+            state.error_kind = Some("turn");
+            state.running = false;
+            state.prompt_started = false;
+            state.setup_pending = false;
+            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":"user","content":text,"request_id":request_id}));
+            state.publish();
+            state
+                .save_checkpoint()
+                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+            return Ok(receipt);
+        }
+        let mut prompt = vec![json!({"type":"text","text":text})];
+        if shell {
+            prompt[0]["_meta"] = json!({"bash_command":text});
+        }
+        let (receipt, response) = {
+            let mut state = session.live.lock().unwrap();
             if state.generation != session.connection.generation
                 || !session.connection.alive.load(Ordering::Acquire)
             {
                 return Err("grok_sdk_disconnected".into());
             }
-            let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid});
+            let receipt = json!({"accepted":true,"sdkhost":session.connection.hosted(),"request_id":request_id,"session_id":session.sid});
             state.receipts.insert(request_id.clone(), receipt.clone());
+            state.setup_pending = false;
+            if state.cancel_requested {
+                state.running = false;
+                state.prompt_started = false;
+                state.publish();
+                state
+                    .save_checkpoint()
+                    .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+                return Ok(receipt);
+            }
             state.running = true;
             state.cancel_requested = false;
-            state.prompt_started = false;
+            state.prompt_started = true;
             state.error = None;
             state.error_kind = None;
             state.turn += 1;
-            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell {"tool"} else {"user"},"content":text,"tool_name":if shell {json!("shell")} else {Value::Null},"request_id":request_id}));
+            let item = json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell{"tool"}else{"user"},"content":text,"tool_name":if shell{json!("shell")}else{Value::Null},"request_id":request_id});
+            state.items.push(item.clone());
+            let response = session.connection.begin_prompt(
+                json!({"sessionId":session.sid,"prompt":prompt}),
+                json!({"receipt":receipt,"item":item,"turn":state.turn}),
+            )?;
             state.publish();
-            receipt
+            state
+                .save_checkpoint()
+                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+            (receipt, response)
         };
-        let bridge = self.clone();
-        let input = input.clone();
+        let shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             let _operation = operation;
-            let result = async {
-                bridge
-                    .configure(&session.connection, &session.sid, &input, &session.live)
-                    .await?;
-                let response = {
-                    let mut state = session.live.lock().unwrap();
-                    if state.generation != session.connection.generation {
-                        return Err("grok_sdk_disconnected".into());
-                    }
-                    if state.cancel_requested {
-                        return Ok(json!({"stopReason":"cancelled"}));
-                    }
-                    // Queue under the interrupt lock, preventing a cancel
-                    // notification from overtaking the prompt it targets.
-                    let response = session.connection.begin_request(
-                        "session/prompt",
-                        json!({"sessionId":session.sid,"prompt":prompt}),
-                    )?;
-                    state.prompt_started = true;
-                    response
-                };
-                response
-                    .await
-                    .map_err(|_| "grok_sdk_disconnected".to_owned())?
-            }
-            .await;
-            let mut state = session.live.lock().unwrap();
-            if state.generation != session.connection.generation {
+            let result = response
+                .await
+                .unwrap_or_else(|_| Err("grok_sdk_disconnected".into()));
+            if shutdown.is_cancelled() {
                 return;
             }
-            state.running = false;
-            state.prompt_started = false;
-            state.requests.clear();
-            match result {
-                Ok(result) => {
-                    if let Some(usage) = result["_meta"].get("usage") {
+            if !session.connection.hosted() {
+                let mut state = session.live.lock().unwrap();
+                if state.generation == session.connection.generation {
+                    state.running = false;
+                    state.prompt_started = false;
+                    state.requests.clear();
+                    if let Ok(result) = &result
+                        && let Some(usage) = result["_meta"].get("usage")
+                    {
                         state.usage["last_turn"] = live::scrub_usage(usage);
                     }
-                }
-                Err(error) => {
-                    state.error_kind = Some(
-                        if matches!(
-                            error.as_str(),
-                            "grok_sdk_disconnected"
-                                | "grok_sdk_shutdown"
-                                | "grok_sdk_read_failed"
-                                | "grok_sdk_write_failed"
-                                | "grok_sdk_invalid_protocol"
-                        ) {
-                            "transport"
-                        } else {
-                            "turn"
-                        },
-                    );
-                    state.error = Some(error);
+                    state.publish();
                 }
             }
-            state.publish();
+            if let Err(error) = result {
+                let mut state = session.live.lock().unwrap();
+                if state.generation == session.connection.generation {
+                    state.running = false;
+                    state.prompt_started = false;
+                    if state.error_kind.is_none() {
+                        state.error_kind = Some("transport");
+                    }
+                    state.error = Some(error);
+                    state.publish();
+                }
+            }
         });
         Ok(receipt)
     }
@@ -711,7 +917,7 @@ impl Bridge {
 
     fn receipt(&self, session: &Session) -> Value {
         let live = session.live.lock().unwrap();
-        json!({"uid":session.uid,"session_id":session.sid,"cwd":session.cwd,
+        json!({"sdkhost":session.connection.hosted(),"uid":session.uid,"session_id":session.sid,"cwd":session.cwd,
             "capabilities":capabilities(&live),"raw":live.snapshot()["raw"]})
     }
 

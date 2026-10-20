@@ -63,8 +63,9 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 同时打开数据库；使用 SDK 时应先正常退出同一 SID 的独立 TUI。此限制不能表述为
 支持原生共享写入或完整互斥保证。其他 SID 不受影响。
 
-接收后的进程不依赖 SSE 连接或网页存活。读写失败、native ERROR、进程异常退出和
-中断保留可见错误，不自动重发已交给 CLI 的正文。shutdown 只清理自己启动的进程。
+接收后的进程不依赖 SSE 连接或网页存活。配置持久 state dir 时，通过
+[独立 SDK 宿主](sdkhost.md)持有进程和管道，节点服务重启后重新附着并回放输出。读写失败、native ERROR、进程异常退出和
+中断保留可见错误，不自动重发已交给 CLI 的正文。节点 shutdown 只断开宿主连接；显式停止才终结任务。
 stderr 保存在实时快照的 `diagnostics`；已知敏感环境值及常见凭据字段先做遮盖，
 不把原始 stderr 打到服务日志。启动、模型目录、关闭空输入和中断清理有生命周期
 超时；正文、NDJSON 行长、队列条数与消息总量没有新增拒绝上限。
@@ -104,9 +105,9 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
 广播 lag 后 facade 应使用 bridge/reset 触发重新订阅，不能把缺口解释为任务结束。
-实时消息与正在执行的 child 不跨节点服务重启。共享 facade 的
+配置持久 state dir 时，实时消息从宿主输出重建，正在执行的 child 跨节点服务重启。共享 facade 的
 [持久输入账本](native-sdk.md#持久输入与失败恢复) 保存尚未投递的队列、提交去重与
-失败/未知回执；在途工作重启后须核对，不自动重发。关联的原生 user_input 提供
+失败/未知回执；在途工作重启后先核对原宿主绑定，失败才标未知，不自动重发。关联的原生 user_input 提供
 消费证据，不能把准入当消费。原生历史仍由既有 inventory/read-model 读取。
 
 ## 验证

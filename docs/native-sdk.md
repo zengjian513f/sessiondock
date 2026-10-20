@@ -134,8 +134,10 @@ OpenCode 保留原生 inbox 的 queue/steer 语义，本地账本只跟踪未确
 回显和 OpenCode 的已消费原生消息才提供 observed 消费证据。Grok 正常完成仍保留
 consumption:unverified，不把乐观用户气泡当原生回显。
 
-失败或未知投递阻塞本地后续输入。重启把 sending/accepted 转为 unknown，绝不自动
-重发；尚未发送的 queued 输入可以继续调度。明确重试生成新的原生投递 ID，原始提交
+失败或未知投递阻塞本地后续输入。启用[独立宿主](sdkhost.md)的 Agy/Claude/Grok
+重启先复接原进程并核对 sending/accepted 的回执；网页继续显示 accepted，恢复失败
+转为 unknown，绝不自动重发。其他模式重启仍将未确认输入转为 unknown。
+尚未发送的 queued 输入可以继续调度。明确重试生成新的原生投递 ID，原始提交
 ID 保持去重；同一个重试操作 ID 也不会再次执行。未知结果重试前，网页要求核对历史
 并确认重复风险。移除未知记录只解除本地阻塞，不停止原生任务；停止须显式中断。
 “恢复文字”追加到当前输入框，保留新编辑；附件/引用仍由已有草稿与发布路径管理。

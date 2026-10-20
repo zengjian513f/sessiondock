@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
+import signal
+import socket
+import time
 
 from agy_sdk_fixtures import AgyFixture
 from claude_sdk_fixtures import ClaudeFixture
@@ -70,6 +74,95 @@ class NativeQueueFixture:
 
     def entry(self, request):
         return next(row for row in self.journal() if row['request_id'] == request)
+
+    def native_pid(self):
+        if self.source == 'agy':
+            return self.peer.inputs()[-1]['pid']
+        if self.source == 'claude':
+            return self.peer.frames('spawn')[-1]['pid']
+        statuses = []
+        for path in self.host_sockets():
+            try:
+                statuses.append(self.host_rpc(path, 'Status'))
+            except (FileNotFoundError, ConnectionRefusedError):
+                continue
+        live = [row['pid'] for row in statuses if row['exit'] is None]
+        assert len(live) == 1, ('expected exactly one live Grok SDK child', statuses)
+        return live[0]
+
+    def initialization_count(self):
+        if self.source == 'claude':
+            return sum(frame.get('request', {}).get('subtype') == 'initialize'
+                       for frame in self.peer.frames('control_request'))
+        if self.source == 'grok':
+            # Model discovery uses its own short-lived ACP peer at node start.
+            # Only the conversation runtime must retain its initialization.
+            return sum(frame.get('params', {}).get('clientInfo', {}).get('name') == 'sessiondock'
+                       for frame in self.peer.received('initialize'))
+        raise AssertionError('Initialization evidence is not configured for ' + self.source)
+
+    def host_sockets(self):
+        return list((self.root / 'state/sdkhost').glob('*/control.sock'))
+
+    def host_rpc(self, path, request):
+        assert path.resolve().is_relative_to(self.root.resolve())
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                client.connect(f'/proc/self/fd/{directory}/control.sock')
+            finally:
+                os.close(directory)
+            client.sendall(json.dumps(request).encode() + b'\n')
+            with client.makefile('rb') as response:
+                value = json.loads(response.readline())
+        assert not value.get('error'), value
+        return value['value']
+
+    def close(self):
+        """Only final fixture teardown ends detached hosts; server() never does."""
+        failures = []
+        for path in self.host_sockets():
+            try:
+                host_pid = int((path.parent / 'host.pid').read_text())
+                status = self.host_rpc(path, 'Status')
+                if status['exit'] is None or not (status.get('stdout_eof', False) and status.get('stderr_eof', False)):
+                    try:
+                        self.host_rpc(path, {'Signal': {'signal': signal.SIGKILL}})
+                    except (json.JSONDecodeError, ConnectionResetError):
+                        # Child exit can terminate the host before its ACK.
+                        pass
+                self.wait_exited(status['pid'])
+                self.wait_exited(host_pid)
+            except (FileNotFoundError, ConnectionRefusedError):
+                # Explicit stop may already have removed this private host.
+                continue
+            except Exception as error:
+                failures.append(str(error))
+        assert not failures, failures
+
+    @staticmethod
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        stat = Path('/proc') / str(pid) / 'stat'
+        return not stat.exists() or stat.read_text().rsplit(')', 1)[1].split()[0] != 'Z'
+
+    def wait_exited(self, pid):
+        deadline = time.monotonic() + 5
+        while self.alive(pid) and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert not self.alive(pid), ('explicit stop left native child alive', pid)
+
+    def wait_native_text(self, text):
+        assert self.source == 'agy'
+        path = self.peer.native / 'brain' / self.sid / '.system_generated/logs/transcript_full.jsonl'
+        deadline = time.monotonic() + 5
+        while text not in path.read_text() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert text in path.read_text(), 'native peer did not finish while node was offline'
 
     @property
     def blocker(self):

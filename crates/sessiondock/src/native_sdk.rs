@@ -38,6 +38,8 @@ pub struct NativeSdks {
     receipts: Mutex<BTreeMap<String, Value>>,
     submissions: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<Submission>>>>,
     path: Option<PathBuf>,
+    bindings: Mutex<BTreeMap<String, Value>>,
+    binding_path: Option<PathBuf>,
     input_queue: input_queue::Journal,
     queue_workers: Mutex<BTreeSet<String>>,
     stopped: Mutex<BTreeSet<String>>,
@@ -88,6 +90,15 @@ impl NativeSdks {
             Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => BTreeMap::new(),
         };
+        let binding_path = config
+            .state_dir
+            .as_ref()
+            .map(|dir| dir.join("native-sdk-bindings.json"));
+        let bindings = match binding_path.as_ref().map(std::fs::read) {
+            Some(Ok(bytes)) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+            Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => BTreeMap::new(),
+        };
         let input_queue = input_queue::Journal::open(config.state_dir.as_ref())?;
         let sdks = Arc::new(Self {
             providers,
@@ -96,6 +107,8 @@ impl NativeSdks {
             receipts: Mutex::new(receipts),
             submissions: Mutex::new(BTreeMap::new()),
             path,
+            bindings: Mutex::new(bindings),
+            binding_path,
             input_queue,
             queue_workers: Mutex::new(BTreeSet::new()),
             stopped: Mutex::new(BTreeSet::new()),
@@ -173,7 +186,9 @@ impl NativeSdks {
             .expect("SDK stopped scopes")
             .insert(scope.clone());
         self.input_queue.stop(&scope)?;
-        dispatch!(provider, bridge, bridge.stop(&key).await)
+        let result = dispatch!(provider, bridge, bridge.stop(&key).await)?;
+        self.remember_binding(target, false)?;
+        Ok(result)
     }
 
     pub fn unavailable(&self) -> Value {
@@ -234,7 +249,11 @@ impl NativeSdks {
     }
 
     fn save(&self, rows: &BTreeMap<String, Value>) -> Result<(), String> {
-        let Some(path) = &self.path else {
+        Self::save_rows(self.path.as_ref(), rows)
+    }
+
+    fn save_rows(path: Option<&PathBuf>, rows: &BTreeMap<String, Value>) -> Result<(), String> {
+        let Some(path) = path else {
             return Ok(());
         };
         let temporary = path.with_extension("tmp");
@@ -252,6 +271,46 @@ impl NativeSdks {
             std::fs::rename(&temporary, path)
         })();
         result.map_err(|error| format!("SDK 创建回执保存失败：{error}"))
+    }
+
+    fn remember_binding(&self, target: &Value, active: bool) -> Result<(), String> {
+        if !cfg!(unix) || !matches!(target["source"].as_str(), Some("agy" | "claude" | "grok")) {
+            return Ok(());
+        }
+        let mut rows = self.bindings.lock().expect("SDK bindings");
+        let mut next = rows.clone();
+        let key = input_queue::scope(target);
+        if active {
+            next.insert(key, target.clone());
+        } else {
+            next.remove(&key);
+        }
+        Self::save_rows(self.binding_path.as_ref(), &next)?;
+        *rows = next;
+        Ok(())
+    }
+
+    async fn reattach_bindings(&self) {
+        let targets: Vec<Value> = self
+            .bindings
+            .lock()
+            .expect("SDK bindings")
+            .values()
+            .cloned()
+            .collect();
+        for target in targets {
+            if self.shutdown.is_cancelled() {
+                return;
+            }
+            let source = target["source"].as_str().unwrap_or_default().to_owned();
+            // Never call open here: an absent/exited runtime must not cause a new CLI launch.
+            if let Err(error) = self
+                .provider_call(&source, "reattach", target, json!({}))
+                .await
+            {
+                eprintln!("SDK {source} startup reattach: {error}");
+            }
+        }
     }
 
     pub async fn call(
@@ -360,8 +419,21 @@ impl NativeSdks {
             self.save(&next)?;
             *rows = next;
             let mut result = result;
-            result["session"] = row;
+            result["session"] = row.clone();
+            let mut binding = target.clone();
+            binding["uid"] = result["uid"].clone();
+            binding["session_id"] = result["session_id"].clone();
+            binding["source"] = json!(source);
+            for field in ["sdk_fork", "sdk_pending", "sdk_model", "sdk_effort"] {
+                if let Some(value) = row.get(field) {
+                    binding[field] = value.clone();
+                }
+            }
+            self.remember_binding(&binding, true)?;
             return Ok(result);
+        }
+        if method == "open" {
+            self.remember_binding(&target, true)?;
         }
         if method == "discard" {
             let mut rows = self.receipts.lock().expect("SDK receipts");
@@ -604,6 +676,7 @@ impl NativeSdks {
     }
 
     async fn run_input_queue(self: Arc<Self>) {
+        self.reattach_bindings().await;
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
         loop {
             tokio::select! {_=self.shutdown.cancelled()=>return,_=tick.tick()=>{},_=self.queue_wake.notified()=>{}}
@@ -642,6 +715,31 @@ impl NativeSdks {
         let Some(first) = self.input_queue.first(key) else {
             return;
         };
+        if first.state == "recovering" {
+            let mut input = first.input.clone().unwrap_or_else(|| json!({}));
+            input["request_id"] = json!(first.delivery_id);
+            let recovered = self
+                .provider_call(source, "recover", target.clone(), input)
+                .await;
+            let ready = recovered.is_ok();
+            let _ = self.input_queue.change(key, &first.id, |row| {
+                match recovered {
+                    Ok(result) => {
+                        row.state = "accepted".into();
+                        row.result = Some(result);
+                        row.error = None;
+                    }
+                    Err(error) => {
+                        row.state = "unknown".into();
+                        row.error = Some(format!("SDK 宿主恢复失败：{error}；不会自动重发输入。"));
+                    }
+                }
+                Ok(())
+            });
+            if !ready {
+                return;
+            }
+        }
         if let Err(error) = self
             .provider_call(source, "open", target.clone(), json!({}))
             .await

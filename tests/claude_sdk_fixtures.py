@@ -130,7 +130,7 @@ class ClaudeFixture:
         return [row for row in rows if kind is None or row.get("type") == kind]
 
     @contextmanager
-    def server(self, binary, extra_env=None):
+    def server(self, binary, extra_env=None, *, preserve_sdkhosts=False):
         from frontend_paths import frontend_dir
         from send_browser import initialize
         if not self.lifecycle_initialized:
@@ -175,6 +175,9 @@ class ClaudeFixture:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=5)
+                if not preserve_sdkhosts:
+                    from sdkhost_fixtures import stop_private_sdkhosts
+                    stop_private_sdkhosts(self.root)
 
 
 @contextmanager

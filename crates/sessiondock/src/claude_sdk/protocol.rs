@@ -77,6 +77,10 @@ fn block_row(message: &str, index: u64, block: &Value, native_id: Option<&str>) 
 }
 
 pub(super) fn observe(session: &Session, frame: Value) {
+    observe_at(session, frame, None);
+}
+
+pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
     // Native SessionStart hooks run before --resume loads its persisted SID.
     // These unprojected startup notifications carry a temporary process UUID;
     // discard their telemetry without accepting any of its content or identity.
@@ -90,6 +94,9 @@ pub(super) fn observe(session: &Session, frame: Value) {
         return;
     }
     let mut live = lock(&session.live);
+    if let Some(offset) = offset {
+        live.stdout_offset = offset;
+    }
     live.idle_since = None;
     // A process is tied to one exact SID; don't let a foreign frame's content
     // or approval cross into the selected native session.
@@ -114,6 +121,58 @@ pub(super) fn observe(session: &Session, frame: Value) {
     match frame["type"].as_str().unwrap_or("") {
         "control_response" => {
             let response = &frame["response"];
+            if let Some(request) = response["request_id"]
+                .as_str()
+                .and_then(|id| live.control_requests.remove(id))
+                && response["subtype"] != "error"
+            {
+                match request["subtype"].as_str() {
+                    Some("initialize") => {
+                        let initialized = &response["response"];
+                        live.models = initialized["models"].clone();
+                        if let Some(models) = live.models.as_array_mut() {
+                            for model in models {
+                                for (native, normalized) in [
+                                    ("value", "id"),
+                                    ("displayName", "name"),
+                                    ("supportedEffortLevels", "efforts"),
+                                ] {
+                                    if model[normalized].is_null() {
+                                        model[normalized] = model[native].clone();
+                                    }
+                                }
+                            }
+                        }
+                        for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
+                            if let Some(value) = initialized.get(field) {
+                                live.settings[field] = value.clone();
+                            }
+                        }
+                        for field in [
+                            "pending_permission_requests",
+                            "pending_user_dialog_requests",
+                        ] {
+                            live.initialization_requests.extend(
+                                initialized[field].as_array().into_iter().flatten().cloned(),
+                            );
+                        }
+                        live.ready = true;
+                    }
+                    Some("set_model") => live.model = request["model"].as_str().map(str::to_owned),
+                    Some("set_permission_mode") => {
+                        live.settings["permission_mode"] = request["mode"].clone()
+                    }
+                    Some("apply_flag_settings") => {
+                        if let Some(value) = request["settings"].get("fastMode") {
+                            live.settings["fast_mode"] = value.clone();
+                        }
+                        if let Some(value) = request["settings"]["effortLevel"].as_str() {
+                            live.effort = Some(value.into());
+                        }
+                    }
+                    _ => {}
+                }
+            }
             if let Some(id) = response["request_id"].as_str()
                 && let Some(waiter) = live.controls.remove(id)
             {
@@ -132,6 +191,9 @@ pub(super) fn observe(session: &Session, frame: Value) {
                 };
                 let _ = waiter.send(result);
             }
+            session.publish(&mut live);
+            drop(live);
+            restore_initial_requests(session);
             return;
         }
         "control_request" => {
@@ -540,5 +602,22 @@ pub(super) fn retire_dialog(live: &mut Live, card: &Value) {
             !ids.iter()
                 .any(|id| id == &row["native_id"] || id == &row["id"])
         });
+    }
+}
+
+// The initialize response and its pending requests share a durable checkpoint;
+// interruption during projection leaves the remaining raw frames recoverable.
+pub(super) fn restore_initial_requests(session: &Session) {
+    loop {
+        let frame = lock(&session.live).initialization_requests.first().cloned();
+        let Some(frame) = frame else {
+            return;
+        };
+        observe(session, frame);
+        let mut live = lock(&session.live);
+        if !live.initialization_requests.is_empty() {
+            live.initialization_requests.remove(0);
+        }
+        session.publish(&mut live);
     }
 }

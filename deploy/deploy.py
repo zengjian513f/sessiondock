@@ -184,10 +184,10 @@ def cargo_bins(cargo: str) -> dict[str, str]:
     return bins
 
 
-def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
+def resolve_build(cfg: dict, with_ptyhost: bool, with_sdkhost: bool = False) -> tuple[list[str], list[str]]:
     """Return (cargo argv, binary names) for the configured packages."""
     bins = cargo_bins(cfg["cargo"])
-    wanted = list(cfg["packages"]) + ([cfg["ptyhost_package"]] if with_ptyhost else [])
+    wanted = list(cfg["packages"]) + ([cfg["ptyhost_package"]] if with_ptyhost else []) + (["sdkhost"] if with_sdkhost else [])
     packages: list[str] = []
     names: list[str] = []
     for item in wanted:
@@ -260,7 +260,7 @@ def cmd_build(args, targets: list[Target] | None = None) -> Path:
     cargo_argv: list[str] = []
     local_ptyhost = bool(args.ptyhost) and (targets is None or any(t.kind == 'linux-node' for t in targets))
     if not args.web_only and (cfg['packages'] or local_ptyhost):
-        cargo_argv, names = resolve_build(cfg, local_ptyhost)
+        cargo_argv, names = resolve_build(cfg, local_ptyhost, bool(args.sdkhost) and (targets is None or any(t.kind == "linux-node" for t in targets)))
         cargo_argv += ["--target-dir", str(BUILD_TARGET)]
         log_path = stage / "logs" / "cargo-build.log"
         print(f"cargo: {' '.join(cargo_argv)}  (log {log_path.relative_to(ROOT)})")
@@ -411,7 +411,7 @@ def rollback_problems(before: ProbeResult, after: ProbeResult, names: list[str],
 def backup_versions(h, backup: str) -> dict[str, str]:
     """Read release markers from a backup; old backups may have none."""
     versions = {}
-    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []):
+    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []) + (["sdkhost"] if h.o.with_sdkhost and h.kind == "linux-node" else []):
         if h.kind.startswith("windows"):
             rc, out = h.sh.run(f'type "{backup}\\bin\\{name}.exe.version" 2>nul')
         else:
@@ -676,6 +676,8 @@ def cmd_push(args, stage: Path | None = None) -> int:
     for target in chosen:
         if not args.web_only and not target.build_on_target and target.enabled:
             required = set(target.binaries) | ({"ptyhost"} if with_ptyhost and target.kind == "linux-node" else set())
+            if args.sdkhost and target.kind == "linux-node":
+                required.add("sdkhost")
             missing = required - set(art.binaries)
             if missing:
                 die(f"stage lacks {sorted(missing)} for {target.name}; nothing uploaded")
@@ -687,7 +689,7 @@ def cmd_push(args, stage: Path | None = None) -> int:
     else:
         print("stage tests: unknown (stage predates the test gate)")
     opts = DeployOptions(dry_run=args.dry_run, web_only=args.web_only, bin_only=args.bin_only,
-                         with_ptyhost=with_ptyhost, keep_backups=args.keep_backups,
+                         with_ptyhost=with_ptyhost, with_sdkhost=bool(args.sdkhost), keep_backups=args.keep_backups,
                          health_timeout=args.health_timeout, log_dir=stage / "logs",
                          test_mode=info.get("test_mode") or "none")
     print(f"{'DRY RUN: ' if args.dry_run else ''}push {art.short} ({'web only' if args.web_only else 'bin only' if args.bin_only else 'bin+web'}"
@@ -728,6 +730,8 @@ def cmd_deploy(args) -> int:
         bins = sorted({b for t in chosen for b in t.binaries}) if not args.web_only else []
         if args.ptyhost and not args.web_only:
             bins.append('ptyhost')
+        if args.sdkhost and not args.web_only and any(t.kind == 'linux-node' for t in chosen):
+            bins.append('sdkhost')
         print('artifacts: ' + ', '.join(bins + ([] if args.bin_only else ['web'])))
         test_plan(args, ROOT, 'HEAD')
         return 0
@@ -785,6 +789,8 @@ def main(argv: list[str] | None = None) -> int:
     ship_flags = argparse.ArgumentParser(add_help=False)
     ship_flags.add_argument("--with-ptyhost", dest="ptyhost", action="store_true", default=False,
                             help="also build and ship ptyhost when its code changed")
+    ship_flags.add_argument("--with-sdkhost", dest="sdkhost", action="store_true", default=False,
+                            help="build and ship the generic SDK process host; existing hosts keep running")
     ship_flags.add_argument("--without-ptyhost", dest="ptyhost", action="store_false",
                             help="do not build or ship the ptyhost binary")
     ship_flags.add_argument("--web-only", action="store_true", help="no cargo build / no binary steps")

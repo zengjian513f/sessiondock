@@ -77,9 +77,21 @@ impl Journal {
             Err(error) => return Err(error),
         };
         for input in rows.values_mut().flatten() {
-            if matches!(input.state.as_str(), "sending" | "accepted") {
-                input.state = "unknown".into();
-                input.error = Some("服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。".into());
+            if matches!(input.state.as_str(), "sending" | "accepted" | "recovering") {
+                if directory.is_some()
+                    && cfg!(unix)
+                    && input.operation == "turn"
+                    && matches!(
+                        input.target["source"].as_str(),
+                        Some("agy" | "claude" | "grok")
+                    )
+                {
+                    input.state = "recovering".into();
+                    input.error = None;
+                } else {
+                    input.state = "unknown".into();
+                    input.error = Some("服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。".into());
+                }
             } else if input.state == "preparing"
                 || (input.operation != "turn" && input.state == "queued")
             {
@@ -218,7 +230,7 @@ impl Journal {
                 let row = rows
                     .iter()
                     .find(|row| row.operation == "turn" && !terminal(row))?;
-                matches!(row.state.as_str(), "queued" | "accepted")
+                matches!(row.state.as_str(), "queued" | "accepted" | "recovering")
                     .then(|| (key.clone(), row.target.clone()))
             })
             .collect()
@@ -227,7 +239,7 @@ impl Journal {
     fn visible_rows(rows: &Document, key: &str) -> Value {
         json!(rows.get(key).into_iter().flatten().filter(|row|!terminal(row)).map(|row|json!({
             "id":row.id,"origin":"bridge","operation":row.operation,"request_id":row.request_id,
-            "state":row.state,"text":row.draft["text"],"error":row.error,"consumption":row.consumption,
+            "state":if row.state=="recovering"{"accepted"}else{&row.state},"text":row.draft["text"],"error":row.error,"consumption":row.consumption,
             "observed_consumed":row.consumption=="observed","attempts":row.attempts,
             "owner":if row.target["source"]=="opencode"{"native"}else{"bridge"},
             "attachments":row.input.as_ref().map(|input|input["attachments"].clone()).unwrap_or_else(||row.draft["attachments"].clone())
@@ -253,13 +265,17 @@ impl Journal {
         result["queue_id"] = json!(input.id);
         result["accepted"] = json!(matches!(
             input.state.as_str(),
-            "queued" | "sending" | "accepted" | "completed"
+            "queued" | "sending" | "accepted" | "recovering" | "completed"
         ));
         result["queued"] = json!(matches!(
             input.state.as_str(),
-            "queued" | "sending" | "accepted"
+            "queued" | "sending" | "accepted" | "recovering"
         ));
-        result["state"] = json!(input.state);
+        result["state"] = json!(if input.state == "recovering" {
+            "accepted"
+        } else {
+            &input.state
+        });
         result["consumption"] = json!(input.consumption);
         result["observed_consumed"] = json!(input.consumption == "observed");
         result["cancelled"] = json!(input.state == "cancelled");

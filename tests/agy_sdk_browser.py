@@ -9,6 +9,8 @@ and checks the native fixture's independently recorded input/argv/signal log.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+from sdkhost_fixtures import stop_private_sdkhosts
 import re
 import base64
 import json
@@ -64,6 +66,9 @@ def select_sdk(page, uid=None):
     row.click()
     expect(page.locator('#a-sdk')).to_be_visible()
     page.locator('#a-sdk').click()
+    page.wait_for_function("document.querySelector('#sdk-input')?.getClientRects().length || (document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话' && !document.querySelector('#a-session-toggle').disabled)")
+    if not page.locator('#sdk-input').is_visible():
+        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
     expect(page.locator('#sdk-input')).to_be_visible()
     return uid
 
@@ -341,8 +346,9 @@ def main():
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
     if args.frontend:
         os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str(args.frontend.resolve())
-    with tempfile.TemporaryDirectory(prefix='sessiondock-agy-sdk-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-agy-sdk-') as tmp, ExitStack() as cleanup:
         root = Path(tmp).resolve()
+        cleanup.callback(stop_private_sdkhosts, root)
         fixture = AgyFixture(root, args.ptyhost.resolve(strict=True))
         with patch.dict(os.environ, fixture.env):
             initialize('--initialize-lifecycle', root / 'ledger', args.binary.resolve(strict=True))

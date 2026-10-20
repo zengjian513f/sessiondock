@@ -7,7 +7,22 @@ use std::{
 };
 use tokio::sync::broadcast;
 
+type ErrorKind = Option<&'static str>;
+
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Live {
+    #[serde(skip)]
+    pub checkpoint: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub host_key: Option<String>,
+    #[serde(default)]
+    pub stdout_offset: u64,
+    #[serde(default)]
+    pub setup_pending: bool,
+    #[serde(default)]
+    pub initialized: Value,
+    #[serde(default)]
+    pub completed_rpcs: HashSet<u64>,
     pub sid: String,
     pub running: bool,
     pub cancel_requested: bool,
@@ -16,7 +31,8 @@ pub(super) struct Live {
     pub requests: HashMap<String, Value>,
     pub receipts: HashMap<String, Value>,
     pub error: Option<String>,
-    pub error_kind: Option<&'static str>,
+    #[serde(deserialize_with = "deserialize_error_kind")]
+    pub error_kind: ErrorKind,
     pub config: Value,
     pub models: Value,
     pub modes: Value,
@@ -25,6 +41,7 @@ pub(super) struct Live {
     pub context: Value,
     pub extensions: HashMap<String, bool>,
     pub steers: HashMap<String, Value>,
+    #[serde(skip)]
     pub idle_since: Option<Instant>,
     pub idle_reclaimed: bool,
     pub native_tasks: HashSet<String>,
@@ -33,6 +50,7 @@ pub(super) struct Live {
     pub turn: u64,
     pub generation: u64,
     segment: u64,
+    #[serde(skip, default = "events")]
     pub events: broadcast::Sender<Arc<str>>,
 }
 
@@ -40,6 +58,12 @@ impl Live {
     pub fn new(sid: String) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
+            checkpoint: None,
+            host_key: None,
+            stdout_offset: 0,
+            setup_pending: false,
+            initialized: Value::Null,
+            completed_rpcs: HashSet::new(),
             sid,
             running: false,
             cancel_requested: false,
@@ -110,8 +134,18 @@ impl Live {
                 )
         })
     }
+    pub fn save_checkpoint(&self) -> std::io::Result<()> {
+        if let Some(path) = &self.checkpoint {
+            super::transport::save(path, self)?;
+        }
+        Ok(())
+    }
     pub fn publish(&mut self) {
         self.seq += 1;
+        if let Err(error) = self.save_checkpoint() {
+            self.error = Some(format!("grok_sdk_checkpoint: {error}"));
+            self.error_kind = Some("transport");
+        }
         let _ = self.events.send(Arc::from(self.snapshot().to_string()));
     }
     pub fn settings(&mut self, result: &Value) {
@@ -449,4 +483,16 @@ pub(super) fn scrub_usage(value: &Value) -> Value {
         }
     }
     usage
+}
+
+fn events() -> broadcast::Sender<Arc<str>> {
+    broadcast::channel(256).0
+}
+fn deserialize_error_kind<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'static str>, D::Error> {
+    let kind: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(kind
+        .as_deref()
+        .map(|kind| if kind == "turn" { "turn" } else { "transport" }))
 }

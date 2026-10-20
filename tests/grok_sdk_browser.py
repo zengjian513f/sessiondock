@@ -21,6 +21,8 @@ from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY
 from send_browser import initialize
+from sdkhost_fixtures import stop_private_sdkhosts
+from browser_runtime import wait_for_async
 
 
 def api(page, method, body):
@@ -36,6 +38,9 @@ def api(page, method, body):
 def select(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.locator("#a-sdk").click()
+    page.wait_for_function("document.querySelector('#sdk-input')?.getClientRects().length || (document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话' && !document.querySelector('#a-session-toggle').disabled)")
+    if not page.locator('#sdk-input').is_visible():
+        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
     expect(page.locator("#sdk-input")).to_be_visible()
 
 
@@ -306,18 +311,20 @@ def exercise(browser, base, fixture, screenshots):
     select(page,uid)
     watch(page,uid)
 
+    # Acceptance precedes the host pipe write. Count before admission so this
+    # proves exactly one native dispatch even when detach happens before delivery.
+    count = len(fixture.received("session/prompt"))
     # Closing every EventSource/page does not cancel an accepted native turn.
     page.locator("#sdk-input").fill("detached")
     page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot?.running === true")
-    count = len(fixture.received("session/prompt"))
     page.goto("about:blank")
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
     select(page, uid)
     watch(page, uid)
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
-    assert len(fixture.received("session/prompt")) == count
+    assert len(fixture.received("session/prompt")) == count + 1
     assert not fixture.received("session/cancel"), "view detach cancelled native work"
 
     # Stop is a native notification, leaving the ACP runtime reusable.
@@ -364,11 +371,12 @@ def exercise(browser, base, fixture, screenshots):
     assert models["models"] and models["configOptions"]
     receipt = api(page, "turn", {"uid": created["uid"], "text": "new native session", "request_id": "new-first"})
     assert receipt["accepted"]
-    page.wait_for_function("""async uid => {
+    wait_for_async(page,"""async uid => {
       const r=await fetch('/api/native-sdk/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})});
-      return !(await r.json()).raw.running;
+      const raw=(await r.json()).raw;
+      return !raw.running && raw.items.some(item=>item.role==='assistant' && item.content?.includes('Grok final answer'));
     }""", arg=created["uid"])
-    assert (native / "chat_history.jsonl").is_file()
+    assert (native / "chat_history.jsonl").is_file(), {"snapshot":snapshot(page,created["uid"]),"native":str(native),"records":fixture.received()[-15:]}
     assert any(row["params"].get("sessionId") == new_sid for row in fixture.received("session/prompt"))
     api(page, "discard", {"uid": created["uid"]})
     assert native.is_dir(), "discard deleted native files"
@@ -462,11 +470,14 @@ def main():
             'SESSIONDOCK_PTYHOST_DIR':str(root/'unused-host'),
             'SESSIONDOCK_STATE_DIR':str(root/'state')}
         (root/'state').mkdir()
-        with server(SimpleNamespace(root=root), args.binary, "off", extra) as base:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True)
-                exercise(browser, base, fixture, args.screenshots)
-                browser.close()
+        try:
+            with server(SimpleNamespace(root=root), args.binary, "off", extra) as base:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    exercise(browser, base, fixture, args.screenshots)
+                    browser.close()
+        finally:
+            stop_private_sdkhosts(root)
     print("Grok native ACP SDK browser: PASS")
 
 

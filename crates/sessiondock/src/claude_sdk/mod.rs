@@ -2,6 +2,8 @@
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
 mod actions;
+#[cfg(unix)]
+mod hosted;
 mod idle;
 mod protocol;
 mod transport;
@@ -25,10 +27,12 @@ use crate::lifecycle::{
     model::Source,
 };
 
+type StaticErrorKind = Option<&'static str>;
 type ControlReply = oneshot::Sender<Result<Value, String>>;
 
 pub struct Bridge {
     root: PathBuf,
+    state_dir: Option<PathBuf>,
     profile: CliProfile,
     proc_root: PathBuf,
     shutdown: CancellationToken,
@@ -55,21 +59,38 @@ struct Session {
     stop: CancellationToken,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Live {
+    #[serde(skip)]
+    checkpoint: Option<PathBuf>,
+    #[serde(default)]
+    stdout_offset: u64,
+    #[serde(default)]
+    host_key: Option<String>,
     seq: u64,
     items: Vec<Value>,
     requests: BTreeMap<String, Value>,
+    #[serde(skip)]
     controls: BTreeMap<String, ControlReply>,
+    #[serde(default)]
+    control_requests: BTreeMap<String, Value>,
+    #[serde(default)]
+    initialization_requests: Vec<Value>,
     accepted: BTreeMap<String, Value>,
     actions: BTreeMap<String, Value>,
     turns: VecDeque<String>,
-    outbound: Option<mpsc::UnboundedSender<Value>>,
+    #[serde(skip)]
+    outbound: Option<transport::Outbound>,
     ready: bool,
     native_running: bool,
     state_observed: bool,
+    #[serde(skip)]
     runtime_stop: Option<CancellationToken>,
+    #[serde(skip)]
     idle_stop: Option<CancellationToken>,
+    #[serde(skip)]
     runtime_done: Option<watch::Receiver<bool>>,
+    #[serde(skip)]
     idle_since: Option<tokio::time::Instant>,
     pid: Option<u32>,
     model: Option<String>,
@@ -82,17 +103,20 @@ struct Live {
     context_usage: Value,
     rate_limits: Value,
     usage_errors: BTreeMap<String, String>,
+    #[serde(skip)]
     refreshing_usage: bool,
     status: Value,
     retry: Value,
     compact: Value,
     background_tasks: Vec<Value>,
     error: Option<String>,
-    error_kind: Option<&'static str>,
+    #[serde(deserialize_with = "hosted_error_kind")]
+    error_kind: StaticErrorKind,
     // Diagnostic tail is private and redacted, never returned in snapshots.
     stderr: VecDeque<String>,
     streaming_message: String,
     streaming_blocks: BTreeMap<u64, Value>,
+    #[serde(skip, default = "live_events")]
     events: broadcast::Sender<Arc<str>>,
 }
 
@@ -126,6 +150,7 @@ pub fn new(
     }
     let bridge = Arc::new(Bridge {
         root: root.clone(),
+        state_dir: config.state_dir.clone(),
         profile,
         proc_root: config.proc_root.clone(),
         shutdown,
@@ -229,10 +254,15 @@ impl Session {
             operations: AsyncMutex::new(()),
             stop: CancellationToken::new(),
             live: Mutex::new(Live {
+                checkpoint: None,
+                stdout_offset: 0,
+                host_key: None,
                 seq: 0,
                 items: vec![],
                 requests: BTreeMap::new(),
                 controls: BTreeMap::new(),
+                control_requests: BTreeMap::new(),
+                initialization_requests: Vec::new(),
                 accepted: BTreeMap::new(),
                 actions: BTreeMap::new(),
                 turns: VecDeque::new(),
@@ -283,6 +313,10 @@ impl Session {
 
     fn publish(&self, live: &mut Live) {
         live.seq += 1;
+        if let Err(error) = live.save_checkpoint() {
+            live.error = Some(format!("claude_sdk_checkpoint: {error}"));
+            live.error_kind = Some("transport");
+        }
         let _ = live.events.send(Arc::from(self.snapshot(live).to_string()));
     }
 
@@ -303,6 +337,9 @@ impl Session {
                 .clone()
                 .ok_or("claude_sdk: native transport disconnected")?;
             live.controls.insert(id.clone(), tx);
+            live.control_requests.insert(id.clone(), request.clone());
+            live.save_checkpoint()
+                .map_err(|e| format!("claude_sdk_checkpoint: {e}"))?;
             if outbound
                 .send(json!({"type":"control_request","request_id":id,"request":request}))
                 .is_err()
@@ -600,7 +637,27 @@ impl Bridge {
                     .retain(|_, (_, receipt)| receipt["uid"] != session.uid);
                 Ok(json!({"discarded":true,"native_history_preserved":true}))
             }
-            "open" | "models" => {
+            "open" | "models" | "recover" | "reattach" => {
+                if method == "reattach" {
+                    #[cfg(unix)]
+                    {
+                        return self.reattach_hosted(&session).await;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        return Ok(json!({"attached":false}));
+                    }
+                }
+                if method == "recover" {
+                    #[cfg(unix)]
+                    {
+                        return self.recover_hosted(&session, &input).await;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        return Err("claude_sdk_recovery: host unavailable".into());
+                    }
+                }
                 self.ensure(&session).await?;
                 session.schedule_usage();
                 if method == "models" {
@@ -736,10 +793,7 @@ impl Bridge {
                     .ok_or("claude_sdk: native transport disconnected")?;
                 let frame = json!({"type":"user","session_id":session.sid,"uuid":message_id,
                     "parent_tool_use_id":null,"message":{"role":"user","content":content}});
-                sender
-                    .send(frame)
-                    .map_err(|_| "claude_sdk: native transport disconnected")?;
-                let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id});
+                let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id,"sdkhost":live.host_key.is_some()});
                 live.accepted.insert(dedup_key, receipt.clone());
                 live.turns.push_back(request_id.clone());
                 live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id}));
@@ -749,6 +803,11 @@ impl Bridge {
                 live.error = None;
                 live.error_kind = None;
                 session.publish(&mut live);
+                live.save_checkpoint()
+                    .map_err(|e| format!("claude_sdk_checkpoint: {e}"))?;
+                sender
+                    .send(frame)
+                    .map_err(|_| "claude_sdk: native transport disconnected")?;
                 Ok(receipt)
             }
             _ => Err(format!(
@@ -779,5 +838,41 @@ impl Bridge {
         live.requests.remove(key);
         session.publish(&mut live);
         Ok(json!({"responded":true,"key":key}))
+    }
+}
+
+fn live_events() -> broadcast::Sender<Arc<str>> {
+    broadcast::channel(128).0
+}
+fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<&'static str>, D::Error> {
+    let value = <Option<String> as serde::Deserialize>::deserialize(d)?;
+    Ok(match value.as_deref() {
+        Some("transport") => Some("transport"),
+        Some("turn") => Some("turn"),
+        Some("interrupted") => Some("interrupted"),
+        _ => None,
+    })
+}
+impl Live {
+    fn save_checkpoint(&self) -> io::Result<()> {
+        let Some(path) = &self.checkpoint else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
+        let temporary = path.with_extension("tmp");
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(temporary, path)
     }
 }

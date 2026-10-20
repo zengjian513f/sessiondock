@@ -522,9 +522,13 @@ Agy bridge 的 shutdown 会结束自己持有的 Child；实时快照不跨服�
 现有证据不能还原原生进程的精确退出时刻/退出码，也不能把原生 IDLE 等同于
 审计任务和子代理汇总完成，因此不宣称已证实 CLI 自身崩溃或 OOM。
 
-[部署检查](deployment.md)现在在 Linux staging 和 backup 前检查在途原生输入，
+最初止血补丁的[部署检查](deployment.md)在 Linux staging 和 backup 前检查在途原生输入，
 阻止已知活跃工作被正常发布打断。临时目录的隔离 run_push 验收覆盖 sending、
 accepted、staging 后新增工作、终态/排队回执、缺失/损坏账本、Hub 和 dry-run；
 拒绝路径没有 swap、restart 或 rollback。部署语法、文档链接、AGENTS 检查及
 deploy dry-run 通过。本次仅改部署脚本和文档，未做生产重启或付费 CLI 重放。
-跨重启持续执行及检查之后的并发准入尚未解决，保留在 [TODO](../TODO.md)。
+后续架构修复将进程和原始通道移入[独立 SDK 宿主](sdkhost.md)，具体 SDK 协议
+仍在节点服务。节点 shutdown 仅断开通道，重启复接原宿主，补读输出并恢复审批与
+输入去重；明确停止仍终结原进程组。普通发布不替换宿主。旧进程内任务无法原地
+迁移，部署检查继续保护它们，新宿主任务允许节点重启。原生后台任务完成后的
+续跑语义与节点生命周期分开验收，见 [TODO](../TODO.md)。

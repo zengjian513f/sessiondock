@@ -10,10 +10,12 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
 from playwright.sync_api import expect, sync_playwright
-from history_fixtures import BINARY
+from history_fixtures import BINARY, REPO
 from native_sdk_queue_fixtures import NativeQueueFixture
+from popups import on_popup
 
 
 
@@ -25,11 +27,13 @@ def debug(page):
             if '/api/native-sdk/queue_' in request.url else None)
 
 
-def open_page(browser, base, fixture):
+def open_page(browser, base, fixture, *, accept_popups=True):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_()
                   if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()
+    if accept_popups:
+        on_popup(page, lambda dialog: dialog.accept())
     page.set_default_timeout(20000)
     debug(page)
     page.goto(base, wait_until='domcontentloaded')
@@ -38,7 +42,20 @@ def open_page(browser, base, fixture):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     if not page.locator('#sdk-input').is_visible():
         page.locator('#a-sdk').click()
+    # Selecting SDK can now show read-only history; use the same explicit
+    # session start control as a user, without restarting an attached runtime.
+    page.wait_for_function('''() => {
+        const input = document.querySelector('#sdk-input');
+        const start = document.querySelector('#a-session-toggle');
+        return !!input?.getClientRects().length ||
+            (!!start?.getClientRects().length && !start.disabled &&
+             start.getAttribute('aria-label') === '启动会话');
+    }''')
+    if not page.locator('#sdk-input').is_visible():
+        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
+    expect(page.locator('#sdk-input')).to_be_visible()
     expect(page.locator('#sdk-input')).to_be_enabled()
+    page.wait_for_function('NativeSdkView.connected')
     return context, page, uid
 
 
@@ -129,7 +146,9 @@ def basic_queue(browser, fixture, screenshots):
                 page.wait_for_function('uid => !!_es && _esUid===uid', arg=uid)
                 other_uid = page.evaluate('sid => S.sessions.find(row => row.sid===sid).uid', fixture.other_sid)
                 page.locator(f'#side .item[data-uid="{other_uid}"]').click()
-                expect(page.locator('#sdk-input')).to_be_visible()
+                # This second session is only being viewed, so its idle SDK
+                # history need not expose a composer or start a native peer.
+                expect(page.locator('.native-sdk-pane')).to_be_visible()
                 page.wait_for_function('uid => NativeSdkView.uid===uid && !_es', arg=other_uid)
                 page.locator('#a-chat').click()
                 page.wait_for_function('uid => !!_es && _esUid===uid', arg=other_uid)
@@ -234,7 +253,8 @@ def cancelled_draft(browser, fixture, screenshots):
 
 def failure_and_unknown(browser, fixture, screenshots):
     with fixture.server() as base:
-        context, page, uid = open_page(browser, base, fixture)
+        # This case explicitly exercises cancel/confirm choices itself.
+        context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             print('Grok: explicit failure blocks later input; retry action replay is idempotent', flush=True)
             failed = send(page, 'native-error')
@@ -290,6 +310,7 @@ def restart_queue(browser, fixture, screenshots):
         context, page, uid = open_page(browser, base, fixture)
         first = send(page, fixture.blocker)
         state(page, first['request_id'], 'accepted')
+        native_pid = fixture.native_pid()
         attach(page)
         queued = send(page, 'durable queued attachment after restart')
         state(page, queued['request_id'], 'queued')
@@ -299,28 +320,198 @@ def restart_queue(browser, fixture, screenshots):
         assert len(fixture.inputs('hold')) == holds_before + 1 and not fixture.inputs('durable queued attachment')
         paths = fixture.entry(queued['request_id'])['input']['attachments']
         context.close()
+    assert fixture.alive(native_pid), 'node shutdown killed the active native SDK child'
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture)
         try:
-            state(page, first['request_id'], 'unknown')
+            state(page, first['request_id'], 'accepted')
             state(page, queued['request_id'], 'queued')
+            assert fixture.native_pid() == native_pid and fixture.alive(native_pid)
             expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文')
             assert len(fixture.inputs('hold')) == holds_before + 1 and not fixture.inputs('durable queued attachment')
-            pictures(page, uid, screenshots, 'restart-unknown', all_sizes=True)
-            card(page, first['request_id']).get_by_role('button', name='恢复文字', exact=True).click()
-            expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文\nhold')
-            card(page, first['request_id']).get_by_role('button', name='移除记录', exact=True).click()
-            page.get_by_role('button', name='移除记录', exact=True).last.click()
+            assert replay(page, base, 'turn', first)['state'] == 'accepted'
+            pictures(page, uid, screenshots, 'restart-running')
+            page.locator('#sdk-stop').click()
             gone(page, queued['request_id'])
             assert len(fixture.inputs('hold')) == holds_before + 1 and len(fixture.inputs('durable queued attachment')) == 1
-            expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文\nhold')
+            expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文')
             entry = fixture.entry(queued['request_id'])
             assert entry['state'] == 'completed' and entry['consumption'] == 'observed', entry
             assert entry['input']['attachments'] == paths
             repeat = replay(page, base, 'turn', queued)
             assert repeat['state'] == 'completed' and len(fixture.inputs('durable queued attachment')) == 1
-            assert fixture.entry(first['request_id'])['state'] == 'cancelled'
-            print('Claude: restart unknown blocks, no automatic replay, confirmed dismissal resumes safe queued input, newer draft and publication retained passed', flush=True)
+            assert fixture.entry(first['request_id'])['state'] == 'completed'
+            print('Claude: same native PID survives restart, active input not replayed, explicit interrupt advances queue, draft and attachment retained', flush=True)
+        finally:
+            context.close()
+
+
+def restart_output(browser, fixture):
+    """The native peer finishes while no SessionDock process is connected."""
+    text = 'hold:offline-replay'
+    before = len(fixture.inputs(text))
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture)
+        try:
+            first = send(page, text)
+            state(page, first['request_id'], 'accepted')
+            expect(page.locator('.sdk-live')).to_contain_text('Agy running offline-replay')
+            pid = fixture.native_pid()
+        finally:
+            context.close()
+    assert fixture.alive(pid), 'node shutdown killed Agy before offline completion'
+    fixture.peer.release('offline-replay')
+    fixture.wait_native_text('Agy running offline-replay finished offline-replay')
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture)
+        try:
+            expect(page.locator('.sdk-live')).to_contain_text('Agy running offline-replay finished offline-replay')
+            page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
+            gone(page, first['request_id'])
+            assert fixture.entry(first['request_id'])['state'] == 'completed'
+            assert len(fixture.inputs(text)) == before + 1
+            assert replay(page, base, 'turn', first)['state'] == 'completed'
+            assert len(fixture.inputs(text)) == before + 1
+            page.reload(wait_until='domcontentloaded')
+            expect(page.locator('#sdk-input')).to_be_enabled()
+            assert len(fixture.inputs(text)) == before + 1
+            # A separate active turn proves explicit session stop still kills
+            # its native child after reconnect (unlike merely closing the node).
+            stopping = send(page, 'hold:explicit-stop-after-restart')
+            state(page, stopping['request_id'], 'accepted')
+            stop_pid = fixture.native_pid()
+            expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
+            page.locator('#a-session-toggle').click()
+            expect(page.locator('#sdk-composer')).to_be_hidden()
+            fixture.wait_exited(stop_pid)
+            print('Agy: output while node offline replayed, HTTP retry deduplicated, explicit session stop ends native child', flush=True)
+        finally:
+            context.close()
+
+
+def restart_approval(browser, fixture):
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture)
+        try:
+            first = send(page, 'approval')
+            page.wait_for_function('NativeSdkView.raw?.requests?.length === 1')
+            key = page.evaluate('NativeSdkView.raw.requests[0].key')
+            pid = fixture.native_pid()
+            before = len(fixture.inputs('approval'))
+        finally:
+            context.close()
+    assert fixture.alive(pid), 'pending approval child died with the node'
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture)
+        try:
+            page.wait_for_function('key => NativeSdkView.raw?.requests?.[0]?.key === key', arg=key)
+            assert fixture.native_pid() == pid
+            if fixture.source == 'grok':
+                page.get_by_role('button', name='Reject', exact=True).click()
+                final = 'Grok final answer'
+            else:
+                page.locator('[data-sdk-request]').get_by_role('button', name='拒绝', exact=True).click()
+                final = 'Claude synthetic final approval'
+            expect(page.locator('.sdk-live')).to_contain_text(final)
+            gone(page, first['request_id'])
+            assert len(fixture.inputs('approval')) == before
+            assert fixture.entry(first['request_id'])['state'] == 'completed'
+            print(f'{fixture.source}: same pending approval and PID restored, real UI decision reaches native request once', flush=True)
+        finally:
+            context.close()
+
+
+def stop_inherited_pipes(browser, fixture):
+    """Native parent exit must not make its still-open process group unstoppable."""
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture)
+        try:
+            send(page, '__DESCENDANT_PIPE__')
+            deadline = time.monotonic() + 5
+            observed = None
+            while time.monotonic() < deadline:
+                children = [row for row in fixture.peer.events() if row['kind'] == 'descendant']
+                if children:
+                    child = children[-1]
+                    for path in fixture.host_sockets():
+                        try:
+                            status = fixture.host_rpc(path, 'Status')
+                        except (FileNotFoundError, ConnectionRefusedError):
+                            continue
+                        if status['pid'] == child['parent_pid'] and status['exit'] is not None:
+                            observed = path, status, child
+                            break
+                if observed:
+                    break
+                page.wait_for_timeout(20)
+            assert observed, 'host did not report native parent exit while descendant held pipes'
+            path, status, child = observed
+            assert status['exit'] == {'code': 0, 'signal': None}, status
+            assert not status['stdout_eof'] and not status['stderr_eof'], status
+            assert fixture.alive(child['pid'])
+            host_pid = int((path.parent / 'host.pid').read_text())
+            expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
+            page.locator('#a-session-toggle').click()
+            expect(page.locator('#sdk-composer')).to_be_hidden()
+            fixture.wait_exited(child['pid'])
+            fixture.wait_exited(host_pid)
+            if (path.parent / 'status.json').exists():
+                final = json.loads((path.parent / 'status.json').read_text())
+                assert final['stdout_eof'] and final['stderr_eof'], final
+            print('Agy: exited native parent retains pipe-owning descendant until explicit UI stop closes group and host', flush=True)
+        finally:
+            context.close()
+
+
+def restart_idle_registry(browser, fixture):
+    """An idle live host must be rediscovered before any SDK view is opened."""
+    text = 'idle host survives without queued work'
+    with fixture.server() as base:
+        context, page, uid = open_page(browser, base, fixture)
+        try:
+            submitted = send(page, text)
+            final = 'Claude synthetic final ' + text if fixture.source == 'claude' else 'Grok final answer'
+            expect(page.locator('.sdk-live')).to_contain_text(final)
+            page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
+            gone(page, submitted['request_id'])
+            assert fixture.entry(submitted['request_id'])['state'] == 'completed'
+            assert not any(row['state'] in ('sending', 'accepted', 'queued') for row in fixture.journal())
+            pid = fixture.native_pid()
+            initializations = fixture.initialization_count()
+            assert initializations > 0
+            inputs = fixture.inputs()
+        finally:
+            context.close()
+    assert fixture.alive(pid), 'idle native process died with SessionDock'
+    with fixture.server() as base:
+        context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+        context.route('**/*', lambda route: route.continue_()
+                      if route.request.url.startswith(base + '/') else route.abort())
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        opens = []
+        page.on('request', lambda request: opens.append(request.url)
+                if request.url.endswith('/api/native-sdk/open') else None)
+        try:
+            page.goto(base, wait_until='domcontentloaded')
+            page.wait_for_function('uid => S.sessions.some(row => row.uid === uid)', arg=uid)
+            # A fresh browser context has no selected conversation. The list's
+            # own live refresh must recognize the host without /open side effects.
+            page.wait_for_function('uid => S.liveSdk.has(uid) && S.live.has(uid)', arg=uid)
+            assert not opens, 'registry test opened an SDK before checking list activity'
+            assert fixture.native_pid() == pid and fixture.alive(pid)
+            assert fixture.initialization_count() == initializations
+            assert fixture.inputs() == inputs
+            page.locator(f'#side .item[data-uid="{uid}"]').click()
+            if not page.locator('#sdk-input').is_visible():
+                page.locator('#a-sdk').click()
+            expect(page.locator('#sdk-input')).to_be_visible()
+            page.wait_for_function('NativeSdkView.connected')
+            expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
+            assert fixture.native_pid() == pid
+            assert fixture.initialization_count() == initializations
+            assert fixture.inputs() == inputs
+            print(f'{fixture.source}: idle host rediscovered by list before SDK open, same PID and no repeated initialization/input', flush=True)
         finally:
             context.close()
 
@@ -328,7 +519,7 @@ def restart_queue(browser, fixture, screenshots):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--host-binary', type=Path, default=BINARY.parent / 'ptyhost')
+    parser.add_argument('--host-binary', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     if args.screenshots:
@@ -338,17 +529,26 @@ def main():
         if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
             options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**options)
+        fixtures = {}
         try:
             root = Path(temporary)
-            fixtures = {source: NativeQueueFixture(root / source, source, args.binary, args.host_binary)
-                        for source in ('grok', 'agy', 'claude')}
+            for source in ('grok', 'agy', 'claude'):
+                fixtures[source] = NativeQueueFixture(root / source, source, args.binary, args.host_binary)
             for fixture in fixtures.values():
                 basic_queue(browser, fixture, args.screenshots)
             cancelled_draft(browser, fixtures['grok'], args.screenshots)
             failure_and_unknown(browser, fixtures['grok'], args.screenshots)
             restart_queue(browser, fixtures['claude'], args.screenshots)
+            restart_output(browser, fixtures['agy'])
+            restart_approval(browser, fixtures['claude'])
+            restart_approval(browser, fixtures['grok'])
+            stop_inherited_pipes(browser, fixtures['agy'])
+            restart_idle_registry(browser, fixtures['claude'])
+            restart_idle_registry(browser, fixtures['grok'])
         finally:
             browser.close()
+            for fixture in fixtures.values():
+                fixture.close()
     print('PASS native SDK durable queues: Grok/Agy/Claude real browser, FIFO admission, shared SSE/cancel, STOP, request/action dedup, failed/unknown retry, attachment publication, editor preservation and service restart', flush=True)
 
 
