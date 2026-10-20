@@ -1,4 +1,5 @@
-//! Native deletion through Agy's own resume picker. No native SQLite writes.
+//! Native deletion through Agy's resume picker, or explicit empty-session cleanup.
+//! Native SQLite contents are never rewritten.
 use super::launcher::Launcher;
 use ptyhost_client::{CaptureKind, ControlOp, ControlReply, HostClient, Limits};
 use rusqlite::{Connection, OpenFlags};
@@ -36,6 +37,71 @@ fn payload_missing(home: &Path, sid: &str) -> Result<bool, String> {
             .map_err(|_| "无法核对 Agy 原生文件删除结果")?
         {
             return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn remove_empty_payload(home: &Path, sid: &str) -> Result<bool, String> {
+    // Agy's picker omits zero-step sessions, even when --conversation opens
+    // their database successfully. Resuming them cannot reach a delete action
+    // and unnecessarily advertises the cleanup worker as a live session.
+    // Missing transcripts alone are NOT evidence of an empty native session.
+    let empty = || -> rusqlite::Result<bool> {
+        let catalog = Connection::open_with_flags(
+            home.join("conversation_summaries.db"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let empty_summary: bool = catalog.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_summaries \
+             WHERE conversation_id=?1 AND step_count=0 AND parent_conversation_id='')",
+            [sid],
+            |row| row.get(0),
+        )?;
+        if !empty_summary {
+            return Ok(false);
+        }
+        let db = Connection::open_with_flags(
+            home.join("conversations").join(format!("{sid}.db")),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        db.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM steps) \
+             AND NOT EXISTS(SELECT 1 FROM parent_references)",
+            [],
+            |row| row.get(0),
+        )
+    };
+    if !empty().unwrap_or(false) {
+        // Unknown schemas and unreadable databases keep the native CLI path.
+        return Ok(false);
+    }
+    let brain = home.join("brain").join(sid);
+    for name in ["transcript_full.jsonl", "transcript.jsonl"] {
+        if brain
+            .join(".system_generated/logs")
+            .join(name)
+            .try_exists()
+            .map_err(|_| "无法核对 Agy 原生正文")?
+        {
+            return Ok(false);
+        }
+    }
+    // This is reached only by an explicitly confirmed delete, after the fresh
+    // running-state check and serialized deletion slot. Remove only this SID's
+    // native carriers; leave the shared catalog untouched. The caller records
+    // the existing durable deletion receipt before publishing success.
+    match std::fs::remove_dir_all(&brain) {
+        Ok(()) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(_) => return Err("无法删除 Agy 空会话目录".into()),
+    }
+    // Keep the database until last so a partial cleanup remains retryable.
+    for suffix in [".db-wal", ".db-shm", ".db"] {
+        match std::fs::remove_file(home.join("conversations").join(format!("{sid}{suffix}"))) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return Err("无法删除 Agy 空会话数据库".into()),
         }
     }
     Ok(true)
@@ -118,6 +184,9 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
     // An explicitly deleted index-only remnant has no native payload to remove.
     // Do not resume it: doing so may create a new empty conversation database.
     if payload_missing(home, sid)? {
+        return Ok(());
+    }
+    if remove_empty_payload(home, sid)? {
         return Ok(());
     }
     let id = super::store::fresh_request_id().map_err(|_| "无法创建 Agy 删除任务")?;

@@ -60,7 +60,7 @@ agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动�
 - `brain/<sid>/.system_generated/logs/transcript_full.jsonl`：完整文本记录。
   同目录 `transcript.jsonl` 可能带 `truncated_fields`，不作为正文来源。
 - `conversations/<sid>.db`：agy 的原生二进制会话库；用于 CLI 恢复与 fd 身份证据，
-  SessionDock 不解码或修改其中步骤。
+  SessionDock 不解码或修改其中步骤；显式删除空会话时只读核对步骤及父引用是否为空。
 
 镜像位于 `<AGY_ROOT>/cli/<sid>/summary.json` 和 `messages.jsonl`，标记
 `sessiondock-agy-mirror`。新建私有目录/文件采用 0700/0600。列表、历史分页、
@@ -206,18 +206,26 @@ Command 审批识别 `↑/↓ Navigate · tab Amend · ctrl+g edit/expand comman
 CLI 永久删除，不进入回收站，不提供恢复。网页确认后，节点通过配置的 Agy profile
 启动独立私有 ptyhost，以完整 SID `--conversation` 恢复，识别空编辑区，再打开
 `/resume`、按完整 SID 搜索。只有唯一选中行标记为 `[CURRENT]` 且菜单明确提供
-`f4 Delete` 时才进入原生确认；确认画面出现后提交一次。不会调用模型、修改原生
-SQLite、删除镜像冒充删除，或按标题/列表位置猜目标。
+`f4 Delete` 时才进入原生确认；确认画面出现后提交一次。不会调用模型、改写原生
+SQLite 内容、删除镜像冒充删除，或按标题/列表位置猜目标。
 
 删除串行执行，取得执行位置后重新核对运行状态；运行中会话仍须先停止。
 每次原生操作最多等待 25 秒。未识别画面、选择不符、原生失败或超时会保留可见失败，
 不自动重发确认。**DELTA（工作目录信任）**：若原生启动停在已识别的信任菜单，立即
 停止私有工作进程并说明原因，不等通用超时，也不代选信任。用户可先从网页启动该会话，
 自行决定是否信任目录，确认后停止会话再重试删除；未确认信任时保留原生会话。
-有原生载体的删除须核对原生索引行、会话数据库及 brain 目录均已
+经原生 CLI 删除须核对原生索引行、会话数据库及 brain 目录均已
 消失，保存删除回执，再让镜像同步并刷新列表、清理对应启动回执。用户明确删除仅剩索引、原生数据库和
 brain 目录均已不存在的残留时，只登记删除回执；不启动 CLI 恢复空壳，不改写原生索引。
 HTTP 断开不取消已经开始的原生操作；正常结束或失败均停止该次私有工作进程。服务日志记录 `agy.delete_started/completed/failed`。
+
+**DELTA（BUG-20261020-122359-62331a）**：Agy 1.4.3 的恢复菜单不列出零步骤会话。
+用户确认删除后，若原生索引的 `step_count=0` 且没有父会话，原生数据库的 `steps`
+及 `parent_references` 均为空，并且完整及截断 transcript 都不存在，则直接删除该 SID
+的 brain 目录、数据库及其 WAL/SHM 侧文件，再保存上述删除回执。保留共享原生索引，
+由回执阻止空壳重新导入；不启动 CLI，因此不会因删除操作把空会话重新标活。
+正文缺失、旧索引的零计数或空镜像单独均不触发此分支；非空、未知或不可读的数据库仍走
+原生 CLI。普通读取不清理任何原生文件。
 
 删除验证使用私有 HOME、合成 loopback 网关和假 CLI，覆盖节点、Hub、批量、取消、
 身份不符与原生失败。未知快捷键或菜单保留失败，不绕过原生确认。移动、克隆及整树删除

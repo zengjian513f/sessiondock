@@ -5,6 +5,20 @@ import sqlite3
 from agy_history_browser import SCHEMA, record
 
 IDS = [f'a6000000-0000-4000-8000-{i:012d}' for i in range(10, 16)]
+EMPTY_IDS = [f'a6000000-0000-4000-8000-{i:012d}' for i in range(20, 23)]
+
+
+def seed_empty(native, work):
+    """Native zero-step carriers omitted by the Agy resume picker."""
+    with sqlite3.connect(native / 'conversation_summaries.db') as c:
+        for sid in EMPTY_IDS:
+            c.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
+                (sid, '', '0001-01-01T00:00:00Z', json.dumps([work.as_uri()]), '', 'CASCADE_RUN_STATUS_IDLE', 0, ''))
+            with sqlite3.connect(native / 'conversations' / (sid + '.db')) as db:
+                db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_payload BLOB)')
+                db.execute('CREATE TABLE parent_references (idx INTEGER PRIMARY KEY, data BLOB)')
+            for directory in ('.user_uploaded', 'scratch'):
+                (native / 'brain' / sid / directory).mkdir(parents=True)
 
 
 def seed(native, work):
@@ -21,6 +35,19 @@ def seed(native, work):
             (logs / 'transcript_full.jsonl').write_text(json.dumps(record(0, 'USER_INPUT', 'fixture ' + sid)) + '\n')
 
 
+def retain_native_steps(native, sid):
+    """A stale zero-step summary must never stand in for actual native history."""
+    path = native / 'conversations' / (sid + '.db')
+    path.unlink()
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_payload BLOB)')
+        db.execute('CREATE TABLE parent_references (idx INTEGER PRIMARY KEY, data BLOB)')
+        db.execute("INSERT INTO steps VALUES (0, X'0102')")
+    with sqlite3.connect(native / 'conversation_summaries.db') as c:
+        c.execute('UPDATE conversation_summaries SET step_count=0 WHERE conversation_id=?', (sid,))
+    (native / 'brain' / sid / '.system_generated/logs/transcript_full.jsonl').unlink()
+
+
 FAKE = r'''
 import os, sys, tty, json, sqlite3, shutil
 from pathlib import Path
@@ -34,6 +61,8 @@ sid = sys.argv[sys.argv.index('--conversation')+1]
 home = Path(os.environ['DELETE_NATIVE'])
 log = Path(os.environ['DELETE_LOG'])
 mode = (home / 'mode').read_text() if (home / 'mode').exists() else 'ok'
+with sqlite3.connect(home/'conversation_summaries.db') as c:
+    empty = c.execute('SELECT step_count FROM conversation_summaries WHERE conversation_id=?',(sid,)).fetchone()==(0,)
 with log.open('a') as f:f.write(json.dumps({'start':sid,'pid':os.getpid()})+'\n')
 tty.setraw(0)
 def show(menu=None):
@@ -57,7 +86,11 @@ while True:
     with log.open('a') as f:f.write(json.dumps({'sid':sid,'input':data.decode(errors='replace')})+'\n')
     buf+=data
     if b'/resume\r' in buf:
-        show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  Type to search conversations...\r\n> [CURRENT] Review Closed Research Reports · 同名 Agy 会话\r\n\r\nKeyboard: ↑/↓ Navigate  f4 Delete');buf=b''
+        if empty and mode=='ok':
+            show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  No conversations available.\r\n  Press Enter to return.\r\n\r\nKeyboard: enter Select  tab Switch Tab  esc Go back / Clear search')
+        else:
+            show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  Type to search conversations...\r\n> [CURRENT] Review Closed Research Reports · 同名 Agy 会话\r\n\r\nKeyboard: ↑/↓ Navigate  f4 Delete')
+        buf=b''
     elif sid.encode() in buf:
         picker();buf=b''
     elif b'\x1bOS' in buf:
