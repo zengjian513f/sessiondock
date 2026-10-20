@@ -9283,7 +9283,24 @@ function msgNode(m) {
       + mediaGallery(m.media?.filter(item => !attachmentRefs.has(item.ref)), m.media_more);
   };
   const paint = full => {
-    body.innerHTML = render(full); renderFormulae(body); paintSyntax(body);
+    const next = document.createElement('template');
+    next.innerHTML = render(full);
+    // Later prose must not turn completed fences back into plain text while
+    // the asynchronous syntax worker repaints them. Keep the original nodes,
+    // including pending worker jobs, language labels and horizontal scroll.
+    const previous = [...body.querySelectorAll('pre > code.code-block')];
+    const retained = [];
+    next.content.querySelectorAll('pre > code.code-block').forEach((code, index) => {
+      const old = previous[index];
+      if (!old || old.textContent !== code.textContent
+          || old.dataset.codeLang !== code.dataset.codeLang) return;
+      const pre = old.parentElement;
+      retained.push([pre, pre.scrollLeft, pre.scrollTop]);
+      code.parentElement.replaceWith(pre);
+    });
+    body.replaceChildren(next.content);
+    for (const [pre, left, top] of retained) { pre.scrollLeft = left; pre.scrollTop = top; }
+    renderFormulae(body); paintSyntax(body);
   };
   n.appendChild(body);
   const setAction = addAction(n);
