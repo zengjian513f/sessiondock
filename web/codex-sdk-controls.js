@@ -261,11 +261,17 @@ async function sdkUpdateSettings(view, values, request, paint) {
 
 function sdkSyncSettings(view) {
   if (!view.pane) return;
-  const pending = view.settingChoices.size > 0;
+  const pending = view.settingChoices?.size > 0;
+  const unavailable = view.readOnly || !view.connected;
   for (const select of view.pane.querySelectorAll('#sdk-model, #sdk-effort, #sdk-mode, #sdk-tier, #sdk-control-approval, #sdk-control-sandbox, select[id^="native-sdk-"]')) {
-    select.disabled = pending;
+    select.disabled = unavailable || pending;
     if (pending) select.setAttribute('aria-busy', 'true'); else select.removeAttribute('aria-busy');
   }
   const button = view.pane.querySelector('#sdk-send');
-  button.disabled = pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
+  button.disabled = unavailable || pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
+  const refresh = view.pane.querySelector('#native-usage-refresh');
+  if (refresh) refresh.disabled = unavailable || !!view.loadingUsage;
+  const row = sessionRunRow(view.uid);
+  paintSessionRunControl(view.pane.querySelector('.footer-session-toggle'),
+    view.agent ? {...row, uid: view.uid, agent_id: view.agent} : row);
 }

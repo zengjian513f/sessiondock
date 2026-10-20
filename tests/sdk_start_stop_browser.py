@@ -40,9 +40,11 @@ def exercise(browser, base, source, screenshots, label):
         uid = row.get_attribute('data-uid')
         from session_start_fixtures import choose_mode
         def set_mode(mode):
-            if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
+            return_to_session = page.locator('#detail .mobile-back').is_visible()
+            if return_to_session: page.locator('#detail .mobile-back').click()
             choose_mode(page, source, mode)
             page.locator('#settings-dialog .modal-close').click()
+            if return_to_session: row.click()
         set_mode('cli')
         row.click()
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
@@ -50,7 +52,8 @@ def exercise(browser, base, source, screenshots, label):
         set_mode('sdk')
         page.reload(wait_until='networkidle')
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         set_mode('cli')
         page.reload(wait_until='networkidle')
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
@@ -65,36 +68,62 @@ def exercise(browser, base, source, screenshots, label):
         order = page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)')
         row.click()
         expect(page.locator('.sdk-history')).to_be_visible()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '启动会话')
+        page.locator('#sdk-input').fill('draft before explicit start')
+        page.locator('#sdk-input').press('Enter')
+        expect(page.locator('#sdk-input')).to_have_value('draft before explicit start' + ('\n' if width < 720 else ''))
         assert not opens, opens
         assert not page.evaluate('uid => S.liveSdk.has(uid)', uid)
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-cold.png'))
         # SDK view switches and reloads also remain read-only.
         page.locator('#a-chat').click()
         page.locator('#a-sdk').click()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         page.reload(wait_until='networkidle')
         expect(page.locator('.sdk-history')).to_be_visible()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         assert not opens, opens
         after = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         assert after == before, {'before':before, 'after':after, 'opens':opens}
         assert page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)') == order
 
-        def power():
-            button = page.locator('#a-session-toggle')
-            if not button.is_visible(): page.locator('#a-more').click()
-            button.click()
+        def connected():
+            try:
+                page.wait_for_function('SdkView.connected')
+            except Exception:
+                print('Connection state:', errors, page.evaluate('({uid:S.sel, kind:SessionContentView.kind, readOnly:SdkView.readOnly, connected:SdkView.connected, live:[...S.liveSdk], status:SdkView.notice?.title, failed:SdkView.openFailed, busy:[...ConsoleUI.busy]})'), flush=True)
+                page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-connection-failed.png'))
+                raise
 
-        # Choose SDK explicitly, even when the previous view was ordinary chat.
-        page.locator('#a-chat').click()
-        if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
-        row.click(button='right')
-        page.locator('#item-menu [data-act="stop"]').click()
+        def power():
+            button = page.locator('#sdk-composer .footer-session-toggle')
+            stopping = button.get_attribute('data-run-intent') == 'stop'
+            button.click()
+            if stopping:
+                page.wait_for_function('SdkView.readOnly === true')
+                expect(button).to_have_attribute('aria-label', '启动会话')
+                expect(button).to_be_enabled()
+
+        # The persistent footer starts the existing SDK through its normal lifecycle.
+        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('未运行')
+        expect(page.locator('#sdk-composer .footer-session-toggle')).to_be_enabled()
+        if label == 'node' and width == 1280 and source == 'codex':
+            endpoint = '**/api/codex-sdk/open'
+            page.route(endpoint, lambda route: route.fulfill(status=503, json={'error':'Synthetic startup failure'}), times=1)
+            power()
+            expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('无法打开')
+            expect(page.locator('#sdk-send')).to_be_disabled()
+            expect(page.locator('#sdk-composer .footer-session-toggle')).to_be_enabled()
+            page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-failed.png'))
+            opens.clear()
+        power()
 
         expect(page.locator('#sdk-input')).to_be_visible()
-        page.wait_for_function('SdkView.connected')
+        connected()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
         assert len(opens) == 1, opens
         if source in ('claude', 'grok', 'agy'):
@@ -118,13 +147,14 @@ def exercise(browser, base, source, screenshots, label):
             'uids': [], 'sdk_uids': [], 'tmux_uids': [], 'working_uids': []}))
         page.reload(wait_until='networkidle')
         expect(page.locator('.sdk-history')).to_be_visible()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         count = len(opens)
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-discovery-pending.png'))
         page.unroute(live_route)
         page.evaluate('refreshLive(true)')
         expect(page.locator('#sdk-input')).to_be_visible()
-        page.wait_for_function('SdkView.connected')
+        connected()
         expect(page.locator('#sdk-input')).to_have_value('draft survives delayed SDK discovery')
         assert len(opens) == count + 1, opens
         page.evaluate('refreshLive(true)')
@@ -132,29 +162,40 @@ def exercise(browser, base, source, screenshots, label):
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-reconnected.png'))
         # A second page attaches to the live SDK; stopping must also close its stream.
         second = context.new_page()
+        second.on('pageerror', lambda error: errors.append(str(error)))
         second.goto(page.url, wait_until='networkidle')
-        second.wait_for_function('SdkView.connected')
+        second.locator('#a-sdk').click()
+        try:
+            second.wait_for_function('SdkView.connected')
+        except Exception:
+            print('Second page:', second.url, errors, second.evaluate('({uid:S.sel, agent:S.agent, kind:SessionContentView.kind, readOnly:SdkView.readOnly, connected:SdkView.connected, live:[...S.liveSdk], status:SdkView.notice?.textContent})'), flush=True)
+            second.screenshot(path=str(screenshots/f'{label}-{source}-{width}-second-failed.png'))
+            raise
         running_snapshot = page.request.get(base+'/api/live?force=1').json()
         power()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
-        expect(second.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
+        expect(second.locator('#sdk-composer')).to_be_visible()
+        expect(second.locator('#sdk-send')).to_be_disabled()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '启动会话')
         assert uid not in page.request.get(base+'/api/live?force=1').json().get('sdk_uids', [])
         # A late pre-stop observation must not reconnect a stopped view.
         stopped_opens = len(opens)
         page.route(live_route, lambda route: route.fulfill(json=running_snapshot))
         page.evaluate('refreshLive(true)')
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         assert len(opens) == stopped_opens, opens
         page.unroute(live_route)
         page.evaluate('refreshLive(true)')
         count = len(opens)
         page.reload(wait_until='networkidle')
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         assert len(opens) == count, opens
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-stopped.png'))
         power()
-        page.wait_for_function('SdkView.connected')
+        connected()
         expect(page.locator('#sdk-input')).to_be_visible()
         if label == 'node' and width == 1280:
             text = {'codex':'ask stop-test', 'claude':'hold', 'grok':'wait-for-cancel',
@@ -164,14 +205,16 @@ def exercise(browser, base, source, screenshots, label):
             expect(page.locator('#sdk-stop')).to_be_visible()
             page.locator('#sdk-input').fill('unsent draft after stop')
         power()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         assert uid not in page.request.get(base+'/api/live?force=1').json().get('sdk_uids', [])
         if label == 'node' and width == 1280:
             power()
-            page.wait_for_function('SdkView.connected')
+            connected()
             expect(page.locator('#sdk-input')).to_have_value('unsent draft after stop')
             power()
-            expect(page.locator('#sdk-composer')).to_be_hidden()
+            expect(page.locator('#sdk-composer')).to_be_visible()
+            expect(page.locator('#sdk-send')).to_be_disabled()
         assert not errors, errors
         context.close()
 
@@ -194,13 +237,22 @@ def child_check(browser, root, binary, screenshots):
         on_popup(page, lambda dialog: dialog.accept())
         page.goto(base+'/?'+urlencode({'sid':'codex:'+THREAD+'/agent:'+CHILD}), wait_until='networkidle')
         expect(page.locator('.sdk-history')).to_contain_text('Child history sentinel '+CHILD)
-        expect(page.locator('#sdk-composer')).to_be_hidden()
-        page.locator('#a-session-toggle').click()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
+        page.locator('#a-chat').click()
+        expect(page.locator('#composer')).to_be_visible()
+        expect(page.locator('#cinput')).to_be_disabled()
+        expect(page.locator('#cinput')).to_have_value('')
+        expect(page.locator('#csend')).to_be_disabled()
+        page.screenshot(path=str(screenshots/'codex-child-conversation.png'))
+        page.locator('#a-sdk').click()
+        page.locator('#sdk-composer .footer-session-toggle').click()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
         page.screenshot(path=str(screenshots/'codex-child-started.png'))
-        page.locator('#a-session-toggle').click()
-        expect(page.locator('#sdk-composer')).to_be_hidden()
+        page.locator('#sdk-composer .footer-session-toggle').click()
+        expect(page.locator('#sdk-composer')).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
         assert [m['params']['threadId'] for m in fake.methods('thread/resume')] == [CHILD]
         assert [m['params']['threadId'] for m in fake.methods('turn/interrupt')] == [CHILD]
         assert [m['params']['threadId'] for m in fake.methods('thread/unsubscribe')] == [CHILD]
