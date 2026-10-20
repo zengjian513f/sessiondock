@@ -48,6 +48,20 @@ Conversation-specific responsibilities remain here:
 - Serving one referenced file (`GET /api/session/file`: raw, `mode=info`,
   `mode=preview`, `download=1`) for the conversation's own links.
 
+DELTA (BUG-20261020-032856-824de4): user-message lines produced by SEND,
+`附件N: ./sessiondock_attachments/<batch>/<file>` (including Windows separators),
+render image previews and file links in ordinary chat and all five SDK views.
+Reference resolution keeps the complete attachment path, including filename spaces.
+Live items use the existing checked single-file API; history reuses projected
+media without a second copy. If an SDK item precedes its native record/mirror,
+the preview retries reference resolution until that record grants access.
+Unchanged SDK snapshots preserve the preview DOM.
+Numbered captions, file navigation and downloads remain available after reload.
+Fenced examples remain literal; native input
+and published files retain the existing textual-path contract.
+Covered by [Codex compose](../tests/codex_sdk_compose_browser.py) on node/Hub and
+[native SDK attachment display](../tests/sdk_attachment_display_browser.py).
+
 DELTA: SessionDock's directory listing, file-manager actions and chunked
 uploads (`GET /api/session/files`, `POST /api/session/files/action`,
 `POST /api/session/files/upload`, the JSON upload-completion form of

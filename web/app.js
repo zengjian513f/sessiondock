@@ -8979,6 +8979,29 @@ async function mediaImageFailed(event) {
 }
 
 document.addEventListener('error', mediaImageFailed, true);
+document.addEventListener('error', event => {
+  const img = event.target;
+  if (img?.tagName !== 'IMG' || img.dataset.attachmentPreview !== 'true' || img._attachmentRecovering) return;
+  img._attachmentRecovering = true;
+  const src = img.src, info = new URL(src);
+  info.searchParams.set('mode', 'info');
+  // SDK user items can precede the native history/mirror that grants a file
+  // reference. Wait for that grant; never bypass it or resend the attachment.
+  const recover = async () => {
+    if (!img.isConnected) return;
+    try {
+      const response = await fetch(info, {cache: 'no-store', signal: AbortSignal.timeout(5000)});
+      if (!img.isConnected) return;
+      if (response.ok) {
+        img.src = src;
+        return;
+      }
+      const detail = await response.json();
+      if (detail.code === 'file_not_referenced') setTimeout(recover, 1000);
+    } catch { /* Keep the caption/link available for the actual file error. */ }
+  };
+  void recover();
+}, true);
 document.addEventListener('load', event => {
   const img = event.target;
   if (lazyMediaEnabled() && img?.tagName === 'IMG' && img.dataset.mediaLazy === 'true'
@@ -9253,8 +9276,12 @@ function msgNode(m) {
   if (m.native_type) n.dataset.nativeType = m.native_type;
   if (m.counted === false) n.dataset.counted = 'false';
   const body = el('div', 'mb content-preview');
-  const linkContext = {uid: S.sel, agent: S.agent};
-  const render = full => md(m.text, full, m.media, linkContext) + mediaGallery(m.media, m.media_more);
+  const linkContext = {uid: S.sel, agent: S.agent, attachments: m.role === 'user'};
+  const render = full => {
+    const attachmentRefs = new Set();
+    return md(m.text, full, m.media, {...linkContext, attachmentRefs})
+      + mediaGallery(m.media?.filter(item => !attachmentRefs.has(item.ref)), m.media_more);
+  };
   const paint = full => {
     body.innerHTML = render(full); renderFormulae(body); paintSyntax(body);
   };
@@ -9285,6 +9312,11 @@ function msgNode(m) {
   };
   // Preserve the disclosure button and its state while SDK text keeps arriving.
   n._updateMessage = next => {
+    if (next.text === m.text && JSON.stringify(next.media) === JSON.stringify(m.media)
+        && JSON.stringify(next.media_more) === JSON.stringify(m.media_more)) {
+      m = next;
+      return;
+    }
     m = next;
     long = collapsible && m.text.length > CLIP;
     needsMore = collapsible && (needsMore || long);
@@ -9895,6 +9927,13 @@ function md(text, full, media = [], context = {}) {
     prose.length = 0;
   };
   for (let i = 0; i < lines.length;) {
+    const attachment = context.attachments && messageAttachmentHtml(lines[i], media, context);
+    if (attachment) {
+      flush();
+      output.push(attachment);
+      i++;
+      continue;
+    }
     // 只有独立行上的 Markdown 围栏才是代码块。旧的 split(/```/)
     // 会把句子里提到的 ```python 也当成开头，后半条消息全吞进 pre。
     const open = lines[i].match(/^\s{0,3}(`{3,}|~{3,})[^\S\n]*(.*)$/);
@@ -9923,6 +9962,35 @@ function md(text, full, media = [], context = {}) {
   }
   flush();
   return output.join('') || '<p></p>';
+}
+
+// SEND keeps attachments as textual paths in every CLI/SDK. Recognize that
+// envelope in user prose, including live items and reloaded native history.
+function messageAttachmentHtml(line, media, context) {
+  const match = line.match(/^(附件[1-9]\d*): (\.\/sessiondock_attachments\/\d+\/[^\r\n]+|\.\\sessiondock_attachments\\\d+\\[^\r\n]+)\r?$/);
+  if (!match || !context.uid) return '';
+  const [, label, ref] = match;
+  const name = ref.split(/[/\\]/).pop();
+  const query = new URLSearchParams({uid: context.uid, ref});
+  if (context.agent) query.set('agent', context.agent);
+  // The node resolves the reference and applies its existing file checks. Do
+  // not interpret a path in history as a browser URL or a native image input.
+  const src = appUrl('/api/session/file') + '?' + query;
+  if (/\.(png|jpe?g|gif|webp|avif|bmp|apng|ico|svg)$/i.test(name)) {
+    const caption = esc(`${label}: ${name}`);
+    const known = media?.find(item => item.ref === ref);
+    if (known) {
+      const preview = imageHtml({...known, alt: `${label}: ${name}`});
+      if (preview) {
+        context.attachmentRefs?.add(ref);
+        return `<div class="media-gallery">${preview.replace('<a ', `<a data-file-ref="${esc(ref)}" data-file-href="${esc(src)}" `)}</div>`;
+      }
+    }
+    const image = `<img loading="lazy" decoding="async" referrerpolicy="no-referrer" data-attachment-preview="true" src="${esc(src)}" alt="${caption}"><span>${caption}</span>`;
+    const link = referenceLink(ref, image, context, true).replace('<a ', '<a class="media-link" ');
+    return `<div class="media-gallery">${link}</div>`;
+  }
+  return `<p>${esc(label)}: ${referenceLink(ref, esc(name), context, true)}</p>`;
 }
 
 const RE_LIST = /^\s*([-*+]|\d+[.)])\s+/;

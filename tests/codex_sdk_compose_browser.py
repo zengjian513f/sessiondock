@@ -8,7 +8,6 @@ existing private conversation store and resumable upload routes own all bytes.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -22,13 +21,26 @@ from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_fixtures import FakeAppServer
-from history_fixtures import BINARY, REPO
+from history_fixtures import BINARY, REPO, codex_message, encoded
 from hub_fixtures import Hub, free_port
 from media_browser import PNG
 from new_session_model_browser import open_dialog
 from node_auth_fixtures import TOKEN, node_env
 from private_hosts import private_hosts
 from path_completion_fixtures import create_paths, exercise_paths
+
+
+class ComposeAppServer(FakeAppServer):
+    async def _user_item(self, turn_id, text, suffix='user', content=None):
+        # Native Codex records user input before publishing item/completed.
+        # File previews resolve references from that record during the turn.
+        with self.rollout.open('ab') as stream:
+            stream.write(encoded(codex_message('user', text)))
+        await super()._user_item(turn_id, text, suffix, content)
+
+    def _persist(self, user, assistant):
+        with self.rollout.open('ab') as stream:
+            stream.write(encoded(codex_message('assistant', assistant)))
 
 
 def saved(page, uid, text):
@@ -45,6 +57,36 @@ def attach(page, kind, name, mime, data):
     with page.expect_file_chooser() as chooser:
         page.locator(f'#sdk-attach-menu [data-attach="{kind}"]').click()
     chooser.value.set_files({'name': name, 'mimeType': mime, 'buffer': data})
+
+
+def visible_attachments(page, selector, width):
+    bubble = page.locator(selector).filter(has_text='屏幕截图-with-realistic-long-name.png').last
+    image = bubble.locator('.media-link img')
+    expect(image).to_have_count(1)
+    image.scroll_into_view_if_needed()
+    expand = bubble.get_by_text('展开全文', exact=False)
+    if expand.is_visible():
+        expand.click()
+    expect(image).to_be_visible()
+    page.wait_for_function('(image) => image.complete', arg=image.element_handle())
+    if not image.evaluate('(image) => image.naturalWidth'):
+        response = page.request.get(image.get_attribute('src'))
+        raise AssertionError(f'attachment image HTTP {response.status}: {response.text()}')
+    assert image.evaluate('(image) => image.naturalWidth') == width
+    assert image.evaluate('(image) => image.getBoundingClientRect().width') <= width
+    for name in ('屏幕截图-with-realistic-long-name.png', 'analysis-input-研究笔记.txt', 'dropped-project-file.csv'):
+        link = bubble.locator('a[data-file-ref]').filter(has_text=name)
+        expect(link).to_have_count(1)
+    # A real right-click/download uses the node's existing resolver, including
+    # through Hub qualification, without a separate attachment download API.
+    with page.expect_response(lambda response: urlsplit(response.url).path.endswith('/api/session/resolve-files')) as resolution:
+        bubble.locator('.media-link > span').click(button='right')
+    assert not resolution.value.json().get('errors'), resolution.value.text()
+    with page.expect_download() as downloading:
+        page.get_by_role('menuitem', name='下载', exact=True).click()
+    download = downloading.value
+    assert download.failure() is None
+    assert download.suggested_filename == '屏幕截图-with-realistic-long-name.png'
 
 
 def exercise(browser, base, fake, root, width, theme, screenshots, label):
@@ -84,7 +126,8 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         assert not rollout.exists(), 'SDK create wrote a native history before SEND'
         text = f'approve {label} 请检查图片和任意文件，保留这份尚未发送的草稿。'
         page.locator('#sdk-input').fill(text)
-        attach(page, 'image', '屏幕截图-with-realistic-long-name.png', 'image/png', base64.b64decode(PNG))
+        image_data = page.screenshot()
+        attach(page, 'image', '屏幕截图-with-realistic-long-name.png', 'image/png', image_data)
         attach(page, 'file', 'analysis-input-研究笔记.txt', 'text/plain', b'private fixture document\n')
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(2)
         expect(page.locator('#sdk-compose-items .draft-thumb img')).to_have_count(1)
@@ -206,6 +249,9 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         page.evaluate('() => { window.fetch = composeFetch; releaseComposeSend(); }')
         expect(page.locator('#sdk-input')).to_have_value(new_text)
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(0)
+        visible_attachments(page, '.sdk-live .msg[data-role="user"]', width)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-live-attachments.png'))
         page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
         expect(page.locator('.sdk-history')).to_contain_text('All done after approval')
         saved(page, uid, new_text)
@@ -214,6 +260,16 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         page.reload(wait_until='domcontentloaded')
         expect(page.locator('#sdk-input')).to_have_value(new_text)
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(0)
+
+        visible_attachments(page, '.sdk-history .msg[data-role="user"]', width)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-history-attachments.png'))
+        page.locator('#a-chat').click()
+        visible_attachments(page, '#msgs .msg[data-role="user"]', width)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-conversation-attachments.png'))
+        page.locator('#a-sdk').click()
+        expect(page.locator('#sdk-input')).to_have_value(new_text)
 
         # A pure attachment message is accepted without invented user text.
         page.locator('#sdk-input').fill('')
@@ -275,7 +331,7 @@ def main():
             'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'), 'SESSIONDOCK_LAUNCHER_CONFIG': str(config),
             'SESSIONDOCK_PROC_ROOT': str(root/'proc'),
             'SESSIONDOCK_FILE_ROOTS': str(root), 'SESSIONDOCK_FILE_WRITE_ROOTS': str(root)}
-        with private_hosts(root), FakeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake:
+        with private_hosts(root), ComposeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake:
             with server(corpus, args.binary, root/'app.sock', environment) as base:
                 hub_root = root/'hub'; hub_root.mkdir()
                 hub = Hub(hub_binary.resolve(), hub_root, [SimpleNamespace(name='ComposeNode', token=TOKEN, port=port)])
