@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 
 use super::{ParseOptions, Parser, Skipped, clip, envelopes, normalized, string, tools};
-use crate::sessions::Event;
+use crate::sessions::{Event, agy::system_message};
 
 /// Resume only the forward Agy reducer, never retain native records here.
 /// Media-bearing prefixes and structural sidecars cannot resume this reducer.
@@ -108,40 +108,6 @@ pub(in crate::sessions) fn parse_append(
     }
     meta["migration_warnings"] = json!(parser.skipped.warnings());
     (meta, parser.events, None, state)
-}
-
-/// Agy's exact system injection envelope; ordinary user/code tags are never
-/// passed here. Unrecognized or incomplete layouts stay verbatim.
-fn system_message(text: &str) -> (String, Value) {
-    const INTRO: &str = "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n";
-    let wrapped = text.strip_prefix(INTRO).unwrap_or(text);
-    let body = envelopes::whole(wrapped, "SYSTEM_MESSAGE")
-        .map(str::trim)
-        .unwrap_or(text);
-    let header = body
-        .strip_prefix("[Message] timestamp=")
-        .and_then(|rest| rest.split_once(" sender="))
-        .and_then(|(timestamp, rest)| {
-            rest.split_once(" priority=")
-                .map(|(sender, rest)| (timestamp, sender, rest))
-        })
-        .and_then(|(timestamp, sender, rest)| {
-            rest.split_once(" content=")
-                .map(|(priority, content)| (timestamp, sender, priority, content))
-        });
-    match header {
-        Some((timestamp, sender, priority, content)) => (
-            content.to_owned(),
-            json!({
-                "native_type":"SYSTEM_MESSAGE", "counted":false, "system_timestamp":timestamp,
-                "system_sender":sender, "system_priority":priority,
-            }),
-        ),
-        None => (
-            body.to_owned(),
-            json!({"native_type":"SYSTEM_MESSAGE", "counted":false}),
-        ),
-    }
 }
 
 pub(super) fn metadata(summary: &Value, records: &[(Value, u64)], fallback: &str) -> Value {

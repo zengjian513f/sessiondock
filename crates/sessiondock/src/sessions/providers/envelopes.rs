@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-pub(super) fn whole<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+pub(in crate::sessions) fn whole<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     text.trim()
         .strip_prefix(&format!("<{name}>"))?
         .strip_suffix(&format!("</{name}>"))
