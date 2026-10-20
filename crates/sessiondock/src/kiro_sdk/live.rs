@@ -160,11 +160,25 @@ impl LiveState {
                 .as_str()
                 .or_else(|| disk["model"].as_str())
                 .or_else(|| disk["currentModelId"].as_str())
+                .or_else(|| {
+                    disk.pointer("/session_state/rts_model_state/model_info/model_id")
+                        .and_then(|v| v.as_str())
+                })
+                .or_else(|| {
+                    disk.pointer("/session_state/rts_model_state/model_info/modelId")
+                        .and_then(|v| v.as_str())
+                })
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 self.model = Some(m.to_string());
                 self.model_observed = true;
+            }
+        }
+        if self.autopilot.is_none() {
+            if let Some(ap) = disk["autopilot"].as_bool() {
+                self.autopilot = Some(ap);
+                self.permission_mode = Some(if ap { "autopilot" } else { "default" }.into());
             }
         }
         if self.effort.is_none() {
@@ -291,7 +305,14 @@ impl LiveState {
                     .unwrap_or_else(|| {
                         matches!(
                             cur_str.unwrap_or("").trim().to_ascii_lowercase().as_str(),
-                            "true" | "1" | "autopilot" | "auto" | "always" | "bypasspermissions"
+                            "true"
+                                | "1"
+                                | "on"
+                                | "enabled"
+                                | "autopilot"
+                                | "auto"
+                                | "always"
+                                | "bypasspermissions"
                         )
                     });
                 self.autopilot = Some(enabled);

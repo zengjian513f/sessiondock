@@ -59,6 +59,7 @@
 .sd-session-card [data-source="grok"] { color: var(--grok, #8b5cf6); }
 .sd-session-card [data-source="opencode"] { color: var(--opencode, #4b5563); }
 .sd-session-card [data-source="agy"] { color: var(--agy, #2563eb); }
+.sd-session-card [data-source="kiro"] { color: var(--kiro, #7c3aed); }
 
 .sd-session-card .t .session-title { color: var(--text); font-size: inherit; font-weight: inherit; }
 /* Labdesk keeps its live-title marker inside the title link. Place it over the icon. */

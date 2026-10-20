@@ -262,6 +262,16 @@ fn extract_cwd(summary: &Value, is_v2: bool) -> String {
             return s;
         }
     }
+    for key in ["workspacePaths", "rootPaths"] {
+        if let Some(arr) = summary.get(key).and_then(Value::as_array) {
+            for item in arr {
+                let s = string(item);
+                if !s.is_empty() {
+                    return s;
+                }
+            }
+        }
+    }
     if is_v2
         && let Some(turns) = summary
             .pointer("/session_state/conversation_metadata/user_turn_metadatas")

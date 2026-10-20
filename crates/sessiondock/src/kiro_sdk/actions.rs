@@ -702,7 +702,14 @@ impl Bridge {
             "permission_mode" | "autopilot" => {
                 let enabled = matches!(
                     val.trim().to_ascii_lowercase().as_str(),
-                    "true" | "1" | "autopilot" | "auto" | "always" | "bypasspermissions"
+                    "true"
+                        | "1"
+                        | "on"
+                        | "enabled"
+                        | "autopilot"
+                        | "auto"
+                        | "always"
+                        | "bypasspermissions"
                 );
                 let (config_id, wire_val) = {
                     let st = session.state.lock().unwrap();
@@ -715,6 +722,15 @@ impl Bridge {
                             || cat.eq_ignore_ascii_case("autopilot")
                             || cat.eq_ignore_ascii_case("approval")
                         {
+                            let uses_on_off = opt["options"]
+                                .as_array()
+                                .map(|arr| {
+                                    arr.iter().any(|o| {
+                                        o["value"].as_str() == Some("on")
+                                            || o["value"].as_str() == Some("off")
+                                    })
+                                })
+                                .unwrap_or(false);
                             let uses_bool_str = opt["options"]
                                 .as_array()
                                 .map(|arr| {
@@ -723,8 +739,10 @@ impl Bridge {
                                             || o["value"].as_str() == Some("false")
                                     })
                                 })
-                                .unwrap_or(true);
-                            let wv = if uses_bool_str {
+                                .unwrap_or(!uses_on_off);
+                            let wv = if uses_on_off {
+                                if enabled { "on" } else { "off" }
+                            } else if uses_bool_str {
                                 if enabled { "true" } else { "false" }
                             } else if enabled {
                                 "autopilot"
