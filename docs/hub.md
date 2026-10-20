@@ -288,7 +288,9 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   响应，不丢会话、不改变原生文件。版本只在同一路径和查询视图内使用，重启后
   自动重建基线。不带该头的客户端保留原 `sig/unchanged` 合同。
   Hub 先还原节点的完整响应，再应用命名空间与离线缓存；旧节点忽略该头时可继续使用。
-- `trash`：`items` 拼接、`size` 求和、`dir = "所选机器的本地回收站"`。
+- `trash`：`items` 按 `deleted_ts` 跨机器倒序排列，同一时间按命名空间化 `id` 倒序排列；
+  `size` 求和、`dir = "所选机器的本地回收站"`。DELTA (2026-10-20)：
+  删除后新条目应排在 Hub 回收站前面，不能因机器顺序沉到列表中部。
 - `search_stream(Arc<Registry>, Arc<Client>, query) -> Result<impl Stream<Item = String>>`
   （`progress=1`，`progress_requested(query)` 判定）：每项一行 NDJSON（`serde_json`
   紧凑形式 + `\n`）。先发一条 `progress`（每机 `{id,name,done:0,total:null,state:

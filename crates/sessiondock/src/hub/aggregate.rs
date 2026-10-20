@@ -449,10 +449,24 @@ pub async fn trash(
 
 fn trash_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
     let mut result = envelope(nodes, answers);
-    let items: Vec<Value> = answers
+    let mut items: Vec<Value> = answers
         .iter()
         .flat_map(|answer| answer.rows("items"))
         .collect();
+    // Node trash lists are newest first, but concatenating nodes groups their
+    // entries by machine. Keep the Hub list newest first across all machines.
+    items.sort_by(|left, right| {
+        right["deleted_ts"]
+            .as_u64()
+            .unwrap_or(0)
+            .cmp(&left["deleted_ts"].as_u64().unwrap_or(0))
+            .then_with(|| {
+                right["id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(left["id"].as_str().unwrap_or(""))
+            })
+    });
     result.insert("items".into(), Value::Array(items));
     result.insert(
         "size".into(),

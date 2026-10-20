@@ -177,10 +177,10 @@ class NodeHandler(BaseHTTPRequestHandler):
         if u.path == "/api/term/attach":
             return self.attach()
         if u.path == "/api/trash":
-            return self._json({"items": [{"id": "claude/same-trash", "uid": s["row"]["uid"], "source": "claude",
+            return self._json({"items": s.get("trash_items", [{"id": "claude/same-trash", "uid": s["row"]["uid"], "source": "claude",
                                           "title": s["name"] + " deleted", "cwd": "/same/project",
                                           "origin": "/same/file", "deleted_at": "2026-09-01T00:00:00Z",
-                                          "size": 10, "restorable": True}], "size": 10})
+                                          "size": 10, "restorable": True}]), "size": 10})
         if u.path.startswith("/api/"):
             return self._json({"error": "not found"}, 404)
         return self._json({"error": "no static assets"}, 404)

@@ -126,6 +126,39 @@ def check_directory_view(browser, hub):
     context.close()
 
 
+def check_trash_order(browser, hub, nodes):
+    # The newest deletion belongs to the first node, regardless of the order
+    # in which Hub receives node responses.
+    for node, stamp, title, deleted_at in zip(
+        nodes, (1792507478, 1792334678, 1792421078),
+        ("NodeA recent", "NodeB old", "Vega middle"),
+        ("2026-10-20T14:44:38Z", "2026-10-18T14:44:38Z", "2026-10-19T14:44:38Z"),
+    ):
+        node.set(trash_items=[{"id": f"claude/{node.name}-trash", "uid": "claude:same-file-hash",
+                               "source": "claude", "title": title, "cwd": "/same/project",
+                               "origin": "/same/file", "deleted_at": deleted_at,
+                               "deleted_ts": stamp, "size": 10, "restorable": True}])
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    try:
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+        page.locator("#trash").click()
+        expect(page.locator("#trash-list .trash-item")).to_have_count(3)
+        expect(page.locator("#trash-list .trash-title span")).to_have_text(
+            ["NodeA recent", "Vega middle", "NodeB old"])
+        shots = os.environ.get("SESSIONDOCK_TEST_SHOTS")
+        if shots:
+            Path(shots).mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(Path(shots) / "hub-trash-order.png"))
+        assert not errors, errors
+    finally:
+        context.close()
+        for node in nodes:
+            node.pop("trash_items")
+
+
 def check_page(page, nodes, hub):
     a, b, vega = nodes
     page.wait_for_function(('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]'))
@@ -412,6 +445,7 @@ def main():
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
                     check_directory_view(browser, hub)
+                    check_trash_order(browser, hub, nodes)
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     injector = Injector()
                     context.route("**/api/sessions*", injector.handle)

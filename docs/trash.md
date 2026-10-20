@@ -56,9 +56,10 @@ parent directories. Existing destinations produce `409 restore_conflict`. A fail
 multi-file move attempts rollback and retains the recovery manifest when some
 files could not be returned. Purge removes the complete selected trash entry.
 
-The default listing includes all entries; optional `limit` and `cursor` provide
-pagination. Batch deletion returns individual `deleted`, `skipped`, `failed` and
-`errors` results. Purge accepts `id`, `ids`, `all:true`, or `days:N`; a pending-parent purge also
+The default listing includes all entries, newest first on both a node and the Hub;
+optional `limit` and `cursor` provide pagination. Batch deletion returns
+individual `deleted`, `skipped`, `failed` and `errors` results. Purge accepts
+`id`, `ids`, `all:true`, or `days:N`; a pending-parent purge also
 requires `uids` matching the `sessions` and `cascade_sessions` preview from
 `GET /api/trash`. Hub requests retain each node's confirmed UID set. It reports
 `removed`, `freed`, `errors`, `failed`, and `remaining`.
