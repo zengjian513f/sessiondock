@@ -441,9 +441,7 @@ impl HostClient {
                 return Err(Error::InvalidEndpoint);
             }
             // No supplied host/IP is ever used, even if present in metadata.
-            return Ok(LocalStream::Tcp(
-                tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?,
-            ));
+            return Ok(LocalStream::Tcp(transport::connect_loopback(port).await?));
         }
         #[cfg(unix)]
         {

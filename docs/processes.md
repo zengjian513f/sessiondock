@@ -85,6 +85,17 @@ socket derived inside the explicit trusted directory. Private record tuples and
 tokens are compared only internally. They are never exported as reusable
 credentials or claimed to be a persistent process-instance identity.
 
+On Windows, the private IPv4 loopback socket requests no SYN retransmissions
+through `SIO_TCP_INITIAL_RTO`; Windows otherwise retries even a refused local
+connection for about two seconds. This is a per-socket setting, not a machine TCP
+configuration change. Unsupported stacks retain their default behavior. A
+refused endpoint remains unknown, its record is untouched, and a recovered
+endpoint is probed again normally. Established Info/authentication exchanges
+retain the existing operation deadline; slow healthy peers are not cut off by a
+shorter request timeout. See Microsoft's [socket option documentation](https://learn.microsoft.com/en-us/windows/win32/api/mstcpip/ns-mstcpip-tcp_initial_rto_parameters)
+and the Windows/Linux Chromium regression
+[`loopback_status_browser.py`](../tests/loopback_status_browser.py).
+
 Only a successful, consistent host reply sets a host's `known:true`:
 `exited:false` means the host reports its child running; `exited:true` is confirmed
 child exit at observation time. Missing/refused endpoints, auth failures, invalid
