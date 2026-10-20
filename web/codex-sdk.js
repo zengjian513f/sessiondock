@@ -266,9 +266,10 @@ const CodexSdkView = {
     const node = this.pane?.querySelector(`[data-gauge="${slot}"]`);
     if (!node) return;
     node.hidden = !Number.isFinite(used);
+    UsageUI.title(node,node.hidden ? '' : title);
     if (node.hidden) return;
-    const gauge=UsageUI.gauge(label,used,title);
-    node.classList.toggle('low',gauge.classList.contains('low'));node.title=title;
+    const gauge=UsageUI.gauge(label,used,'');
+    node.classList.toggle('low',gauge.classList.contains('low'));
     node.replaceChildren(...gauge.childNodes);
   },
 
@@ -290,11 +291,11 @@ const CodexSdkView = {
     for (const [slot, window] of Object.entries(slots)) {
       if (!window) { this.gauge(slot, slot, NaN, ''); continue; }
       const label = this.windowLabel(window.windowDurationMins);
-      const reset = window.resetsAt ? `；${new Date(window.resetsAt * 1000).toLocaleString()} 重置` : '';
+      const reset = () => UsageUI.reset(window.resetsAt == null ? null : window.resetsAt * 1000);
       const recorded = this.limitsRecordedAt != null
         ? `；上次记录${this.limitsRecordedAt ? ` ${new Date(this.limitsRecordedAt).toLocaleString()}` : ''}` : '';
       this.gauge(slot, label, window.usedPercent,
-        `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset}${recorded}`);
+        () => `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset()}${recorded}`);
     }
     const usage = this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage;
     const size = usage?.modelContextWindow;

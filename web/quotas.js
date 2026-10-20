@@ -20,20 +20,14 @@ async function initQuotas(container) {
     return value == null || value === '' ? 'N/A' : UsageUI.window(value);
   }
   function countdown(value) {
-    const end=Date.parse(value);
-    if (!Number.isFinite(end)) return 'N/A';
-    let seconds=Math.max(0,Math.ceil((end-Date.now())/1000));
-    if (!seconds) return '已到期';
-    const days=Math.floor(seconds/86400);seconds%=86400;
-    const hours=Math.floor(seconds/3600);seconds%=3600;
-    const minutes=Math.floor(seconds/60);
-    return (days ? days+'d ' : '')+String(hours).padStart(2,'0')+':'+String(minutes).padStart(2,'0');
+    return UsageUI.countdown(value);
   }
   function deadline(value, expiry=false) {
     const cell=el('td','quota-time',countdown(value));
     if (value) {
       cell.dataset.deadline=value;
       cell.title=(expiry ? '已返回卡片的最近到期：' : '')+new Date(value).toLocaleString();
+      if (!expiry) UsageUI.title(cell,()=>`重置剩余 ${countdown(value)}；${new Date(value).toLocaleString()}`);
     }
     return cell;
   }

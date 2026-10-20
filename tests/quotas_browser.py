@@ -136,6 +136,7 @@ def main():
                 page.clock.set_fixed_time(end-remaining)
                 page.clock.run_for(1000)
                 expect(deadline).to_have_text(label)
+                expect(deadline).to_have_attribute('title', re.compile('重置剩余 ' + re.escape(label)))
             page.clock.set_fixed_time(time.time())
             page.clock.run_for(1000)
             for cell in machine.locator('[data-deadline]').all():
