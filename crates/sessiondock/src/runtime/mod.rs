@@ -31,7 +31,7 @@ pub mod process;
 pub mod process_links;
 pub mod procscan;
 use process::ProcClock;
-pub use process::{IdentityFailure, ProcessIdentity, StartTime};
+pub use process::{IdentityFailure, ProcessIdentity};
 
 #[derive(Clone)]
 struct NativeSession {
@@ -712,7 +712,6 @@ struct Captured {
     /// The exact UID matched when captured. Only such entries can later show
     /// an exit; unassociated instances are forgotten as soon as they vanish.
     uid: Option<String>,
-    last_seen: Instant,
     gone: bool,
 }
 
@@ -1113,7 +1112,6 @@ impl ManagedRuntime {
                     Ok(()) => {
                         let mut memory = lock(&self.memory);
                         if let Some(entry) = memory.entries.get_mut(&key) {
-                            entry.last_seen = Instant::now();
                             entry.gone = false;
                             if uid.is_some() {
                                 entry.uid = uid;
@@ -1148,7 +1146,6 @@ impl ManagedRuntime {
                         child,
                         host,
                         uid,
-                        last_seen: Instant::now(),
                         gone: false,
                     },
                 );

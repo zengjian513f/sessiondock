@@ -22,15 +22,18 @@ pub(crate) mod opencode;
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::LazyLock;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat, Utc};
-use regex::Regex;
 use serde_json::Value;
 
 use super::Stamp;
 use crate::sessions::SessionError;
 use crate::sessions::providers::Skipped;
+pub(crate) use crate::sessions::scope::declared_identity as native_identity;
+pub use crate::sessions::text::{
+    claude_bash_input, claude_bash_output_matches, clip, flatten_text, is_codex_protocol_injection,
+    is_injected, iso_seconds, norm_ts, py_str, py_strip, text_if_truthy, title_from_text, truthy,
+    unquote,
+};
 
 /// The metadata head read never exceeds this.
 pub const HEAD_BYTES: u64 = 96 * 1024;
@@ -45,6 +48,7 @@ pub const CODEX_HEAD_LINES: usize = 120;
 pub const CLAUDE_AGENT_CREATED_LINES: usize = 8;
 /// The bytes the index read from one data file, plus the stamp of the file
 /// version those bytes belong to.
+#[derive(Clone, Copy)]
 pub struct DataFile<'a> {
     /// First `min(size, HEAD_BYTES)` bytes.
     pub head: &'a [u8],
@@ -382,377 +386,6 @@ pub fn cursor_head(data: &DataFile<'_>, end: u64) -> Option<String> {
     ))
 }
 
-/// The scope rules of `sessions::scope::native_identity` over the records
-/// seen. `extract` yields the declared id value of one record, if any.
-pub fn native_identity<'a>(
-    records: impl Iterator<Item = &'a Value>,
-) -> (Result<String, SessionError>, Vec<String>) {
-    let mut identity: Option<String> = None;
-    let mut declared = BTreeSet::new();
-    let mut error = None;
-    for value in records {
-        let Some(id) = value.as_str().filter(|id| {
-            !id.trim().is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
-        }) else {
-            error.get_or_insert_with(|| {
-                SessionError::new(501, "原生会话 ID 无效，不能确定操作范围")
-            });
-            continue;
-        };
-        declared.insert(id.to_owned());
-        if identity.as_deref().is_some_and(|previous| previous != id) {
-            error.get_or_insert_with(|| SessionError::new(409, "原生记录包含冲突的会话 ID"));
-        }
-        identity.get_or_insert_with(|| id.to_owned());
-    }
-    let identity = match error {
-        Some(error) => Err(error),
-        None => identity.ok_or_else(|| {
-            SessionError::new(501, "原生记录缺少明确会话 ID，不能用文件名或显示名称推断")
-        }),
-    };
-    (identity, declared.into_iter().collect())
-}
-
-// ---------------------------------------------------------------------------
-// Value primitives.
-// ---------------------------------------------------------------------------
-
-/// Truthiness of a JSON value.
-pub use crate::json_compat::truthy;
-
-/// String form of a scalar JSON value that reaches a row field.
-pub fn py_str(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Null => "None".to_owned(),
-        Value::Bool(true) => "True".to_owned(),
-        Value::Bool(false) => "False".to_owned(),
-        Value::Number(number) => number.to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// `value` when truthy, as text.
-pub fn text_if_truthy(value: &Value) -> Option<String> {
-    truthy(value).then(|| py_str(value))
-}
-
-/// Whitespace (Unicode White_Space plus the C0 separators 1C–1F).
-pub fn py_is_space(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
-pub fn py_strip(text: &str) -> &str {
-    text.trim_matches(py_is_space)
-}
-
-/// Line-split boundaries.
-pub fn py_splitlines(text: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    let mut chars = text.char_indices().peekable();
-    while let Some((index, c)) = chars.next() {
-        let boundary = match c {
-            '\n' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}'
-            | '\u{2029}' => Some(index + c.len_utf8()),
-            '\r' => {
-                let mut next = index + 1;
-                if chars.peek().is_some_and(|(_, c)| *c == '\n') {
-                    chars.next();
-                    next += 1;
-                }
-                Some(next)
-            }
-            _ => None,
-        };
-        if let Some(next) = boundary {
-            lines.push(&text[start..index]);
-            start = next;
-        }
-    }
-    if start < text.len() {
-        lines.push(&text[start..]);
-    }
-    lines
-}
-
-/// Whitespace-normalized, at most `n` characters plus `…`.
-pub fn clip(text: &str, n: usize) -> String {
-    let joined = text
-        .split(py_is_space)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if joined.chars().count() > n {
-        joined.chars().take(n).collect::<String>() + "…"
-    } else {
-        joined
-    }
-}
-
-/// A native timestamp as an RFC 3339 UTC instant with
-/// millisecond precision, or `None` when it is falsy or unparsable.
-pub fn norm_ts(value: &Value) -> Option<String> {
-    if !truthy(value) {
-        return None;
-    }
-    let instant = match value {
-        Value::Number(number) => {
-            let number = number.as_f64()?;
-            let seconds = if number > 1e11 {
-                number / 1000.0
-            } else {
-                number
-            };
-            let micros = (seconds * 1e6).round();
-            if !micros.is_finite() || micros.abs() > i64::MAX as f64 {
-                return None;
-            }
-            DateTime::from_timestamp_micros(micros as i64)?
-        }
-        Value::String(text) => parse_iso(&text.replace('Z', "+00:00"))?,
-        _ => return None,
-    };
-    Some(instant.to_rfc3339_opts(SecondsFormat::Millis, true))
-}
-
-/// The subset of `datetime.fromisoformat` shapes native records use.
-fn parse_iso(text: &str) -> Option<DateTime<Utc>> {
-    for format in [
-        "%Y-%m-%dT%H:%M:%S%.f%:z",
-        "%Y-%m-%d %H:%M:%S%.f%:z",
-        "%Y-%m-%dT%H:%M:%S%.f%z",
-        "%Y-%m-%d %H:%M:%S%.f%z",
-        "%Y-%m-%dT%H:%M%:z",
-        "%Y-%m-%d %H:%M%:z",
-    ] {
-        if let Ok(parsed) = DateTime::parse_from_str(text, format) {
-            return Some(parsed.to_utc());
-        }
-    }
-    for format in [
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%d %H:%M",
-    ] {
-        if let Ok(parsed) = NaiveDateTime::parse_from_str(text, format) {
-            return Some(parsed.and_utc());
-        }
-    }
-    NaiveDate::parse_from_str(text, "%Y-%m-%d")
-        .ok()
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|date| date.and_utc())
-}
-
-/// File time truncated to whole seconds.
-pub fn iso_seconds(mtime_ns: u128) -> String {
-    let seconds = i64::try_from(mtime_ns / 1_000_000_000).unwrap_or(i64::MAX);
-    DateTime::from_timestamp(seconds, 0)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
-// ---------------------------------------------------------------------------
-// Text primitives used by title derivation.
-// ---------------------------------------------------------------------------
-
-static INJECTED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)AGENTS\.md instructions|<INSTRUCTIONS>|<user_info>|<environment_context>|<system-reminder>|<command-name>|Caveat: The messages below|<local-command-(?:caveat|stdout)>|<task-notification>|This session is being continued from a previous conversation|# Global User Guidance|<project_instructions>|<user_instructions>",
-    )
-    .expect("static regex")
-});
-
-static TIMELINE_PROTOCOL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)^\s*(?:#\s*AGENTS\.md instructions|#\s*Global User Guidance|<INSTRUCTIONS>|<user_info>|<environment_context>|<system-reminder>|<command-name>|<local-command-(?:caveat|stdout)>|<task-notification>|<project_instructions>|<user_instructions>|Caveat:\s*The messages below were generated by the user while running local commands|This session is being continued from a previous conversation)",
-    )
-    .expect("static regex")
-});
-
-static BASH_INPUT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?is)^\s*<bash-input>(.*?)</bash-input>\s*$").expect("static regex")
-});
-
-static PAIRED_TAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<(command-[a-z-]+|system-reminder|local-command[a-z-]*)>").expect("static regex")
-});
-
-static SHORT_TAG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<[^>]{1,40}>").expect("static regex"));
-
-/// Searches the first 2000 characters.
-pub fn is_injected(text: &str) -> bool {
-    let window: String = text.chars().take(2000).collect();
-    INJECTED.is_match(&window)
-}
-
-/// A CLI protocol block at the very start.
-pub fn is_timeline_protocol(text: &str) -> bool {
-    TIMELINE_PROTOCOL.is_match(text)
-}
-
-pub fn claude_bash_input(text: &str) -> Option<String> {
-    let captures = BASH_INPUT.captures(text)?;
-    let decoded = html_escape::decode_html_entities(captures.get(1).map_or("", |m| m.as_str()));
-    let command = py_strip(&decoded);
-    if command.is_empty() {
-        return None;
-    }
-    Some(if command.starts_with('!') {
-        command.to_owned()
-    } else {
-        format!("! {command}")
-    })
-}
-
-/// Whether a match is returned: only an exact
-/// sequence of `<bash-stdout>`/`<bash-stderr>` envelopes (case-insensitive,
-/// paired with their own closing tag) and nothing but whitespace around them.
-pub fn claude_bash_output_matches(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-    let mut spans = Vec::new();
-    let mut position = 0;
-    while position < bytes.len() {
-        let Some(relative) = lower[position..].find("<bash-std") else {
-            break;
-        };
-        let start = position + relative;
-        let stream = if lower[start..].starts_with("<bash-stdout>") {
-            "stdout"
-        } else if lower[start..].starts_with("<bash-stderr>") {
-            "stderr"
-        } else {
-            position = start + 1;
-            continue;
-        };
-        let body_start = start + "<bash-stdout>".len();
-        let closing = format!("</bash-{stream}>");
-        match lower[body_start..].find(&closing) {
-            Some(offset) => {
-                let end = body_start + offset + closing.len();
-                spans.push((start, end));
-                position = end;
-            }
-            None => position = start + 1,
-        }
-    }
-    if spans.is_empty() {
-        return false;
-    }
-    let mut remaining = String::new();
-    let mut cursor = 0;
-    for (start, end) in spans {
-        remaining.push_str(&text[cursor..start]);
-        cursor = end;
-    }
-    remaining.push_str(&text[cursor..]);
-    py_strip(&remaining).is_empty()
-}
-
-fn strip_paired_tags(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut position = 0;
-    while let Some(captures) = PAIRED_TAG.captures_at(text, position) {
-        let opening = captures.get(0).expect("whole match");
-        let name = captures.get(1).map_or("", |m| m.as_str());
-        let closing = format!("</{name}>");
-        match text[opening.end()..].find(&closing) {
-            Some(offset) => {
-                out.push_str(&text[position..opening.start()]);
-                out.push(' ');
-                position = opening.end() + offset + closing.len();
-            }
-            None => {
-                let step = text[opening.start()..]
-                    .chars()
-                    .next()
-                    .map_or(1, char::len_utf8);
-                out.push_str(&text[position..opening.start() + step]);
-                position = opening.start() + step;
-            }
-        }
-    }
-    out.push_str(&text[position..]);
-    out
-}
-
-pub fn title_from_text(text: &str) -> String {
-    let text = strip_paired_tags(text);
-    let text = SHORT_TAG.replace_all(&text, " ");
-    for line in py_splitlines(&text) {
-        let line = py_strip(line);
-        if line.chars().count() >= 4
-            && !(line.starts_with('#')
-                || line.starts_with('-')
-                || line.starts_with('*')
-                || line.starts_with("```"))
-        {
-            return clip(line, 90);
-        }
-    }
-    let fallback = clip(&text, 90);
-    if fallback.is_empty() {
-        "(无标题)".to_owned()
-    } else {
-        fallback
-    }
-}
-
-/// Restricted to `kind == "text"` parts, joined
-/// with newlines. Shapes the reference adapter cannot read either (a scalar
-/// `content`, a non-string `text`) are the same hard failures as today.
-pub fn flatten_text(content: &Value) -> Result<String, String> {
-    let mut parts = Vec::new();
-    match content {
-        Value::Null => {}
-        Value::String(text) => parts.push(text.clone()),
-        Value::Object(_) => push_text_block(content, &mut parts)?,
-        Value::Array(items) => {
-            for item in items {
-                match item {
-                    Value::String(text) => parts.push(text.clone()),
-                    Value::Object(_) => push_text_block(item, &mut parts)?,
-                    _ => {}
-                }
-            }
-        }
-        _ => return Err("原生 content 类型无效".to_owned()),
-    }
-    Ok(parts.join("\n"))
-}
-
-fn push_text_block(block: &Value, parts: &mut Vec<String>) -> Result<(), String> {
-    if matches!(
-        block["type"].as_str(),
-        Some("text" | "input_text" | "output_text" | "summary_text")
-    ) {
-        match &block["text"] {
-            Value::Null => parts.push(String::new()),
-            Value::String(text) => parts.push(text.clone()),
-            _ => return Err("原生文本块的 text 必须是字符串".to_owned()),
-        }
-    }
-    Ok(())
-}
-
-/// True for `goal.internal_context` or a leading CLI protocol block.
-pub fn is_codex_protocol_injection(text: &str, native_meta: &Value) -> bool {
-    native_meta["content_item_kinds"]
-        .as_array()
-        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "goal.internal_context"))
-        || is_timeline_protocol(text)
-        || crate::sessions::providers::envelopes::recommended_plugins(text)
-}
-
-/// `urllib.parse.unquote`: percent UTF-8 decoding with replacement for invalid
-/// bytes, malformed escapes retained, `+` literal.
-pub use crate::json_compat::unquote;
-
 /// Last record (file order) whose timestamp normalizes, tail first, then the
 /// head as the bounded stand-in for the backward whole-file scan.
 pub fn latest_timestamp(records: &Records) -> Option<String> {
@@ -848,21 +481,9 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 match kiro_kind {
-                    "user"
-                    | "assistant"
-                    | "tool_call"
-                    | "tool_result"
-                    | "session_start"
-                    | "error"
-                    | "tombstone"
-                    | "system"
-                    | "checkpoint"
-                    | "Prompt"
-                    | "AssistantMessage"
-                    | "ToolResults"
-                    | "System"
-                    | "Metadata"
-                    | "" => {}
+                    "user" | "assistant" | "tool_call" | "tool_result" | "session_start"
+                    | "error" | "tombstone" | "system" | "checkpoint" | "Prompt"
+                    | "AssistantMessage" | "ToolResults" | "System" | "Metadata" | "" => {}
                     other => skipped.note("Kiro 记录类型", other),
                 }
             }

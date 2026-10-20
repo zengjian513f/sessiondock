@@ -14,11 +14,9 @@ use serde_json::{Value, json};
 use std::{
     ffi::{OsStr, OsString},
     io::{self, ErrorKind, Read, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
-
-pub const MAX_NAME_BYTES: usize = 255;
 
 pub struct WriteService {
     private_root: Option<PathBuf>,
@@ -64,32 +62,6 @@ impl WriteService {
 
 // ---- helpers -------------------------------------------------------------
 
-/// One component: no separators, no `.`/`..`, no reserved prefix, platform
-/// path rules (Windows reserved names, foreign separators) included.
-pub fn validate_name(name: &str) -> Result<(), FileError> {
-    let invalid = || {
-        FileError::new(
-            400,
-            "file_name_invalid",
-            "名称无效：须为单个路径组件，不能包含 /、\\、控制字符或为 . 与 ..",
-        )
-    };
-    if name.is_empty() || name.len() > MAX_NAME_BYTES {
-        return Err(invalid());
-    }
-    if name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
-        return Err(invalid());
-    }
-    if Path::new(name).components().count() != 1
-        || !matches!(
-            Path::new(name).components().next(),
-            Some(Component::Normal(_))
-        )
-    {
-        return Err(invalid());
-    }
-    Ok(())
-}
 fn random_id() -> Result<String, FileError> {
     let mut random = [0u8; 16];
     getrandom::fill(&mut random).map_err(|_| {
@@ -560,6 +532,7 @@ fn attachment_id_ok(text: &str) -> bool {
 /// drive spelling for configured-root comparison and returned attachment paths.
 #[cfg(windows)]
 fn attachment_directory_path(canonical: PathBuf) -> PathBuf {
+    use std::path::Component;
     let mut components = canonical.components();
     if let Some(Component::Prefix(prefix)) = components.next()
         && let std::path::Prefix::VerbatimDisk(letter) = prefix.kind()

@@ -428,6 +428,9 @@ impl Bridge {
         let Some(path) = self.binding_path(&live.sid) else {
             return Ok(());
         };
+        static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temporary = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
         let result = (|| -> io::Result<()> {
             let parent = path.parent().unwrap();
             std::fs::create_dir_all(parent)?;
@@ -443,7 +446,6 @@ impl Bridge {
                 use std::os::unix::fs::OpenOptionsExt;
                 options.mode(0o600);
             }
-            let temporary = path.with_extension("tmp");
             let mut file = options.open(&temporary)?;
             file.write_all(&serde_json::to_vec(&Binding {
                 sid: live.sid.clone(),
@@ -451,8 +453,11 @@ impl Bridge {
                 turn: turn.clone(),
             })?)?;
             file.sync_all()?;
-            std::fs::rename(temporary, path)
+            std::fs::rename(&temporary, path)
         })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
         result.map_err(|e| format!("agy_sdk_binding: {e}"))
     }
 
@@ -1107,13 +1112,17 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
             data.items.len() - 1
         };
         let item = &mut data.items[index];
-        let mut body = item["content"].as_str().unwrap_or("").to_owned();
         if let Some(text) = step["text"].as_str() {
-            body = text.to_owned();
+            item["content"] = json!(text);
         } else if let Some(delta) = step["text_delta"].as_str() {
-            body.push_str(delta);
+            if let Some(Value::String(s)) = item.get_mut("content") {
+                s.push_str(delta);
+            } else {
+                item["content"] = json!(delta);
+            }
+        } else if !item["content"].is_string() {
+            item["content"] = json!("");
         }
-        item["content"] = json!(body);
         item["native"] = step.clone();
         item["status"] = step["state"].clone();
         if kind == "agent_response" {

@@ -99,7 +99,7 @@ const CodexSdkControls = {
       }
       ConversationUI.selectValue(select, value, '档位');
       select.dataset.options = signature;
-      view.toolbarLayout = null;
+      if (view.pane) delete view.pane.querySelector('.sdk-status-row')?.dataset.footerLayout;
       view.layoutToolbar();
     } else select.value = value;
     select.title = `服务档位：${select.selectedOptions[0]?.textContent || '未返回'}`;

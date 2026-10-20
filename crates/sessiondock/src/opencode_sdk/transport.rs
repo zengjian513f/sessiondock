@@ -12,9 +12,21 @@ use tokio_util::sync::CancellationToken;
 
 use crate::lifecycle::launcher::{CliProfile, DENIED_ENV};
 
+static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+    [
+        r#"(?i)(bearer\s+)[^\s"']+"#,
+        r"(?i)(basic\s+)[A-Za-z0-9+/=]+",
+        r"(https?://)[^/\s@]+:[^/\s@]+@",
+    ]
+    .into_iter()
+    .map(|pattern| regex::Regex::new(pattern).expect("valid opencode redaction regex"))
+    .collect()
+});
+
 pub(super) struct Transport {
     pub profile: CliProfile,
     pub shutdown: CancellationToken,
+    secrets: Vec<String>,
 }
 
 // OpenCode's machine client can exit before a large pipe write drains. A
@@ -46,6 +58,27 @@ impl Drop for CapturedOutput {
 }
 
 impl Transport {
+    pub fn new(profile: CliProfile, shutdown: CancellationToken) -> Self {
+        let mut secrets: Vec<String> = std::env::vars()
+            .chain(profile.env.clone())
+            .filter_map(|(name, value)| {
+                let name = name.to_ascii_uppercase();
+                (!value.is_empty()
+                    && ["TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"]
+                        .iter()
+                        .any(|s| name.contains(s)))
+                .then_some(value)
+            })
+            .collect();
+        secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        secrets.dedup();
+        Self {
+            profile,
+            shutdown,
+            secrets,
+        }
+    }
+
     pub async fn api(
         &self,
         cwd: &Path,
@@ -165,25 +198,12 @@ impl Transport {
 
     fn redact(&self, text: &str) -> String {
         let mut result = text.to_owned();
-        for (name, value) in std::env::vars().chain(self.profile.env.clone()) {
-            let name = name.to_ascii_uppercase();
-            if !value.is_empty()
-                && ["TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"]
-                    .iter()
-                    .any(|s| name.contains(s))
-            {
-                result = result.replace(&value, "[redacted]");
-            }
+        for secret in &self.secrets {
+            result = result.replace(secret, "[redacted]");
         }
         // HTTP auth headers and URLs can also be supplied by a provider.
-        for pattern in [
-            r#"(?i)(bearer\s+)[^\s"']+"#,
-            r"(?i)(basic\s+)[A-Za-z0-9+/=]+",
-            r"(https?://)[^/\s@]+:[^/\s@]+@",
-        ] {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                result = regex.replace_all(&result, "${1}[redacted]").into_owned();
-            }
+        for regex in &*REDACT_PATTERNS {
+            result = regex.replace_all(&result, "${1}[redacted]").into_owned();
         }
         result
     }

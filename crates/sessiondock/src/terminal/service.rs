@@ -155,9 +155,9 @@ fn input_error(error: ptyhost_client::Error) -> TerminalError {
 pub struct TerminalService {
     /// The explicit, canonical ptyhost directory (final screens live under it).
     directory: PathBuf,
+    limits: BridgeLimits,
     client: HostClient,
     registry: Arc<Registry>,
-    limits: BridgeLimits,
     gates: Mutex<BTreeMap<String, Weak<AsyncMutex<()>>>>,
 }
 
@@ -292,9 +292,9 @@ impl TerminalService {
         .map_err(host_error)?;
         Ok(Self {
             directory,
+            limits,
             client,
             registry: Arc::new(Registry::new()?),
-            limits,
             gates: Mutex::new(BTreeMap::new()),
         })
     }
@@ -606,39 +606,6 @@ impl TerminalService {
                 503,
                 "terminal_unavailable",
                 "终端 host 未返回历史行",
-            )),
-        }
-    }
-
-    pub async fn capture_screen(
-        &self,
-        name: &str,
-        page: &str,
-        token: &str,
-        expected: ExpectedTarget<'_>,
-    ) -> Result<CaptureReply, TerminalError> {
-        ownership::validate_name(name)?;
-        ownership::validate_page(page)?;
-        let reply = self
-            .request_under_lease(
-                name,
-                page,
-                token,
-                expected,
-                ControlOp::Capture {
-                    kind: CaptureKind::Screen,
-                    styled: true,
-                    join: false,
-                    lines: 0,
-                },
-            )
-            .await?;
-        match reply {
-            ControlReply::Capture(capture) => Ok(capture),
-            _ => Err(TerminalError::new(
-                503,
-                "terminal_unavailable",
-                "终端 host 未返回屏幕捕获",
             )),
         }
     }

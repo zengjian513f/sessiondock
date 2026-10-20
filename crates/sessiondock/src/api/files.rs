@@ -67,7 +67,7 @@ async fn admission(state: &AppState) -> Result<Arc<OwnedSemaphorePermit>, ApiErr
         .await
         .map(Arc::new)
 }
-fn validate_scope(uid: &str, _agent: &str) -> Result<(), ApiError> {
+fn validate_scope(uid: &str) -> Result<(), ApiError> {
     if uid.is_empty() {
         return Err(invalid());
     }
@@ -127,7 +127,7 @@ pub async fn resolve(
             invalid()
         }
     })?;
-    validate_scope(&body.uid, &body.agent)?;
+    validate_scope(&body.uid)?;
     let lease = admission(&state).await?;
     work(&state, lease, move |store| {
         let view = store.messages(
@@ -157,7 +157,7 @@ pub struct FileQuery {
 }
 impl FileQuery {
     fn validate(&mut self) -> Result<(), ApiError> {
-        validate_scope(&self.uid, &self.agent)?;
+        validate_scope(&self.uid)?;
         crate::files::clean_ref(&self.r#ref)?;
         if self.download == "1" || !matches!(self.mode.as_str(), "" | "info" | "preview") {
             // Unknown modes are ordinary file reads.
@@ -418,7 +418,7 @@ pub async fn upload_attachment(
     let (_, writer) = write_configured(&state)?;
     let Query(query) =
         Query::<AttachmentQuery>::try_from_uri(request.uri()).map_err(|_| invalid())?;
-    validate_scope(&query.uid, &query.agent)?;
+    validate_scope(&query.uid)?;
     // A newly launched CLI has no native history UID yet. Its exact lifecycle
     // receipt still carries the server-validated cwd; require both immutable
     // receipt identities before granting the same attachment subdirectory.

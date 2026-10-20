@@ -60,6 +60,11 @@ class QueueServer(ControlsServer):
             await self.notify('turn/completed', {'turn': {'id': turn, 'status': 'completed', 'items': []}})
         asyncio.run_coroutine_threadsafe(finish(), self.loop).result(timeout=5)
 
+    def stream_usage(self, total):
+        asyncio.run_coroutine_threadsafe(self.notify('thread/tokenUsage/updated', {
+            'tokenUsage': {'last': {'totalTokens': total}, 'modelContextWindow': 100000},
+        }), self.loop).result(timeout=5)
+
 
 def open_page(browser, base, width, theme):
     context = browser.new_context(viewport={'width': width, 'height': 844}, color_scheme=theme, service_workers='block')
@@ -68,6 +73,8 @@ def open_page(browser, base, width, theme):
     page.goto(base, wait_until='networkidle')
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
     expect(page.locator('#sdk-input')).to_be_enabled()
+    page.locator('#sdk-input').click()
+    page.wait_for_function('CodexSdkView.connected')
     return context, page
 
 
@@ -80,6 +87,22 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         box.fill(text); send.click(); expect(box).to_have_value('')
     def row(text):
         return page.locator('.sdk-queued').filter(has_text=text)
+    def click_while_streaming(button, action):
+        button.scroll_into_view_if_needed()
+        button.evaluate('node => window.queuePointerTarget = node')
+        box = button.bounding_box()
+        page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        page.mouse.down()
+        try:
+            fake.usage_tick = getattr(fake, 'usage_tick', 1000) + 1
+            fake.stream_usage(fake.usage_tick)
+            page.wait_for_function('n => CodexSdkView.summary?.usage?.last?.totalTokens === n', arg=fake.usage_tick)
+            connected = page.evaluate('queuePointerTarget.isConnected')
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{action}-pointer.png'))
+        finally:
+            page.mouse.up()
+        assert connected, f'{action}: streaming output replaced the button between pointer down/up'
     starts, steers = len(fake.methods('turn/start')), len(fake.methods('turn/steer'))
     submit('working ' + label)
     expect(send).to_have_text('排队')
@@ -104,9 +127,9 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(page.locator('.sdk-queued')).to_have_count(4)
     assert len(fake.methods('turn/start')) == starts + 1
     assert len(fake.methods('turn/steer')) == steers
-    row('撤销这条').locator('[data-queue-action="cancel"]').click()
+    click_while_streaming(row('撤销这条').locator('[data-queue-action="cancel"]'), 'cancel')
     expect(page.locator('.sdk-queued')).to_have_count(3)
-    row('立即引导当前').locator('[data-queue-action="steer"]').click()
+    click_while_streaming(row('立即引导当前').locator('[data-queue-action="steer"]'), 'steer')
     expect(page.locator('.sdk-queued')).to_have_count(2)
     assert len(fake.methods('turn/steer')) == steers + 1
     assert fake.methods('turn/steer')[-1]['params']['expectedTurnId'] == fake.turn

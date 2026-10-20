@@ -146,10 +146,6 @@ pub(super) struct ReferenceIndex {
     pub basenames: BTreeMap<String, Vec<String>>,
     pub directories: Vec<String>,
     media: bool,
-    /// Complete selected-branch scan marker retained for media integration.
-    /// The index no longer truncates at an arbitrary reference budget; all
-    /// simply unknown (no placeholder), never a scope-wide failure.
-    pub complete: bool,
 }
 impl ReferenceIndex {
     pub fn new(messages: &[Value]) -> Result<Self, FileError> {
@@ -171,12 +167,8 @@ impl ReferenceIndex {
             basenames: BTreeMap::new(),
             directories: Vec::new(),
             media,
-            complete: true,
         };
         for message in messages {
-            if !index.complete {
-                break;
-            }
             // Caller supplies semantic messages, never raw metadata/native records.
             let role = message["role"].as_str().unwrap_or("");
             let native_role = if media {
@@ -196,11 +188,11 @@ impl ReferenceIndex {
                 if native_role == "tool"
                     && let Ok(value) = serde_json::from_str::<Value>(text)
                 {
-                    index.scan_value(&value, 0)?;
+                    index.scan_value(&value)?;
                 }
             }
             if native_role == "tool" {
-                index.scan_value(&message["args"], 0)?;
+                index.scan_value(&message["args"])?;
             }
         }
         for reference in native_refs {
@@ -238,9 +230,6 @@ impl ReferenceIndex {
         Ok(())
     }
     fn scan(&mut self, value: &str) -> Result<(), FileError> {
-        if !self.complete {
-            return Ok(());
-        }
         // SEND writes one complete path per numbered line. Tokenizing those
         // lines by whitespace loses filenames with spaces and Windows paths.
         for capture in ATTACHMENT.captures_iter(value) {
@@ -281,14 +270,11 @@ impl ReferenceIndex {
                     .as_str()
                     .trim_end_matches(['.', ',', ';', ':', '!', '?']),
             )?;
-            if !self.complete {
-                return Ok(());
-            }
         }
         Ok(())
     }
 
-    fn scan_value(&mut self, value: &Value, _depth: usize) -> Result<(), FileError> {
+    fn scan_value(&mut self, value: &Value) -> Result<(), FileError> {
         let mut pending = vec![value];
         while let Some(value) = pending.pop() {
             match value {

@@ -499,17 +499,6 @@ impl PageNodes {
             .get(page_id)
             .cloned()
     }
-
-    pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// One node's share of a browser audit batch.

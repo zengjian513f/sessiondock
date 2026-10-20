@@ -15,6 +15,7 @@ use std::{
     sync::Arc,
 };
 
+pub use super::models::Catalog;
 use super::{
     model::{self, Launch, LaunchSpec, Record, Source, State},
     store::StartAuthority,
@@ -1040,11 +1041,26 @@ impl Launcher {
 /// over an empty private directory: no session file is read or removed. A
 /// host that cannot be probed keeps the option; its launch fails on its own.
 fn host_accepts_no_record(host_binary: &Path, host_dir: &Path) -> bool {
+    type ProbeKey = (PathBuf, Option<std::time::SystemTime>, u64);
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<ProbeKey, bool>>> =
+        std::sync::OnceLock::new();
+    let key = std::fs::metadata(host_binary)
+        .ok()
+        .map(|meta| (host_binary.to_path_buf(), meta.modified().ok(), meta.len()));
+    if let Some(key) = &key
+        && let Some(&cached) = CACHE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(key)
+    {
+        return cached;
+    }
     let probe = host_dir.join(".probe");
     if std::fs::create_dir_all(&probe).is_err() {
         return true;
     }
-    match Command::new(host_binary)
+    let accepted = match Command::new(host_binary)
         .arg("--dir")
         .arg(&probe)
         .args(["--no-record", "list"])
@@ -1055,7 +1071,15 @@ fn host_accepts_no_record(host_binary: &Path, host_dir: &Path) -> bool {
     {
         Ok(status) => status.success(),
         Err(_) => true,
+    };
+    if accepted && let Some(key) = key {
+        CACHE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(key, true);
     }
+    accepted
 }
 
 /// Unix: a new process group, so a signal aimed at the service's group never

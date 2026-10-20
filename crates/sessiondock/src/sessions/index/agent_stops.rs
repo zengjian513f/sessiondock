@@ -37,13 +37,6 @@ static NOTICE: LazyLock<Regex> = LazyLock::new(|| {
 static TASK_ID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<task-id>([A-Za-z0-9_-]{1,64})</task-id>").expect("static regex")
 });
-// The `b"..." in raw` pre-checks; literal regexes so the substring
-// search is vectorized (the scan touches every byte of a cold owner file).
-static HAS_TASK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new("<task-id>").expect("literal"));
-static HAS_AGENT_ID: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""agentId""#).expect("literal"));
-static HAS_TOOL_RESULT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""tool_result""#).expect("literal"));
 
 /// Scan state of one owner file.
 #[derive(Clone, Debug, Default)]
@@ -76,8 +69,10 @@ impl StopScan {
 /// scan. Copies of a notice text count only at their first-seen time; a
 /// foreground Agent result is a stop unless it is only `async_launched`.
 pub fn collect(raw: &[u8], scan: &mut StopScan) {
-    let has_notice = HAS_TASK_ID.is_match(raw);
-    let has_result = HAS_AGENT_ID.is_match(raw) && HAS_TOOL_RESULT.is_match(raw);
+    // Fast literal pre-checks before decoding a cold owner transcript line.
+    let has_notice = memchr::memmem::find(raw, b"<task-id>").is_some();
+    let has_result = memchr::memmem::find(raw, br#""agentId""#).is_some()
+        && memchr::memmem::find(raw, br#""tool_result""#).is_some();
     let codex = memchr::memmem::find(raw, b"function_call").is_some();
     if !(has_notice || has_result || codex) {
         return;

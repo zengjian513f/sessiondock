@@ -116,47 +116,58 @@ impl RecordCache {
     /// move into the return value so their destruction happens after unlock.
     pub(crate) fn absorb(&mut self, mut local: Self) -> RetiredRecords {
         let mut discarded = RetiredRecords::default();
-        for (key, mut entry) in std::mem::take(&mut local.entries) {
-            if entry.weight > self.max_weight || self.max_entries == 0 {
-                discarded.entries.push(entry);
-                continue;
-            }
-            if let Some(old) = self.entries.remove(&key) {
-                self.weight -= old.weight;
-                discarded.entries.push(old);
-            }
-            while self.entries.len() >= self.max_entries
-                || self.weight.saturating_add(entry.weight) > self.max_weight
-            {
-                let oldest = self
-                    .entries
-                    .iter()
-                    .min_by_key(|(_, entry)| entry.used)
-                    .map(|(key, _)| key.clone())
-                    .expect("retained entries exceed budget");
-                let old = self.entries.remove(&oldest).expect("selected entry");
-                self.weight -= old.weight;
-                discarded.entries.push(old);
-            }
-            // Keep the same LRU clock rollover behavior as retain.
-            if self.clock == u64::MAX {
-                let mut order = self
-                    .entries
-                    .iter()
-                    .map(|(key, entry)| (entry.used, key.clone()))
-                    .collect::<Vec<_>>();
-                order.sort();
-                for (index, (_, key)) in order.into_iter().enumerate() {
-                    self.entries.get_mut(&key).unwrap().used = index as u64;
-                }
-                self.clock = self.entries.len() as u64;
-            }
-            self.clock += 1;
-            entry.used = self.clock;
-            self.weight += entry.weight;
-            self.entries.insert(key, entry);
+        if self.max_entries == 0 || self.max_weight == 0 {
+            discarded
+                .entries
+                .extend(std::mem::take(&mut local.entries).into_values());
+            return discarded;
+        }
+        for (key, entry) in std::mem::take(&mut local.entries) {
+            self.insert_entry(key, entry, &mut discarded.entries);
         }
         discarded
+    }
+
+    fn insert_entry(&mut self, key: String, mut entry: Entry, discarded: &mut Vec<Entry>) {
+        if entry.weight > self.max_weight || self.max_entries == 0 {
+            discarded.push(entry);
+            return;
+        }
+        if let Some(old) = self.entries.remove(&key) {
+            self.weight -= old.weight;
+            discarded.push(old);
+        }
+        while self.entries.len() >= self.max_entries
+            || self.weight.saturating_add(entry.weight) > self.max_weight
+        {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            let old = self.entries.remove(&oldest).expect("selected entry");
+            self.weight -= old.weight;
+            discarded.push(old);
+        }
+        if self.clock == u64::MAX {
+            let mut order = self
+                .entries
+                .iter()
+                .map(|(key, entry)| (entry.used, key.clone()))
+                .collect::<Vec<_>>();
+            order.sort();
+            for (index, (_, key)) in order.into_iter().enumerate() {
+                self.entries.get_mut(&key).unwrap().used = index as u64;
+            }
+            self.clock = self.entries.len() as u64;
+        }
+        self.clock += 1;
+        entry.used = self.clock;
+        self.weight += entry.weight;
+        self.entries.insert(key, entry);
     }
 }
 
@@ -231,40 +242,12 @@ impl RecordCache {
     }
 
     pub fn retain(&mut self, candidate: Candidate, batch: Batch) {
-        let (max_weight, max_entries) = (self.max_weight, self.max_entries);
-        if batch.error.is_some() || batch.weight > max_weight || max_entries == 0 {
+        if batch.error.is_some() {
             return;
         }
-        while self.entries.len() >= max_entries
-            || self.weight.saturating_add(batch.weight) > max_weight
-        {
-            let Some(key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            let entry = self.entries.remove(&key).expect("selected cache entry");
-            self.weight -= entry.weight;
-        }
-        if self.clock == u64::MAX {
-            let mut order = self
-                .entries
-                .iter()
-                .map(|(key, entry)| (entry.used, key.clone()))
-                .collect::<Vec<_>>();
-            order.sort();
-            for (index, (_, key)) in order.into_iter().enumerate() {
-                self.entries.get_mut(&key).unwrap().used = index as u64;
-            }
-            self.clock = self.entries.len() as u64;
-        }
-        self.clock += 1;
         let key = uid_for(candidate.source, &candidate.path);
-        self.weight += batch.weight;
-        if let Some(old) = self.entries.insert(
+        let mut discarded = Vec::new();
+        self.insert_entry(
             key,
             Entry {
                 candidate,
@@ -273,11 +256,10 @@ impl RecordCache {
                 sidecars: batch.sidecars,
                 invalid: batch.invalid,
                 weight: batch.weight,
-                used: self.clock,
+                used: 0,
             },
-        ) {
-            self.weight -= old.weight;
-        }
+            &mut discarded,
+        );
     }
 }
 

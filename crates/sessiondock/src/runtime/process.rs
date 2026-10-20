@@ -112,8 +112,10 @@ impl ProcClock {
     pub const AT_CLKTCK: usize = 17;
     pub const DEFAULT_TICKS: u64 = 100;
     /// 100 ns `FILETIME` units per second.
+    #[cfg(windows)]
     pub const FILETIME_PER_SECOND: u64 = 10_000_000;
     /// macOS `proc_bsdinfo` start stamps are microseconds since the epoch.
+    #[cfg(target_os = "macos")]
     pub const MICROS_PER_SECOND: u64 = 1_000_000;
 
     pub fn unix_seconds(&self, start: StartTime) -> f64 {

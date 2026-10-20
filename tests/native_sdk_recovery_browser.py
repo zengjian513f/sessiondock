@@ -10,6 +10,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_fixtures import BINARY
 from native_sdk_footer_browser import native_events, provider
+from sdk_ui_fixtures import start_sdk
 
 
 def exercise(browser, base, source, events, screenshots):
@@ -52,6 +53,7 @@ def exercise(browser, base, source, events, screenshots):
     row.click()
     if not page.locator('#sdk-input').is_visible():
         page.locator('#a-sdk').click()
+    start_sdk(page)
     # First read fails. Recovery must happen without a model turn or refresh click.
     page.wait_for_function('NativeSdkView.usageError?.includes("temporarily unavailable")')
     page.wait_for_function('NativeSdkView.usageData?.usage?.tokens?.total_tokens === 4000')
@@ -102,6 +104,8 @@ def exercise(browser, base, source, events, screenshots):
     events.packet = {'type': 'snapshot', 'seq': 2, 'raw': {'running': True,
         'input_queue': [{'id': 'bridge:pending', 'state': 'queued', 'text': 'pending input'}]}}
     page.reload(wait_until='domcontentloaded')
+    page.locator('#a-sdk').click()
+    start_sdk(page)
     button = page.locator('[data-queue-id="bridge:pending"]').get_by_role('button', name='撤销', exact=True)
     expect(button).to_be_visible()
     context.route('**/api/native-sdk/queue_cancel', lambda route: actions.append(route))
@@ -138,6 +142,7 @@ def exercise(browser, base, source, events, screenshots):
     page.locator('#a-sdk').click()
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_contain_text('4,567')
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('42.5%'))
+    page.locator('#sdk-input').click()
     page.wait_for_function('!!NativeSdkView.openRead')
     assert opens
     opens[0].fulfill(json={'ok':True,'capabilities':{'models':False,'billing':True}})

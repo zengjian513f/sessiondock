@@ -175,6 +175,7 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
         tool_calls: BTreeMap::new(),
     };
     let mut files = Vec::new();
+    let mut parsed_files = Vec::with_capacity(group.members.len());
     for member in &group.members {
         if member.source != "codex" {
             return Err(TransferError::new(
@@ -213,7 +214,7 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
             },
         );
         let raw = stable_read(&member.path)?;
-        let parsed = rows(&raw)?;
+        let mut parsed = rows(&raw)?;
         let meta = parsed
             .iter()
             .find(|(_, v)| v["type"] == "session_meta")
@@ -242,7 +243,7 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
                 end_ordinal_exclusive: b["end_ordinal_exclusive"].as_u64(),
             })
         };
-        for (_, row) in &parsed {
+        for (_, row) in &mut parsed {
             let p = &row["payload"];
             if row["type"] == "response_item"
                 && p["type"] == "function_call"
@@ -268,7 +269,7 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
                     .tool_calls
                     .insert(id.into(), "__code_agent".into());
             }
-            super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
+            super::codex_ids::visit(row, &mut |kind, id| {
                 let map = match kind {
                     super::codex_ids::Identity::Thread => return Ok(id.to_owned()),
                     super::codex_ids::Identity::Turn => &mut identities.turns,
@@ -301,6 +302,9 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
             bytes: raw.len() as u64,
             base,
         });
+        if mode == Mode::Clone {
+            parsed_files.push((member.path.clone(), parsed));
+        }
     }
     for file in &files {
         if let Some(base) = &file.base
@@ -314,12 +318,13 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
     }
     let mut reference_issues = Vec::new();
     if mode == Mode::Clone {
-        for file in &files {
-            for (_, row) in rows(&stable_read(&file.source)?)? {
-                if let Some(reason) = super::codex_tools::audit(&row, &identities) {
+        for (source, parsed) in parsed_files {
+            for (_, mut row) in parsed {
+                let ordinal = row["ordinal"].as_u64();
+                if let Some(reason) = super::codex_tools::audit(&mut row, &identities) {
                     reference_issues.push(ReferenceIssue {
-                        source: file.source.clone(),
-                        ordinal: row["ordinal"].as_u64(),
+                        source: source.clone(),
+                        ordinal,
                         reason,
                     });
                 }

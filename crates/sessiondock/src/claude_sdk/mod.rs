@@ -64,6 +64,10 @@ struct Session {
 struct Live {
     #[serde(skip)]
     checkpoint: Option<PathBuf>,
+    #[serde(skip)]
+    last_checkpoint: Option<std::time::Instant>,
+    #[serde(skip)]
+    last_checkpoint_error: Option<String>,
     #[serde(default)]
     stdout_offset: u64,
     #[serde(default)]
@@ -263,6 +267,8 @@ impl Session {
             stop: CancellationToken::new(),
             live: Mutex::new(Live {
                 checkpoint: None,
+                last_checkpoint: None,
+                last_checkpoint_error: None,
                 stdout_offset: 0,
                 host_key: None,
                 seq: 0,
@@ -325,10 +331,27 @@ impl Session {
     }
 
     fn publish(&self, live: &mut Live) {
+        self.publish_with(live, true);
+    }
+
+    fn publish_throttled(&self, live: &mut Live) {
+        self.publish_with(live, false);
+    }
+
+    fn publish_with(&self, live: &mut Live, force_checkpoint: bool) {
         live.seq += 1;
-        if let Err(error) = live.save_checkpoint() {
-            live.error = Some(format!("claude_sdk_checkpoint: {error}"));
+        let res = if force_checkpoint {
+            live.save_checkpoint()
+        } else {
+            live.save_checkpoint_throttled()
+        };
+        if let Err(error) = res {
+            let msg = format!("claude_sdk_checkpoint: {error}");
+            live.last_checkpoint_error = Some(msg.clone());
+            live.error = Some(msg);
             live.error_kind = Some("transport");
+        } else {
+            live.last_checkpoint_error = None;
         }
         let _ = live.events.send(Arc::from(self.snapshot(live).to_string()));
     }
@@ -830,8 +853,9 @@ impl Bridge {
                 live.last_turn = Value::Null;
                 live.interrupt_requested = false;
                 session.publish(&mut live);
-                live.save_checkpoint()
-                    .map_err(|e| format!("claude_sdk_checkpoint: {e}"))?;
+                if let Some(err) = live.last_checkpoint_error.clone() {
+                    return Err(err);
+                }
                 sender
                     .send(frame)
                     .map_err(|_| "claude_sdk: native transport disconnected")?;
@@ -882,14 +906,10 @@ fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
         _ => None,
     })
 }
-impl Live {
-    fn save_checkpoint(&self) -> io::Result<()> {
-        let Some(path) = &self.checkpoint else {
-            return Ok(());
-        };
-        let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
-        let temporary = path.with_extension("tmp");
-        use std::io::Write;
+pub(super) fn save_atomic(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension("tmp");
+    let result = (|| -> io::Result<()> {
         let mut options = std::fs::OpenOptions::new();
         options.create(true).truncate(true).write(true);
         #[cfg(unix)]
@@ -898,8 +918,32 @@ impl Live {
             options.mode(0o600);
         }
         let mut file = options.open(&temporary)?;
-        file.write_all(&bytes)?;
+        file.write_all(&serde_json::to_vec(value).map_err(io::Error::other)?)?;
         file.sync_all()?;
-        std::fs::rename(temporary, path)
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+impl Live {
+    fn save_checkpoint(&mut self) -> io::Result<()> {
+        let Some(path) = &self.checkpoint else {
+            return Ok(());
+        };
+        save_atomic(path, self)?;
+        self.last_checkpoint = Some(std::time::Instant::now());
+        Ok(())
+    }
+
+    fn save_checkpoint_throttled(&mut self) -> io::Result<()> {
+        if self
+            .last_checkpoint
+            .is_none_or(|t| t.elapsed() >= Duration::from_millis(250))
+        {
+            self.save_checkpoint()?;
+        }
+        Ok(())
     }
 }

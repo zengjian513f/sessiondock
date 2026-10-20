@@ -7456,8 +7456,7 @@ async function toggleSessionRun(row, button = null, intent = null, composerMode 
       await SdkView.startSession(row.uid, row.agent_id || null);
     else {
       if (!composerMode) {
-        SdkView.legacyViews.add(viewKey(row.uid));
-        (SdkView.selectMode || SdkView.rememberMode).call(SdkView, row.uid, null, 'terminal');
+        SdkView.selectMode(row.uid, null, 'terminal');
         SessionContentView.close();
       }
       await takeover(row.uid, null, composerMode === 'cli');
@@ -9580,7 +9579,11 @@ function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = can
         || (Number.isInteger(optionIndex) && !!rows[questionIndex]?.options?.[optionIndex]));
     if (!validDraft) {
       selections = Array(rows.length).fill(null);
-      if (draftKey) questionFormDrafts.set(draftKey, selections);
+      if (draftKey) {
+        questionFormDrafts.delete(draftKey);
+        if (questionFormDrafts.size >= 200) questionFormDrafts.delete(questionFormDrafts.keys().next().value);
+        questionFormDrafts.set(draftKey, selections);
+      }
     }
     let formSubmit = null;
     body.querySelectorAll('[data-question-option]').forEach(button => {

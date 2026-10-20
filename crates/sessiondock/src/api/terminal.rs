@@ -869,6 +869,44 @@ pub async fn list(
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
     let generation = super::runtime::lifecycle_generation(&state);
+    let sdk_sessions = collect_sdk_sessions(&state)?;
+    let has_sdk_receipts = !sdk_sessions.is_empty();
+    if !force
+        && !has_sdk_receipts
+        && let Some(bytes) = state.polls.term_list(generation)
+    {
+        return Ok(super::lifecycle::response_bytes(bytes, permit));
+    }
+    let response = build_list_value(&state, force, sdk_sessions).await?;
+    let (bytes, permit) = super::lifecycle::serialize(response, permit).await?;
+    if !has_sdk_receipts {
+        state.polls.store_term_list(generation, bytes.clone());
+    }
+    Ok(super::lifecycle::response_bytes(bytes, permit))
+}
+
+pub(super) async fn list_value(state: &AppState, force: bool) -> Result<Value, ApiError> {
+    let permit = super::lifecycle::admit(state).await?;
+    let generation = super::runtime::lifecycle_generation(state);
+    let sdk_sessions = collect_sdk_sessions(state)?;
+    let has_sdk_receipts = !sdk_sessions.is_empty();
+    if !force
+        && !has_sdk_receipts
+        && let Some(bytes) = state.polls.term_list(generation)
+        && let Ok(value) = serde_json::from_slice(&bytes)
+    {
+        return Ok(value);
+    }
+    let response = build_list_value(state, force, sdk_sessions).await?;
+    if !has_sdk_receipts
+        && let Ok((bytes, _)) = super::lifecycle::serialize(response.clone(), permit).await
+    {
+        state.polls.store_term_list(generation, bytes);
+    }
+    Ok(response)
+}
+
+fn collect_sdk_sessions(state: &AppState) -> Result<Vec<Value>, ApiError> {
     let mut sdk_sessions = state
         .codex_sdk
         .as_ref()
@@ -877,13 +915,14 @@ pub async fn list(
         .map_err(super::codex_sdk::rpc)?
         .unwrap_or_default();
     sdk_sessions.extend(state.native_sdks.pending());
-    let has_sdk_receipts = !sdk_sessions.is_empty();
-    if !force
-        && !has_sdk_receipts
-        && let Some(bytes) = state.polls.term_list(generation)
-    {
-        return Ok(super::lifecycle::response_bytes(bytes, permit));
-    }
+    Ok(sdk_sessions)
+}
+
+async fn build_list_value(
+    state: &AppState,
+    force: bool,
+    sdk_sessions: Vec<Value>,
+) -> Result<Value, ApiError> {
     // The frontend abbreviates cwd with it.
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -928,9 +967,14 @@ pub async fn list(
         "bug_report": state.capabilities["bug_report"],
         "bug_report_worker": state.capabilities["bug_report_worker"]});
     if let Some(service) = &state.terminal {
-        response["hosts"] = json!(service.hosts().await?);
+        // From the host records themselves, not the (up to 500 ms old) shared
+        // observation: a session created a moment ago must not be reported as an
+        // old host for one poll, or its console would start in the wrong renderer.
+        let hosts = service.hosts().await?;
+        grid_hosts.extend(hosts.iter().filter(|h| h.grid).map(|h| h.name.clone()));
+        response["hosts"] = json!(hosts);
         if let Some(runtime) = &state.runtime {
-            let observed = super::runtime::shared(&state, runtime, force).await?;
+            let observed = super::runtime::shared(state, runtime, force).await?;
             // Display the thread currently open in a Codex TUI separately from
             // its immutable protocol binding. Never rewrite the guard identity.
             let mut current = std::collections::BTreeMap::<String, Vec<String>>::new();
@@ -943,6 +987,9 @@ pub async fn list(
                     .await?;
                 let rows = crate::runtime::procscan::SessionRow::from_list(&document);
                 for row in &rows {
+                    if row.source != "codex" {
+                        continue;
+                    }
                     if let Some(host) = observed
                         .snapshot
                         .codex_process_host(&scan.scan, &rows, &row.uid)
@@ -953,14 +1000,6 @@ pub async fn list(
                             .push(row.uid.clone());
                     }
                 }
-            }
-            // From the host records themselves, not the (up to 500 ms old) shared
-            // observation: a session created a moment ago must not be reported as an
-            // old host for one poll, or its console would start in the wrong renderer.
-            if let Some(service) = &state.terminal
-                && let Ok(hosts) = service.hosts().await
-            {
-                grid_hosts.extend(hosts.into_iter().filter(|h| h.grid).map(|h| h.name));
             }
             let catalog = state
                 .reader
@@ -1010,7 +1049,7 @@ pub async fn list(
     if let Some(service) = &state.lifecycle {
         // This is a complete snapshot, not a page. Historical receipts must
         // neither hide later launches nor remove their bound terminals.
-        let records = super::lifecycle::shared_records(&state, service, force).await?;
+        let records = super::lifecycle::shared_records(state, service, force).await?;
         // A bug-report worker's row carries the pending record
         // fields (`kind`, `title` "处理 <id>", `report_id`) so the sidebar
         // names the report instead of "新建 … 会话".
@@ -1096,11 +1135,7 @@ pub async fn list(
         sessions.retain(|row| row["origin_launch_id"].is_null());
         response["enabled"] = json!(!sessions.is_empty());
     }
-    let (bytes, permit) = super::lifecycle::serialize(response, permit).await?;
-    if !has_sdk_receipts {
-        state.polls.store_term_list(generation, bytes.clone());
-    }
-    Ok(super::lifecycle::response_bytes(bytes, permit))
+    Ok(response)
 }
 
 /// Python-compatible `str(value or "")` text for a JSON id field (terminal send).

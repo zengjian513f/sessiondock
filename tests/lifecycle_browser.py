@@ -77,6 +77,7 @@ def main(bind_native=False, bare_shell=False):
                     restarted=iteration>0
                     with isolated_server(corpus,BINARY,host_dir=root/"host",lifecycle_dir=root/"ledger",launcher_config=configuration) as (base,_):
                         context=browser.new_context(viewport={"width":1280,"height":900},service_workers="block")
+                        context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.codex', JSON.stringify('cli'))")
                         context.route("**/*",lambda route:route.continue_() if route.request.url.startswith(base+"/") else route.abort())
                         page=context.new_page()
                         errors=[]
@@ -165,7 +166,7 @@ def main(bind_native=False, bare_shell=False):
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             # Back from the phone width, the header returns its global buttons.
                             expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
-                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-chat","a-info","a-more","a-resources","a-session-action","a-session-toggle","a-term","report-bug"]
+                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-chat","a-info","a-more","a-resources","a-sdk","a-session-action","a-session-toggle","a-term","report-bug"]
                             expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
                             expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","停止会话")
                             if bare_shell:

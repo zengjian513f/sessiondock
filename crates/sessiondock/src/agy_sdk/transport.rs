@@ -15,6 +15,17 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+    [
+        r"(?i)(bearer\s+)[^\s\x22']+",
+        r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)\s*[:=]\s*[\x22']?)[^\s,\x22'}]+",
+        r"(https?://)[^/\s:@]+:[^/\s@]+@",
+    ]
+    .into_iter()
+    .map(|pattern| regex::Regex::new(pattern).expect("static redact regex"))
+    .collect()
+});
+
 pub(super) struct ProcessConfig {
     profile: CliProfile,
     home: PathBuf,
@@ -125,14 +136,8 @@ impl ProcessConfig {
             text = text.replace(secret, "[redacted]");
         }
         // Retain useful diagnostics while removing recognizable credentials not present in profile.env.
-        for pattern in [
-            r"(?i)(bearer\s+)[^\s\x22']+",
-            r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)\s*[:=]\s*[\x22']?)[^\s,\x22'}]+",
-            r"(https?://)[^/\s:@]+:[^/\s@]+@",
-        ] {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                text = regex.replace_all(&text, "${1}[redacted]").into_owned();
-            }
+        for regex in &*REDACT_PATTERNS {
+            text = regex.replace_all(&text, "${1}[redacted]").into_owned();
         }
         text
     }
@@ -368,7 +373,11 @@ impl Native {
                         .await
                     {
                         offset = chunk.next_offset;
-                        if writer.write_all(&chunk.bytes).await.is_err() || chunk.eof {
+                        if !chunk.bytes.is_empty() && writer.write_all(&chunk.bytes).await.is_err()
+                        {
+                            break;
+                        }
+                        if chunk.eof {
                             break;
                         }
                     }

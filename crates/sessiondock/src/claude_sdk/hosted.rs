@@ -34,24 +34,10 @@ impl Sender {
             return Ok(());
         }
         entries.push(Entry { id, frame });
-        save(&self.path, &*entries).map_err(|e| format!("claude_sdk_outbox: {e}"))?;
+        save_atomic(&self.path, &*entries).map_err(|e| format!("claude_sdk_outbox: {e}"))?;
         self.wake.notify_one();
         Ok(())
     }
-}
-fn save(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let tmp = path.with_extension("tmp");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)?;
-    file.write_all(&serde_json::to_vec(value).map_err(io::Error::other)?)?;
-    file.sync_all()?;
-    std::fs::rename(tmp, path)
 }
 fn private_dir(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -380,6 +366,8 @@ async fn run(
     let mut signal_sent = false;
     let mut stderr_offset = 0;
     let mut stderr_buffer = Vec::new();
+    let mut write_error = None;
+    let mut drained_exit = false;
     let outcome: Result<(), String> = async {
         loop {
             if shutdown.is_cancelled() {
@@ -397,16 +385,31 @@ async fn run(
             // repeated transport write harmless after a lost acknowledgement.
             let entries = lock(&sender.entries).clone();
             for entry in &entries[sent..] {
+                if write_error.is_some() {
+                    break;
+                }
                 // The submitter publishes its protocol association under this lock.
                 lock(&session.live).save_checkpoint().map_err(error)?;
                 let mut bytes = serde_json::to_vec(&entry.frame).map_err(error)?;
                 bytes.push(b'\n');
-                let receipt = match client.receipt(&entry.id).await.map_err(error)? {
-                    Some(receipt) => receipt,
-                    None => client.write(&entry.id, &bytes).await.map_err(error)?,
-                };
-                if receipt.state != "written" {
-                    return Err(format!("claude_sdk_write_uncertain: {}", receipt.state));
+                let written = async {
+                    let receipt = match client.receipt(&entry.id).await.map_err(error)? {
+                        Some(receipt) => receipt,
+                        None => client.write(&entry.id, &bytes).await.map_err(error)?,
+                    };
+                    if receipt.state != "written" {
+                        return Err(format!("claude_sdk_write_uncertain: {}", receipt.state));
+                    }
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = written {
+                    // A process may finish its turn and exit before a queued
+                    // control write. Preserve its final output before reporting
+                    // the write failure, and never retry the uncertain write.
+                    sender.closed.store(true, Ordering::Release);
+                    write_error = Some(error);
+                    break;
                 }
                 if entry.frame["type"] == "control_response"
                     && let Some(id) = entry.frame["response"]["request_id"].as_str()
@@ -425,6 +428,7 @@ async fn run(
                 .map_err(error)?;
             read_offset = output.next_offset;
             buffer.extend_from_slice(&output.bytes);
+            let mut offset_dirty = false;
             while let Some(length) = buffer
                 .iter()
                 .position(|byte| *byte == b'\n')
@@ -434,23 +438,31 @@ async fn run(
                 let line: Vec<_> = buffer.drain(..length).collect();
                 let next = read_offset - buffer.len() as u64;
                 if line.iter().all(u8::is_ascii_whitespace) {
-                    let mut live = lock(&session.live);
-                    live.stdout_offset = next;
-                    live.save_checkpoint().map_err(error)?;
+                    lock(&session.live).stdout_offset = next;
+                    offset_dirty = true;
                     continue;
                 }
                 let frame: Value = serde_json::from_slice(&line)
                     .map_err(|_| "claude_sdk: invalid native stream-json output")?;
                 let refresh = frame["type"] == "result"
                     || (frame["type"] == "system" && frame["subtype"] == "compact_boundary");
+                let is_delta = frame["type"] == "stream_event"
+                    && frame["event"]["type"] == "content_block_delta";
                 protocol::observe_at(&session, frame, Some(next));
-                {
-                    let mut live = lock(&session.live);
-                    live.stdout_offset = next;
-                    live.save_checkpoint().map_err(error)?;
+                if let Some(err) = lock(&session.live).last_checkpoint_error.clone() {
+                    return Err(err);
                 }
+                offset_dirty = is_delta;
                 if refresh {
                     session.schedule_usage();
+                }
+            }
+            if offset_dirty {
+                let mut live = lock(&session.live);
+                if output.eof {
+                    live.save_checkpoint().map_err(error)?;
+                } else {
+                    live.save_checkpoint_throttled().map_err(error)?;
                 }
             }
             let diagnostic = client
@@ -481,16 +493,24 @@ async fn run(
             let status = client.status().await.map_err(error)?;
             if read_offset >= status.stdout_len
                 && !(status.stdout_eof && status.exit.is_some())
+                && write_error.is_none()
                 && let Some(reply) = caught_up.take()
             {
+                lock(&session.live).save_checkpoint().map_err(error)?;
                 let _ = reply.send(Ok(()));
             }
             if status.stdout_eof
                 && read_offset >= status.stdout_len
                 && buffer.is_empty()
+                && status.stderr_eof
                 && stderr_offset >= status.stderr_len
+                && stderr_buffer.is_empty()
                 && let Some(exit) = status.exit
             {
+                drained_exit = true;
+                if let Some(error) = &write_error {
+                    return Err(error.clone());
+                }
                 if !deliberate && !exit.success() {
                     return Err(format!(
                         "claude_sdk_disconnected: native CLI exit code {:?}, signal {:?}; {}",
@@ -508,6 +528,11 @@ async fn run(
             if read_offset < status.stdout_len || stderr_offset < status.stderr_len {
                 continue;
             }
+            if status.exit.is_none()
+                && let Some(error) = &write_error
+            {
+                return Err(error.clone());
+            }
             tokio::select! {
                 _ = shutdown.cancelled() => { detached = true; return Ok(()); }
                 _ = sender.wake.notified() => {}
@@ -517,7 +542,11 @@ async fn run(
     }
     .await;
     sender.closed.store(true, Ordering::Release);
-    let exited = client.status().await.ok().is_some_and(|s| s.exit.is_some());
+    // A child can exit between the read loop's status query and this one.
+    // Keep the host association after a write failure until its output has
+    // been drained, so a later attachment can still recover the final result.
+    let exited = client.status().await.ok().is_some_and(|s| s.exit.is_some())
+        && (write_error.is_none() || drained_exit);
     let mut live = lock(&session.live);
     live.outbound = None;
     live.pid = None;

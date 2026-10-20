@@ -250,16 +250,6 @@ impl ClaimResponse {
         }
     }
 
-    /// The server is itself a claimant (a server-held lease around one
-    /// send). Like `into_api_json`, this is the only other
-    /// way the secret leaves the registry; it is consumed, never logged.
-    pub fn into_server_token(self) -> Result<String, PublicOwner> {
-        match self {
-            Self::Granted(claim) => Ok(claim.token.expose_for_claim()),
-            Self::Conflict(owner) => Err(owner),
-        }
-    }
-
     /// Explicitly expose only this claimant's browser lease token, never a
     /// ptyhost credential. HTTP handlers must mark this response `no-store`.
     pub fn into_api_json(self) -> Value {
@@ -275,12 +265,6 @@ impl ClaimResponse {
 /// Allocated by the registry, never accepted from a browser. Not an auth token.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConnectionId(u64);
-
-impl ConnectionId {
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RevocationReason {
@@ -395,9 +379,6 @@ impl BoundLease {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn connection_id(&self) -> ConnectionId {
-        self.connection_id
-    }
 
     /// Clone the signal receiver for a WS select loop. Check its current value
     /// before waiting; a replacement may already have occurred after bind.
@@ -430,15 +411,14 @@ struct State {
 }
 
 impl State {
-    fn advance(&mut self, sample: ClockSample) -> (Duration, usize) {
+    fn advance(&mut self, sample: ClockSample) -> Duration {
         // Concurrent callers can sample before another caller takes the lock.
         // Never move the logical clock backwards or resurrect a reservation.
         let now = self.last_tick.max(sample.monotonic);
         self.last_tick = now;
-        let before = self.leases.len();
         self.leases
             .retain(|_, lease| lease.binding.is_some() || now < lease.reservation_deadline);
-        (now, before - self.leases.len())
+        now
     }
 }
 
@@ -578,7 +558,7 @@ impl Registry {
         };
         let old = {
             let mut state = self.lock()?;
-            let (now, _) = state.advance(sample);
+            let now = state.advance(sample);
             if let Some(key) = target.launch_key()
                 && state.retired.contains(&key)
             {
@@ -705,14 +685,6 @@ impl Registry {
         })
     }
 
-    pub fn owner(&self, name: &str) -> Result<Option<PublicOwner>, OwnershipError> {
-        validate_name(name)?;
-        let sample = self.sample()?;
-        let mut state = self.lock()?;
-        state.advance(sample);
-        Ok(state.leases.get(name).map(|lease| lease.owner.clone()))
-    }
-
     /// Authorize one HTTP input request against the current lease without
     /// consuming or binding it. An unexpired reservation and a bound WebSocket
     /// connection are the same claim; a stale credential is `Revoked`, an
@@ -800,13 +772,6 @@ impl Registry {
         }
         Ok(matches)
     }
-
-    /// Expire abandoned reservations across all names; bound connections do
-    /// not expire on the reservation TTL. An optional service tick can call it.
-    pub fn expire(&self) -> Result<usize, OwnershipError> {
-        let sample = self.sample()?;
-        Ok(self.lock()?.advance(sample).1)
-    }
 }
 
 fn matches_bound(lease: &Lease, bound: &BoundLease) -> bool {
@@ -816,5 +781,5 @@ fn matches_bound(lease: &Lease, bound: &BoundLease) -> bool {
         && lease
             .binding
             .as_ref()
-            .is_some_and(|binding| binding.connection_id == bound.connection_id)
+            .is_some_and(|binding| binding.connection_id.0 == bound.connection_id.0)
 }

@@ -60,13 +60,11 @@ const NativeSdkControls = {
   },
   layout(view) {
     if (!view.pane) return;
-    const gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
-    if (!gauges || !menu) return;
-    const more=view.pane.querySelector('#sdk-more-menu');
+    const gauges=view.pane.querySelector('.sdk-gauges'),more=view.pane.querySelector('#sdk-more-menu');
+    if (!gauges || !more) return;
     SdkUI.layoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector))
       .concat(view.nativeSettings || [],[...view.pane.querySelectorAll('[data-sdk-action]')]));
-    for (const [popover,trigger] of [[menu,'#sdk-more'],[more,'#sdk-more']])
-      if (popover.matches(':popover-open')) ConversationUI.placePopover(popover,view.pane.querySelector(trigger));
+    if (more.matches(':popover-open')) ConversationUI.placePopover(more,view.pane.querySelector('#sdk-more'));
     view.updateStatusDisclosure();
   },
   async loadUsage(view,refresh) {
@@ -199,17 +197,6 @@ const NativeSdkControls = {
       creditSection.append(el('div','sdk-usage-total',creditLabel));
       const resetNote=this.formatReset(creditResetRaw);
       if(resetNote)note(creditSection,resetNote.replace(/^\s*·\s*/,''));
-    }
-    const quota=view.usageData?.quota;
-    if(Array.isArray(quota?.buckets) && quota.buckets.length){
-      const quotaSection=section('额度');
-      for(const bucket of quota.buckets){
-        const unit=bucket.unit || (view.uid.startsWith('kiro:') ? 'Credits' : '');
-        const usedLimit=bucket.used!=null && bucket.limit!=null ? `${creditCount(bucket.used)} / ${creditCount(bucket.limit)}${unit ? ` ${unit}` : ''}` : '';
-        const rem=Number.isFinite(bucket.remaining_percent) ? `剩余 ${UsageUI.percent(bucket.remaining_percent)}%` : '';
-        const resetNote=this.formatReset(bucket.resets_at ?? bucket.reset_at ?? bucket.reset);
-        metric(quotaSection,`${bucket.group || bucket.id || 'Credit'}${bucket.window ? ` · ${UsageUI.window(bucket.window)}` : ''}`,`${[usedLimit,rem].filter(Boolean).join(' · ') || '已读取'}${resetNote}`);
-      }
     }
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage;
     if(context && Number.isFinite(context.percent ?? context.percentage)){
@@ -390,7 +377,7 @@ const NativeSdkControls = {
       if(radio && !radio.disabled)radio.click();
       success=true;
     }else if(command==='rename'){
-      if(view.capabilities.rename===false && !(view.uid.startsWith('kiro:') && view.capabilities.rename!==false))view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
+      if(view.capabilities.rename!==true)view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
       else if(!arg)view.setNotice('用法：/rename 新名称','blocked');
       else{
         const generation=view.generation;

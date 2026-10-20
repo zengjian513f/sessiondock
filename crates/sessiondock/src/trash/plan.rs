@@ -152,7 +152,7 @@ impl Plan {
     }
 }
 
-fn infer_kiro_root(origin: & std::path::Path) -> Option<PathBuf> {
+fn infer_kiro_root(origin: &std::path::Path) -> Option<PathBuf> {
     for ancestor in origin.ancestors() {
         if ancestor.file_name().and_then(|n| n.to_str()) == Some("sessions") {
             return Some(ancestor.to_path_buf());
@@ -171,9 +171,9 @@ fn plan_kiro_files(
     push: &mut dyn FnMut(PathBuf, FileRole) -> Result<(), TrashError>,
 ) -> Result<(), TrashError> {
     if origin.file_name().and_then(|n| n.to_str()) == Some("session.json") {
-        let dir = origin.parent().ok_or_else(|| {
-            TrashError::new(409, "path_missing", "Kiro V3 会话缺少父目录路径")
-        })?;
+        let dir = origin
+            .parent()
+            .ok_or_else(|| TrashError::new(409, "path_missing", "Kiro V3 会话缺少父目录路径"))?;
         push(dir.to_path_buf(), FileRole::Directory)?;
     } else {
         push(origin.to_path_buf(), FileRole::Data)?;

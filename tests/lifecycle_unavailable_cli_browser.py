@@ -39,6 +39,8 @@ XTERM = """() => [...T.views.values()].map(view => {
 def exercise(browser, base, root, uid, screenshots, phase, width, theme, node_id=None):
     context = browser.new_context(viewport={"width": width, "height": 900},
                                   color_scheme=theme, service_workers="block")
+    context.add_init_script("""localStorage.setItem('sessiondock.agentStartMode.codex', JSON.stringify('cli'));
+      localStorage.setItem('sessiondock.hub./.agentStartMode.codex', JSON.stringify('cli'));""")
     errors = []
     page = context.new_page()
     page.on("pageerror", lambda error: errors.append(str(error)))

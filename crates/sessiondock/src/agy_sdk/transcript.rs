@@ -2,7 +2,13 @@
 //! transcript. Never render their transport fields as conversational content.
 use super::{Live, Turn, project, transport::ProcessConfig};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::SeekFrom,
+    sync::Arc,
+    time::SystemTime,
+};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 fn records(bytes: &[u8]) -> impl DoubleEndedIterator<Item = Value> + '_ {
     // Ignore a trailing partial record; a later native write retries it.
@@ -13,7 +19,27 @@ fn records(bytes: &[u8]) -> impl DoubleEndedIterator<Item = Value> + '_ {
 }
 
 pub(super) async fn model(process: &ProcessConfig, sid: &str) -> Option<String> {
-    let bytes = tokio::fs::read(process.transcript_path(sid)).await.ok()?;
+    const TAIL_BYTES: u64 = 65_536;
+    let path = process.transcript_path(sid);
+    let mut file = tokio::fs::File::open(&path).await.ok()?;
+    let len = file.metadata().await.ok()?.len();
+    if len > TAIL_BYTES {
+        if file.seek(SeekFrom::Start(len - TAIL_BYTES)).await.is_ok() {
+            let mut tail = Vec::with_capacity(TAIL_BYTES as usize);
+            if file.read_to_end(&mut tail).await.is_ok() {
+                let slice = match tail.iter().position(|&b| b == b'\n') {
+                    Some(pos) => &tail[pos + 1..],
+                    None => &[],
+                };
+                if let Some(found) = crate::sessions::agy::transcript_model(slice) {
+                    return Some(found);
+                }
+            }
+        }
+        file.seek(SeekFrom::Start(0)).await.ok()?;
+    }
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.read_to_end(&mut bytes).await.ok()?;
     crate::sessions::agy::transcript_model(&bytes)
 }
 
@@ -106,15 +132,183 @@ pub(super) async fn conflicting_result(
         "response_suffix_matches":matches})
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum StepKind {
+    UserInput,
+    SystemMessage,
+    PlannerResponse,
+}
+
+impl StepKind {
+    fn from_step_type(step_type: Option<&str>) -> Self {
+        match step_type {
+            Some("user_input") => Self::UserInput,
+            Some("system_message") => Self::SystemMessage,
+            _ => Self::PlannerResponse,
+        }
+    }
+
+    fn from_transcript_type(record_type: Option<&str>) -> Option<Self> {
+        match record_type {
+            Some("USER_INPUT") => Some(Self::UserInput),
+            Some("SYSTEM_MESSAGE") => Some(Self::SystemMessage),
+            Some("PLANNER_RESPONSE") => Some(Self::PlannerResponse),
+            _ => None,
+        }
+    }
+
+    fn transcript_type(self) -> &'static str {
+        match self {
+            Self::UserInput => "USER_INPUT",
+            Self::SystemMessage => "SYSTEM_MESSAGE",
+            Self::PlannerResponse => "PLANNER_RESPONSE",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Pending {
     steps: BTreeMap<u64, Value>,
+    /// `(step_index, kind)` -> `(byte_offset, byte_len)` of the first
+    /// completed transcript line for that step. Storing only 16-byte spans
+    /// keeps memory tiny across long sessions while allowing re-resolution.
+    spans: HashMap<(u64, StepKind), (u64, usize)>,
+    scanned_offset: u64,
+    /// `(line_offset, raw_part_len, fnv1a64)` of the last complete line scanned.
+    last_anchor: Option<(u64, usize, u64)>,
+    file_id: Option<(u64, u64)>,
     stamp: Option<(u64, Option<SystemTime>)>,
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+fn file_identity(meta: &std::fs::Metadata) -> (u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (meta.dev(), meta.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        (0, 0)
+    }
+}
+
+fn index_transcript_line(
+    line: &[u8],
+    line_offset: u64,
+    out: &mut HashMap<(u64, StepKind), (u64, usize)>,
+) {
+    if line.is_empty() {
+        return;
+    }
+    let Ok(record) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
+    if record["status"] != "DONE" {
+        return;
+    }
+    let Some(kind) = StepKind::from_transcript_type(record["type"].as_str()) else {
+        return;
+    };
+    let Some(index) = record["step_index"].as_u64() else {
+        return;
+    };
+    out.entry((index, kind))
+        .or_insert((line_offset, line.len()));
+}
+
+fn index_complete_lines(
+    complete: &[u8],
+    mut offset: u64,
+    out: &mut HashMap<(u64, StepKind), (u64, usize)>,
+) -> Option<(u64, usize, u64)> {
+    let mut last_anchor = None;
+    for part in complete.split_inclusive(|&b| b == b'\n') {
+        let line = part.strip_suffix(b"\n").unwrap_or(part);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        index_transcript_line(line, offset, out);
+        last_anchor = Some((offset, part.len(), fnv1a64(part)));
+        offset += part.len() as u64;
+    }
+    last_anchor
+}
+
+async fn read_validated_record(
+    file: &mut tokio::fs::File,
+    index: u64,
+    kind: StepKind,
+    offset: u64,
+    len: usize,
+) -> Option<Value> {
+    file.seek(SeekFrom::Start(offset)).await.ok()?;
+    let mut line = vec![0u8; len];
+    file.read_exact(&mut line).await.ok()?;
+    let record = serde_json::from_slice::<Value>(&line).ok()?;
+    if record["status"] != "DONE"
+        || record["step_index"].as_u64() != Some(index)
+        || record["type"].as_str() != Some(kind.transcript_type())
+    {
+        return None;
+    }
+    Some(record)
 }
 
 impl Pending {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    fn reset_index(&mut self) {
+        self.scanned_offset = 0;
+        self.spans.clear();
+        self.last_anchor = None;
+    }
+
+    async fn verify_anchor(&self, file: &mut tokio::fs::File) -> bool {
+        let Some((offset, len, expected_hash)) = self.last_anchor else {
+            return self.scanned_offset == 0;
+        };
+        if file.seek(SeekFrom::Start(offset)).await.is_err() {
+            return false;
+        }
+        let mut buf = vec![0u8; len];
+        if file.read_exact(&mut buf).await.is_err() {
+            return false;
+        }
+        fnv1a64(&buf) == expected_hash
+    }
+
+    async fn scan_from_current_offset(&mut self, file: &mut tokio::fs::File) -> bool {
+        if file
+            .seek(SeekFrom::Start(self.scanned_offset))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        let mut buf = Vec::new();
+        if file.read_to_end(&mut buf).await.is_err() {
+            return false;
+        }
+        // Ignore a trailing partial record; a later native write changes len and retries it.
+        if let Some(last_nl) = buf.iter().rposition(|&b| b == b'\n') {
+            let complete = &buf[..=last_nl];
+            let base_offset = self.scanned_offset;
+            self.scanned_offset += complete.len() as u64;
+            if let Some(anchor) = index_complete_lines(complete, base_offset, &mut self.spans) {
+                self.last_anchor = Some(anchor);
+            }
+        }
+        true
     }
 
     pub fn observe(&mut self, step: &Value) {
@@ -143,52 +337,79 @@ impl Pending {
             return false;
         }
         let path = process.transcript_path(&live.sid);
-        let Ok(meta) = tokio::fs::metadata(&path).await else {
+        let Ok(mut file) = tokio::fs::File::open(&path).await else {
             return false;
         };
+        let Ok(meta) = file.metadata().await else {
+            return false;
+        };
+        let id = file_identity(&meta);
         let stamp = (meta.len(), meta.modified().ok());
-        if self.stamp == Some(stamp) {
+        if self.file_id == Some(id) && self.stamp == Some(stamp) {
             return false;
         }
-        let Ok(bytes) = tokio::fs::read(&path).await else {
+        if self.file_id != Some(id) || meta.len() < self.scanned_offset {
+            self.file_id = Some(id);
+            self.reset_index();
+        } else if self.scanned_offset > 0 && !self.verify_anchor(&mut file).await {
+            self.reset_index();
+        }
+        if meta.len() > self.scanned_offset && !self.scan_from_current_offset(&mut file).await {
             return false;
-        };
+        }
         self.stamp = Some(stamp);
         let mut assistant = false;
         let mut model = None;
-        for record in records(&bytes) {
-            let Some(index) = record["step_index"].as_u64() else {
-                continue;
-            };
-            let Some(step) = self.steps.get(&index) else {
-                continue;
-            };
-            let expected = match step["step_type"].as_str() {
-                Some("user_input") => "USER_INPUT",
-                Some("system_message") => "SYSTEM_MESSAGE",
-                _ => "PLANNER_RESPONSE",
-            };
-            if record["type"] != expected || record["status"] != "DONE" {
-                continue;
+        let mut rescanned = false;
+        loop {
+            let candidates: Vec<(u64, StepKind, u64, usize)> = self
+                .steps
+                .iter()
+                .filter_map(|(&index, step)| {
+                    let kind = StepKind::from_step_type(step["step_type"].as_str());
+                    let &(offset, len) = self.spans.get(&(index, kind))?;
+                    Some((index, kind, offset, len))
+                })
+                .collect();
+            let mut need_rescan = false;
+            for (index, kind, offset, len) in candidates {
+                let Some(record) = read_validated_record(&mut file, index, kind, offset, len).await
+                else {
+                    need_rescan = true;
+                    break;
+                };
+                let mut step = self.steps.remove(&index).unwrap();
+                if kind == StepKind::UserInput {
+                    if let Some(value) = crate::sessions::agy::record_model(&record) {
+                        model = Some(value);
+                    }
+                    continue;
+                }
+                let text = record["content"].as_str().unwrap_or_default();
+                if kind == StepKind::SystemMessage {
+                    let (text, fields) = crate::sessions::agy::system_message(text);
+                    step["text"] = text.into();
+                    step["system_fields"] = fields;
+                } else {
+                    assistant |= !text.is_empty();
+                    step["text"] = text.into();
+                }
+                step["transcript"] = record;
+                project(live, turn, &step);
             }
-            let mut step = self.steps.remove(&index).unwrap();
-            if expected == "USER_INPUT" {
-                if let Some(value) = crate::sessions::agy::record_model(&record) {
-                    model = Some(value);
+            if need_rescan && !rescanned {
+                rescanned = true;
+                self.reset_index();
+                if !self.scan_from_current_offset(&mut file).await {
+                    self.stamp = None;
+                    break;
                 }
                 continue;
             }
-            let text = record["content"].as_str().unwrap_or_default();
-            if expected == "SYSTEM_MESSAGE" {
-                let (text, fields) = crate::sessions::agy::system_message(text);
-                step["text"] = text.into();
-                step["system_fields"] = fields;
-            } else {
-                assistant |= !text.is_empty();
-                step["text"] = text.into();
+            if need_rescan {
+                self.stamp = None;
             }
-            step["transcript"] = record;
-            project(live, turn, &step);
+            break;
         }
         live.observe_model(model);
         assistant

@@ -33,9 +33,6 @@ impl NativeBinding {
     pub fn instance_id(&self) -> &str {
         &self.instance_id
     }
-    pub fn method(&self) -> &'static str {
-        "operator"
-    }
     fn parse(value: &Value, meta: &Metadata) -> Result<Self> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]

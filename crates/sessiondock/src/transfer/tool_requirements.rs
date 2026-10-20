@@ -7,8 +7,8 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-fn name(value: &Value, namespace: Option<&str>, tools: &mut BTreeSet<String>) {
-    if let Some(name) = value["name"].as_str().filter(|s| !s.is_empty()) {
+fn name(name: Option<&str>, namespace: Option<&str>, tools: &mut BTreeSet<String>) {
+    if let Some(name) = name.filter(|s| !s.is_empty()) {
         tools.insert(match namespace.filter(|s| !s.is_empty()) {
             Some(namespace) => format!("{namespace}.{name}"),
             None => name.into(),
@@ -26,7 +26,7 @@ pub fn collect(plan: &ClonePlan, native: &Native) -> Result<BTreeSet<String>, Tr
     {
         for row in &table.rows {
             name(
-                &serde_json::to_value(row)?,
+                row.get("name").and_then(Value::as_str),
                 row.get("namespace").and_then(Value::as_str),
                 &mut tools,
             );
@@ -49,11 +49,19 @@ pub fn collect(plan: &ClonePlan, native: &Native) -> Result<BTreeSet<String>, Tr
                     if definition["type"] == "namespace" {
                         if let Some(children) = definition["tools"].as_array() {
                             for child in children {
-                                name(child, definition["name"].as_str(), &mut tools);
+                                name(
+                                    child["name"].as_str(),
+                                    definition["name"].as_str(),
+                                    &mut tools,
+                                );
                             }
                         }
                     } else {
-                        name(definition, definition["namespace"].as_str(), &mut tools);
+                        name(
+                            definition["name"].as_str(),
+                            definition["namespace"].as_str(),
+                            &mut tools,
+                        );
                     }
                 }
             }

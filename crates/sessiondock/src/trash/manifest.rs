@@ -390,9 +390,7 @@ fn clean_kiro_session_index(root: &Path, sid: &str) {
                     changed = true;
                 }
             }
-            if changed
-                && let Ok(encoded) = serde_json::to_vec_pretty(&val)
-            {
+            if changed && let Ok(encoded) = serde_json::to_vec_pretty(&val) {
                 let _ = fs::write(&index_json, encoded);
             }
         }

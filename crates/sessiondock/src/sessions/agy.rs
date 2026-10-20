@@ -110,18 +110,23 @@ pub(crate) fn system_message(text: &str) -> (String, Value) {
     }
 }
 
+#[cfg(unix)]
+type FileIdentity = (u64, u64);
+#[cfg(not(unix))]
+type FileIdentity = String;
+
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
     size: u64,
     modified: Option<std::time::SystemTime>,
-    identity: String,
+    identity: FileIdentity,
 }
 fn stamp(path: &Path) -> io::Result<Stamp> {
     let metadata = fs::metadata(path)?;
     #[cfg(unix)]
     let identity = {
         use std::os::unix::fs::MetadataExt;
-        format!("{}:{}", metadata.dev(), metadata.ino())
+        (metadata.dev(), metadata.ino())
     };
     #[cfg(not(unix))]
     let identity = format!("{:?}", metadata.created().ok());
@@ -165,10 +170,10 @@ pub struct Mirror {
     home: PathBuf,
     root: PathBuf,
     connection: Option<Connection>,
-    identity: Option<String>,
+    identity: Option<FileIdentity>,
     version: Option<i64>,
     sessions: BTreeMap<String, Value>,
-    exported: BTreeMap<String, Option<Stamp>>,
+    exported: BTreeMap<String, (Value, Option<Stamp>)>,
 }
 
 impl Mirror {
@@ -246,7 +251,7 @@ impl Mirror {
             .query_row("PRAGMA data_version", [], |row| row.get(0))
             .map_err(db_error)?;
         let changed = self.version != Some(version);
-        let sessions = if changed {
+        let fresh = if changed {
             let transaction = connection.transaction().map_err(db_error)?;
             let mut statement = transaction.prepare("SELECT conversation_id, title, last_modified_time, workspace_uris, parent_conversation_id, status, step_count, agent_name FROM conversation_summaries").map_err(db_error)?;
             let rows = statement
@@ -285,14 +290,15 @@ impl Mirror {
             }
             drop(statement);
             transaction.commit().map_err(db_error)?;
-            found
+            Some(found)
         } else {
-            self.sessions.clone()
+            None
         };
+        let sessions = fresh.as_ref().unwrap_or(&self.sessions);
         let mut known = BTreeSet::new();
-        for (sid, session) in &sessions {
+        for (sid, session) in sessions {
             if !deleted_receipt(&self.home, &self.root, sid)? {
-                self.export(sid, session)?;
+                Self::export(&self.home, &self.root, &mut self.exported, sid, session)?;
                 known.insert(sid.clone());
             }
         }
@@ -320,16 +326,23 @@ impl Mirror {
                     }
                 }
             }
-            self.sessions = sessions;
+            if let Some(fresh) = fresh {
+                self.sessions = fresh;
+            }
             self.version = Some(version);
         }
         Ok(())
     }
 
-    fn export(&mut self, sid: &str, session: &Value) -> io::Result<()> {
-        let directory = self.root.join("cli").join(sid);
-        let native = self
-            .home
+    fn export(
+        home: &Path,
+        root: &Path,
+        exported: &mut BTreeMap<String, (Value, Option<Stamp>)>,
+        sid: &str,
+        session: &Value,
+    ) -> io::Result<()> {
+        let directory = root.join("cli").join(sid);
+        let native = home
             .join("brain")
             .join(sid)
             .join(".system_generated/logs/transcript_full.jsonl");
@@ -341,11 +354,20 @@ impl Mirror {
         private_dir(&directory)?;
         let messages = directory.join(MESSAGES_FILE);
         let summary = directory.join(SUMMARY_FILE);
+        let cached = exported.get(sid);
+        if cached.is_some_and(|(last_session, last_stamp)| {
+            last_session == session && *last_stamp == current
+        }) && messages.is_file()
+            && summary.is_file()
+        {
+            return Ok(());
+        }
         let mut value = session.clone();
         let transcript_missing = current.is_none();
-        let previous = fs::read(&summary)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let previous_bytes = fs::read(&summary).ok();
+        let previous = previous_bytes
+            .as_deref()
+            .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok());
         // Agy init writes Go's zero time until the first input. It is not
         // conversation activity. Keep a stable native-file time in the private
         // projection until the catalog supplies a real activity timestamp.
@@ -357,7 +379,7 @@ impl Mirror {
             {
                 value["time_updated"] = updated.clone();
             } else if let Ok(modified) =
-                fs::metadata(self.home.join("conversations").join(format!("{sid}.db")))
+                fs::metadata(home.join("conversations").join(format!("{sid}.db")))
                     .and_then(|meta| meta.modified())
             {
                 value["time_updated"] = chrono::DateTime::<chrono::Utc>::from(modified)
@@ -373,7 +395,8 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
-        if (current.is_some() && self.exported.get(sid) != Some(&current)) || !messages.is_file() {
+        let transcript_changed = cached.is_none_or(|(_, last_stamp)| *last_stamp != current);
+        if (current.is_some() && transcript_changed) || !messages.is_file() {
             let bytes = if current.is_some() {
                 fs::read(&native)?
             } else {
@@ -402,17 +425,20 @@ impl Mirror {
                 .map(|name| json!({"id":name}))
                 .unwrap_or(Value::Null);
             publish(&messages, &bytes[..complete], true)?;
-            self.exported.insert(sid.to_owned(), current);
         }
         if value["time_created"].is_null() || zero_time(&value["time_created"]) {
             value["time_created"] = value["time_updated"].clone();
         }
         let bytes = serde_json::to_vec(&json!({"format":FORMAT,"session":value,
             "transcript_missing":transcript_missing,
-            "native_database":self.home.join("conversations").join(format!("{sid}.db")),
+            "native_database":home.join("conversations").join(format!("{sid}.db")),
             "native_transcript":native}))
         .map_err(io::Error::other)?;
-        publish(&summary, &bytes, false)
+        if previous_bytes.as_deref() != Some(bytes.as_slice()) || !summary.is_file() {
+            write_atomic(&summary, &bytes)?;
+        }
+        exported.insert(sid.to_owned(), (session.clone(), current));
+        Ok(())
     }
 }
 
@@ -495,6 +521,10 @@ fn publish(path: &Path, bytes: &[u8], append: bool) -> io::Result<()> {
             .write_all(&bytes[existing.length..])?;
         return Ok(());
     }
+    write_atomic(path, bytes)
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temporary = path.with_extension("tmp");
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

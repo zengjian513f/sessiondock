@@ -270,7 +270,7 @@ impl Store {
             fs::rename(&temporary, self.directory.join("conversation-ledger.json"))?;
             // Once installed, later writes must use this document even if
             // directory sync fails and its acknowledgment is lost.
-            *state = next.clone();
+            *state = next;
             #[cfg(unix)]
             fs::File::open(&self.directory)?.sync_all()?;
             Ok::<_, std::io::Error>(())
@@ -279,7 +279,6 @@ impl Store {
             let _ = fs::remove_file(&temporary);
             return Err(io(error));
         }
-        *state = next;
         drop(state);
         if drafts_changed
             && let Some(listener) = self
@@ -865,13 +864,6 @@ impl Store {
                 .any(|(alias, target)| *target == key && native_live(alias));
         (key, shared)
     }
-    /// Drop the input retained for a receipt the operator discarded, so
-    /// `drafts` stops advertising the deleted session. A draft shared with a
-    /// native UID stays: that session still shows it. Returns whether a draft
-    /// was removed.
-    pub fn forget_launch(&self, record_id: &str) -> Result<bool> {
-        self.forget_launch_unshared(record_id, None)
-    }
     /// Remove migrated native drafts and their launch aliases. Other native
     /// sessions sharing a draft keep it; migration never drops unrelated input.
     pub fn retire_drafts(&self, uids: &HashSet<String>) -> Result<()> {
@@ -908,10 +900,11 @@ impl Store {
             Ok(())
         })
     }
-    /// Same as [`Self::forget_launch`], but a native alias only counts as
-    /// shared while that UID is still in the catalog. After the native
-    /// session is trashed, the launch draft must go or `drafts` rebuilds
-    /// the pending row.
+    /// Drop the input retained for a receipt the operator discarded, so
+    /// `drafts` stops advertising the deleted session. A native alias only
+    /// counts as shared while that UID is still in the catalog. After the
+    /// native session is trashed, the launch draft must go or `drafts`
+    /// rebuilds the pending row.
     pub fn forget_launch_unshared(
         &self,
         record_id: &str,

@@ -390,9 +390,9 @@ fn ensure_model_in_list(list: &mut Vec<Value>, model_id: Option<&str>) {
     let Some(mid) = model_id.map(str::trim).filter(|s| !s.is_empty()) else {
         return;
     };
-    let exists = list.iter().any(|item| {
-        item["id"].as_str() == Some(mid) || item["name"].as_str() == Some(mid)
-    });
+    let exists = list
+        .iter()
+        .any(|item| item["id"].as_str() == Some(mid) || item["name"].as_str() == Some(mid));
     if !exists {
         let efforts = list
             .first()
@@ -1346,8 +1346,8 @@ impl Bridge {
             return Err("title is required".into());
         }
 
-        if let Some(disk_loc) = locate_kiro_session(&self.root, &sid)
-            .or_else(|| locate_kiro_session(&self.root, uid))
+        if let Some(disk_loc) =
+            locate_kiro_session(&self.root, &sid).or_else(|| locate_kiro_session(&self.root, uid))
         {
             let path = match disk_loc {
                 KiroDiskSession::V3Dir { session_json, .. } => session_json,

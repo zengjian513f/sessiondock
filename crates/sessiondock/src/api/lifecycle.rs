@@ -110,9 +110,6 @@ fn parse_body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
         }
     })
 }
-fn diagnostics(_values: [&str; 3]) -> Result<(), ApiError> {
-    Ok(())
-}
 pub(super) fn check_instance(record: &Record, instance: &str) -> Result<(), ApiError> {
     if record.instance_id() != instance {
         return Err(ApiError::new(
@@ -167,12 +164,6 @@ pub struct BindRequest {
     instance_id: String,
     uid: String,
     operator_confirmed: bool,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
 }
 pub async fn bind(
     State(state): State<AppState>,
@@ -181,7 +172,6 @@ pub async fn bind(
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     if body.record_id.len() != 32 || body.instance_id.len() != 32 || !body.operator_confirmed {
         return Err(invalid());
     }
@@ -320,12 +310,6 @@ pub struct CreateRequest {
     cols: Option<u16>,
     #[serde(default)]
     rows: Option<u16>,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
 }
 
 /// Exactly one interactive entry must match the source; a resume additionally
@@ -642,7 +626,6 @@ pub async fn create(
         (Some(service), Some(uid)) => Some(service.session_guard(uid).await),
         _ => None,
     };
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     let request_id = request_id(body.request_id, true)?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let entry = select_entry(service, body.source, body.resume_uid.is_some())?.clone();
@@ -656,9 +639,7 @@ pub async fn create(
                     "续接会话的数据源与请求来源不一致",
                 ));
             }
-            if body.source == Source::Kiro
-                && state.native_sdks.loaded_uids().contains(&scope.uid)
-            {
+            if body.source == Source::Kiro && state.native_sdks.loaded_uids().contains(&scope.uid) {
                 return Err(ApiError::new(
                     StatusCode::CONFLICT,
                     "sdk_session_busy",
@@ -703,35 +684,13 @@ pub async fn create(
     } else {
         spec
     };
-    let continuation = if let Some(edge) = body.remote_continuation {
-        if hub.is_none() {
-            return Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "relations_remote_hub",
-                "跨机器关系需要通过 Hub 验证",
-            ));
-        }
-        Some(edge)
-    } else if let Some(uid) = body.continuation_uid {
-        Some(
-            state
-                .reader
-                .run(move |store| {
-                    let inventory = store.list(true)?;
-                    let row = inventory["sessions"]
-                        .as_array()
-                        .and_then(|rows| rows.iter().find(|r| r["uid"] == uid))
-                        .ok_or_else(|| crate::sessions::SessionError {
-                            status: 404,
-                            message: "前序会话不存在".into(),
-                        })?;
-                    Ok(crate::metadata::relations::descriptor(row, row))
-                })
-                .await?,
-        )
-    } else {
-        None
-    };
+    let continuation = super::relations::sdk_continuation(
+        &state,
+        body.continuation_uid,
+        body.remote_continuation,
+        hub.is_some(),
+    )
+    .await?;
     let spec = spec.with_continuation(continuation);
     let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
@@ -752,12 +711,6 @@ pub struct TakeoverRequest {
     cols: Option<u16>,
     #[serde(default)]
     rows: Option<u16>,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
 }
 /// Takeover: reuse a managed console, ask before replacing an external
 /// CLI, then resume the exact catalog identity in its recorded cwd.
@@ -772,7 +725,6 @@ pub async fn takeover(
         Some(service) => Some(service.session_guard(&body.uid).await),
         None => None,
     };
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     let request_id = crate::lifecycle::store::fresh_request_id()
         .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
@@ -796,7 +748,7 @@ pub async fn takeover(
     }
     let processes = external_processes(&state, &scope.uid).await?;
     if let Some((host, instance)) = &processes.managed_fork {
-        let records = service.list(0, usize::MAX).await.map_err(failure)?;
+        let records = shared_records(&state, service, false).await?;
         let mut matches = records.iter().filter(|record| {
             record.host_name() == host
                 && record.instance_id() == instance
@@ -983,12 +935,6 @@ pub async fn client_update(
 pub struct CancelRequest {
     record_id: String,
     instance_id: String,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
 }
 pub async fn cancel(
     State(state): State<AppState>,
@@ -997,7 +943,6 @@ pub async fn cancel(
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     if body.record_id.len() != 32 || body.instance_id.len() != 32 {
         return Err(invalid());
     }
@@ -1023,7 +968,6 @@ pub async fn discard(
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     if body.record_id.len() != 32 || body.instance_id.len() != 32 {
         return Err(invalid());
     }
@@ -1107,12 +1051,6 @@ pub(super) async fn forget_discarded_launch(
 pub struct StopRequest {
     #[serde(default)]
     uid: String,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
 }
 fn invalid_stop() -> ApiError {
     ApiError::new(
@@ -1143,7 +1081,6 @@ pub async fn stop(
             invalid_stop()
         }
     })?;
-    diagnostics([&body._build, &body._trace_id, &body._page_id]).map_err(|_| invalid_stop())?;
     let uid = body.uid;
     // Index catalog: an unknown UID is 404 ("会话不存在").
     // Subagent/unsupported/ambiguous rows proceed to the runtime lookup, which

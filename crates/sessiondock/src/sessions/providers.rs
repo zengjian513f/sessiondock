@@ -5,22 +5,26 @@ mod agy;
 mod claude;
 pub(super) mod envelopes;
 mod grok;
-pub(crate) mod kiro;
 mod image_content;
+pub(crate) mod kiro;
 mod opencode;
 mod tools;
 
 pub(super) use agy::{AppendProjection, ProjectionPrefix, parse_append as parse_agy_append};
 
 use super::records::native_images::{MediaContext, Sidecar};
-use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::LazyLock;
 
 use serde_json::{Value, json};
 
 use super::Event;
+pub(super) use super::text::{claude_pasted_text, is_question as question_tool};
+use super::text::{
+    clip_title as clip, codex_internal, first_nonempty, is_question,
+    is_timeline_protocol as timeline_protocol, normalized, output_exit_code, string,
+    strip_codex_abort_prefix, strip_grok_user_query, text_parts, tool_text_parts, visible_text,
+};
 use crate::json_compat::truthy;
 
 pub(super) fn validate_grok_summary(summary: &Value) -> Result<(), String> {
@@ -302,7 +306,9 @@ fn parse_context<'a>(
     }
     if source == "kiro"
         && records.is_empty()
-        && let Some(hist) = summary.and_then(|s| s.get("history")).and_then(Value::as_array)
+        && let Some(hist) = summary
+            .and_then(|s| s.get("history"))
+            .and_then(Value::as_array)
     {
         for item in hist {
             if let Err(reason) = parser.kiro(item, 0) {
@@ -315,212 +321,12 @@ fn parse_context<'a>(
     (meta, parser.events, None)
 }
 
-fn string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(text) => text.clone(),
-        _ => serde_json::to_string_pretty(value).unwrap_or_default(),
-    }
-}
-
-fn normalized(value: &Value) -> Value {
-    let date = if let Some(number) = value.as_f64() {
-        let seconds = if number > 1e11 {
-            number / 1000.0
-        } else {
-            number
-        };
-        chrono::DateTime::from_timestamp_millis((seconds * 1000.0) as i64)
-    } else if let Some(text) = value.as_str() {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .ok()
-            .map(|dt| dt.to_utc())
-    } else {
-        None
-    };
-    date.map(|dt| json!(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
-        .unwrap_or(Value::Null)
-}
-
-fn first_nonempty(values: &[Value], fallback: &str) -> String {
-    values
-        .iter()
-        .filter_map(Value::as_str)
-        .find(|s| !s.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn clip(text: &str) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.chars().count() > 90 {
-        normalized.chars().take(90).collect::<String>() + "…"
-    } else {
-        normalized
-    }
-}
-
-/// Grok wraps a user turn as `<image_files>…</image_files>` blocks followed by
-/// `<user_query>…</user_query>`; images arrive as structured parts. A message
-/// sent while Grok was working or after interrupting the previous turn also
-/// carries a protocol prefix (`The user sent a message while you were
-/// working:` / `The user interrupted the previous turn:`) and suffix (`Make
-/// sure to complete any unfinished tasks from previous turns.`) outside the
-/// tags; none of it is the user's text. Match the reference adapter:
-/// whole-text, case-insensitive, and only one leading and one trailing
-/// newline of the body are removed, not the user's indentation; any other
-/// text outside the envelope keeps the record verbatim.
-static GROK_USER_QUERY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(concat!(
-        r"(?is)^\s*(?:<image_files>.*?</image_files>\s*)*",
-        r"(?:The user (?:sent a message while you were working|interrupted the previous turn):\s*)?",
-        r"(?:<image_files>.*?</image_files>\s*)*",
-        r"<user_query>(.*?)</user_query>\s*",
-        r"(?:Make sure to complete any unfinished tasks from previous turns\.)?\s*",
-        r"(?:<skill_information>.*?</skill_information>\s*)?$",
-    ))
-    .unwrap()
-});
-
-fn strip_grok_user_query(text: &str) -> String {
-    let Some(captures) = GROK_USER_QUERY.captures(text) else {
-        return text.to_owned();
-    };
-    let body = captures.get(1).map_or("", |m| m.as_str());
-    let body = body
-        .strip_prefix("\r\n")
-        .or_else(|| body.strip_prefix('\n'))
-        .unwrap_or(body);
-    body.strip_suffix("\r\n")
-        .or_else(|| body.strip_suffix('\n'))
-        .unwrap_or(body)
-        .to_owned()
-}
-
 /// Parser predicates the list summary's turn state shares (`index/summary`).
 pub(super) fn claude_interrupt(record: &Value) -> bool {
     claude::interrupt_record(record)
 }
 pub(super) fn claude_compact(record: &Value) -> bool {
     claude::compact(record)
-}
-pub(super) fn question_tool(name: &str) -> bool {
-    is_question(name)
-}
-
-/// Claude's paste envelope repeats its id on the closing tag. Only unwrap a
-/// complete matching pair; unknown/malformed markup and the pasted body stay
-/// literal. This is display normalization, never a change to native input.
-pub(super) fn claude_pasted_text(text: &str) -> String {
-    static OPEN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"<pasted_content id="([^"]+)">"#).unwrap());
-    let mut out = String::with_capacity(text.len());
-    let mut position = 0;
-    while let Some(captures) = OPEN.captures_at(text, position) {
-        let opening = captures.get(0).unwrap();
-        let closing = format!("</pasted_content id=\"{}\">", &captures[1]);
-        let Some(offset) = text[opening.end()..].find(&closing) else {
-            out.push_str(&text[position..opening.end()]);
-            position = opening.end();
-            continue;
-        };
-        out.push_str(&text[position..opening.start()]);
-        let body = &text[opening.end()..opening.end() + offset];
-        let body = body
-            .strip_prefix("\r\n")
-            .or_else(|| body.strip_prefix('\n'))
-            .unwrap_or(body);
-        out.push_str(
-            body.strip_suffix("\r\n")
-                .or_else(|| body.strip_suffix('\n'))
-                .unwrap_or(body),
-        );
-        position = opening.end() + offset + closing.len();
-    }
-    out.push_str(&text[position..]);
-    out
-}
-
-fn timeline_protocol(text: &str) -> bool {
-    let text = text.trim_start().to_lowercase();
-    if let Some(heading) = text.strip_prefix('#')
-        && (heading.trim_start().starts_with("agents.md instructions")
-            || heading.trim_start().starts_with("global user guidance"))
-    {
-        return true;
-    }
-    [
-        "<instructions>",
-        "<user_info>",
-        "<environment_context>",
-        "<system-reminder>",
-        "<command-name>",
-        "<local-command-caveat>",
-        "<local-command-stdout>",
-        "<task-notification>",
-        "<project_instructions>",
-        "<user_instructions>",
-        "caveat: the messages below were generated by the user while running local commands",
-        "this session is being continued from a previous conversation",
-    ]
-    .iter()
-    .any(|prefix| text.starts_with(prefix))
-}
-
-fn codex_internal(payload: &Value, text: &str) -> bool {
-    payload["role"] == "developer"
-        || (payload["role"] == "user"
-            && (timeline_protocol(text)
-                || envelopes::recommended_plugins(text)
-                || payload["internal_chat_message_metadata_passthrough"]["content_item_kinds"]
-                    .as_array()
-                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "goal.internal_context"))))
-}
-
-fn strip_codex_abort_prefix(text: &str) -> String {
-    let mut rest = text;
-    loop {
-        let trimmed = rest.trim_start();
-        let lower = trimmed.to_ascii_lowercase();
-        if !lower.starts_with("<turn_aborted>") {
-            break;
-        }
-        let Some(end) = lower.find("</turn_aborted>") else {
-            break;
-        };
-        rest = trimmed[end + "</turn_aborted>".len()..].trim_start();
-    }
-    rest.to_owned()
-}
-
-fn visible_text(content: &Value) -> String {
-    // Inspect only native text blocks. Image source/file data is not title text;
-    // ordinary user-authored JSON inside a text block remains ordinary text.
-    match content {
-        Value::String(text) => text.clone(),
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|item| {
-                if let Some(text) = item.as_str() {
-                    return Some(text);
-                }
-                match item["type"].as_str().unwrap_or("") {
-                    "text" | "input_text" | "output_text" | "summary_text" => item["text"].as_str(),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Object(_)
-            if matches!(
-                content["type"].as_str(),
-                Some("text" | "input_text" | "output_text" | "summary_text")
-            ) =>
-        {
-            content["text"].as_str().unwrap_or("").to_owned()
-        }
-        _ => String::new(),
-    }
 }
 
 /// Native API-error/synthetic replies carry no actual model identity.
@@ -738,10 +544,10 @@ struct Parser<'a> {
     turn: String,
     previous_title: String,
     codex_meta_seen: bool,
+    kiro_history: Vec<(String, usize)>,
     source: String,
     media: Option<MediaContext<'a>>,
     skipped: Skipped,
-    kiro_history: Vec<(String, usize)>,
 }
 
 impl Parser<'_> {
@@ -1243,121 +1049,5 @@ impl Parser<'_> {
             self.status(end, "working", ts, json!({}))
         }
         Ok(())
-    }
-}
-
-/// Exit code over the first 400 characters, case-insensitively:
-/// `"exit_code"\s*:\s*(-?\d+)` or `\bexit(?:ed)?(?: with)?(?: code| status)? (-?\d+)`
-/// — the plain form needs exactly one space before the number, so `exit: 1`
-/// (Grok's output header) is not a code.
-fn output_exit_code(text: &str) -> Option<i64> {
-    fn integer(value: &str) -> Option<i64> {
-        let end = value
-            .char_indices()
-            .take_while(|(index, ch)| ch.is_ascii_digit() || (*index == 0 && *ch == '-'))
-            .map(|(index, ch)| index + ch.len_utf8())
-            .last()?;
-        value[..end].parse().ok()
-    }
-    let prefix = text.chars().take(400).collect::<String>().to_lowercase();
-    if let Some((_, rest)) = prefix.split_once("\"exit_code\"")
-        && let Some(rest) = rest.trim_start().strip_prefix(':')
-        && let Some(code) = integer(rest.trim_start())
-    {
-        return Some(code);
-    }
-    for (index, _) in prefix.match_indices("exit") {
-        if prefix[..index]
-            .chars()
-            .last()
-            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-        {
-            continue;
-        }
-        let mut rest = &prefix[index + 4..];
-        if let Some(tail) = rest.strip_prefix("ed") {
-            rest = tail
-        }
-        if let Some(tail) = rest.strip_prefix(" with") {
-            rest = tail
-        }
-        if let Some(tail) = rest
-            .strip_prefix(" code")
-            .or_else(|| rest.strip_prefix(" status"))
-        {
-            rest = tail
-        }
-        if let Some(tail) = rest.strip_prefix(' ')
-            && let Some(code) = integer(tail)
-        {
-            return Some(code);
-        }
-    }
-    None
-}
-
-fn is_question(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower == "askuserquestion"
-        || lower == "request_user_input"
-        || lower.ends_with(".request_user_input")
-        || lower.ends_with("__request_user_input")
-}
-
-/// Claude/Grok tool results drop empty text blocks before joining, exactly
-/// like the reference adapter; ordinary message content keeps them.
-fn tool_text_parts(content: &Value, skipped: &mut Skipped) -> Result<String, String> {
-    match content {
-        Value::Array(items) => Ok(items
-            .iter()
-            .map(|item| text_part(item, skipped))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n")),
-        other => text_parts(other, skipped),
-    }
-}
-
-/// Text of a content value. Blocks of an unknown non-image kind (and
-/// non-string/non-object array elements) are skipped and counted, like the
-/// reference `_flatten_content`; a text block whose `text` is not a string and
-/// a top-level scalar remain hard failures (the reference adapter raises).
-fn text_parts(content: &Value, skipped: &mut Skipped) -> Result<String, String> {
-    Ok(text_part(content, skipped)?.unwrap_or_default())
-}
-
-/// `Ok(None)` is a skipped block: it contributes no line to a joined array.
-fn text_part(content: &Value, skipped: &mut Skipped) -> Result<Option<String>, String> {
-    match content {
-        Value::Null => Ok(Some(String::new())),
-        Value::String(text) => Ok(Some(text.clone())),
-        Value::Array(items) => {
-            let mut parts = Vec::with_capacity(items.len());
-            for item in items {
-                if item.is_string() || item.is_object() || item.is_array() {
-                    if let Some(part) = text_part(item, skipped)? {
-                        parts.push(part);
-                    }
-                } else {
-                    skipped.note("内容块类型", "(非对象元素)");
-                }
-            }
-            Ok(Some(parts.join("\n")))
-        }
-        Value::Object(_) => match content["type"].as_str().unwrap_or("") {
-            "text" | "input_text" | "output_text" | "summary_text" => match &content["text"] {
-                Value::Null => Ok(Some(String::new())),
-                Value::String(text) => Ok(Some(text.clone())),
-                _ => Err("原生文本块的 text 必须是字符串".into()),
-            },
-            other => {
-                skipped.note("内容块类型", other);
-                Ok(None)
-            }
-        },
-        _ => Err("原生 content 类型无效".to_owned()),
     }
 }

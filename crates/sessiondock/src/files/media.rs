@@ -52,9 +52,9 @@ impl FileService {
     fn cached_media_index(&self, revision: &str) -> Option<Arc<references::ReferenceIndex>> {
         let mut cache = self.media_indexes.lock().ok()?;
         let position = cache.iter().position(|(key, _)| key == revision)?;
-        let entry = cache.remove(position);
+        let entry = cache.remove(position)?;
         let index = entry.1.clone();
-        cache.push(entry);
+        cache.push_back(entry);
         Some(index)
     }
     fn retain_media_index(&self, revision: &str, index: Arc<references::ReferenceIndex>) {
@@ -62,17 +62,18 @@ impl FileService {
             return;
         };
         cache.retain(|(key, _)| key != revision);
-        cache.push((revision.to_owned(), index));
-        let retained = |cache: &Vec<(String, Arc<references::ReferenceIndex>)>| {
-            cache
-                .iter()
-                .map(|(_, index)| index.refs.len())
-                .sum::<usize>()
-        };
+        cache.push_back((revision.to_owned(), index));
+        let retained =
+            |cache: &std::collections::VecDeque<(String, Arc<references::ReferenceIndex>)>| {
+                cache
+                    .iter()
+                    .map(|(_, index)| index.refs.len())
+                    .sum::<usize>()
+            };
         while cache.len() > MEDIA_INDEX_CACHE_ENTRIES
             || (cache.len() > 1 && retained(&cache) > MEDIA_INDEX_CACHE_REFS)
         {
-            cache.remove(0);
+            cache.pop_front();
         }
     }
 }

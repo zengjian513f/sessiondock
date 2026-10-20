@@ -779,9 +779,13 @@ impl Bridge {
             state.error = None;
             state.error_kind = None;
             state.publish();
-            state
-                .save_checkpoint()
-                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+            if let Some(err) = state
+                .error
+                .as_ref()
+                .filter(|e| e.starts_with("grok_sdk_checkpoint:"))
+            {
+                return Err(err.clone());
+            }
         }
         if let Err(error) = self
             .configure(&session.connection, &session.sid, input, &session.live)
@@ -801,9 +805,9 @@ impl Bridge {
             state.setup_pending = false;
             state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":"user","content":text,"request_id":request_id}));
             state.publish();
-            state
-                .save_checkpoint()
-                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+            if let Some(err) = state.last_checkpoint_error.clone() {
+                return Err(err);
+            }
             return Ok(receipt);
         }
         let mut prompt = vec![json!({"type":"text","text":text})];
@@ -825,9 +829,9 @@ impl Bridge {
                 state.prompt_started = false;
                 state.last_turn = json!({"status":"interrupted","id":state.turn});
                 state.publish();
-                state
-                    .save_checkpoint()
-                    .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+                if let Some(err) = state.last_checkpoint_error.clone() {
+                    return Err(err);
+                }
                 return Ok(receipt);
             }
             state.running = true;
@@ -843,9 +847,9 @@ impl Bridge {
                 json!({"receipt":receipt,"item":item,"turn":state.turn}),
             )?;
             state.publish();
-            state
-                .save_checkpoint()
-                .map_err(|e| format!("grok_sdk_checkpoint: {e}"))?;
+            if let Some(err) = state.last_checkpoint_error.clone() {
+                return Err(err);
+            }
             (receipt, response)
         };
         let shutdown = self.shutdown.clone();

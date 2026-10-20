@@ -151,8 +151,12 @@ pub async fn live(
     let force = query
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
-    let value = live_document(&state, force).await?;
+    let value = live_value(&state, force).await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response())
+}
+
+pub(super) async fn live_value(state: &AppState, force: bool) -> Result<Value, ApiError> {
+    live_document(state, force).await
 }
 
 pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value, ApiError> {
@@ -218,7 +222,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     let scan_report = scanned
         .as_ref()
         .ok()
-        .map(|snapshot| cache_report(snapshot.cached, snapshot.age, scanner.ttl()));
+        .map(|snapshot| cache_report(snapshot.cached, snapshot.age, crate::runtime::procscan::TTL));
     if !force && let Some(cached) = state.polls.live(&key) {
         return Ok(finish(
             (*cached).clone(),

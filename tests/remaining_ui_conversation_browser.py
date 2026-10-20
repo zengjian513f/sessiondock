@@ -72,7 +72,17 @@ def main():
      done('sd.conversation.tool-more','Expand clipped output exposes independent fixture last line',width)
      wrap=process.locator('button[data-diff-wrap]').first;wrap.click();expect(wrap).to_have_attribute('aria-pressed','true');wrap.click();expect(wrap).to_have_attribute('aria-pressed','false')
      done('sd.conversation.file-diff-wrap','Diff wrap control toggles aria state and restores original layout',width)
-     link=msgs.locator('a[data-file-ref]').last;link.click(button='right');expect(page.locator('#file-menu [data-action=download]')).to_be_visible()
+     link=msgs.locator('a[data-file-ref]').last
+     # Finish scrolling the long output before opening its context menu.
+     # The menu intentionally closes on conversation scroll events.
+     link.scroll_into_view_if_needed()
+     page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+     with page.expect_response(lambda r:r.url.endswith('/api/session/resolve-files')) as resolved:
+      link.click(button='right')
+     assert resolved.value.ok,resolved.value.text()
+     assert any(t.get('kind')=='file' and t.get('path')==str(root/'work/receipt.txt') for t in resolved.value.json().get('targets',[])),resolved.value.text()
+     expect(page.locator('#file-menu [data-action=download]')).to_be_visible()
+     page.screenshot(path=str(a.output/f'file-menu-{width}.png'))
      page.keyboard.press('ArrowDown');assert page.locator('#file-menu').evaluate('e=>e.contains(document.activeElement)')
      page.keyboard.press('Escape');expect(page.locator('#file-menu')).to_be_hidden()
      done('sd.conversation.file-menu-keyboard','File context menu ArrowDown focus then Escape closes',width)

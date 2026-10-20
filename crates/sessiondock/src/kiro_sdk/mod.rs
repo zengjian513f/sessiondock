@@ -150,10 +150,7 @@ impl Bridge {
         let now = now_secs();
         let candidates: Vec<(String, Arc<Session>)> = {
             let guard = self.sessions.lock().unwrap();
-            guard
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
 
         for (uid, session) in candidates {
@@ -320,7 +317,11 @@ impl Bridge {
             }
         }
         for val in [target, payload] {
-            if let Some(path_str) = val["path"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(path_str) = val["path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 let path = Path::new(path_str);
                 if let Some(sid) = crate::sessions::index::summary::kiro::sid_for_path(path) {
                     return sid;
@@ -428,10 +429,9 @@ impl Bridge {
             "models" => self.models_action(uid, &cwd, &target).await,
             "settings" => {
                 let session = self.ensure_open(uid, &cwd, &target).await?;
-                if let (Some(cid), Some(val)) = (
-                    payload["configId"].as_str(),
-                    payload["value"].as_str(),
-                ) {
+                if let (Some(cid), Some(val)) =
+                    (payload["configId"].as_str(), payload["value"].as_str())
+                {
                     self.apply_setting(&session, cid, val).await?;
                 }
                 if let Some(m) = payload["model"].as_str().filter(|s| !s.is_empty()) {
@@ -453,12 +453,8 @@ impl Bridge {
                 {
                     self.apply_setting(&session, "permission_mode", pm).await?;
                 } else if let Some(ap) = payload["autopilot"].as_bool() {
-                    self.apply_setting(
-                        &session,
-                        "autopilot",
-                        if ap { "true" } else { "false" },
-                    )
-                    .await?;
+                    self.apply_setting(&session, "autopilot", if ap { "true" } else { "false" })
+                        .await?;
                 }
                 Ok(session.snapshot())
             }
@@ -479,9 +475,8 @@ impl Bridge {
                         {
                             session.state.lock().unwrap().apply_metadata(&ctx_res);
                         }
-                        if let Ok(acct_res) = session
-                            .request("_kiro/account/getUsage", json!({}))
-                            .await
+                        if let Ok(acct_res) =
+                            session.request("_kiro/account/getUsage", json!({})).await
                         {
                             session.state.lock().unwrap().apply_metadata(&acct_res);
                         }

@@ -169,6 +169,9 @@ impl Journal {
             fs::rename(&temporary, path)?;
             Ok(())
         })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
         result.map_err(|error| format!("SDK 输入队列保存失败：{error}"))
     }
 

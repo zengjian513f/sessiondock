@@ -5,7 +5,7 @@ pub(crate) mod paths;
 pub(crate) use input::agy_editor;
 mod report_name;
 pub mod rewind;
-pub use input::{InputState, InputStatus, transient_input_error};
+pub use input::{InputStatus, transient_input_error};
 pub mod store;
 pub mod uploads;
 use crate::{
@@ -68,7 +68,7 @@ pub struct Conversations {
     reports: Option<Arc<crate::bug_report::BugReportService>>,
     codex_sdk: Option<Arc<crate::codex_sdk::CodexSdk>>,
     native_sdks: Option<Arc<crate::native_sdk::NativeSdks>>,
-    locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    locks: Mutex<HashMap<String, std::sync::Weak<AsyncMutex<()>>>>,
     /// Per-session CLI state (docs/cli-state.md).
     pub cli: cli_state::Registry,
 }
@@ -181,21 +181,35 @@ impl Conversations {
         {
             return Ok(state);
         }
+        let (_, state, _) = self.observe_screen(&identity, None, false).await?;
+        Ok(state)
+    }
+    async fn observe_screen(
+        &self,
+        identity: &Identity,
+        page: Option<&PageLease>,
+        include_prompt: bool,
+    ) -> Result<(cli_state::Observation, cli_state::CliState, Value), Failure> {
         let lock = self.lock(&identity.key);
         let (_guard, waited) = match lock.try_lock() {
             Ok(guard) => (guard, false),
             Err(_) => (lock.lock().await, true),
         };
         let mut transcript = None;
-        let observation: cli_state::Observation = match self.lease(&identity, None, waited).await {
+        let mut prompt = Value::Null;
+        let observation: cli_state::Observation = match self.lease(identity, page, waited).await {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
-                self.driver.release(lease).await;
                 if let Ok(frame) = &capture {
-                    self.observe_interrupted_queue(&identity, frame).await?;
+                    self.observe_interrupted_queue(identity, frame).await?;
                 }
                 capture.and_then(|capture| {
                     self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
+                    if include_prompt && capture.lag.is_none_or(|lag| lag == 0) {
+                        prompt =
+                            crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
+                                .unwrap_or(Value::Null);
+                    }
                     transcript = cli_state::transcript(&identity.source, &capture);
                     Ok((
                         input::classify(&identity.source, &capture),
@@ -214,7 +228,7 @@ impl Conversations {
             self.store.mark_queued(&identity.key, "lost")?;
             state.queued = self.store.queued(&identity.key);
         }
-        Ok(state)
+        Ok((observation, state, prompt))
     }
     /// Retires queued sends whose native user/command record appeared: same
     /// digest and a record time no earlier than the send (records without a
@@ -537,12 +551,16 @@ impl Conversations {
         })
     }
     fn lock(&self, key: &str) -> Arc<AsyncMutex<()>> {
-        self.locks
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .entry(key.into())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone()
+        let mut locks = self.locks.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(lock) = locks.get(key).and_then(std::sync::Weak::upgrade) {
+            return lock;
+        }
+        if locks.len() >= 64 {
+            locks.retain(|_, v| v.strong_count() > 0);
+        }
+        let lock = Arc::new(AsyncMutex::new(()));
+        locks.insert(key.into(), Arc::downgrade(&lock));
+        lock
     }
     pub fn upload_lock(&self, key: &str, id: &str) -> Arc<AsyncMutex<()>> {
         self.lock(&format!("upload:{key}\0{id}"))
@@ -674,46 +692,8 @@ impl Conversations {
         page: Option<&PageLease>,
     ) -> Result<(u64, InputStatus, cli_state::CliState, Value), Failure> {
         let identity = self.identity(uid).await?;
-        let lock = self.lock(&identity.key);
-        let (_guard, waited) = match lock.try_lock() {
-            Ok(guard) => (guard, false),
-            Err(_) => (lock.lock().await, true),
-        };
         self.remember_cli_identity(uid, &identity);
-        let mut transcript = None;
-        let mut prompt = Value::Null;
-        let observation: cli_state::Observation = match self.lease(&identity, page, waited).await {
-            Ok(lease) => {
-                let capture = self.driver.capture(&lease).await.map_err(driver_error);
-                self.driver.release(lease).await;
-                if let Ok(frame) = &capture {
-                    self.observe_interrupted_queue(&identity, frame).await?;
-                }
-                capture.and_then(|capture| {
-                    self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
-                    if capture.lag.is_none_or(|lag| lag == 0) {
-                        prompt =
-                            crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
-                                .unwrap_or(Value::Null);
-                    }
-                    transcript = cli_state::transcript(&identity.source, &capture);
-                    Ok((
-                        input::classify(&identity.source, &capture),
-                        cli_state::editor_text(&identity.source, &capture),
-                        cli_state::screen_busy(&identity.source, &capture),
-                        cli_state::screen_phase(&identity.source, &capture),
-                    ))
-                })
-            }
-            Err(error) => Err(error),
-        };
-        let queued = self.store.queued(&identity.key);
-        let (mut state, lost) = self.cli.record(&identity.key, &observation, queued);
-        self.cli.set_transcript(&identity.key, transcript);
-        if lost && state.queued.iter().any(|row| row.state != "lost") {
-            self.store.mark_queued(&identity.key, "lost")?;
-            state.queued = self.store.queued(&identity.key);
-        }
+        let (observation, state, prompt) = self.observe_screen(&identity, page, true).await?;
         // The recorded state may name a returned prompt more precisely.
         let status = state.input.unwrap_or(observation?.0);
         Ok((
@@ -856,7 +836,6 @@ impl Conversations {
         let page = page_lease(input.lease.as_ref());
         let lease = self.lease(&identity, page.as_ref(), waited).await?;
         if !input.name.is_empty() && input.name != lease.name {
-            self.driver.release(lease).await;
             return Err(Failure::new(
                 409,
                 "terminal_unlinked",
@@ -879,7 +858,6 @@ impl Conversations {
                 serde_json::json!({"error": error.to_string()}),
             );
         }
-        self.driver.release(lease).await;
         result
     }
     /// A startup timeout/shutdown may be recorded only while the first task is still unsent.
