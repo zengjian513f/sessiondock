@@ -77,7 +77,8 @@ create/load 明确发送 `_meta.yoloMode: false`、`autoMode: false`。
 Grok 自身的原生权限规则仍适用；桥接只转发实际收到的审批。
 
 浏览器/SSE 离开不会取消已接受的工作。桥接持有进程、快照及请求，重新打开可继续
-查看或回答。共享 shutdown token 取消时清理本桥接启动的 ACP 子进程；
+查看或回答。配置持久 state dir 时由[独立 SDK 宿主](sdkhost.md)持有 ACP 子进程，
+共享 shutdown 只断开连接；重启恢复原协议状态、输出游标和待回答请求；
 不触碰外部 TUI、共享 leader 或其他 CLI 进程。
 
 独立 TUI 无法加入本桥接的 ACP runtime，`shared_tui: false`。
@@ -233,7 +234,8 @@ facade 应将 snapshots 作为 SSE `sdk` 事件转发；broadcast lag 时重新�
 
 连接意外结束会清理运行标记和过期审批，保留已接受输入及诊断消息；再次 open
 重新 load 同 SID，但从不自动 replay prompt。断线时原生工作可能已产生结果，
-用户应结合普通历史判断。进程重启后的内存收据/去重缓存不持久化。
+用户应结合普通历史判断。持久宿主模式保存收据、去重及协议投影，节点重启复接
+原进程并补读输出；无持久目录的开发模式不承诺重启恢复。
 
 ## 验证
 

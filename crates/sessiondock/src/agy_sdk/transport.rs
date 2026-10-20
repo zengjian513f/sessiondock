@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, Command},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -22,6 +22,8 @@ pub(super) struct ProcessConfig {
     proc_root: PathBuf,
     secrets: Vec<String>,
     owned: std::sync::Mutex<std::collections::HashSet<u32>>,
+    pub host_dir: Option<PathBuf>,
+    pub adapter_dir: Option<PathBuf>,
 }
 
 pub(super) fn validate_sid(sid: &str) -> Result<(), String> {
@@ -34,7 +36,12 @@ pub(super) fn validate_sid(sid: &str) -> Result<(), String> {
 }
 
 impl ProcessConfig {
-    pub fn new(profile: CliProfile, home: PathBuf, proc_root: PathBuf) -> io::Result<Self> {
+    pub fn new(
+        profile: CliProfile,
+        home: PathBuf,
+        proc_root: PathBuf,
+        state_dir: Option<&PathBuf>,
+    ) -> io::Result<Self> {
         // The CLI has no documented --data-dir override. Never silently launch into another HOME.
         let launcher_home = profile.env.get("HOME").map(PathBuf::from).or_else(|| {
             (!profile.env_remove.iter().any(|key| key == "HOME"))
@@ -68,6 +75,8 @@ impl ProcessConfig {
         secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
         secrets.dedup();
         Ok(Self {
+            host_dir: state_dir.map(|dir| dir.join("sdkhost")),
+            adapter_dir: state_dir.map(|dir| dir.join("sdk-adapters/agy")),
             profile,
             home,
             model_cwd: launcher_home.ok_or_else(|| {
@@ -77,6 +86,10 @@ impl ProcessConfig {
             secrets,
             owned: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
+    }
+
+    pub fn adopt(&self, pid: u32) {
+        self.owned.lock().unwrap().insert(pid);
     }
 
     pub fn native_path(&self, sid: &str) -> PathBuf {
@@ -218,9 +231,11 @@ impl ProcessConfig {
 }
 
 pub(super) struct Native {
-    child: Child,
+    child: Option<Child>,
+    host: Option<sdkhost_client::Client>,
+    pump: Option<JoinHandle<()>>,
     pub input: Option<ChildStdin>,
-    pub output: Lines<BufReader<ChildStdout>>,
+    pub output: Lines<BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>>,
     stderr: Option<JoinHandle<String>>,
     pub sid: String,
     pub cwd: String,
@@ -231,6 +246,9 @@ pub(super) struct Native {
 impl Drop for Native {
     fn drop(&mut self) {
         self.process.owned.lock().unwrap().remove(&self.pid);
+        if let Some(pump) = self.pump.take() {
+            pump.abort();
+        }
         if let Some(stderr) = self.stderr.take() {
             stderr.abort();
         }
@@ -246,6 +264,7 @@ impl Native {
         effort: Option<&str>,
         mode: Option<&str>,
         shutdown: CancellationToken,
+        binding: Option<(&str, bool)>,
     ) -> Result<Self, String> {
         if shutdown.is_cancelled() {
             return Err("agy_sdk_shutdown".into());
@@ -273,25 +292,86 @@ impl Native {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("agy_sdk_spawn: {error}"))?;
-        let pid = child.id().ok_or("agy_sdk_child_missing")?;
+        let (child, host, input, stdout, stderr, pump, pid): (
+            Option<Child>,
+            Option<sdkhost_client::Client>,
+            Option<ChildStdin>,
+            std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+            Option<JoinHandle<String>>,
+            Option<JoinHandle<()>>,
+            u32,
+        ) = if let (Some(dir), Some((key, recovering))) = (&process.host_dir, binding) {
+            let host = if recovering {
+                sdkhost_client::Client::attach(dir, key).await
+            } else {
+                sdkhost_client::Client::launch_or_attach(dir, key, &command).await
+            }
+            .map_err(|error| format!("agy_sdk_host: {error}"))?;
+            let pid = host
+                .status()
+                .await
+                .map_err(|e| format!("agy_sdk_host: {e}"))?
+                .pid;
+            let (reader, mut writer) = tokio::io::duplex(65536);
+            let stream_host = host.clone();
+            let pump = tokio::spawn(async move {
+                let mut offset = 0;
+                loop {
+                    match stream_host
+                        .read(sdkhost_client::Stream::Stdout, offset)
+                        .await
+                    {
+                        Ok(chunk) => {
+                            offset = chunk.next_offset;
+                            if writer.write_all(&chunk.bytes).await.is_err() || chunk.eof {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            (
+                None,
+                Some(host),
+                None,
+                Box::pin(reader),
+                None,
+                Some(pump),
+                pid,
+            )
+        } else {
+            let mut child = command
+                .spawn()
+                .map_err(|error| format!("agy_sdk_spawn: {error}"))?;
+            let pid = child.id().ok_or("agy_sdk_child_missing")?;
+            let input = child.stdin.take();
+            let stdout = child.stdout.take().ok_or("agy_sdk_stdout_missing")?;
+            let mut stderr = child.stderr.take().ok_or("agy_sdk_stderr_missing")?;
+            let redactor = process.clone();
+            let stderr = tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                let _ = stderr.read_to_end(&mut bytes).await;
+                redactor.redact(&String::from_utf8_lossy(&bytes))
+            });
+            (
+                Some(child),
+                None,
+                input,
+                Box::pin(stdout),
+                Some(stderr),
+                None,
+                pid,
+            )
+        };
         process.owned.lock().unwrap().insert(pid);
-        let input = child.stdin.take();
-        let stdout = child.stdout.take().ok_or("agy_sdk_stdout_missing")?;
-        let mut stderr = child.stderr.take().ok_or("agy_sdk_stderr_missing")?;
-        let redactor = process.clone();
-        let stderr = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            let _ = stderr.read_to_end(&mut bytes).await;
-            redactor.redact(&String::from_utf8_lossy(&bytes))
-        });
         let mut native = Self {
             child,
+            host,
             input,
             output: BufReader::new(stdout).lines(),
-            stderr: Some(stderr),
+            stderr,
+            pump,
             sid: String::new(),
             cwd: String::new(),
             process: process.clone(),
@@ -345,7 +425,9 @@ impl Native {
             Ok(())
         })();
         if let Err(error) = result {
-            native.terminate().await;
+            if !shutdown.is_cancelled() {
+                native.terminate().await;
+            }
             let diagnostic = native.diagnostics().await;
             return Err(if diagnostic.is_empty() {
                 error
@@ -360,6 +442,23 @@ impl Native {
         let mut bytes = serde_json::to_vec(&json!({"event":"user","message":{"content":text}}))
             .map_err(|_| "agy_sdk_encode")?;
         bytes.push(b'\n');
+        if let Some(host) = &self.host {
+            let receipt = match host
+                .receipt("input")
+                .await
+                .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?
+            {
+                Some(receipt) => receipt,
+                None => host
+                    .write("input", &bytes)
+                    .await
+                    .map_err(|e| format!("agy_sdk_write_uncertain: {e}"))?,
+            };
+            if receipt.state != "written" {
+                return Err(format!("agy_sdk_write_uncertain: {}", receipt.state));
+            }
+            return Ok(());
+        }
         let input = self.input.as_mut().ok_or("agy_sdk_stdin_closed")?;
         input
             .write_all(&bytes)
@@ -383,10 +482,38 @@ impl Native {
         }
     }
 
-    pub fn interrupt(&mut self) -> Result<(), String> {
+    pub async fn close_input(&mut self) -> Result<(), String> {
+        if let Some(host) = &self.host {
+            if !host
+                .status()
+                .await
+                .map_err(|e| format!("agy_sdk_eof: {e}"))?
+                .stdin_closed
+            {
+                host.close_stdin("eof")
+                    .await
+                    .map_err(|e| format!("agy_sdk_eof: {e}"))?;
+            }
+        } else {
+            self.input.take();
+        }
+        Ok(())
+    }
+
+    pub async fn interrupt(&mut self) -> Result<(), String> {
+        if let Some(host) = &self.host {
+            return host
+                .signal(libc::SIGINT)
+                .await
+                .map_err(|e| format!("agy_sdk_interrupt: {e}"));
+        }
         #[cfg(unix)]
         {
-            let pid = self.child.id().ok_or("agy_sdk_idle")?;
+            let pid = self
+                .child
+                .as_ref()
+                .and_then(|child| child.id())
+                .ok_or("agy_sdk_idle")?;
             // SAFETY: this retained Child owns the PID until wait/reap; never signal discovered processes.
             if unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) } != 0 {
                 return Err(format!("agy_sdk_interrupt: {}", io::Error::last_os_error()));
@@ -400,18 +527,48 @@ impl Native {
     }
 
     pub async fn terminate(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+        if let Some(host) = &self.host {
+            #[cfg(unix)]
+            let _ = host.signal(libc::SIGKILL).await;
+            let _ = host.wait().await;
+        } else if let Some(child) = &mut self.child {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
     }
 
     pub async fn finish(&mut self, shutdown: CancellationToken) -> Result<ExitStatus, String> {
+        #[cfg(unix)]
+        if let Some(host) = &self.host {
+            use std::os::unix::process::ExitStatusExt;
+            return tokio::select! {
+                _=shutdown.cancelled()=>Err("agy_sdk_shutdown".into()),
+                result=host.wait()=>result.map(|exit| ExitStatus::from_raw(
+                    exit.code.map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8)
+                )).map_err(|error|format!("agy_sdk_wait: {error}")),
+            };
+        }
+        let child = self.child.as_mut().ok_or("agy_sdk_child_missing")?;
         tokio::select! {
-            _=shutdown.cancelled()=>{self.terminate().await;Err("agy_sdk_shutdown".into())},
-            result=self.child.wait()=>result.map_err(|error|format!("agy_sdk_wait: {error}")),
+            _=shutdown.cancelled()=>Err("agy_sdk_shutdown".into()),
+            result=child.wait()=>result.map_err(|error|format!("agy_sdk_wait: {error}")),
         }
     }
 
     pub async fn diagnostics(&mut self) -> String {
+        if let Some(host) = &self.host {
+            let mut bytes = Vec::new();
+            let mut offset = 0;
+            while let Ok(chunk) = host.read(sdkhost_client::Stream::Stderr, offset).await {
+                let empty = chunk.bytes.is_empty();
+                offset = chunk.next_offset;
+                bytes.extend(chunk.bytes);
+                if chunk.eof || empty {
+                    break;
+                }
+            }
+            return self.process.redact(&String::from_utf8_lossy(&bytes));
+        }
         let Some(mut task) = self.stderr.take() else {
             return String::new();
         };

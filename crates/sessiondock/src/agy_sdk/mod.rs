@@ -53,13 +53,22 @@ struct Data {
     mode: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Turn {
     id: String,
     text: String,
     model: Option<String>,
     effort: Option<String>,
     mode: Option<String>,
+    #[serde(default)]
+    recovering: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Binding {
+    sid: String,
+    cwd: String,
+    turn: Turn,
 }
 
 enum Command {
@@ -88,7 +97,12 @@ pub fn new(
     else {
         return Ok(None);
     };
-    let process = ProcessConfig::new(profile, home.clone(), config.proc_root.clone())?;
+    let process = ProcessConfig::new(
+        profile,
+        home.clone(),
+        config.proc_root.clone(),
+        config.state_dir.as_ref(),
+    )?;
     Ok(Some(Arc::new(Bridge {
         process: Arc::new(process),
         mirror: mirror.clone(),
@@ -147,6 +161,13 @@ impl Bridge {
         tokio::time::timeout(std::time::Duration::from_secs(10), live.done.cancelled())
             .await
             .map_err(|_| "Agy SDK 停止尚未确认")?;
+        if let Some(path) = self.binding_path(&live.sid) {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("agy_sdk_binding: {error}")),
+            }
+        }
         Ok(true)
     }
 
@@ -202,6 +223,20 @@ impl Bridge {
                 let data = live.data.lock().unwrap();
                 Ok(json!({"session_id":live.sid,"cwd":live.cwd,"capabilities":capabilities(),"raw":live.raw(&data)}))
             }
+            "reattach" => {
+                let sid = text(&target, "session_id")?;
+                if self.process.host_dir.is_none() || self.read_binding(&sid)?.is_none() {
+                    return Ok(json!({"attached":false}));
+                }
+                let live = self.open(&target).await?;
+                Ok(json!({"attached":true,"session_id":live.sid}))
+            }
+            "recover" => {
+                let live = self.open(&target).await?;
+                let request = text(&input, "request_id")?;
+                let data = live.data.lock().unwrap();
+                data.receipts.get(&request).cloned().ok_or_else(|| "agy_sdk_recovery_missing: 未找到原宿主绑定，不会重发输入".into())
+            }
             "turn" => {
                 let live = self.open(&target).await?;
                 if let Some(request)=choice(&input,"request_id")
@@ -216,8 +251,9 @@ impl Bridge {
                 let turn = Turn { id: request.clone(), text: content.clone(),
                     model: choice(&input,"model").or_else(|| data.model.clone()),
                     effort: choice(&input,"effort").or_else(|| data.effort.clone()),
-                    mode: choice(&input,"mode").or_else(|| data.mode.clone()) };
-                let receipt = json!({"accepted":true,"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
+                    mode: choice(&input,"mode").or_else(|| data.mode.clone()), recovering: false };
+                let receipt = json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
+                self.save_binding(&live, &turn)?;
                 live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
                 data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued"}));
                 data.receipts.insert(request, receipt.clone());
@@ -264,6 +300,24 @@ impl Bridge {
             }
             return Ok(live);
         }
+        let binding = self.read_binding(&sid)?;
+        if let Some(binding) = &binding {
+            if binding.sid != sid || binding.cwd != cwd {
+                return Err("agy_sdk_identity_changed".into());
+            }
+            if let Some(dir) = &self.process.host_dir {
+                let host = sdkhost_client::Client::attach(dir, &host_key(&sid, &binding.turn.id))
+                    .await
+                    .map_err(|e| format!("agy_sdk_recovery_missing: {e}"))?;
+                let status = host
+                    .status()
+                    .await
+                    .map_err(|e| format!("agy_sdk_recovery: {e}"))?;
+                if status.exit.is_none() {
+                    self.process.adopt(status.pid);
+                }
+            }
+        }
         self.process.check_available(sid.clone()).await?;
         if !self.process.native_path(&sid).is_file() {
             return Err(
@@ -271,7 +325,79 @@ impl Bridge {
                     .into(),
             );
         }
-        self.install(key, sid, cwd, None, None)
+        let live = self.install(key, sid, cwd, None, None)?;
+        if let Some(mut binding) = binding {
+            let mut data = live.data.lock().unwrap();
+            // Concurrent opens share the installed actor and its receipt.
+            if !data.receipts.contains_key(&binding.turn.id) {
+                binding.turn.recovering = true;
+                let request = binding.turn.id.clone();
+                data.model = binding.turn.model.clone();
+                data.effort = binding.turn.effort.clone();
+                data.mode = binding.turn.mode.clone();
+                data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":binding.turn.text,"request_id":request,"status":"running"}));
+                data.receipts.insert(request.clone(), json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()}));
+                data.outstanding += 1;
+                live.commands
+                    .send(Command::Turn(binding.turn))
+                    .map_err(|_| "agy_sdk_shutdown")?;
+                live.publish(&mut data);
+            }
+        }
+        Ok(live)
+    }
+
+    fn binding_path(&self, sid: &str) -> Option<PathBuf> {
+        self.process
+            .adapter_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{sid}.json")))
+    }
+
+    fn read_binding(&self, sid: &str) -> Result<Option<Binding>, String> {
+        let Some(path) = self.binding_path(sid) else {
+            return Ok(None);
+        };
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| format!("agy_sdk_binding: {e}")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("agy_sdk_binding: {error}")),
+        }
+    }
+
+    fn save_binding(&self, live: &Live, turn: &Turn) -> Result<(), String> {
+        use std::io::Write;
+        let Some(path) = self.binding_path(&live.sid) else {
+            return Ok(());
+        };
+        let result = (|| -> io::Result<()> {
+            let parent = path.parent().unwrap();
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).truncate(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let temporary = path.with_extension("tmp");
+            let mut file = options.open(&temporary)?;
+            file.write_all(&serde_json::to_vec(&Binding {
+                sid: live.sid.clone(),
+                cwd: live.cwd.clone(),
+                turn: turn.clone(),
+            })?)?;
+            file.sync_all()?;
+            std::fs::rename(temporary, path)
+        })();
+        result.map_err(|e| format!("agy_sdk_binding: {e}"))
     }
 
     fn install(
@@ -296,7 +422,7 @@ impl Bridge {
             sid: sid.clone(),
             cwd,
             commands,
-            stop: self.shutdown.child_token(),
+            stop: CancellationToken::new(),
             done: CancellationToken::new(),
             events,
             data: Mutex::new(Data {
@@ -319,8 +445,9 @@ impl Bridge {
         sessions.keys.insert(key, live.clone());
         let process = self.process.clone();
         let running = live.clone();
+        let shutdown = self.shutdown.clone();
         tokio::spawn(async move {
-            actor(process, running.clone(), receiver, running.stop.clone()).await;
+            actor(process, running.clone(), receiver, shutdown).await;
             running.done.cancel();
         });
         Ok(live)
@@ -360,6 +487,7 @@ impl Bridge {
             effort.as_deref(),
             choice(&input, "mode").as_deref(),
             self.shutdown.clone(),
+            None,
         )
         .await?;
         let sid = native.sid.clone();
@@ -425,13 +553,13 @@ async fn actor(
 ) {
     let mut pending = std::collections::VecDeque::new();
     loop {
-        if shutdown.is_cancelled() {
+        if shutdown.is_cancelled() || live.stop.is_cancelled() {
             break;
         }
         let command = if let Some(turn) = pending.pop_front() {
             Some(Command::Turn(turn))
         } else {
-            tokio::select! { _=shutdown.cancelled()=>None, command=receiver.recv()=>command }
+            tokio::select! { _=shutdown.cancelled()=>None, _=live.stop.cancelled()=>None, command=receiver.recv()=>command }
         };
         let Some(command) = command else {
             break;
@@ -498,9 +626,12 @@ async fn actor(
                 live.publish(&mut data);
             }
         }
-        if shutdown.is_cancelled() {
+        if shutdown.is_cancelled() || live.stop.is_cancelled() {
             break;
         }
+    }
+    if shutdown.is_cancelled() {
+        return;
     }
     let mut data = live.data.lock().unwrap();
     if data.outstanding > 0 {
@@ -529,29 +660,31 @@ async fn execute(
         turn.effort.as_deref(),
         turn.mode.as_deref(),
         shutdown.clone(),
+        Some((&host_key(&live.sid, &turn.id), turn.recovering)),
     )
     .await?;
     let outcome=async {
     tokio::select! {
-        _=shutdown.cancelled()=>{native.terminate().await;return Err("agy_sdk_shutdown".into());},
+        _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
         sent=native.send(&turn.text)=>sent?,
     }
     // EOF means finish this turn and exit, rather than cancel. Next turn resumes the same SID.
-    native.input.take();
+    native.close_input().await?;
     let mut result = None;
     let mut interrupted = false;
     let mut interrupt_deadline = None;
     let mut saw_assistant = false;
     loop {
         tokio::select! {
-            _=shutdown.cancelled()=>{ native.terminate().await; return Err("agy_sdk_shutdown".into()); }
+            _=shutdown.cancelled()=>{ return Err("agy_sdk_shutdown".into()); }
+            _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             _=async { match interrupt_deadline { Some(deadline)=>tokio::time::sleep_until(deadline).await, None=>std::future::pending().await } }=>{
                 native.terminate().await;return Err("agy_sdk_interrupted: 原生 SIGINT 未及时退出，已结束本桥接进程。".into());
             }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
                 Some(Command::Interrupt(reply))=>{
-                    let answer=native.interrupt();
+                    let answer=native.interrupt().await;
                     if answer.is_ok() { interrupted=true;interrupt_deadline=Some(tokio::time::Instant::now()+std::time::Duration::from_secs(5)); }
                     let _=reply.send(answer.map(|()|json!({"interrupted":true,"session_id":live.sid})));
                 }
@@ -582,7 +715,7 @@ async fn execute(
             }
         }
     }
-    let status = native.finish(shutdown).await?;
+    let status = native.finish(shutdown.clone()).await?;
     if interrupted {
         return Err(
             "agy_sdk_interrupted: 已向本桥接启动的 Agy 发送 SIGINT；下一轮恢复同一 SID。".into(),
@@ -601,7 +734,7 @@ async fn execute(
         )),
     }
     }.await;
-    if outcome.is_err() {
+    if outcome.is_err() && !shutdown.is_cancelled() {
         native.terminate().await;
     }
     live.diagnostic(native.diagnostics().await);
@@ -678,4 +811,12 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
         }
     }
     live.publish(&mut data);
+}
+
+fn host_key(sid: &str, request: &str) -> String {
+    format!("agy:{sid}:{request}")
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

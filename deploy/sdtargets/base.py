@@ -82,6 +82,7 @@ class DeployOptions:
     web_only: bool = False
     bin_only: bool = False
     with_ptyhost: bool = False
+    with_sdkhost: bool = False
     keep_backups: int = 5
     health_timeout: float = 45.0
     log_dir: Path = Path("target/deploy")

@@ -21,7 +21,7 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS conversation_summaries (
     step_count INTEGER, agent_name TEXT)'''
 
 FAKE = r"""
-import json, os, signal, sqlite3, sys, threading, time, uuid
+import json, os, signal, sqlite3, subprocess, sys, threading, time, uuid
 from pathlib import Path
 args=sys.argv[1:]
 root=Path(os.environ['AGY_SDK_FIXTURE'])
@@ -95,6 +95,10 @@ for line in sys.stdin:
     record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
     native_record('USER_INPUT','<USER_REQUEST>\n'+text+'\n</USER_REQUEST>')
     step('user_input',state='DONE');advance()
+    if text=='__DESCENDANT_PIPE__':
+        descendant=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'])
+        record({'kind':'descendant','sid':sid,'pid':descendant.pid,'parent_pid':os.getpid()})
+        os._exit(0)
     if text=='__CRASH__':os._exit(7)
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)

@@ -73,6 +73,13 @@ def wait_snapshot(page, uid, predicate):
     raise AssertionError("native snapshot condition not reached: " + json.dumps(last, ensure_ascii=False))
 
 
+def start_sdk_if_needed(page):
+    page.wait_for_function("""() => document.querySelector('#sdk-input')?.offsetParent
+      || document.querySelector('#a-session-toggle')?.title === '启动会话'""")
+    if not page.locator('#sdk-input').is_visible():
+        page.locator('#a-session-toggle').click()
+
+
 def open_sdk(page, fixture, expect, uid=None):
     uid = uid or fixture.uid
     card = page.locator(f'#side .item[data-uid="{uid}"]')
@@ -81,6 +88,7 @@ def open_sdk(page, fixture, expect, uid=None):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#a-sdk")).to_be_visible()
     page.locator("#a-sdk").click()
+    start_sdk_if_needed(page)
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#sdk-send")).to_be_enabled()
     page.wait_for_function("uid => NativeSdkView.connected && NativeSdkView.uid === uid",arg=uid)
@@ -465,7 +473,7 @@ def fork_restart_check(fixture, binary):
     original = fixture.path.read_text()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
-        with fixture.server(binary) as base:
+        with fixture.server(binary, preserve_sdkhosts=True) as base:
             context = browser.new_context(service_workers='block')
             page = context.new_page()
             page.goto(base, wait_until='networkidle')
@@ -547,6 +555,7 @@ def startup_failure_check(fixture, binary, screenshots=None):
         page.goto(base, wait_until='networkidle')
         page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
         page.locator('#a-sdk').click()
+        start_sdk_if_needed(page)
         expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('command not found')
         expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('[redacted]')
         assert 'synthetic-startup-secret' not in page.locator('.sdk-pane .sdk-status').inner_text()
@@ -621,6 +630,7 @@ def view_mode_check(fixture, base, screenshots, label):
                 if page.locator('#detail .mobile-back').is_visible():
                     page.locator('#detail .mobile-back').click()
                 page.locator('#side .item[data-uid^="claude:"]').filter(has_text='另一条 Claude SDK 会话').click()
+                start_sdk_if_needed(page)
                 expect(page.locator('#sdk-input')).to_be_visible()
                 other_uid = page.evaluate('S.sel')
                 page.wait_for_function('NativeSdkView.connected')

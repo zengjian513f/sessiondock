@@ -58,6 +58,8 @@ class LinuxNodeHandler(TargetHandler):
         names = list(self.t.binaries)
         if self.o.with_ptyhost and self.ships_ptyhost and PTYHOST not in names:
             names.append(PTYHOST)
+        if self.o.with_sdkhost and self.kind == "linux-node" and "sdkhost" not in names:
+            names.append("sdkhost")
         return names
 
     def watched_binaries(self) -> list[str]:
@@ -65,6 +67,8 @@ class LinuxNodeHandler(TargetHandler):
         names = list(self.t.binaries)
         if self.ships_ptyhost and PTYHOST not in names:
             names.append(PTYHOST)
+        if self.o.with_sdkhost and self.kind == "linux-node" and "sdkhost" not in names:
+            names.append("sdkhost")
         return names
 
     # -- probe --------------------------------------------------------------------------
@@ -151,7 +155,7 @@ class LinuxNodeHandler(TargetHandler):
         before = self.before or ProbeResult(False)
         out = []
         if self.kind == "linux-node":
-            out.append("check native SDK input ledger before staging and backup; defer while sending/accepted work exists")
+            out.append("check native SDK input ledger before staging and backup; defer while in-process SDK work exists (independent sdkhost work survives)")
         for name in self.binaries():
             want = self.a.version
             have = before.binary_versions.get(name, "")
@@ -186,7 +190,8 @@ if not path.exists():
     sys.exit(0)
 rows = json.loads(path.read_text())
 active = [row for queue in rows.values() for row in queue
-          if row.get("state") in ("sending", "accepted")]
+          if row.get("state") in ("sending", "accepted", "recovering")
+          and not (row.get("result") or {}).get("sdkhost")]
 if active:
     print("Native SDK work is unfinished; deployment deferred before backup/swap/restart:")
     for row in active:
@@ -228,6 +233,8 @@ if active:
         names = list(self.t.binaries)
         if self.o.with_ptyhost and self.ships_ptyhost and PTYHOST not in names:
             names.append(PTYHOST)
+        if self.o.with_sdkhost and self.kind == "linux-node" and "sdkhost" not in names:
+            names.append("sdkhost")
         return names
 
     def backup(self) -> str:

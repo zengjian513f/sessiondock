@@ -48,6 +48,9 @@ impl Bridge {
                 .unwrap_or_else(|_| Err("grok_sdk_disconnected".to_owned())),
             Err(error) => Err(error),
         };
+        if self.shutdown.is_cancelled() {
+            return Err("grok_sdk_shutdown".into());
+        }
         let mut state = session.live.lock().unwrap();
         let mut result = result;
         if let Ok(native) = &result {

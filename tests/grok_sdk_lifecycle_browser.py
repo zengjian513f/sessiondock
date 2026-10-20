@@ -21,6 +21,7 @@ from grok_sdk_browser import api,select,snapshot,watch,capture_state
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY
 from send_browser import initialize
+from sdkhost_fixtures import stop_private_sdkhosts
 
 
 def alive(pid):
@@ -187,7 +188,10 @@ def main():
                 initialize("--initialize-lifecycle",root/"ledger",args.binary.resolve(strict=True))
                 (root/"state").mkdir()
                 extra={**fixture.env,"SESSIONDOCK_NATIVE_SDKS":"auto","SESSIONDOCK_LIFECYCLE_DIR":str(root/"ledger"),"SESSIONDOCK_PTYHOST_DIR":str(root/"unused-host"),"SESSIONDOCK_STATE_DIR":str(root/"state"),"LD_PRELOAD":str(library),"SESSIONDOCK_TEST_CLOCK_FILE":str(marker)}
-                with server(SimpleNamespace(root=root),args.binary,"off",extra) as base:exercise(browser,base,fixture,marker,args.screenshots)
+                try:
+                    with server(SimpleNamespace(root=root),args.binary,"off",extra) as base:exercise(browser,base,fixture,marker,args.screenshots)
+                finally:
+                    stop_private_sdkhosts(root)
             browser.close()
     print("PASS Grok explicit native interject, receipt boundaries, subscribed/active/approval protection, ten-minute idle release and same-SID reopen")
 

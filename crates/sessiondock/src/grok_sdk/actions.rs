@@ -16,6 +16,9 @@ impl Bridge {
             _ => unreachable!(),
         };
         let result = session.connection.request(native, params).await;
+        if self.shutdown.is_cancelled() {
+            return Err("grok_sdk_shutdown".into());
+        }
         self.observe_extension(session, method, &result);
         let result = result?;
         // Context occupancy has a dedicated native read. Never derive it from
@@ -100,9 +103,17 @@ impl Bridge {
         if method == "settings" {
             self.check_conflict(&session.sid, &session.path, Some(session.connection.pid))
                 .await?;
+            mutations.insert(
+                key.clone(),
+                Err(
+                    "grok_sdk_mutation_unknown: operation dispatched before service restart".into(),
+                ),
+            );
+            self.save_attempts("mutations.json", &mutations)?;
             let result = self.mutate_once(&session, method, input).await;
             self.observe_extension(&session, method, &result);
             mutations.insert(key, result.clone());
+            self.save_attempts("mutations.json", &mutations)?;
             return result;
         }
         let _operation = session
@@ -118,9 +129,15 @@ impl Bridge {
                 return Err("grok_sdk_busy".into());
             }
         }
+        mutations.insert(
+            key.clone(),
+            Err("grok_sdk_mutation_unknown: operation dispatched before service restart".into()),
+        );
+        self.save_attempts("mutations.json", &mutations)?;
         let result = self.mutate_once(&session, method, input).await;
         self.observe_extension(&session, method, &result);
         mutations.insert(key, result.clone());
+        self.save_attempts("mutations.json", &mutations)?;
         result
     }
 
@@ -168,6 +185,9 @@ impl Bridge {
             state.publish();
         }
         let result = session.connection.request(native, params).await;
+        if self.shutdown.is_cancelled() {
+            return Err("grok_sdk_shutdown".into());
+        }
         {
             let mut state = session.live.lock().unwrap();
             state.running = false;

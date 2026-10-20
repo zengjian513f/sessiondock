@@ -48,7 +48,7 @@ impl Bridge {
                 || !state.native_tasks.is_empty()
                 || state.incomplete_tasks
                 || state.has_pending_steers()
-                || session.connection.has_pending()
+                || session.connection.has_pending(&state)
             {
                 state.idle_since = None;
                 continue;

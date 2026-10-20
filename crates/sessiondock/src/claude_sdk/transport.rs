@@ -2,8 +2,30 @@ use super::*;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+#[derive(Clone)]
+pub(super) enum Outbound {
+    Direct(mpsc::UnboundedSender<Value>),
+    #[cfg(unix)]
+    Hosted(super::hosted::Sender),
+}
+impl Outbound {
+    pub fn send(&self, frame: Value) -> Result<(), String> {
+        match self {
+            Self::Direct(sender) => sender
+                .send(frame)
+                .map_err(|_| "claude_sdk_disconnected".into()),
+            #[cfg(unix)]
+            Self::Hosted(sender) => sender.send(frame),
+        }
+    }
+}
+
 impl Bridge {
     pub(super) async fn ensure(self: &Arc<Self>, session: &Arc<Session>) -> Result<(), String> {
+        #[cfg(unix)]
+        if self.state_dir.is_some() {
+            return self.ensure_hosted(session).await;
+        }
         if lock(&session.live).ready {
             return Ok(());
         }
@@ -88,7 +110,7 @@ impl Bridge {
             let (tx, rx) = mpsc::unbounded_channel();
             {
                 let mut live = lock(&session.live);
-                live.outbound = Some(tx);
+                live.outbound = Some(Outbound::Direct(tx));
                 live.pid = pid;
                 live.ready = false;
                 live.state_observed = false;
@@ -244,6 +266,10 @@ impl Bridge {
                 let _ = done.send(true);
             });
         }
+        self.initialize_session(session).await
+    }
+
+    pub(super) async fn initialize_session(&self, session: &Arc<Session>) -> Result<(), String> {
         let initialized = session
             .control(json!({"subtype":"initialize","hooks":null,"supportedDialogKinds":["refusal_fallback_prompt"]}))
             .await;
@@ -406,7 +432,7 @@ async fn write_input(
     failed.cancel();
 }
 
-fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
+pub(super) fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
     std::env::vars()
         .chain(profile.env.clone())
         .filter_map(|(name, value)| {
@@ -420,7 +446,7 @@ fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
         .collect()
 }
 
-fn redact(mut text: String, secrets: &[String]) -> String {
+pub(super) fn redact(mut text: String, secrets: &[String]) -> String {
     for secret in secrets {
         text = text.replace(secret, "[redacted]");
     }
