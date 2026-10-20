@@ -239,6 +239,12 @@ const NativeSdkControls = {
       };
     };
     for(const item of bridgeRows){
+      if(item.state==='accepted'){
+        const receipt=el('div','native-message-state',labels.accepted);
+        receipt.dataset.queueId=item.id;receipt.dataset.queueOrigin='bridge';
+        receipt.title='仅表示原生已接收输入，不表示已处理或已完成';
+        holder.append(receipt);continue;
+      }
       const body=cardFor(item,labels[item.state] || item.state);body.parentElement.dataset.queueOrigin='bridge';
       if(item.error)body.append(el('p','sdk-control-note',item.error));
       if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':'原生处理结果尚未确认，后续输入暂停。核对历史后可重试或移除此记录。'));

@@ -392,6 +392,10 @@ immediate model/effort/mode/permission/Fast/agent changes and delayed confirmati
 including rejection, preserved drafts and no stale send overrides, desktop/mobile.
 Both use private synthetic peers; `--screenshots DIR` records full pages.
 
+`python3 tests/native_sdk_receipt_browser.py` covers four native SDKs sending
+input, compact accepted receipts without duplicate text, failure recovery and
+cancellation, on desktop/mobile in dark/light themes. `--screenshots DIR` records full pages.
+
 Shared helpers imported by browser suites live in `tests/*_fixtures.py`
 (extracted on 2026-10-06 from the removed HTTP/parity/real scripts); the runner
 skips them.
