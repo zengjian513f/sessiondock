@@ -27,7 +27,7 @@ def single_row(page):
     }""")
     measurements = page.locator('.sdk-pane .sdk-status-row').evaluate("""row => {
       const bounds = row.getBoundingClientRect();
-      const controls = [...row.querySelectorAll(':scope > .footer-session-toggle, :scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
+      const controls = [...row.querySelectorAll(':scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
         .filter(node => node.getClientRects().length && !node.hidden)
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
           left:r.left, right:r.right, top:r.top, bottom:r.bottom}; });

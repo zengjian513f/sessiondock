@@ -526,7 +526,7 @@ async function toggleLinkedTermSession(uid, terminalOnly = false) {
 }
 
 // ---------------------------------------------------------------- 接管
-async function takeover(uid, btn) {
+async function takeover(uid, btn, keepConversation = false) {
   const setBtn = (t, dis) => {
     if (btn) { btn.title = btn.ariaLabel = t; btn.setAttribute('aria-busy', String(dis)); }
   };
@@ -553,9 +553,11 @@ async function takeover(uid, btn) {
     if (S.sel !== uid || S.agent) return;
     // Starting from the session menu bypasses the terminal button's view
     // switch. Select the terminal before discovery can restore the SDK pane.
-    SdkView.legacyViews.add(viewKey(uid));
-    SdkView.selectMode(uid, null, 'terminal');
-    SessionContentView.close();
+    if (!keepConversation) {
+      SdkView.legacyViews.add(viewKey(uid));
+      SdkView.selectMode(uid, null, 'terminal');
+      SessionContentView.close();
+    }
     await loadTermList();
     // The receipt is ready, but the fresh instance reaches the console
     // list only once its guarded observation matches the session row; wait
@@ -571,7 +573,7 @@ async function takeover(uid, btn) {
     S.liveTmux.add(uid);
     paintLive();
     ConsoleUI.errors.delete(uid);
-    await openTermPane(d.name);
+    if (!keepConversation) await openTermPane(d.name);
   } finally {
     setBtn('接管会话', false);
     renderTakeoverBtn();
@@ -5206,7 +5208,7 @@ function renderComposerInputStatus() {
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);
   const lifecycle = composerUid && !takenOver(composerUid) && !receipt
-    ? {state:'starting', message:'会话未在终端运行，点击状态栏电源按钮启动；草稿可继续编辑'}
+    ? {state:'starting', message:'会话未在终端运行，点击输入框启动；草稿可继续编辑'}
     : sessionComposerEnded(composerUid)
     ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
     : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
@@ -6012,6 +6014,7 @@ async function submitComposer({initial = false} = {}) {
   }
 }
 
+$('#cinput').addEventListener('click', () => startComposerSession(composerUid, null, 'cli'));
 $('#cinput').addEventListener('input', e => {
   const draft = composerDraft();
   if (draft) { draft.text = e.target.value; persistComposerDraft(); }

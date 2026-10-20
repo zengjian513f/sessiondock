@@ -11,7 +11,6 @@ const SdkUI = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="btn footer-session-toggle" type="button" aria-label="启动会话" title="启动会话"></button>
           <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '连接中'}</span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量"></div>
@@ -37,6 +36,7 @@ const SdkUI = {
     pane.querySelector('#sdk-composer').hidden = false;
     view.input.disabled = true;
     pane.querySelector('#sdk-send').disabled = true;
+    view.input.onclick = () => startComposerSession(view.uid, view.agent, 'sdk');
     view.input.oninput = () => { view.fitInput(); CodexSdkCompose.input(view); };
     view.input.onblur = () => PathCompletion.close(view.input);
     view.input.onkeydown = event => {

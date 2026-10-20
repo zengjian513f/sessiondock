@@ -7369,14 +7369,14 @@ function sessionStopUnavailable(row) {
   return row?.pending && row.source !== 'shell'
     ? '新会话尚未保存会话记录，停止后无法续接。可继续使用或丢弃会话。' : '';
 }
-function sessionRunUnavailable(row) {
+function sessionRunUnavailable(row, mode = agentStartMode(row?.source)) {
   if (!row) return '会话状态尚未读取。';
   if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在切换会话运行状态，请稍候。';
   if (sessionRunActive(row)) return sessionStopUnavailable(row);
   if (row.pending) return row.source === 'shell'
     ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
     : '此启动记录尚无可续接的原生会话，请从新建会话重新启动。';
-  if (agentStartMode(row.source) === 'sdk') return sessionStartUnavailable(row, 'sdk');
+  if (mode === 'sdk') return sessionStartUnavailable(row, 'sdk');
   const reason = consoleUnavailableReason(row.uid, row.agent_id || null, false);
   if (reason) return reason;
   const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(row.uid)] : T;
@@ -7408,11 +7408,15 @@ function refreshSessionRunControls() {
   // Missing from that projection does not mean its running host has stopped.
   if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
     paintSessionRunControl(button, row);
-  for (const control of document.querySelectorAll('.footer-session-toggle'))
-    paintSessionRunControl(control, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
-async function toggleSessionRun(row, button = null, intent = null) {
+function startComposerSession(uid, agent, mode) {
+  if (!uid || S.sel !== uid || S.agent !== agent) return;
+  if (mode === 'sdk' && !SdkView.readOnly && !SdkView.openFailed) return;
+  const row = sessionRunRow(uid);
+  if (row) void toggleSessionRun(agent ? {...row, agent_id: agent} : row, null, 'start', mode);
+}
+async function toggleSessionRun(row, button = null, intent = null, composerMode = null) {
   if (!row || ConsoleUI.busy.has(row.uid)) return;
   // A live refresh can change the row after the control was painted. Keep the
   // action the user clicked; stop is idempotent if the instance already exited.
@@ -7428,25 +7432,28 @@ async function toggleSessionRun(row, button = null, intent = null) {
     }
     return;
   }
-  if (sessionRunActive(row)) {
-    await openSession(row.uid, row.agent_id || null);
+  if (sessionRunActive(row) && !(composerMode === 'sdk' && SdkView.openFailed)) {
+    if (!composerMode) await openSession(row.uid, row.agent_id || null);
     return;
   }
-  const mode = agentStartMode(row.source);
-  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
+  const mode = composerMode || agentStartMode(row.source);
+  if (sessionRunUnavailable(row, mode)) {paintSessionRunControl(button, row); return;}
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();
   try {
-    await openSession(row.uid, row.agent_id || null);
+    // Input clicks preserve the editor, its selection and the current view.
+    if (!composerMode) await openSession(row.uid, row.agent_id || null);
     // Reuse the existing exact-UID resume and its idempotent launch receipt.
     if (mode === 'sdk')
       await SdkView.startSession(row.uid, row.agent_id || null);
     else {
-      SdkView.legacyViews.add(viewKey(row.uid));
-      (SdkView.selectMode || SdkView.rememberMode).call(SdkView, row.uid, null, 'terminal');
-      SessionContentView.close();
-      await takeover(row.uid, null);
+      if (!composerMode) {
+        SdkView.legacyViews.add(viewKey(row.uid));
+        (SdkView.selectMode || SdkView.rememberMode).call(SdkView, row.uid, null, 'terminal');
+        SessionContentView.close();
+      }
+      await takeover(row.uid, null, composerMode === 'cli');
     }
   } catch (error) {
     await appAlert(`启动失败：${error.message || error}`);
@@ -9702,9 +9709,6 @@ function renderActivity(activity) {
     gauges.setAttribute('aria-label', '用量');
     gauges.tabIndex = 0;
     row.append(gauges);
-    const power = el('button', 'btn footer-session-toggle');
-    power.type = 'button';
-    row.append(power);
     box.after(row);
   }
   row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
@@ -9734,10 +9738,6 @@ function renderActivity(activity) {
   details.textContent = n.title;
   ConversationUI.bindPopover(n, details, row);
   row.prepend(n);
-  const power = row.querySelector('.footer-session-toggle');
-  row.prepend(power);
-  paintSessionRunControl(power, S.agent
-    ? {...sessionRunRow(S.sel), uid: S.sel, agent_id: S.agent} : sessionRunRow(S.sel));
   renderConversationUsage(row, S.sel);
   ConversationUI.updateStatusDisclosure(n, details);
 }
