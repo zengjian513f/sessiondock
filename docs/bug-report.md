@@ -1,4 +1,4 @@
-# Bug reports and their CLI workers (M7)
+# Bug reports and their workers (M7)
 
 `POST /api/bug-report` captures a self-contained diagnostic bundle
 and optionally starts a managed CLI instance that investigates it. The Rust implementation lives in
@@ -8,6 +8,19 @@ query), `api/bug_report.rs` (route, validation, the `uid=bug-report` upload)
 and `files/write.rs` (`bug_report_upload`). The route is `501
 bug_report_disabled` and `capabilities.bug_report` is `false` until every
 dependency is configured.
+
+## SDK / CLI launch preference
+
+DELTA: the browser's per-agent launch preference applies to new sessions,
+existing-session start and report workers. The report sends `mode: "sdk"` or
+`"cli"`; omitted mode retains CLI compatibility for older clients. SDK mode
+never falls back to CLI. The mode joins the durable report replay payload.
+SDK workers use the ordinary provider create/open and durable turn submission
+paths, link the report draft to the returned native UID, and retain the diagnostic
+prompt as an editable draft on failure. Their response includes `worker.mode`,
+`worker.uid` and `worker.session`; Hub qualifies both the worker and its nested
+session. Opening the report joins that SDK view. The manifest records
+`worker_mode: "sdk"` and SDK submission status. CLI behavior below is unchanged.
 
 ## Configuration
 

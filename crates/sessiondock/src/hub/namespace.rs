@@ -186,6 +186,9 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             .and_then(Value::as_object_mut)
     {
         decorate_row(worker, node, true, false)?;
+        if let Some(session) = worker.get_mut("session").and_then(Value::as_object_mut) {
+            decorate_row(session, node, false, false)?;
+        }
     }
     if path.starts_with("/api/session/conversation") {
         if let Some(session) = result

@@ -69,10 +69,7 @@ def exercise(browser, base, source, screenshots, label):
         if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
         row.click(button='right')
         page.locator('#item-menu [data-act="stop"]').click()
-        expect(page.locator('#session-start-menu')).to_be_visible()
-        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-start-menu.png'))
-        page.locator('#session-start-menu [data-start-mode="sdk"]').click()
-        expect(page.locator('#session-start-menu')).to_be_hidden()
+
         expect(page.locator('#sdk-input')).to_be_visible()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')

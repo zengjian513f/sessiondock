@@ -19,8 +19,14 @@ from send_browser import initialize
 
 
 @contextmanager
-def provider(source, root, binary, *, cli=False):
+def provider(source, root, binary, *, cli=False, report=False):
     extra = node_env(root, free_port(), '127.0.0.0/8')
+    if report:
+        for name in ('reports', 'audit', 'report-work'):
+            (root/name).mkdir()
+        extra.update(SESSIONDOCK_BUG_REPORT_DIR=str(root/'reports'),
+            SESSIONDOCK_BUG_REPORT_WORKER='true', SESSIONDOCK_BUG_REPORT_REPO=str(root/'report-work'),
+            SESSIONDOCK_AUDIT_DIR=str(root/'audit'))
     if cli:
         (root/'menu-host').mkdir()
         from terminal_browser import SHELL_SCRIPT

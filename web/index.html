@@ -368,10 +368,7 @@
 <div id="toolbar-view-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="列表视图"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
 <div id="toolbar-sources-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="Agent 类型"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
 <div id="toolbar-nest-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="折叠方式"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
-<div id="session-start-menu" class="ctx-menu" hidden role="menu" aria-label="启动方式">
-  <button type="button" role="menuitem" data-start-mode="sdk">SDK</button>
-  <button type="button" role="menuitem" data-start-mode="cli">CLI</button>
-</div>
+
 <div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
 <dialog id="new-session-dialog" aria-labelledby="new-session-title">
   <form id="new-session-form">
@@ -598,6 +595,13 @@
     </div>
     </div>
     <div id="settings-features" class="settings-pane" role="tabpanel" hidden>
+    <p>会话启动方式用于新建、启动已有会话和报告问题；已运行会话保持原方式。</p>
+    <label class="setting-row"><span><b>Claude 启动方式</b></span><select data-agent-start-mode="claude" aria-label="Claude 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+    <label class="setting-row"><span><b>Codex 启动方式</b></span><select data-agent-start-mode="codex" aria-label="Codex 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+    <label class="setting-row"><span><b>Grok 启动方式</b></span><select data-agent-start-mode="grok" aria-label="Grok 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+    <label class="setting-row"><span><b>Agy 启动方式</b></span><select data-agent-start-mode="agy" aria-label="Agy 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+    <label class="setting-row"><span><b>OpenCode 启动方式</b></span><select data-agent-start-mode="opencode" aria-label="OpenCode 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+
     <label class="setting-row" for="setting-sleep">
       <span><b>自动休眠</b><small>无操作时暂停同步，按 Resume 恢复；会话继续运行</small></span>
       <select id="setting-sleep">

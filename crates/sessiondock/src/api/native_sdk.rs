@@ -1,7 +1,7 @@
 //! HTTP/SSE transport shared by native SDK providers.
 use crate::{error::ApiError, state::AppState};
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{
@@ -44,11 +44,30 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
 pub async fn call(
     State(state): State<AppState>,
     Path(method): Path<String>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    tokio::spawn(execute(state, method, body))
-        .await
-        .map_err(|_| failure("SDK 请求执行失败".into()))?
+    tokio::spawn(async move {
+        let continuation = if method == "create" {
+            super::relations::sdk_continuation(
+                &state,
+                body["continuation_uid"].as_str().map(str::to_owned),
+                serde_json::from_value(body["remote_continuation"].clone())
+                    .map_err(|e| failure(e.to_string()))?,
+                hub.is_some(),
+            )
+            .await?
+        } else {
+            None
+        };
+        let result = execute(state.clone(), method, body).await?;
+        if let Some(uid) = result.0["uid"].as_str() {
+            super::relations::record_sdk_continuation(&state, uid, continuation)?;
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|_| failure("SDK 请求执行失败".into()))?
 }
 
 async fn execute(

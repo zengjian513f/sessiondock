@@ -71,6 +71,9 @@ def run(browser, root, binary, screenshots):
         with node() as (base, _):
             page = browser.new_page(viewport={'width': 1280, 'height': 900}, color_scheme='light')
             page.goto(base, wait_until='networkidle')
+            from session_start_fixtures import choose_mode
+            choose_mode(page, 'codex', 'cli')
+            page.locator('#settings-dialog .modal-close').click()
             reports = []
             for i in range(2):
                 print(f'report {i + 1}: submit through dialog; hold native publication', flush=True)
@@ -124,6 +127,9 @@ def run(browser, root, binary, screenshots):
         with node() as (base, _):
             page = browser.new_page(viewport={'width': 390, 'height': 844}, color_scheme='dark')
             page.goto(base, wait_until='networkidle')
+            from session_start_fixtures import choose_mode
+            choose_mode(page, 'codex', 'cli')
+            page.locator('#settings-dialog .modal-close').click()
             for report, sid in reports:
                 pending = 'tmux:' + report['worker']['name']
                 page.wait_for_function("uid => !document.querySelector(`#side .item[data-uid=\"${uid}\"]`)",

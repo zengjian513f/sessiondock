@@ -461,10 +461,10 @@ const SdkView = new Proxy({
   async startSession(uid, agent = null) {
     if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent)
       SessionContentView.open('sdk', uid, agent);
-    const pane = this.pane;
-    this.active.open(uid, pane, agent, {readOnly: true});
-    this.active.readOnly = false;
-    pane.querySelector('#sdk-composer').hidden = false;
+    if (this.active.readOnly) {
+      this.active.readOnly = false;
+      this.pane.querySelector('#sdk-composer').hidden = false;
+    }
     await this.active.start(this.active.generation);
     await refreshLive(true);
     refreshSessionRunControls();

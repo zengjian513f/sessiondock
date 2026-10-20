@@ -4022,7 +4022,6 @@ let suppressItemClick = false;
 function openItemMenu(uid, x, y) {
   const menu = $('#item-menu');
   globalThis.SessionDockGroups?.closeMenu();
-  closeSessionStartMenu();
   menuUid = uid;
   const list = sidebarSessions();
   const row = list.find(session => session.uid === uid);
@@ -4061,7 +4060,6 @@ function openItemMenu(uid, x, y) {
 }
 
 function closeItemMenu() {
-  closeSessionStartMenu();
   globalThis.SessionDockGroups?.closeMenu();
   $('#item-menu').hidden = true;
   menuUid = '';
@@ -4193,9 +4191,6 @@ $('#item-menu').onclick = async e => {
   if (!button || button.getAttribute('aria-disabled') === 'true') return;
   const uid = menuUid;
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
-  if (button.dataset.act === 'stop' && button.dataset.runIntent === 'start') {
-    openSessionStartMenu(button); return;
-  }
   closeItemMenu();
   if (!uid) return;
   if (button.dataset.act === 'copy-identity') {
@@ -4245,7 +4240,7 @@ $('#item-menu').onclick = async e => {
 };
 
 document.addEventListener('pointerdown', e => {
-  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu, #session-start-menu')) closeItemMenu();
+  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu')) closeItemMenu();
 }, true);
 addEventListener('resize', closeItemMenu);
 
@@ -7338,45 +7333,6 @@ function sessionStartUnavailable(row, mode) {
   if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null) ? '' : '此会话没有可用的 SDK 启动方式。';
   return consoleUnavailableReason(row.uid, row.agent_id || null, false);
 }
-function closeSessionStartMenu() {
-  $('#session-start-menu').hidden = true;
-  $('#item-menu [data-act="stop"]').setAttribute('aria-expanded', 'false');
-}
-function openSessionStartMenu(anchor, focus = true) {
-  if (anchor.dataset.runIntent !== 'start' || anchor.getAttribute('aria-disabled') === 'true') return;
-  globalThis.SessionDockGroups?.closeMenu();
-  const menu = $('#session-start-menu'), row = sessionRunRow(menuUid);
-  for (const button of menu.querySelectorAll('[data-start-mode]'))
-    setControlUnavailable(button, sessionStartUnavailable(row, button.dataset.startMode));
-  menu.hidden = false;
-  anchor.setAttribute('aria-expanded', 'true');
-  placeSubmenu(menu, anchor);
-  if (focus) menu.querySelector('button:not([aria-disabled="true"])')?.focus();
-}
-$('#session-start-menu').onclick = async event => {
-  const button = event.target.closest('[data-start-mode]');
-  if (!button || button.getAttribute('aria-disabled') === 'true') return;
-  const row = sessionRunRow(menuUid), mode = button.dataset.startMode;
-  closeItemMenu();
-  if (row) await toggleSessionRun(row, null, 'start', mode);
-};
-$('#session-start-menu').onkeydown = event => {
-  if (event.key === 'Escape' || event.key === 'ArrowLeft') {
-    event.preventDefault(); event.stopPropagation(); closeSessionStartMenu();
-    $('#item-menu [data-act="stop"]').focus();
-  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-    event.preventDefault();
-    const buttons = [...event.currentTarget.querySelectorAll('button')];
-    const index = buttons.indexOf(document.activeElement);
-    buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + 1) % buttons.length]?.focus();
-  }
-};
-bindSubmenuHover($('#item-menu'), $('#item-menu [data-act="stop"]'), $('#session-start-menu'),
-  () => openSessionStartMenu($('#item-menu [data-act="stop"]'), false), closeSessionStartMenu);
-$('#item-menu [data-act="stop"]').onkeydown = event => {
-  if (event.key === 'ArrowRight') { event.preventDefault(); openSessionStartMenu(event.currentTarget); }
-};
-
 function sessionRunRow(uid) {
   return sidebarSessions().find(row => row.uid === uid)
     || (typeof sessionTermMeta === 'function' ? sessionTermMeta(uid) : null);
@@ -7396,8 +7352,7 @@ function sessionRunUnavailable(row) {
   if (row.pending) return row.source === 'shell'
     ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
     : '此启动记录尚无可续接的原生会话，请从新建会话重新启动。';
-  if (SdkView.available(row.uid, row.agent_id || null)
-      && (SdkView.defaultFor(row.uid, row.agent_id || null) || (S.sel === row.uid && SessionContentView.kind === 'sdk'))) return '';
+  if (agentStartMode(row.source) === 'sdk') return sessionStartUnavailable(row, 'sdk');
   const reason = consoleUnavailableReason(row.uid, row.agent_id || null, false);
   if (reason) return reason;
   const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(row.uid)] : T;
@@ -7411,15 +7366,7 @@ function paintSessionRunControl(button, row) {
   setControlUnavailable(button, '');
   button.title = button.ariaLabel = label;
   if (button.closest('#item-menu')) {
-    button.innerHTML = running ? label : `${label} <span aria-hidden="true">›</span>`;
-    if (running) {
-      button.removeAttribute('aria-haspopup'); button.removeAttribute('aria-controls');
-      closeSessionStartMenu();
-    } else {
-      button.setAttribute('aria-haspopup', 'menu');
-      button.setAttribute('aria-controls', 'session-start-menu');
-      button.setAttribute('aria-expanded', String(!$('#session-start-menu').hidden));
-    }
+    button.textContent = label;
   }
   else {
     button.innerHTML = uiIcon('power');
@@ -7428,9 +7375,7 @@ function paintSessionRunControl(button, row) {
     button.onclick = () => toggleSessionRun(row?.agent_id ? row : sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
   }
   button.dataset.runIntent = running ? 'stop' : 'start';
-  const reason = button.closest('#item-menu') && !running && !row?.pending
-    ? (sessionStartUnavailable(row, 'sdk') && sessionStartUnavailable(row, 'cli')) : sessionRunUnavailable(row);
-  setControlUnavailable(button, reason);
+  setControlUnavailable(button, sessionRunUnavailable(row));
 }
 function refreshSessionRunControls() {
   const button = $('#a-session-toggle');
@@ -7441,7 +7386,7 @@ function refreshSessionRunControls() {
     paintSessionRunControl(button, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
-async function toggleSessionRun(row, button = null, intent = null, mode = null) {
+async function toggleSessionRun(row, button = null, intent = null) {
   // A live refresh can change the row after the control was painted. Keep the
   // action the user clicked; stop is idempotent if the instance already exited.
   if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {
@@ -7449,21 +7394,24 @@ async function toggleSessionRun(row, button = null, intent = null, mode = null) 
     else await stopSession(row, button);
     return;
   }
-  if (mode ? sessionStartUnavailable(row, mode) : sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
+  if (sessionRunActive(row)) {
+    await openSession(row.uid, row.agent_id || null);
+    return;
+  }
+  const mode = agentStartMode(row.source);
+  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();
   try {
-    if (mode || S.sel !== row.uid || S.agent !== (row.agent_id || null)) await openSession(row.uid, row.agent_id || null);
+    await openSession(row.uid, row.agent_id || null);
     // Reuse the existing exact-UID resume and its idempotent launch receipt.
-    if ((mode === 'sdk' || (!mode && SessionContentView.kind === 'sdk')) && SdkView.available(row.uid, row.agent_id || null))
+    if (mode === 'sdk')
       await SdkView.startSession(row.uid, row.agent_id || null);
     else {
-      if (mode === 'cli') {
-        SdkView.legacyViews.add(viewKey(row.uid));
-        SdkView.rememberMode(row.uid, null, 'terminal');
-        SessionContentView.close();
-      }
+      SdkView.legacyViews.add(viewKey(row.uid));
+      (SdkView.selectMode || SdkView.rememberMode).call(SdkView, row.uid, null, 'terminal');
+      SessionContentView.close();
       await takeover(row.uid, null);
     }
   } catch (error) {
@@ -11422,7 +11370,16 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
   tab.onclick = () => showSettingsTab(tab.dataset.tab);
 }
 
+for (const select of document.querySelectorAll('[data-agent-start-mode]')) {
+  select.onchange = () => {
+    store.set('agentStartMode.' + select.dataset.agentStartMode, select.value);
+    refreshSessionRunControls();
+  };
+}
+
 function openSettings() {
+  for (const select of document.querySelectorAll('[data-agent-start-mode]'))
+    select.value = agentStartMode(select.dataset.agentStartMode);
   applyInterfaceScale();
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');

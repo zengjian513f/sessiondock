@@ -163,9 +163,24 @@ async fn report_inner(
             json!({"error": format!("不支持的处理会话类型: {source_text}"), "code": "bug_report_source"}),
         ));
     };
+    let sdk_mode = body["mode"] == "sdk";
+    if state.bug_report_worker && sdk_mode {
+        let available = if source_text == "codex" {
+            state.codex_sdk.is_some()
+        } else {
+            state.native_sdks.capabilities()[&source_text] == true
+        };
+        if !available {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "bug_report_sdk_unavailable",
+                format!("{source_text} SDK 不可用"),
+            ));
+        }
+    }
     // The source needs its one
     // configured CLI, the same the picker starts.
-    if state.bug_report_worker && ctx.lifecycle.entry_for(source, false).is_none() {
+    if state.bug_report_worker && !sdk_mode && ctx.lifecycle.entry_for(source, false).is_none() {
         return Ok(json_body(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({"error": format!("本机找不到 {} 命令", source_name(source)), "code": "bug_report_source_unavailable"}),
@@ -224,6 +239,9 @@ async fn report_inner(
     let feature = body["report_type"] == "feature";
     let mut payload = json!({"description":body["description"],"source":source_text,
         "attachments":body["attachments"],"origin":body["origin"],"uid":body["uid"]});
+    if sdk_mode {
+        payload["mode"] = json!("sdk");
+    }
     if feature {
         payload["report_type"] = json!("feature");
     }
@@ -422,19 +440,32 @@ async fn report_inner(
             json!({"ok": true, "report_id": report.report_id, "path": report.path, "worker": null}),
         )
     } else {
-        match worker::launch(
-            &ctx,
-            &report,
-            source,
-            cols,
-            rows,
-            conversations.clone(),
-            draft_uid,
-            body["draft_revision"].as_u64(),
-            (model, effort),
-        )
-        .await
-        {
+        let launched = if sdk_mode {
+            super::bug_report_sdk::launch(
+                state.clone(),
+                &report,
+                &source_text,
+                &draft_uid,
+                body["draft_revision"].as_u64(),
+                model,
+                effort,
+            )
+            .await
+        } else {
+            worker::launch(
+                &ctx,
+                &report,
+                source,
+                cols,
+                rows,
+                conversations.clone(),
+                draft_uid,
+                body["draft_revision"].as_u64(),
+                (model, effort),
+            )
+            .await
+        };
+        match launched {
             Ok(worker) => (
                 StatusCode::ACCEPTED,
                 json!({"ok": true, "report_id": report.report_id, "path": report.path,

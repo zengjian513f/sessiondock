@@ -194,15 +194,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
                 .filter(|row| row.source == "codex" && loaded.contains(&row.sid))
                 .map(|row| row.uid.clone()),
         );
-        for row in sdk.pending().map_err(super::codex_sdk::rpc)? {
-            if row["sid"]
-                .as_str()
-                .is_some_and(|sid| loaded.iter().any(|id| id == sid))
-                && let Some(uid) = row["uid"].as_str()
-            {
-                sdk_uids.insert(uid.to_owned());
-            }
-        }
+        sdk_uids.extend(sdk.live_session_uids(&loaded));
     }
     let key = LiveKey {
         scan: match &scanned {
