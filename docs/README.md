@@ -38,6 +38,7 @@
 | [conversation.md](conversation.md) | 会话草稿与 SEND |
 | [frontend-migration-surfaces.md](frontend-migration-surfaces.md) | 现有前端用户可见功能清单 |
 | [grok-sdk.md](grok-sdk.md) | Grok 原生 SDK 桥接 |
+| [kiro-sdk.md](kiro-sdk.md) | Kiro 原生 SDK 桥接 |
 | [native-sdk.md](native-sdk.md) | 多来源 SDK 模式 |
 | [opencode-sdk.md](opencode-sdk.md) | OpenCode 原生 SDK 桥接 |
 | [question-card-regression-audit.md](question-card-regression-audit.md) | 活动题卡核验范围 |
@@ -57,6 +58,7 @@
 | [files.md](files.md) | Files and FileDock |
 | [grok-metadata.md](grok-metadata.md) | Grok native metadata compatibility |
 | [history-pages.md](history-pages.md) | Session list, views and finite history pages |
+| [kiro.md](kiro.md) | Kiro sessions |
 | [media-pagination-design.md](media-pagination-design.md) | Media continuation and history pagination |
 | [media.md](media.md) | Native media |
 | [metadata.md](metadata.md) | Development metadata store |

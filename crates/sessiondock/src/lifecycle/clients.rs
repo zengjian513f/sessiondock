@@ -381,7 +381,7 @@ fn latest(profile: &CliProfile) -> Option<String> {
             );
             text(&fetch(profile, &url)?, "version")
         }
-        Source::Shell => None,
+        Source::Kiro | Source::Shell => None,
     }
 }
 
@@ -426,7 +426,13 @@ fn run(profile: &CliProfile, arguments: &[&str], timeout: Duration) -> std::io::
         )
     })?;
     let mut command = Command::new(executable);
-    command.args(&profile.args).args(arguments);
+    for arg in &profile.args {
+        if profile.source == Source::Kiro && (arg == "chat" || arg.starts_with("--agent-engine")) {
+            continue;
+        }
+        command.arg(arg);
+    }
+    command.args(arguments);
     bounded(command, profile, timeout)
 }
 

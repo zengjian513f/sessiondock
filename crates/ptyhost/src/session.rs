@@ -453,11 +453,17 @@ impl Session {
                     | "grok"
                     | "opencode"
                     | "agy"
+                    | "kiro"
+                    | "kiro-cli"
+                    | "kiro-cli-chat"
                     | "claude.exe"
                     | "codex.exe"
                     | "grok.exe"
                     | "opencode.exe"
                     | "agy.exe"
+                    | "kiro.exe"
+                    | "kiro-cli.exe"
+                    | "kiro-cli-chat.exe"
             ) {
                 return base;
             }

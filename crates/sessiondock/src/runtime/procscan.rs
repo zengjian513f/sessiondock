@@ -43,8 +43,16 @@ pub const ANCESTRY_DEPTH: usize = 16;
 /// CLI-ancestor and tmux-host walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
-const KEYWORDS: [&str; 4] = ["claude", "codex", "grok", "agy"];
-const CLI_NAMES: [&str; 4] = ["claude", "codex", "grok", "agy"];
+const KEYWORDS: [&str; 5] = ["claude", "codex", "grok", "agy", "kiro"];
+const CLI_NAMES: [&str; 7] = [
+    "claude",
+    "codex",
+    "grok",
+    "agy",
+    "kiro",
+    "kiro-cli",
+    "kiro-cli-chat",
+];
 /// Environment identity a CLI sets for its tool children.
 const ENV_FAMILY: [(&str, &str); 3] = [
     ("CLAUDE_CODE_SESSION_ID=", "claude"),
@@ -68,7 +76,12 @@ pub const SPAWN_ENV_KEYS: [&str; 5] = [
     "GROK_SESSION_ID",
     "CLAUDE_PID",
 ];
-const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects/", "/.grok/"];
+const SESSION_FILE_MARKERS: [&str; 4] = [
+    "/.codex/sessions/",
+    "/.claude/projects/",
+    "/.grok/",
+    "/.kiro/sessions/",
+];
 
 /// Where session files may live: the literal home markers plus the
 /// configured read roots. On the real machine the roots are exactly those
@@ -78,6 +91,7 @@ const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects
 pub struct SessionRoots {
     prefixes: Vec<String>,
     agy_home: Option<PathBuf>,
+    kiro_root: Option<PathBuf>,
 }
 
 impl SessionRoots {
@@ -91,6 +105,7 @@ impl SessionRoots {
                 .filter(|prefix| prefix.len() > 1)
                 .collect(),
             agy_home: None,
+            kiro_root: None,
         }
     }
 
@@ -100,13 +115,23 @@ impl SessionRoots {
         self
     }
 
-    fn agy_sid(&self, target: &Path) -> Option<String> {
-        let directory = self
-            .agy_home
-            .as_ref()?
-            .canonicalize()
-            .ok()?
-            .join("conversations");
+    /// Optional Kiro sessions root for lock/fd discovery.
+    pub fn with_kiro_root(mut self, root: Option<PathBuf>) -> Self {
+        if let Some(path) = &root {
+            let prefix = format!("{}/", path.to_string_lossy().trim_end_matches('/'));
+            if prefix.len() > 1 && !self.prefixes.contains(&prefix) {
+                self.prefixes.push(prefix);
+            }
+        }
+        self.kiro_root = root;
+        self
+    }
+
+    fn agy_conversations(&self) -> Option<PathBuf> {
+        Some(self.agy_home.as_ref()?.canonicalize().ok()?.join("conversations"))
+    }
+
+    fn agy_sid_in(directory: &Path, target: &Path) -> Option<String> {
         if target.parent()? != directory || target.extension()? != "db" {
             return None;
         }
@@ -117,15 +142,63 @@ impl SessionRoots {
             .map(str::to_owned)
     }
 
-    fn holds(&self, target: &str) -> bool {
-        target.ends_with(".jsonl")
-            && (SESSION_FILE_MARKERS
+    fn kiro_sid(&self, target: &Path) -> Option<String> {
+        let text = target.to_string_lossy();
+        let in_root = text.contains("/.kiro/")
+            || text.contains("/kiro/")
+            || self
+                .prefixes
                 .iter()
-                .any(|marker| target.contains(marker))
-                || self
-                    .prefixes
-                    .iter()
-                    .any(|prefix| target.starts_with(prefix)))
+                .any(|prefix| text.starts_with(prefix.as_str()));
+        let ext = target.extension().and_then(|e| e.to_str());
+        if ext == Some("lock")
+            && let Some(stem) = target.file_stem().and_then(|s| s.to_str())
+            && (stem.starts_with("sess_") || (in_root && !stem.is_empty() && stem != "session"))
+        {
+            return Some(stem.to_owned());
+        }
+        if matches!(
+            target.file_name().and_then(|n| n.to_str()),
+            Some("session.json" | "events.jsonl" | "messages.jsonl" | "session.lock")
+        ) && let Some(parent) = target
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            && (parent.starts_with("sess_")
+                || (in_root && !parent.is_empty() && parent != "cli" && parent != "sessions"))
+        {
+            return Some(parent.to_owned());
+        }
+        if in_root
+            && matches!(ext, Some("json" | "jsonl"))
+            && target
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                == Some("cli")
+            && let Some(stem) = target.file_stem().and_then(|s| s.to_str())
+            && !stem.is_empty()
+            && stem != "session"
+            && stem != "index"
+        {
+            return Some(stem.to_owned());
+        }
+        None
+    }
+
+    fn holds(&self, target: &str) -> bool {
+        let in_root = SESSION_FILE_MARKERS
+            .iter()
+            .any(|marker| target.contains(marker))
+            || self
+                .prefixes
+                .iter()
+                .any(|prefix| target.starts_with(prefix));
+        in_root
+            && (target.ends_with(".jsonl")
+                || target.ends_with("/session.json")
+                || target.ends_with(".lock")
+                || (target.contains("/cli/") && target.ends_with(".json")))
     }
 }
 
@@ -153,14 +226,44 @@ pub fn cli_family(argv0: &str) -> Option<&'static str> {
         Some("codex")
     } else if head == "agy" {
         Some("agy")
+    } else if head == "kiro" || head.starts_with("kiro-") {
+        Some("kiro")
     } else {
         None
     }
 }
 
-/// The CLI main process itself, not a shell it started.
+/// Whether `cmd` is a Kiro ACP server invocation (`kiro-cli acp` or
+/// `acp-server.js`) rather than an interactive CLI session (`kiro-cli chat`).
+pub fn is_kiro_acp_cmd(cmd: &str) -> bool {
+    let mut tokens = cmd.split_ascii_whitespace();
+    let Some(argv0) = tokens.next() else {
+        return false;
+    };
+    if cli_family(argv0) != Some("kiro") && !cmd.to_ascii_lowercase().contains("kiro") {
+        return false;
+    }
+    for token in tokens {
+        if token == "acp"
+            || token == "--acp"
+            || token == "acp-server.js"
+            || token.ends_with("/acp-server.js")
+        {
+            return true;
+        }
+        if token == "chat" {
+            return false;
+        }
+    }
+    false
+}
+
+/// The CLI main process itself, not a shell or ACP server it started.
 pub fn is_cli(cmd: &str) -> bool {
     let head = cli_name(argv0_of(cmd));
+    if head == "kiro" || head.starts_with("kiro-") {
+        return !is_kiro_acp_cmd(cmd);
+    }
     CLI_NAMES.contains(&head.as_str()) || head.starts_with("codex-") || head.starts_with("claude-")
 }
 
@@ -169,23 +272,33 @@ fn argv0_of(cmd: &str) -> &str {
 }
 
 fn cli_comm(name: &str) -> bool {
-    CLI_NAMES.contains(&name) || name.starts_with("codex-") || name.starts_with("claude-")
+    CLI_NAMES.contains(&name)
+        || name.starts_with("codex-")
+        || name.starts_with("claude-")
+        || name.starts_with("kiro-")
 }
 
 fn session_regex() -> &'static Regex {
     static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     REGEX.get_or_init(|| {
-        const UUID: &str =
-            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
-        Regex::new(&format!("--session-id[= ]({UUID})|--resume[= ]({UUID})")).expect("static regex")
+        const SID: &str = "(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|sess_[0-9a-zA-Z_-]+)";
+        Regex::new(&format!(
+            "--session-id[= ]({SID})|--resume-id[= ]({SID})|--resume[= ]({SID})"
+        ))
+        .expect("static regex")
     })
 }
 
-/// `--session-id`/`--resume` UUIDs, lowercased.
+/// `--session-id`/`--resume-id`/`--resume` IDs, lowercased.
 pub fn command_sids(cmd: &str) -> BTreeSet<String> {
     session_regex()
         .captures_iter(cmd)
-        .filter_map(|capture| capture.get(1).or_else(|| capture.get(2)))
+        .filter_map(|capture| {
+            capture
+                .get(1)
+                .or_else(|| capture.get(2))
+                .or_else(|| capture.get(3))
+        })
         .map(|found| found.as_str().to_ascii_lowercase())
         .collect()
 }
@@ -337,10 +450,23 @@ impl ProcTree {
         let mut current = pid;
         for _ in 0..CLI_ANCESTOR_DEPTH {
             let parent = self.parent(current)?;
-            if cli_comm(&parent.name) {
+            let comm = parent.name.to_ascii_lowercase();
+            if comm == "sdkhost" || comm.starts_with("sdkhost-") {
+                return None;
+            }
+            let is_main = if comm == "kiro" || comm.starts_with("kiro-") {
+                self.cmdline(current)
+                    .is_none_or(|cmd| !is_kiro_acp_cmd(&cmd))
+            } else {
+                cli_comm(&parent.name)
+                    || self.cmdline(current).is_some_and(|cmd| {
+                        cli_family(argv0_of(&cmd)) == Some("kiro") && !is_kiro_acp_cmd(&cmd)
+                    })
+            };
+            if is_main {
                 return Some(current);
             }
-            if parent.ppid <= 1 {
+            if parent.ppid <= 1 || parent.ppid == current {
                 return None;
             }
             current = parent.ppid;
@@ -348,8 +474,34 @@ impl ProcTree {
         None
     }
 
+    /// Whether `pid` or one of its ancestors within `ANCESTRY_DEPTH` is
+    /// `sdkhost` (which hosts Native SDK processes such as `kiro-cli acp`).
+    pub fn is_sdkhost_descendant(&self, pid: u32) -> bool {
+        let mut current = pid;
+        for _ in 0..ANCESTRY_DEPTH {
+            if let Some(cmd) = self.cmdline(current) {
+                let argv0 = cli_name(argv0_of(&cmd));
+                if argv0 == "sdkhost" || argv0.starts_with("sdkhost-") {
+                    return true;
+                }
+            }
+            let Some(parent) = self.parent(current) else {
+                break;
+            };
+            let comm = parent.name.to_ascii_lowercase();
+            if comm == "sdkhost" || comm.starts_with("sdkhost-") {
+                return true;
+            }
+            if parent.ppid <= 1 || parent.ppid == current {
+                break;
+            }
+            current = parent.ppid;
+        }
+        false
+    }
+
     /// This pid is a session's CLI main process
-    /// (`claude`/`codex`/`grok` itself). The pane-ownership walks stop at one
+    /// (`claude`/`codex`/`grok`/`kiro-cli chat` itself). The pane-ownership walks stop at one
     /// above their starting process, even at a host root: a `grok -p` or `codex
     /// exec` a pane's Claude spawned sits in that pane's process tree, but
     /// the console is the parent CLI's, not the grandchild session's.
@@ -498,7 +650,12 @@ impl SessionRow {
         Some(Self {
             uid: uid.to_owned(),
             source: text("source"),
-            sid: text("sid"),
+            sid: row["sid"]
+                .as_str()
+                .filter(|sid| !sid.is_empty())
+                .or_else(|| row["session_id"].as_str())
+                .unwrap_or("")
+                .to_owned(),
             path: text("path"),
             cwd: row["cwd"]
                 .as_str()
@@ -558,16 +715,35 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         if !KEYWORDS.iter().any(|keyword| lower.contains(keyword)) {
             continue;
         }
-        stats.matched += 1;
+        if tree.is_sdkhost_descendant(pid) {
+            continue;
+        }
         let main = is_cli(&cmd);
+        let argv0 = argv0_of(&cmd);
+        // A standalone or sdkhost-spawned `kiro-cli acp` / `acp-server.js` with
+        // no interactive `kiro-cli chat` CLI ancestor is an SDK process, never
+        // an external CLI session.
+        if !main
+            && (cli_family(argv0) == Some("kiro") || is_kiro_acp_cmd(&cmd))
+            && tree.cli_ancestor(pid).is_none()
+        {
+            continue;
+        }
+        stats.matched += 1;
         // The id in a resume command is this process's authoritative identity:
         // an inherited `CLAUDE_CODE_SESSION_ID` from an older session must not
         // mark both sessions live.
         let cmd_sids = command_sids(&cmd);
         for sid in &cmd_sids {
-            sids.entry(sid.clone()).or_default().insert(i64::from(pid));
+            let holder = if main {
+                i64::from(pid)
+            } else if let Some(owner) = tree.cli_ancestor(pid) {
+                i64::from(owner)
+            } else {
+                i64::from(pid)
+            };
+            sids.entry(sid.clone()).or_default().insert(holder);
         }
-        let argv0 = argv0_of(&cmd);
         let head = argv0.rsplit('/').next().unwrap_or(argv0);
         if main && head == "claude" && cmd_sids.is_empty() {
             let directory = tree.root().join(pid.to_string());
@@ -606,17 +782,30 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let Ok(fds) = std::fs::read_dir(directory.join("fd")) else {
             continue;
         };
+        let agy_conversations =
+            (main && cli_family(argv0) == Some("agy")).then(|| roots.agy_conversations()).flatten();
+        let is_kiro_proc = cli_family(argv0) == Some("kiro") || lower.contains("kiro");
         for entry in fds.flatten() {
             let Ok(target) = std::fs::read_link(entry.path()) else {
                 continue;
             };
-            if main
-                && cli_family(argv0) == Some("agy")
-                && let Some(sid) = roots.agy_sid(&target)
+            if let Some(directory) = agy_conversations.as_deref()
+                && let Some(sid) = SessionRoots::agy_sid_in(directory, &target)
             {
                 sids.entry(format!("agy:{}", sid.to_ascii_lowercase()))
                     .or_default()
                     .insert(i64::from(pid));
+            }
+            if is_kiro_proc && let Some(sid) = roots.kiro_sid(&target) {
+                let entry = sids.entry(sid.to_ascii_lowercase()).or_default();
+                if main {
+                    entry.insert(i64::from(pid));
+                } else {
+                    if let Some(owner) = tree.cli_ancestor(pid) {
+                        entry.insert(i64::from(owner));
+                    }
+                    entry.insert(-i64::from(pid));
+                }
             }
             let target = target.to_string_lossy();
             if roots.holds(&target) {
@@ -625,13 +814,21 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
                 } else {
                     -i64::from(pid)
                 };
-                paths.entry(target.into_owned()).or_default().insert(holder);
+                let holders = paths.entry(target.into_owned()).or_default();
+                holders.insert(holder);
+                if !main
+                    && is_kiro_proc
+                    && let Some(owner) = tree.cli_ancestor(pid)
+                {
+                    holders.insert(i64::from(owner));
+                }
             }
         }
     }
     if let Some(file) = grok_active {
         note_grok_sessions(&mut sids, file, &tree);
     }
+    note_kiro_locks(&mut sids, roots, &tree);
     stats.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Scan {
         sids,
@@ -713,6 +910,97 @@ fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path, t
     }
 }
 
+/// Resolve a Kiro V3 `<sess_id>.lock` file's `pid` to owning CLI PIDs,
+/// excluding zombie processes and `sdkhost`-hosted ACP process trees.
+fn kiro_lock_pids_from_file(lock_file: &Path, tree: &ProcTree) -> BTreeSet<i64> {
+    let mut found = BTreeSet::new();
+    let Some(data) = std::fs::read(lock_file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    else {
+        return found;
+    };
+    let Some(pid) = data
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+    else {
+        return found;
+    };
+    if !process_stamp(tree.root(), pid).is_some_and(|(state, _)| state != 'Z') {
+        return found;
+    }
+    if tree.is_sdkhost_descendant(pid) {
+        return found;
+    }
+    if tree.is_cli_process(pid) {
+        found.insert(i64::from(pid));
+    } else if let Some(owner) = tree.cli_ancestor(pid)
+        && !tree.is_sdkhost_descendant(owner)
+    {
+        found.insert(i64::from(owner));
+        found.insert(-i64::from(pid));
+    }
+    found
+}
+
+fn note_kiro_locks(
+    sids: &mut BTreeMap<String, BTreeSet<i64>>,
+    roots: &SessionRoots,
+    tree: &ProcTree,
+) {
+    let mut dirs: Vec<PathBuf> = roots
+        .prefixes
+        .iter()
+        .map(|prefix| PathBuf::from(prefix.trim_end_matches('/')))
+        .collect();
+    if let Some(root) = &roots.kiro_root
+        && !dirs.contains(root)
+    {
+        dirs.push(root.clone());
+    }
+    for root in dirs {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("lock")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && stem.starts_with("sess_")
+            {
+                let pids = kiro_lock_pids_from_file(&path, tree);
+                if !pids.is_empty() {
+                    sids.entry(stem.to_ascii_lowercase())
+                        .or_default()
+                        .extend(pids);
+                }
+                continue;
+            }
+            if !path.is_dir() {
+                continue;
+            }
+            let Ok(sub_entries) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            for sub in sub_entries.flatten() {
+                let sub_path = sub.path();
+                if sub_path.extension().and_then(|e| e.to_str()) == Some("lock")
+                    && let Some(stem) = sub_path.file_stem().and_then(|s| s.to_str())
+                    && stem.starts_with("sess_")
+                {
+                    let pids = kiro_lock_pids_from_file(&sub_path, tree);
+                    if !pids.is_empty() {
+                        sids.entry(stem.to_ascii_lowercase())
+                            .or_default()
+                            .extend(pids);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Live uids in list order and the pids each
 /// one owns after Codex fork-chain folding.
 pub struct ActiveProcesses {
@@ -722,7 +1010,8 @@ pub struct ActiveProcesses {
 
 impl Scan {
     /// Holders of the session file and of any
-    /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
+    /// JSONL under a Grok/Kiro session directory (`events.jsonl` for `grok -p`
+    /// or `kiro-cli chat`).
     pub(crate) fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
         if session.path.is_empty() {
@@ -731,10 +1020,53 @@ impl Scan {
         if let Some(pids) = self.paths.get(&session.path) {
             found.extend(pids);
         }
-        let prefix = format!("{}/", session.path.trim_end_matches('/'));
-        for (held, pids) in &self.paths {
-            if held.starts_with(&prefix) {
-                found.extend(pids);
+        let base = if session.source == "kiro"
+            && (session.path.ends_with("/session.json") || session.path.ends_with("/events.jsonl"))
+        {
+            Path::new(&session.path)
+                .parent()
+                .and_then(|p| p.to_str())
+                .unwrap_or(&session.path)
+        } else {
+            session.path.as_str()
+        };
+        let prefix = format!("{}/", base.trim_end_matches('/'));
+        for (held, pids) in self.paths.range(prefix.clone()..) {
+            if !held.starts_with(&prefix) {
+                break;
+            }
+            found.extend(pids);
+        }
+        found
+    }
+
+    fn kiro_session_lock_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
+        let mut found = BTreeSet::new();
+        if session.source != "kiro" || session.path.is_empty() {
+            return found;
+        }
+        let path = Path::new(&session.path);
+        let mut candidates = Vec::new();
+        if matches!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("session.json" | "events.jsonl")
+        ) && let Some(dir) = path.parent()
+        {
+            candidates.push(dir.with_extension("lock"));
+        }
+        candidates.push(path.with_extension("lock"));
+        if !session.sid.is_empty()
+            && let Some(parent) = path.parent()
+        {
+            candidates.push(parent.join(format!("{}.lock", session.sid)));
+            if let Some(grandparent) = parent.parent() {
+                candidates.push(grandparent.join(format!("{}.lock", session.sid)));
+            }
+        }
+        for lock_path in candidates {
+            if lock_path.is_file() {
+                found.extend(kiro_lock_pids_from_file(&lock_path, &self.tree));
+                break;
             }
         }
         found
@@ -773,6 +1105,7 @@ impl Scan {
             found.extend(pids);
         }
         found.extend(self.session_path_pids(session));
+        found.extend(self.kiro_session_lock_pids(session));
         found.extend(self.bare_claude_pids(session));
         if session.source == "codex" {
             // One app-server can hold many independent threads. Its file
@@ -794,7 +1127,7 @@ impl Scan {
 
     /// A listed Grok session id counts even without a pid.
     pub fn is_live(&self, session: &SessionRow) -> bool {
-        if session.source == "codex" {
+        if matches!(session.source.as_str(), "codex" | "kiro") {
             return !self.pids_of(session).is_empty();
         }
         let sid = Self::identity_key(session);

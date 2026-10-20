@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 enum Provider {
     Grok(Arc<crate::grok_sdk::Bridge>),
     Agy(Arc<crate::agy_sdk::Bridge>),
+    Kiro(Arc<crate::kiro_sdk::Bridge>),
     OpenCode(Arc<crate::opencode_sdk::Bridge>),
     Claude(Arc<crate::claude_sdk::Bridge>),
 }
@@ -25,6 +26,7 @@ macro_rules! dispatch {
         match $provider {
             Provider::Grok($bridge) => $body,
             Provider::Agy($bridge) => $body,
+            Provider::Kiro($bridge) => $body,
             Provider::OpenCode($bridge) => $body,
             Provider::Claude($bridge) => $body,
         }
@@ -79,6 +81,7 @@ impl NativeSdks {
         }
         register!("grok", grok_sdk, Grok);
         register!("agy", agy_sdk, Agy);
+        register!("kiro", kiro_sdk, Kiro);
         register!("opencode", opencode_sdk, OpenCode);
         register!("claude", claude_sdk, Claude);
         let path = config
@@ -136,6 +139,7 @@ impl NativeSdks {
             "claude" => crate::lifecycle::model::Source::Claude,
             "grok" => crate::lifecycle::model::Source::Grok,
             "agy" => crate::lifecycle::model::Source::Agy,
+            "kiro" => crate::lifecycle::model::Source::Kiro,
             "opencode" => crate::lifecycle::model::Source::Opencode,
             _ => return false,
         };
@@ -274,7 +278,12 @@ impl NativeSdks {
     }
 
     fn remember_binding(&self, target: &Value, active: bool) -> Result<(), String> {
-        if !cfg!(unix) || !matches!(target["source"].as_str(), Some("agy" | "claude" | "grok")) {
+        if !cfg!(unix)
+            || !matches!(
+                target["source"].as_str(),
+                Some("agy" | "claude" | "grok" | "kiro")
+            )
+        {
             return Ok(());
         }
         let mut rows = self.bindings.lock().expect("SDK bindings");

@@ -268,6 +268,7 @@ impl Default for Config {
                 grok: None,
                 opencode: None,
                 agy: None,
+                kiro: None,
             },
             codex_index: None,
             codex_app_server: None,
@@ -401,12 +402,44 @@ impl Config {
                 }
             }
         }
+        let claude = root("SESSIONDOCK_CLAUDE_ROOT", true)?;
+        let codex = root("SESSIONDOCK_CODEX_ROOT", true)?;
+        let grok = root("SESSIONDOCK_GROK_ROOT", true)?;
+        let opencode = root("SESSIONDOCK_OPENCODE_ROOT", true)?;
+        let agy = root("SESSIONDOCK_AGY_ROOT", true)?;
+        let kiro = match env::var_os("SESSIONDOCK_KIRO_ROOT") {
+            Some(value) if value.is_empty() => None,
+            Some(_) => root("SESSIONDOCK_KIRO_ROOT", true)?,
+            None => env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| {
+                    let configured = [&claude, &codex, &grok, &opencode, &agy];
+                    let any_set = configured.iter().any(|r| r.is_some());
+                    !any_set
+                        || configured
+                            .iter()
+                            .filter_map(|r| r.as_deref())
+                            .any(|p| p.starts_with(home))
+                })
+                .and_then(|home| {
+                    let configured = home.join(".kiro/sessions");
+                    match configured.canonicalize() {
+                        Ok(path) if path.is_dir() => Some(path),
+                        Ok(_) => None,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            std::path::absolute(configured).ok()
+                        }
+                        Err(_) => None,
+                    }
+                }),
+        };
         config.roots = SessionRoots {
-            claude: root("SESSIONDOCK_CLAUDE_ROOT", true)?,
-            codex: root("SESSIONDOCK_CODEX_ROOT", true)?,
-            grok: root("SESSIONDOCK_GROK_ROOT", true)?,
-            opencode: root("SESSIONDOCK_OPENCODE_ROOT", true)?,
-            agy: root("SESSIONDOCK_AGY_ROOT", true)?,
+            claude,
+            codex,
+            grok,
+            opencode,
+            agy,
+            kiro,
         };
         config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;

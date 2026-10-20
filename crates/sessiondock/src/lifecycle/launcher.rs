@@ -101,6 +101,27 @@ pub struct CliProfile {
     pub env_remove: Vec<String>,
 }
 
+impl CliProfile {
+    /// Default Kiro CLI profile template (`kiro-cli chat --agent-engine=v3`).
+    pub fn default_kiro(executable: PathBuf) -> Self {
+        Self {
+            id: "kiro".into(),
+            source: Source::Kiro,
+            executable,
+            args: Vec::new(),
+            new_args: vec!["chat".into(), "--agent-engine=v3".into()],
+            resume_args: vec![
+                "chat".into(),
+                "--agent-engine=v3".into(),
+                "--resume-id".into(),
+                SESSION_ID_PLACEHOLDER.into(),
+            ],
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+        }
+    }
+}
+
 /// Public catalog row for HTTP selection: which configured IDs exist, their
 /// source, whether they are real CLI profiles and whether they can resume.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,7 +198,7 @@ fn choice_args(spec: &LaunchSpec) -> Vec<String> {
     let mut args = Vec::new();
     let (model, effort) = (spec.model(), spec.effort());
     match spec.source() {
-        Source::Claude | Source::Agy => {
+        Source::Claude | Source::Agy | Source::Kiro => {
             if let Some(model) = model {
                 args.extend(["--model".into(), model.into()]);
             }
@@ -362,7 +383,13 @@ fn cli_absent(profile: &CliProfile) -> bool {
         return true;
     };
     let mut command = Command::new(executable);
-    command.args(&profile.args).arg("--version");
+    for arg in &profile.args {
+        if profile.source == Source::Kiro && (arg == "chat" || arg.starts_with("--agent-engine")) {
+            continue;
+        }
+        command.arg(arg);
+    }
+    command.arg("--version");
     for name in &profile.env_remove {
         command.env_remove(name);
     }
@@ -604,7 +631,17 @@ impl Launcher {
         let (configured, defaults, placeholder, value): (&[String], &[&str], &str, Option<&str>) =
             match spec.launch() {
                 Launch::Fixed => return Err(Error::InvalidSpec),
-                Launch::NewPending => (&profile.new_args, &[], SESSION_ID_PLACEHOLDER, None),
+                Launch::NewPending => {
+                    let defaults: &[&str] = if spec.source() == Source::Kiro
+                        && profile.new_args.is_empty()
+                        && !profile.args.iter().any(|arg| arg == "chat")
+                    {
+                        &["chat", "--agent-engine=v3"]
+                    } else {
+                        &[]
+                    };
+                    (&profile.new_args, defaults, SESSION_ID_PLACEHOLDER, None)
+                }
                 Launch::NewAssigned => (
                     &profile.new_args,
                     if spec.source() == Source::Opencode {
@@ -621,6 +658,18 @@ impl Launcher {
                         Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
                         Source::Opencode => &["--session", SID_PLACEHOLDER],
                         Source::Agy => &["--conversation", SID_PLACEHOLDER],
+                        Source::Kiro => {
+                            if profile
+                                .args
+                                .iter()
+                                .chain(profile.resume_args.iter())
+                                .any(|arg| arg == "chat")
+                            {
+                                &["--resume-id", SID_PLACEHOLDER]
+                            } else {
+                                &["chat", "--agent-engine=v3", "--resume-id", SID_PLACEHOLDER]
+                            }
+                        }
                         Source::Shell => return Err(Error::InvalidSpec),
                     };
                     (&profile.resume_args, defaults, SID_PLACEHOLDER, Some(sid))
@@ -631,7 +680,11 @@ impl Launcher {
         }
         let mut argv = vec![executable];
         argv.extend(profile.args.iter().map(OsString::from));
-        let has_placeholder = configured.iter().any(|arg| arg == placeholder);
+        let is_placeholder = |arg: &str| {
+            arg == placeholder
+                || (value.is_some() && matches!(arg, SESSION_ID_PLACEHOLDER | SID_PLACEHOLDER))
+        };
+        let has_placeholder = configured.iter().any(|arg| is_placeholder(arg));
         for arg in configured.iter().map(String::as_str).chain(
             (!has_placeholder)
                 .then_some(defaults)
@@ -639,7 +692,7 @@ impl Launcher {
                 .flatten()
                 .copied(),
         ) {
-            if arg == placeholder {
+            if is_placeholder(arg) {
                 argv.push(OsString::from(value.ok_or(Error::InvalidSpec)?));
             } else {
                 argv.push(OsString::from(arg));

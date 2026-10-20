@@ -2,6 +2,23 @@
 
 // Native capabilities share presentation, never another provider's wire semantics.
 const NativeSdkControls = {
+  labels: Object.freeze({claude:'Claude',codex:'Codex',grok:'Grok',opencode:'OpenCode',agy:'Agy',kiro:'Kiro'}),
+  badgeClass(source) { return `b-${source || 'unknown'}`; },
+  formatReset(value) {
+    if (value == null || value === '') return '';
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return UsageUI.reset(value > 1e11 ? Math.round(value / 1000) : value);
+    }
+    const str = String(value).trim();
+    if (!str) return '';
+    if (/^\d+(\.\d+)?$/.test(str)) {
+      const n = Number(str);
+      return UsageUI.reset(n > 1e11 ? Math.round(n / 1000) : n);
+    }
+    const parsed = Date.parse(str);
+    if (Number.isFinite(parsed)) return UsageUI.reset(Math.round(parsed / 1000));
+    return str.startsWith('·') ? ` ${str}` : ` · ${str}${str.includes('重置') ? '' : ' 后重置'}`;
+  },
   mount(view) {
     view.settingChoices = new Map(); view.nativeSettingValues = new Map();
     view.usageRead=null;view.usageRetryTimer=0;view.usageRetryDelay=1000;
@@ -26,7 +43,7 @@ const NativeSdkControls = {
     menu.append(usageMenu);
     this.paint(view);
     // Account snapshots are independent of native startup; never wait for /open.
-    if(['agy','claude'].includes(view.uid.split(':')[0])) {
+    if(['agy','claude','kiro'].includes(view.uid.split(':')[0])) {
       const generation=view.generation,revision=view.quotaRevision,read=new AbortController();view.quotaRead=read;
       void UsageUI.readQuota(view.uid,read.signal).then(quota=>{
         if(!view.current(generation) || revision!==view.quotaRevision || !quota)return;
@@ -92,8 +109,8 @@ const NativeSdkControls = {
   },
   rememberUsage(view) {
     const data={...view.usageData};
-    for(const key of ['usage','context_usage','billing','rate_limits','step_usage','usage_errors'])
-      if(view.raw?.[key] && Object.keys(view.raw[key]).length)data[key]=view.raw[key];
+    for(const key of ['usage','context_usage','billing','rate_limits','step_usage','usage_errors','credits','credit_limit','resets_at'])
+      if(view.raw?.[key]!=null && (typeof view.raw[key]!=='object' || Object.keys(view.raw[key]).length))data[key]=view.raw[key];
     UsageUI.remember(view.uid,view.agent,data);
     UsageUI.rememberQuota(view.uid,data.quota);
   },
@@ -104,8 +121,14 @@ const NativeSdkControls = {
     const usage=Object.keys(view.raw?.usage || {}).length ? view.raw.usage : view.usageData?.usage || {},t=usage.tokens || usage;
     const number=(...values)=>values.find(value=>typeof value==='number' && Number.isFinite(value));
     const count=value=>value.toLocaleString(undefined,{maximumFractionDigits:0});
+    const creditCount=value=>value.toLocaleString(undefined,{maximumFractionDigits:2});
     const input=number(t.input,t.input_tokens,t.inputTokens),output=number(t.output,t.output_tokens,t.outputTokens);
     const total=number(t.total_tokens,t.totalTokens,input != null && output != null ? input+output : null);
+    const creditObj=(typeof usage.credits==='object' && usage.credits) || (typeof view.raw?.credits==='object' && view.raw.credits) || view.raw?.billing || view.usageData?.billing || usage.billing || {};
+    const credits=number(usage.credits,usage.credit,usage.credits_used,usage.total_credits,creditObj.used,creditObj.creditsUsed,creditObj.creditUsed,t.credits,view.raw?.credits,view.usageData?.credits);
+    const creditLimit=number(usage.credit_limit,usage.credits_limit,usage.max_credits,creditObj.limit,creditObj.creditsLimit,creditObj.creditLimit,creditObj.total,view.raw?.credit_limit,view.usageData?.credit_limit);
+    const creditUnit=usage.credit_unit || usage.unit || creditObj.unit || (credits === 1 && creditLimit == null ? 'Credit' : 'Credits');
+    const creditResetRaw=usage.resets_at ?? usage.reset_at ?? creditObj.resetRemaining ?? creditObj.billingCycleReset ?? creditObj.resetsAt ?? creditObj.resetAt ?? creditObj.currentPeriod?.end ?? view.raw?.resets_at ?? view.usageData?.resets_at;
     const lines=[];
     const text=(label,value)=>{lines.push(()=>`${label}：${typeof value==='function' ? value() : value}`);};
     const gauge=(label,used,title)=>{
@@ -113,20 +136,31 @@ const NativeSdkControls = {
       gauges.append(UsageUI.gauge(label,used,title));text(label,title);
     };
     if(total!=null){const node=el('span','sdk-credits',`${total >= 10000 ? total.toLocaleString('en', {notation:'compact', maximumFractionDigits:1}) : count(total)} tok`);node.title=`累计 ${count(total)} tokens；不是当前上下文占用`;gauges.append(node);}
+    if(credits!=null){
+      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
+      const node=el('span','sdk-credits',creditLabel);
+      node.title=`已用 ${creditLabel}${this.formatReset(creditResetRaw)}`;
+      gauges.append(node);
+      text('Credit',()=>`${creditLabel}${this.formatReset(creditResetRaw)}`);
+    }
     for(const [label,value] of [['输入 Token',input],['输出 Token',output],['思考 Token',number(t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens)],['缓存读取',number(t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens)],['缓存写入',number(t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens)],['累计 Token',total]])if(value!=null)text(label,count(value));
     const cost=usage.usageIsIncomplete || usage.costIsPartial ? undefined : number(usage.cost_usd,usage.total_cost_usd,typeof usage.costUsdTicks==='number'?usage.costUsdTicks/1e10:null); if(cost!=null)text('成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage || {};
-    const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${context.used_tokens!=null ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
+    const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens) ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
     const quota=view.usageData?.quota;
     UsageUI.appendQuotas(gauges,quota,view.uid.split(':')[0]);
-    for(const bucket of quota?.buckets || [])text(`${bucket.group || bucket.id} · ${UsageUI.window(bucket.window)}`,()=>`剩余 ${Number.isFinite(bucket.remaining_percent)?UsageUI.percent(bucket.remaining_percent)+'%':'未知'}${UsageUI.reset(bucket.resets_at)}`);
+    for(const bucket of quota?.buckets || []){
+      const unit=bucket.unit || (view.uid.startsWith('kiro:') ? 'Credits' : '');
+      const usedLimit=bucket.used!=null && bucket.limit!=null ? `${creditCount(bucket.used)} / ${creditCount(bucket.limit)}${unit ? ` ${unit}` : ''} · ` : '';
+      text(`${bucket.group || bucket.id || 'Credit'} · ${UsageUI.window(bucket.window || unit || '额度')}`,()=>`${usedLimit}剩余 ${Number.isFinite(bucket.remaining_percent)?UsageUI.percent(bucket.remaining_percent)+'%':'未知'}${this.formatReset(bucket.resets_at ?? bucket.reset_at ?? bucket.reset)}`);
+    }
     if(quota?.error)text('额度查询',quota.error);
     const billing=view.raw?.billing || view.usageData?.billing;const b=billing?.config || billing;
-    if(b){gauge('额度',b.creditUsagePercent,()=>`本周期已用 ${b.creditUsagePercent}%${UsageUI.reset(b.currentPeriod?.end)}`);if(b.prepaidBalance?.val!=null)text('预付余额',`$${(b.prepaidBalance.val/100).toFixed(2)}`);}
+    if(b){gauge('额度',b.creditUsagePercent,()=>`本周期已用 ${b.creditUsagePercent}%${this.formatReset(b.currentPeriod?.end)}`);if(b.prepaidBalance?.val!=null)text('预付余额',`$${(b.prepaidBalance.val/100).toFixed(2)}`);}
     const rate=view.raw?.rate_limits || view.usageData?.rate_limits;
     for(const [window,limit] of Object.entries(rate || {})) {
       const used=number(limit?.utilization,limit?.used_percentage,limit?.usedPercent);
-      if(used!=null)text(UsageUI.window(window),()=>`已用 ${UsageUI.percent(used)}%${UsageUI.reset(limit.resets_at)}`);
+      if(used!=null)text(UsageUI.window(window),()=>`已用 ${UsageUI.percent(used)}%${this.formatReset(limit.resets_at)}`);
     }
     if(usage.basis)text('统计范围',usage.basis);
     if(view.raw?.step_usage)text('最近步骤用量',JSON.stringify(view.raw.step_usage));
@@ -136,14 +170,15 @@ const NativeSdkControls = {
     if(view.usageError)text('查询未完成',view.usageError);
     if(!lines.length)text('用量','原生尚未提供用量数据');
     UsageUI.title(gauges,()=>lines.map(line=>line()).join(''),true);
-    this.paintUsageDetail(detail,view,usage,t,total,input,output);
+    this.paintUsageDetail(detail,view,usage,t,total,input,output,credits,creditLimit,creditUnit,creditResetRaw);
     const usageMenu=view.pane.querySelector('#sdk-usage-menu');
     usageMenu.hidden=!detail.childElementCount;
     this.rememberUsage(view);
     this.layout(view);
   },
-  paintUsageDetail(detail,view,usage,t,total,input,output) {
+  paintUsageDetail(detail,view,usage,t,total,input,output,credits=null,creditLimit=null,creditUnit='Credits',creditResetRaw=null) {
     const count=value=>value.toLocaleString(undefined,{maximumFractionDigits:0});
+    const creditCount=value=>value.toLocaleString(undefined,{maximumFractionDigits:2});
     const section=title=>{const block=el('section','sdk-usage-group');block.append(el('h4','',title));detail.append(block);return block;};
     const metric=(holder,label,value)=>{const row=el('div','sdk-usage-metric');row.append(el('span','',label),el('b','',value));holder.append(row);};
     const note=(holder,value)=>holder.append(el('p','sdk-control-note',value));
@@ -158,13 +193,31 @@ const NativeSdkControls = {
     const cost=usage.cost_usd ?? usage.total_cost_usd ?? (Number.isFinite(usage.costUsdTicks)?usage.costUsdTicks/1e10:undefined);
     if(typeof cost==='number' && !usage.usageIsIncomplete && !usage.costIsPartial)metric(grid,'成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
     if(hasTokens && usage.basis)note(tokens,usage.basis==='native cumulative modelUsage; estimated cost; thinking included in output'?'原生累计用量；成本为估算；思考计入输出':usage.basis);
+    if(typeof credits==='number' && Number.isFinite(credits)){
+      const creditSection=section('Credit 用量');
+      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
+      creditSection.append(el('div','sdk-usage-total',creditLabel));
+      const resetNote=this.formatReset(creditResetRaw);
+      if(resetNote)note(creditSection,resetNote.replace(/^\s*·\s*/,''));
+    }
+    const quota=view.usageData?.quota;
+    if(Array.isArray(quota?.buckets) && quota.buckets.length){
+      const quotaSection=section('额度');
+      for(const bucket of quota.buckets){
+        const unit=bucket.unit || (view.uid.startsWith('kiro:') ? 'Credits' : '');
+        const usedLimit=bucket.used!=null && bucket.limit!=null ? `${creditCount(bucket.used)} / ${creditCount(bucket.limit)}${unit ? ` ${unit}` : ''}` : '';
+        const rem=Number.isFinite(bucket.remaining_percent) ? `剩余 ${UsageUI.percent(bucket.remaining_percent)}%` : '';
+        const resetNote=this.formatReset(bucket.resets_at ?? bucket.reset_at ?? bucket.reset);
+        metric(quotaSection,`${bucket.group || bucket.id || 'Credit'}${bucket.window ? ` · ${UsageUI.window(bucket.window)}` : ''}`,`${[usedLimit,rem].filter(Boolean).join(' · ') || '已读取'}${resetNote}`);
+      }
+    }
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage;
     if(context && Number.isFinite(context.percent ?? context.percentage)){
       const holder=section('上下文'),percent=context.percent ?? context.percentage;
       holder.append(UsageUI.gauge('已用',percent,context.basis || '原生估计'));
       if(Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens))note(holder,`${count(context.used_tokens)} / ${count(context.max_tokens)} Token`);
     }
-    if(view.raw?.step_usage){const step=section('最近步骤 · 单独统计');for(const [key,value] of Object.entries(view.raw.step_usage))metric(step,({input_tokens:'输入',output_tokens:'输出',thinking_tokens:'思考',cache_read_tokens:'缓存读取',total_tokens:'Token'})[key] || key,typeof value==='number'?count(value):JSON.stringify(value));}
+    if(view.raw?.step_usage){const step=section('最近步骤 · 单独统计');for(const [key,value] of Object.entries(view.raw.step_usage))metric(step,({input_tokens:'输入',output_tokens:'输出',thinking_tokens:'思考',cache_read_tokens:'缓存读取',total_tokens:'Token',credits:'Credits',credit:'Credit'})[key] || key,typeof value==='number'?count(value):JSON.stringify(value));}
     if(view.raw?.settings?.fast_mode_state){const state=view.raw.settings.fast_mode_state;note(detail,`Fast 状态：${{off:'关闭',on:'开启',enabled:'开启',disabled:'关闭'}[state] || (typeof state==='string'?state:JSON.stringify(state))}`);}
     if(view.raw?.settings?.fast_mode_disabled_reason)note(detail,`Fast 不可用：${view.raw.settings.fast_mode_disabled_reason}`);
     for(const error of [view.usageData?.quota?.error,view.usageError,...Object.values(view.raw?.usage_errors || {})])if(error){
@@ -173,10 +226,10 @@ const NativeSdkControls = {
   },
   paintSettings(view) {
     const holder=view.pane.querySelector('#native-sdk-settings'),raw=view.raw || {},source=view.uid.split(':')[0];
-    const modes=raw.modes?.availableModes || raw.modes || [];
+    const modes=raw.modes?.availableModes || (Array.isArray(raw.modes)?raw.modes:null) || (source==='kiro' && (view.capabilities.mode || view.capabilities.settings) ? ['default','plan','auto'] : []);
     const definitions=[];
     if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.modes?.currentModeId || raw.settings?.mode]);
-    if(view.capabilities.permission_mode)definitions.push(['permission_mode','权限模式',['default','acceptEdits','plan','dontAsk','auto','bypassPermissions'],raw.settings?.permission_mode]);
+    if(view.capabilities.permission_mode || view.capabilities.approval || (source==='kiro' && (view.capabilities.permissions || view.capabilities.settings)))definitions.push(['permission_mode','权限模式',raw.permission_modes || raw.approvals || (source==='kiro'?['default','autopilot']:['default','acceptEdits','plan','dontAsk','auto','bypassPermissions']),raw.permission_mode || raw.settings?.permission_mode || (typeof raw.autopilot==='boolean'?(raw.autopilot?'autopilot':'default'):raw.approval)]);
     if(view.capabilities.fast_mode)definitions.push(['fast_mode','Fast',['false','true'],raw.settings?.fast_mode==null?'':String(raw.settings.fast_mode)]);
     if(view.capabilities.settings && source==='opencode')definitions.push(['native_agent','代理',view.nativeAgents || raw.agents || [],raw.agent]);
     for(const definition of definitions){definition[3]=sdkSettingValue(view,definition[0],definition[3] || '');definition[4]=view.settingChoices.has(definition[0]);}
@@ -185,7 +238,7 @@ const NativeSdkControls = {
     for(const control of view.nativeSettings || [])control.remove();view.nativeSettings=[];holder.replaceChildren();
     for(const [key,title,options,current,pending] of definitions) {
       const label=el('label','new-effort sdk-native-setting'),select=document.createElement('select');label.title=title;select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
-      const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
+      const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',autopilot:'Autopilot',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
       for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
       if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
       ConversationUI.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
@@ -265,7 +318,8 @@ const NativeSdkControls = {
   },
   async action(view,method,body={}) {
     const generation=view.generation;
-    if(view.capabilities[method]!==true && !(method==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings)){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
+    const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
+    if(view.capabilities[method]!==true && !kiroAllowed && !(method==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings)){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
     try{
       if(method==='steer'){
         const modal=CodexSdkActions.form('引导当前任务','原生会在可插入时处理；临近任务结束时可能另开一轮。普通发送仍进入队列。','发送引导');
@@ -286,6 +340,10 @@ const NativeSdkControls = {
       if(method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
       if(method==='revert_commit' && !await appConfirm('提交回退会永久移除被回退的对话记录；工作区文件不会回滚。',{ok:'提交回退'}))return false;
       if(!view.current(generation))return false;
+      if(method==='compact'){
+        view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
+        view.paintStatus();
+      }
       const {restore_text,...nativeBody}=body;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
       if(!view.current(generation))return true;
@@ -299,24 +357,40 @@ const NativeSdkControls = {
         await view.refreshHistory(generation,true);
         if(body.restore_text && view.current(generation))await CodexSdkActions.restoreInput(view,body.restore_text);
       }
-      if(method==='compact')view.paintStatus();else view.setNotice('原生操作已接受');return true;
-    }catch(error){if(view.current(generation))view.setNotice(`操作失败：${error.message}`,'blocked');return false;}
+      if(method==='compact'){
+        if(view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:response.raw?.compact || response.compact || {state:'success'}};
+        view.paintStatus();
+      }else view.setNotice('原生操作已接受');return true;
+    }catch(error){
+      if(view.current(generation)){
+        if(method==='compact' && view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:{state:'failed',error:error.message}};
+        view.setNotice(`操作失败：${error.message}`,'blocked');
+      }
+      return false;
+    }
   },
   async command(view,text) {
     const match=/^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());if(!match && !text.trim().startsWith('!'))return false;
     const command=match?.[1] || 'shell',arg=(match?.[2] || (match?'':text.trim().slice(1))).trim();
     let success=false;
-    if(['usage','status','help'].includes(command)){
-      if(command==='usage')void this.loadUsage(view,true);
-      if(command==='help')view.setNotice('网页命令：/usage、/status、/model ID、/effort 档位、/stop、/new、/rename 名称、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
+    if(['usage','context','status','help'].includes(command)){
+      if(command==='usage' || command==='context')void this.loadUsage(view,true);
+      if(command==='help')view.setNotice('网页命令：/usage、/context、/status、/model ID、/effort 档位、/mode 模式、/plan、/stop、/new、/rename 名称、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
       else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();ConversationUI.placePopover(menu,view.notice);}
       else {
-        const menu=view.pane.querySelector('#sdk-more-menu'),button=view.pane.querySelector('#sdk-more');
-        if(!button.hidden && !menu.matches(':popover-open')){menu.showPopover();ConversationUI.placePopover(menu,button);}
+        const menu=view.pane.querySelector('#sdk-more-menu'),button=view.pane.querySelector('#sdk-more'),usageMenu=view.pane.querySelector('#sdk-usage-menu');
+        if(usageMenu)usageMenu.hidden=false;
+        if(button)button.hidden=false;
+        if(menu && !menu.matches(':popover-open')){menu.showPopover();ConversationUI.placePopover(menu,button && !button.hidden ? button : view.pane.querySelector('.sdk-status-row'));}
       }success=true;
-    }else if(command==='new'){document.querySelector('#new-session')?.click();success=true;}
-    else if(command==='rename'){
-      if(!view.capabilities.rename)view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
+    }else if(command==='new'){
+      const source=view.uid.split(':')[0];
+      document.querySelector('#new-session')?.click();
+      const radio=document.querySelector(`#new-session-form input[name="new-source"][value="${CSS.escape(source)}"]`);
+      if(radio && !radio.disabled)radio.click();
+      success=true;
+    }else if(command==='rename'){
+      if(view.capabilities.rename===false && !(view.uid.startsWith('kiro:') && view.capabilities.rename!==false))view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
       else if(!arg)view.setNotice('用法：/rename 新名称','blocked');
       else{
         const generation=view.generation;
@@ -326,9 +400,12 @@ const NativeSdkControls = {
         success=true;
       }
     }else if(command==='stop'){await view.interrupt();success=true;}
-    else if(['model','effort'].includes(command)){
+    else if(['model','effort','mode'].includes(command)){
       if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
       else {await this.settings(view,{[command]:arg});success=true;}
+    }else if(command==='plan'){
+      await this.settings(view,{mode:arg || 'plan'});
+      success=true;
     }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?{before:arg}:{});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
@@ -347,28 +424,24 @@ const NativeSdkControls = {
       return index == null ? null : `step:${index}`;
     }
     if(source==='opencode')return item.native_id || (/^message:(.+)$/.exec(item.turn_id || '')?.[1]) || null;
-    if(source==='claude')return item.native_id || item.turn_id || item.id || null;
+    if(source==='claude' || source==='kiro')return item.native_id || item.turn_id || item.id || null;
     return null;
   },
   decorate(view,node,item) {
     if(item?.role!=='user' || node.querySelector('.sdk-bubble-toggle'))return;
     const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:');
-    if(!identity || (!view.capabilities.fork && !view.capabilities.revert && !view.capabilities.rewind))return;
-    const toggle=el('button','sdk-bubble-toggle','⋯');toggle.type='button';toggle.setAttribute('aria-label','消息操作');toggle.setAttribute('aria-expanded','false');
-    const menu=el('div','new-model-menu sdk-bubble-menu');menu.setAttribute('popover','auto');menu.setAttribute('aria-label','消息操作');
+    if(!identity)return;
+    const items=[];
     for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
       if(!view.capabilities[method])continue;
-      const button=el('button','new-model-option',label);button.type='button';
-      button.onclick=async()=>{
-        menu.hidePopover();
+      items.push([label,async()=>{
         const generation=view.generation;
         if(method!=='fork' && !await appConfirm('回退到这条消息之前？消息内容将追加回输入框，工作区文件保持原样。',{ok:'回退'}))return;
         if(!view.current(generation))return;
         await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork'?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
-      };
-      menu.append(button);
+      }]);
     }
-    toggle.onclick=()=>{if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();ConversationUI.placePopover(menu,toggle);}};menu.addEventListener('beforetoggle',event=>toggle.setAttribute('aria-expanded',String(event.newState==='open')));node.classList.add('sdk-user-actions');node.append(toggle,menu);
+    SdkUI.decorateUserBubble(view,node,items);
   },
   elicitation(view,request) {
     const card=el('div','msg sdk-request');card.dataset.sdkRequest=request.key;const body=el('div','mb');body.append(el('p','sdk-request-title',request.title || 'MCP 请求'),el('p','',request.message || request.description || ''));

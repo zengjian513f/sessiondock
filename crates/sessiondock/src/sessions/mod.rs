@@ -10,7 +10,7 @@
 //! never modified.
 
 mod history;
-mod index;
+pub(crate) mod index;
 pub(crate) use index::codex_rollout_id;
 pub mod agy;
 mod native_input;
@@ -173,6 +173,14 @@ pub struct SessionRoots {
     pub opencode: Option<PathBuf>,
     /// Private mirror of Agy's native summary database and complete transcripts.
     pub agy: Option<PathBuf>,
+    /// Kiro sessions root (`~/.kiro/sessions` by default, or `SESSIONDOCK_KIRO_ROOT`).
+    pub kiro: Option<PathBuf>,
+}
+
+impl SessionRoots {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        config.roots.clone()
+    }
 }
 
 /// Identity proven by native records and inventory ownership, independent of
@@ -259,7 +267,7 @@ impl Candidate {
     /// [summary] represents that absence, while [chat, summary] represents a
     /// present chat (including a zero-byte file). Other providers keep [data].
     pub(crate) fn data_stamp(&self) -> Option<&FileStamp> {
-        if matches!(self.source, "grok" | "opencode" | "agy")
+        if matches!(self.source, "grok" | "opencode" | "agy" | "kiro")
             && self.summary.is_some()
             && self.stamps.len() == 1
         {
@@ -1229,8 +1237,10 @@ fn index_cursors(row: &mut Value, index: &IndexSnapshot) {
 fn index_cursor(entry: &CandidateRef) -> Option<Value> {
     match (entry.committed(), entry.cursor_head()) {
         (Some(end), Some(head)) => Some(json!({"end": end, "head": head})),
-        // A Grok session without a chat file projects to an empty history.
-        _ if matches!(entry.source, "grok" | "opencode" | "agy") && entry.stamp.is_none() => {
+        // A Grok/OpenCode/Agy/Kiro session without a chat file projects to an empty history.
+        _ if matches!(entry.source, "grok" | "opencode" | "agy" | "kiro")
+            && entry.stamp.is_none() =>
+        {
             Some(json!({"end": 0, "head": views::head(&[], 0)}))
         }
         _ => None,
@@ -1470,7 +1480,7 @@ pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError>
 pub(crate) fn restamp(candidate: &Candidate) -> Result<Candidate, SessionError> {
     let mut next = candidate.clone();
     next.stamps.clear();
-    let has_data = if matches!(candidate.source, "grok" | "opencode" | "agy") {
+    let has_data = if matches!(candidate.source, "grok" | "opencode" | "agy" | "kiro") {
         trusted_path(&candidate.root, &candidate.path)?;
         fs::metadata(&candidate.data).is_ok_and(|metadata| metadata.is_file())
     } else {

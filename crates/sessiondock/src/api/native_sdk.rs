@@ -15,8 +15,9 @@ use std::{convert::Infallible, time::Duration};
 use tokio::sync::broadcast;
 
 fn failure(message: String) -> ApiError {
-    let (status, code) = if message.contains("session_busy") || message.contains("独立 OpenCode")
-    {
+    let (status, code) = if message.contains("kiro_sdk_session_busy") {
+        (StatusCode::CONFLICT, "kiro_sdk_session_busy")
+    } else if message.contains("session_busy") || message.contains("独立 OpenCode") {
         (StatusCode::CONFLICT, "native_sdk_session_busy")
     } else {
         (StatusCode::BAD_GATEWAY, "native_sdk_error")
@@ -140,12 +141,25 @@ async fn execute(
         };
         json!({"source":body["source"],"cwd":cwd})
     } else {
-        target(
-            &state,
-            body["uid"].as_str().unwrap_or_default(),
-            body["agent"].as_str().unwrap_or_default(),
-        )
-        .await?
+        let uid = body["uid"].as_str().unwrap_or_default();
+        let agent = body["agent"].as_str().unwrap_or_default();
+        match target(&state, uid, agent).await {
+            Ok(target) => target,
+            Err(_error) if matches!(method.as_str(), "stop" | "discard") && !uid.is_empty() => {
+                let source = body["source"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| uid.split_once(':').map(|(s, _)| s))
+                    .unwrap_or_default();
+                let sid = body["session_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| uid.split_once(':').map(|(_, id)| id))
+                    .unwrap_or(uid);
+                json!({"uid":uid,"session_id":sid,"cwd":body["cwd"],"source":source,"agent":agent})
+            }
+            Err(error) => return Err(error),
+        }
     };
     let source = target["source"].as_str().unwrap_or_default();
     if !state.native_sdks.capabilities()[source]

@@ -76,6 +76,7 @@ pub fn source_label(source: Source) -> &'static str {
         Source::Grok => "Grok",
         Source::Opencode => "OpenCode",
         Source::Agy => "Agy",
+        Source::Kiro => "Kiro",
         Source::Shell => "SSH",
     }
 }
@@ -87,6 +88,7 @@ pub fn source_name(source: Source) -> &'static str {
         Source::Grok => "grok",
         Source::Opencode => "opencode",
         Source::Agy => "agy",
+        Source::Kiro => "kiro",
         Source::Shell => "shell",
     }
 }
@@ -98,6 +100,7 @@ pub fn parse_source(text: &str) -> Option<Source> {
         "grok" => Some(Source::Grok),
         "opencode" => Some(Source::Opencode),
         "agy" => Some(Source::Agy),
+        "kiro" => Some(Source::Kiro),
         _ => None,
     }
 }

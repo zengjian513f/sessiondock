@@ -205,6 +205,7 @@ impl TrashService {
                 grok: freeze(roots.grok),
                 opencode: freeze(roots.opencode),
                 agy: freeze(roots.agy),
+                kiro: freeze(roots.kiro),
             },
             lock: Mutex::new(()),
             tree_progress: Default::default(),

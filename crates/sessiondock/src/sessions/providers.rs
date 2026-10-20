@@ -5,6 +5,7 @@ mod agy;
 mod claude;
 pub(super) mod envelopes;
 mod grok;
+pub(crate) mod kiro;
 mod image_content;
 mod opencode;
 mod tools;
@@ -292,10 +293,21 @@ fn parse_context<'a>(
             "grok" => parser.grok(record, *end),
             "opencode" => parser.opencode(record, *end),
             "agy" => parser.agy(record, *end),
+            "kiro" => parser.kiro(record, *end),
             _ => Err("未知原生数据源".to_owned()),
         };
         if let Err(reason) = result {
             return (meta, Vec::new(), Some(reason));
+        }
+    }
+    if source == "kiro"
+        && records.is_empty()
+        && let Some(hist) = summary.and_then(|s| s.get("history")).and_then(Value::as_array)
+    {
+        for item in hist {
+            if let Err(reason) = parser.kiro(item, 0) {
+                return (meta, Vec::new(), Some(reason));
+            }
         }
     }
     // Non-fatal: the session stays supported; the row reports what was skipped.
@@ -547,6 +559,9 @@ fn metadata(
     if source == "agy" {
         return agy::metadata(summary.unwrap_or(&Value::Null), records, fallback);
     }
+    if source == "kiro" {
+        return kiro::metadata(path, summary.unwrap_or(&Value::Null), records, fallback);
+    }
     let filename = path
         .file_stem()
         .unwrap_or_default()
@@ -726,6 +741,7 @@ struct Parser<'a> {
     source: String,
     media: Option<MediaContext<'a>>,
     skipped: Skipped,
+    kiro_history: Vec<(String, usize)>,
 }
 
 impl Parser<'_> {

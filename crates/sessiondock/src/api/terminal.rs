@@ -201,6 +201,13 @@ async fn claim_inner(
                     service.claim_launch(target,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 (Some(uid),Some(instance),None,None) => {
+                    if uid.starts_with("kiro:") && state.native_sdks.loaded_uids().contains(uid) {
+                        return Err(ApiError::new(
+                            StatusCode::CONFLICT,
+                            "sdk_session_busy",
+                            "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
+                        ));
+                    }
                     let observed=super::runtime::observe(&state).await?.ok_or_else(binding_unavailable)?;
                     let target=observed.hosts.iter().filter_map(|host|host.bound_target()).find(|target|
                         target.name()==body.name && target.uid()==uid && target.instance_id()==instance
@@ -284,6 +291,13 @@ pub async fn attach(
         (None, None, None, None) => Ok(()),
         (Some(uid), Some(instance), None, None) => {
             async {
+                if uid.starts_with("kiro:") && state.native_sdks.loaded_uids().contains(uid) {
+                    return Err(ApiError::new(
+                        StatusCode::CONFLICT,
+                        "sdk_session_busy",
+                        "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
+                    ));
+                }
                 let observed = super::runtime::observe(&state)
                     .await?
                     .ok_or_else(binding_unavailable)?;
@@ -648,7 +662,16 @@ pub async fn send(
         &body.launch_id,
     ) {
         (None, None, None, None) => ExpectedTarget::Raw,
-        (Some(uid), Some(instance), None, None) => ExpectedTarget::Native { uid, instance },
+        (Some(uid), Some(instance), None, None) => {
+            if uid.starts_with("kiro:") && state.native_sdks.loaded_uids().contains(uid) {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "sdk_session_busy",
+                    "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
+                ));
+            }
+            ExpectedTarget::Native { uid, instance }
+        }
         (None, Some(instance), Some(record), Some(launch)) => {
             if record.len() != 32 || launch.len() != 32 || instance.len() != 32 {
                 return Err(binding_unavailable());
@@ -758,6 +781,19 @@ async fn authorize_native(
     state: &AppState,
     target: &ptyhost_client::BoundTarget,
 ) -> Result<(), ApiError> {
+    if target.source().as_str() == "kiro"
+        && state
+            .native_sdks
+            .loaded_uids()
+            .iter()
+            .any(|uid| uid == target.uid())
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "sdk_session_busy",
+            "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
+        ));
+    }
     if target.origin_launch_id().is_some() {
         super::lifecycle::enabled(state)?
             .authorize_native(target)
@@ -1030,6 +1066,7 @@ pub async fn list(
             crate::lifecycle::model::Source::Grok,
             crate::lifecycle::model::Source::Opencode,
             crate::lifecycle::model::Source::Agy,
+            crate::lifecycle::model::Source::Kiro,
             crate::lifecycle::model::Source::Shell,
         ];
         for source in sources {

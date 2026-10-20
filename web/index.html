@@ -91,6 +91,9 @@
     </linearGradient>
     <path fill="url(#i-agy-fill)" transform="scale(.1333333333)" d="M144.248 149.062C151.748 154.688 162.998 150.938 152.685 140.625C121.748 110.625 128.31 28.125 89.8727 28.125C51.4352 28.125 57.9977 110.625 27.0602 140.625C15.8102 151.875 27.9977 154.688 35.4977 149.062C64.5602 129.375 62.6852 94.6875 89.8727 94.6875C117.06 94.6875 115.185 129.375 144.248 149.062Z"/>
   </symbol>
+  <symbol id="i-kiro" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M12 2.5c-4.7 0-8.5 3.6-8.5 8.2v8.1c0 .9 1 1.4 1.7.8l2.1-1.7c.5-.4 1.2-.4 1.7 0l1.9 1.5c.6.5 1.6.5 2.2 0l1.9-1.5c.5-.4 1.2-.4 1.7 0l2.1 1.7c.7.6 1.7.1 1.7-.8v-8.1c0-4.6-3.8-8.2-8.5-8.2zm-3.1 7.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm6.2 0a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z"/>
+  </symbol>
   <symbol id="i-terminal" viewBox="0 0 16 16">
     <rect x="1.5" y="2" width="13" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
     <path d="M4 5l2.3 2L4 9m4 1h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -386,6 +389,7 @@
         <label title="Grok"><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
         <label title="Agy"><input type="radio" name="new-source" value="agy"><span><svg class="ico source-icon" data-source="agy" aria-hidden="true"><use href="#i-agy"/></svg><em class="src-label">Agy</em></span></label>
         <label title="OpenCode"><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
+        <label title="Kiro"><input type="radio" name="new-source" value="kiro" data-agent="kiro" class="agent-opt"><span><svg class="ico source-icon" data-source="kiro" aria-hidden="true"><use href="#i-kiro"/></svg><em class="src-label">Kiro</em></span></label>
         <label title="SSH"><input type="radio" name="new-source" value="shell"><span><svg class="ico source-icon" data-source="shell" aria-hidden="true"><use href="#i-terminal"/></svg><em class="src-label">SSH</em></span></label>
       </fieldset>
       <div class="new-choice">
@@ -475,6 +479,7 @@
         <label title="Grok"><input type="radio" name="bug-report-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
         <label title="Agy"><input type="radio" name="bug-report-source" value="agy"><span><svg class="ico source-icon" data-source="agy" aria-hidden="true"><use href="#i-agy"/></svg><em class="src-label">Agy</em></span></label>
         <label title="OpenCode"><input type="radio" name="bug-report-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
+        <label title="Kiro"><input type="radio" name="bug-report-source" value="kiro" data-agent="kiro" class="agent-opt"><span><svg class="ico source-icon" data-source="kiro" aria-hidden="true"><use href="#i-kiro"/></svg><em class="src-label">Kiro</em></span></label>
       </fieldset>
       <div class="new-choice">
         <div class="new-model">
@@ -645,6 +650,7 @@
     <label class="setting-row"><span><b>Grok</b></span><select data-agent-start-mode="grok" aria-label="Grok 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     <label class="setting-row"><span><b>Agy</b></span><select data-agent-start-mode="agy" aria-label="Agy 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     <label class="setting-row"><span><b>OpenCode</b></span><select data-agent-start-mode="opencode" aria-label="OpenCode 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
+    <label class="setting-row"><span><b>Kiro</b></span><select data-agent-start-mode="kiro" aria-label="Kiro 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     </section>
     </div>
     <div id="settings-machines" class="settings-pane" role="tabpanel" hidden>
