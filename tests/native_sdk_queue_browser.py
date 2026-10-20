@@ -439,32 +439,39 @@ def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
             context.close()
 
 
-def restart_conflicting_result(browser, fixture):
-    text = '__RECOVERED_STREAM__'
+def restart_conflicting_result(browser, fixture, screenshots=None, *, text='__RECOVERED_STREAM__'):
+    conflict = text == '__RECOVERED_STREAM__'
     with fixture.server() as base:
-        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             submitted = send(page, text)
             state(page, submitted['request_id'], 'unknown')
-            expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
+            expect(page.locator('.sdk-live')).to_contain_text(
+                '最终结果：所有指定检查通过' if conflict else 'agy_sdk_native_ERROR:')
             pid = fixture.native_pid()
+            if not conflict:
+                assert page.evaluate('NativeSdkView.raw.error_kind') == 'turn'
+                pictures(page, uid, screenshots, 'agy-retained-error-' + text.strip('_').lower())
         finally:
             context.close()
-    assert fixture.alive(pid), 'conflicting result killed the persistent native runtime'
+    assert fixture.alive(pid), 'native ERROR receipt killed the persistent native runtime'
     with fixture.server() as base:
         context, page, _ = open_page(browser, base, fixture, accept_popups=False)
         try:
             state(page, submitted['request_id'], 'unknown')
             assert fixture.native_pid() == pid and fixture.alive(pid)
             assert fixture.inputs(text) == [text]
+            assert page.evaluate('NativeSdkView.raw.error_kind') == ('uncertain' if conflict else 'turn')
+            queued = send(page, 'continue after result reconciliation')
+            state(page, queued['request_id'], 'queued')
+            assert fixture.inputs('continue after result reconciliation') == []
             card(page, submitted['request_id']).get_by_role('button', name='移除记录', exact=True).click()
             page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
-            next_input = send(page, 'continue after result reconciliation')
             expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after result reconciliation')
-            gone(page, next_input['request_id'])
+            gone(page, queued['request_id'])
             assert fixture.native_pid() == pid and fixture.inputs(text) == [text]
             assert len(fixture.inputs('continue after result reconciliation')) == 1
-            print('Agy: conflicting result survives node restart without replay or killing the native runtime', flush=True)
+            print(f'Agy: {text} survives node restart; unknown blocks FIFO until dismissal, same PID resumes once', flush=True)
         finally:
             context.close()
 
@@ -781,6 +788,10 @@ def main():
             legacy_unknown(browser, fixtures['legacy-agy'], args.screenshots)
             legacy_unknown(browser, fixtures['legacy-failed-agy'], args.screenshots, 'failed')
             restart_conflicting_result(browser, fixtures['conflict-agy'])
+            for marker in ('__ERROR__', '__UNRECOVERED_STREAM__'):
+                name = 'error-agy-' + marker
+                fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)
+                restart_conflicting_result(browser, fixtures[name], args.screenshots, text=marker)
             for conflict, dismissed in ((True, False), (True, True), (False, False)):
                 name = f'closed-agy-{conflict}-{dismissed}'
                 fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)

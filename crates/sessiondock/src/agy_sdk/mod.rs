@@ -749,16 +749,17 @@ async fn actor(
                 let conflict = outcome
                     .as_ref()
                     .is_err_and(|error| error.starts_with("agy_sdk_result_conflict:"));
+                let retained = reusable_result(&outcome) && turn.persistent;
                 log_turn(
                     if outcome.is_ok() { "info" } else { "warn" },
                     "agy.sdk.turn_finished",
                     &live,
                     &turn,
                     json!({"success":outcome.is_ok(),"conflict":conflict,
-                        "runtime_retained":(outcome.is_ok() || conflict) && turn.persistent && runtime.native.is_some(),
+                        "runtime_retained":retained && runtime.native.is_some(),
                         "stopping":live.stop.is_cancelled(),"shutdown":shutdown.is_cancelled()}),
                 );
-                data.runtime = if (outcome.is_ok() || conflict) && turn.persistent {
+                data.runtime = if retained {
                     runtime.native.as_ref().map(|native| {
                         let mut runtime = turn.clone();
                         runtime.stdout_offset = native.stdout_offset;
@@ -820,6 +821,18 @@ async fn actor(
     data.outstanding = 0;
     data.active = None;
     live.publish(&mut data);
+}
+
+// A valid ERROR receipt ends a turn, not the persistent CLI. Keep its binding
+// as well as its process so the next explicit input uses the same runtime.
+// Explicit interrupts, protocol failures and unknown result statuses still
+// take the cleanup path.
+fn reusable_result(outcome: &Result<(), String>) -> bool {
+    outcome.is_ok()
+        || outcome.as_ref().is_err_and(|error| {
+            error.starts_with("agy_sdk_result_conflict:")
+                || error.starts_with("agy_sdk_native_ERROR:")
+        })
 }
 
 async fn execute(
@@ -1007,12 +1020,12 @@ async fn execute(
         )),
     }
     }.await;
-    if turn.persistent
-        && (outcome.is_ok()
-            || outcome
-                .as_ref()
-                .is_err_and(|error| error.starts_with("agy_sdk_result_conflict:")))
-    {
+    if turn.persistent && reusable_result(&outcome) {
+        // Hosted stderr is readable without closing the pipe. A direct child's
+        // collector stays attached until exit; awaiting it here would abort it.
+        if outcome.is_err() && process.host_dir.is_some() {
+            live.diagnostic(native.diagnostics().await);
+        }
         return outcome;
     }
     if outcome.is_err() && !shutdown.is_cancelled() {

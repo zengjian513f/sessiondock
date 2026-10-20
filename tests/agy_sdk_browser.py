@@ -355,6 +355,11 @@ def exercise(browser, base, fixture, screenshots=None):
         page.locator(f'[data-queue-id="{failed["id"]}"]').get_by_role('button', name='移除记录', exact=True).click()
         page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
         expect(page.locator(f'[data-queue-id="{failed["id"]}"]')).to_have_count(0)
+        send(page, 'continue after native error')
+        expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after native error')
+        idle(page)
+        assert fixture.inputs('__ERROR__')[-1]['pid'] == fixture.inputs('continue after native error')[-1]['pid']
+        assert len(fixture.inputs('__ERROR__')) == 1
 
         print('Agy: recovered stream with stale ERROR receipt is not a failed send', flush=True)
         for marker, conflict in [('__HISTORICAL_ERROR__', False), ('好，请在独立工作区修复审计发现的问题，完成复审与验证；不要重复执行已经完成的任务，并保留当前会话。', True), ('__UNRECOVERED_STREAM__', False), ('__HISTORICAL_WITH_CURRENT_ERROR__', False)]:
@@ -390,6 +395,13 @@ def exercise(browser, base, fixture, screenshots=None):
             card.get_by_role('button', name='移除记录', exact=True).click()
             page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
             expect(card).to_have_count(0)
+            if not conflict:
+                followup = 'continue after ' + marker
+                send(page, followup)
+                expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + followup)
+                idle(page)
+                assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs(followup)[-1]['pid']
+                assert len(fixture.inputs(marker)) == before
             if conflict:
                 send(page, 'after conflicting result')
                 expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after conflicting result')
@@ -528,7 +540,7 @@ def check_diagnostic_logs(fixture):
         assert any(row['event'] == 'agy.sdk.write_receipt' and row['written'] and not row['reused'] for row in trace)
         assert any(row['event'] == 'agy.sdk.step' and row['kind'] == 'user_input' for row in trace)
         finished = next(row for row in trace if row['event'] == 'agy.sdk.turn_finished')
-        assert finished['runtime_retained'] == conflict, finished
+        assert finished['runtime_retained'], finished
         transition = next(row for row in trace if row['event'] == 'native_sdk.input_transition' and row['to'] == 'unknown')
         assert transition['consumption'] == 'observed' and transition['attempts'] == 0
         assert transition['request_id'] and transition['uid'] and transition['source'] == 'agy'
@@ -536,9 +548,8 @@ def check_diagnostic_logs(fixture):
         if conflict:
             assert evidence['response_suffix_matches'] and evidence['final_response_bytes'] > 0
             assert evidence['last_step'] > evidence['error_steps'][-1]
-            assert not any(row['event'] in ('agy.sdk.interrupt', 'agy.sdk.terminate') for row in trace)
-        else:
-            assert any(row['event'] == 'agy.sdk.terminate' for row in trace)
+        assert not any(row['event'] in ('agy.sdk.interrupt', 'agy.sdk.terminate',
+                                       'agy.sdk.kill_requested', 'agy.sdk.kill_signal') for row in trace)
     assert any(row['status'] == 'SUCCESS' for row in results), 'normal result tracing missing'
     inherited = next(row for row in results if row['evidence']['reason'] == 'historical_error_after_completed_response')
     assert inherited['status'] == 'ERROR' and inherited['effective_status'] == 'SUCCESS'

@@ -93,6 +93,13 @@ DELTA（BUG-20261020-110536-cb072e）：宿主回放确认同一 SID、同一投
 脱敏 stderr 留在诊断中；没有既有回合错误时仍显示运行时关闭错误。
 节点再次重启和移除本地待核对记录均不重发旧输入；只有新的明确发送才创建同 SID 的新运行实例。
 
+同一缺陷的生命周期修复：合法的 `result.status=ERROR` 只结束当前回合，
+不再触发对持久 CLI 的 SIGKILL。保留错误、消费证据和待核对队列，也保留运行时绑定；
+节点重启可重新附着，用户确认移除记录后，后续输入复用同一进程。不能因此将真实
+错误改为成功或自动重试。显式中断／停止、读写或协议失败仍按原有路径清理；
+原生自行退出时仍报告实际退出原因。宿主 stderr 在回合错误时读取脱敏快照，
+没有宿主时保留直接子进程的 stderr 收集器，待退出后读取。
+
 ## 共享接入
 
 公开入口：`new(&Config, CancellationToken) -> io::Result<Option<Arc<Bridge>>>`，
@@ -146,7 +153,10 @@ user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能
 
 [agy_sdk_browser.py](../tests/agy_sdk_browser.py) 使用临时原生目录和合成协议对端，
 通过 Chromium 实际操作 SDK 页面，覆盖本来源的新建/恢复、发送、流式消息和工具、
-去重、中断、重开及外部 writer 冲突；审批和问题按本来源声明的能力验收。
+去重、中断、重开及外部 writer 冲突；错误回合后验证同 PID 继续且没有终止请求。
+[持久队列浏览器](../tests/native_sdk_queue_browser.py)还覆盖真实错误后的节点重启、
+待核对阻塞后续输入、确认移除后同 PID 继续且不重发旧输入。
+审批和问题按本来源声明的能力验收。
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
