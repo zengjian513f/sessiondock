@@ -81,6 +81,36 @@ struct Binding {
     turn: Turn,
 }
 
+fn log_turn(level: &str, event: &str, live: &Live, turn: &Turn, mut fields: Value) {
+    fields["source"] = json!("agy");
+    fields["session_id"] = json!(live.sid);
+    fields["delivery_id"] = json!(turn.id);
+    fields["runtime_id"] = json!(if turn.runtime_id.is_empty() {
+        &turn.id
+    } else {
+        &turn.runtime_id
+    });
+    fields["recovering"] = json!(turn.recovering);
+    crate::log::transition(level, event, fields);
+}
+
+fn log_step(live: &Live, turn: &Turn, native: &Native, step: &Value, idle: bool) {
+    // Bound volume to relevant native boundaries, never per-token output.
+    let kind = step["step_type"].as_str().unwrap_or_default();
+    if step["state"] == "DONE" && matches!(kind, "user_input" | "agent_response" | "error_message")
+    {
+        log_turn(
+            "info",
+            "agy.sdk.step",
+            live,
+            turn,
+            json!({"native_pid":native.pid(),"stdout_offset":native.stdout_offset,"idle":idle,
+                "step":step["step_index"].as_u64(),"kind":kind,
+                "text_bytes":step["text_delta"].as_str().map(str::len).unwrap_or(0)}),
+        );
+    }
+}
+
 enum Command {
     Turn(Turn),
     Interrupt(oneshot::Sender<Result<Value, String>>),
@@ -622,10 +652,16 @@ async fn actor(
                                 && runtime.native.as_ref().unwrap().check_event(&event).is_ok()
                             {
                                 if event["event"]=="step_update" {
+                                    log_step(&live,&turn,runtime.native.as_ref().unwrap(),&event["step_update"],true);
                                     project(&live,&turn,&event["step_update"]);
                                     runtime.transcript.observe(&event["step_update"]);
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                 } else if event["event"]=="result" {
+                                    log_turn("warn","agy.sdk.idle_result",&live,&turn,json!({
+                                        "native_pid":runtime.native.as_ref().unwrap().pid(),
+                                        "stdout_offset":runtime.native.as_ref().unwrap().stdout_offset,
+                                        "success":event["result"]["status"]=="SUCCESS",
+                                        "error_present":event["result"]["error"].is_string()}));
                                     let mut data=live.data.lock().unwrap();
                                     if event["result"]["usage"].is_object() { data.usage=event["result"]["usage"].clone(); }
                                     if event["result"]["status"]!="SUCCESS" {
@@ -713,6 +749,15 @@ async fn actor(
                 let conflict = outcome
                     .as_ref()
                     .is_err_and(|error| error.starts_with("agy_sdk_result_conflict:"));
+                log_turn(
+                    if outcome.is_ok() { "info" } else { "warn" },
+                    "agy.sdk.turn_finished",
+                    &live,
+                    &turn,
+                    json!({"success":outcome.is_ok(),"conflict":conflict,
+                        "runtime_retained":(outcome.is_ok() || conflict) && turn.persistent && runtime.native.is_some(),
+                        "stopping":live.stop.is_cancelled(),"shutdown":shutdown.is_cancelled()}),
+                );
                 data.runtime = if (outcome.is_ok() || conflict) && turn.persistent {
                     runtime.native.as_ref().map(|native| {
                         let mut runtime = turn.clone();
@@ -790,6 +835,14 @@ async fn execute(
         native: slot,
         transcript,
     } = runtime;
+    log_turn(
+        "info",
+        "agy.sdk.turn_started",
+        live,
+        turn,
+        json!({"persistent":turn.persistent,"replay_offset":turn.stdout_offset,
+            "runtime_attached":slot.is_some()}),
+    );
     process.check_available(live.sid.clone()).await?;
     let runtime = if turn.runtime_id.is_empty() {
         &turn.id
@@ -840,6 +893,9 @@ async fn execute(
         _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
         sent=native.send(&turn.text, if turn.persistent { &turn.id } else { "input" })=>sent?,
     }
+    log_turn("info","agy.sdk.input_written",live,turn,json!({
+        "native_pid":native.pid(),"stdout_offset":native.stdout_offset,"persistent":turn.persistent,
+        "input_bytes":turn.text.len()}));
     // Preserve EOF completion only for bindings created before persistent runtimes.
     if !turn.persistent { native.close_input().await?; }
     let mut result = None;
@@ -860,18 +916,30 @@ async fn execute(
                 Some(Command::Turn(turn))=>pending.push_back(turn),
                 Some(Command::Interrupt(reply))=>{
                     let answer=native.interrupt().await;
+                    log_turn("info","agy.sdk.interrupt",live,turn,json!({
+                        "native_pid":native.pid(),"signal":"SIGINT","sent":answer.is_ok(),
+                        "stdout_offset":native.stdout_offset}));
                     if answer.is_ok() { interrupted=true;interrupt_deadline=Some(tokio::time::Instant::now()+std::time::Duration::from_secs(5)); }
                     let _=reply.send(answer.map(|()|json!({"interrupted":true,"session_id":live.sid})));
                 }
                 None=>{ native.terminate().await;return Err("agy_sdk_shutdown".into()); }
             },
             line=native.next_line()=>{
-                let line=match line { Ok(Some(line))=>line, Ok(None)=>break, Err(error)=>{ native.terminate().await;return Err(format!("agy_sdk_read: {error}")); } };
+                let line=match line { Ok(Some(line))=>line, Ok(None)=>{
+                    log_turn("info","agy.sdk.output_closed",live,turn,json!({
+                        "native_pid":native.pid(),"stdout_offset":native.stdout_offset,"result_seen":result.is_some()}));
+                    break
+                }, Err(error)=>{
+                    log_turn("warn","agy.sdk.read_failed",live,turn,json!({
+                        "native_pid":native.pid(),"stdout_offset":native.stdout_offset,"io_kind":format!("{:?}",error.kind())}));
+                    native.terminate().await;return Err(format!("agy_sdk_read: {error}"));
+                } };
                 let event:Value=match serde_json::from_str(&line) {Ok(event)=>event,Err(_)=>{native.terminate().await;return Err("agy_sdk_invalid_ndjson".into());}};
                 if let Err(error)=native.check_event(&event) {native.terminate().await;return Err(error);}
                 match event["event"].as_str() {
                     Some("step_update")=>{
                         let step=&event["step_update"];
+                        log_step(live,turn,native,step,false);
                         saw_assistant |= step["step_type"]=="agent_response" && step["text_delta"].as_str().is_some_and(|s|!s.is_empty());
                         project(live,turn,step);
                         transcript.observe(step);
@@ -886,7 +954,16 @@ async fn execute(
                             data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value}));live.publish(&mut data);
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
-                        if !interrupted && transcript::conflicting_result(process,live,turn,value).await {
+                        let evidence=transcript::conflicting_result(process,live,turn,value).await;
+                        let conflict=!interrupted && evidence["conflict"]==true;
+                        log_turn(if status=="SUCCESS" {"info"} else {"warn"},"agy.sdk.result",live,turn,json!({
+                            "native_pid":native.pid(),"stdout_offset":native.stdout_offset,
+                            "status":match status {"SUCCESS"|"ERROR"|"INTERRUPTED"=>status,_=>"INVALID"},
+                            "error_present":value["error"].is_string(),
+                            "response_bytes":value["response"].as_str().map(str::len).unwrap_or(0),
+                            "interrupted":interrupted,"saw_assistant":saw_assistant,
+                            "conflict":conflict,"evidence":evidence}));
+                        if conflict {
                             live.diagnostic(format!("\nAgy result.status=ERROR: {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
                             return Err("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
                         }
@@ -933,6 +1010,15 @@ async fn execute(
         return outcome;
     }
     if outcome.is_err() && !shutdown.is_cancelled() {
+        log_turn(
+            "warn",
+            "agy.sdk.terminate",
+            live,
+            turn,
+            json!({
+            "native_pid":native.pid(),"stdout_offset":native.stdout_offset,
+            "reason":"turn_error","stopping":live.stop.is_cancelled()}),
+        );
         native.terminate().await;
     }
     live.diagnostic(native.diagnostics().await);

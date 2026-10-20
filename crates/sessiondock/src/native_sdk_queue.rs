@@ -59,6 +59,30 @@ fn terminal(input: &Input) -> bool {
     matches!(input.state.as_str(), "completed" | "cancelled")
 }
 
+fn log_transition(before: Option<&Input>, after: &Input, reason: &str) {
+    if before.is_some_and(|before| {
+        before.state == after.state
+            && before.consumption == after.consumption
+            && before.delivery_id == after.delivery_id
+            && before.stop_requested == after.stop_requested
+    }) {
+        return;
+    }
+    crate::log::transition(
+        "info",
+        "native_sdk.input_transition",
+        json!({"source":after.target["source"],"uid":after.target["uid"],
+            "session_id":after.target["session_id"],"agent":after.target["agent"],
+            "request_id":after.request_id,"delivery_id":after.delivery_id,
+            "previous_delivery_id":before.map(|row|row.delivery_id.as_str()),
+            "from":before.map(|row|row.state.as_str()),"to":after.state,
+            "previous_consumption":before.map(|row|row.consumption.as_str()),
+            "consumption":after.consumption,"attempts":after.attempts,
+            "error_present":after.error.is_some(),"stop_requested":after.stop_requested,
+            "reason":reason}),
+    );
+}
+
 impl Journal {
     pub fn open(directory: Option<&PathBuf>) -> io::Result<Self> {
         let path = directory.map(|path| path.join("native-sdk-inputs.json"));
@@ -76,7 +100,9 @@ impl Journal {
             Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
             Err(error) => return Err(error),
         };
+        let mut recovered = Vec::new();
         for input in rows.values_mut().flatten() {
+            let before = input.clone();
             // Older bridges classified execution errors as failed sends even
             // after observing native consumption. Preserve the evidence and
             // require explicit reconciliation before any repeat submission.
@@ -105,6 +131,9 @@ impl Journal {
                 input.error =
                     Some("准备输入时服务重启，尚未调用原生发送；请明确重试或撤销。".into());
             }
+            if before.state != input.state {
+                recovered.push((before, input.clone()));
+            }
         }
         let (events, _) = broadcast::channel(128);
         let journal = Self {
@@ -115,6 +144,9 @@ impl Journal {
         journal
             .save(&journal.rows.lock().expect("SDK input journal"))
             .map_err(io::Error::other)?;
+        for (before, after) in recovered {
+            log_transition(Some(&before), &after, "service_recovery");
+        }
         Ok(journal)
     }
 
@@ -154,6 +186,12 @@ impl Journal {
             }
         }
         self.save(&next)?;
+        for after in next.get(key).into_iter().flatten() {
+            let before = rows
+                .get(key)
+                .and_then(|rows| rows.iter().find(|row| row.id == after.id));
+            log_transition(before, after, "stop");
+        }
         *rows = next;
         self.publish(key, &rows);
         Ok(())
@@ -192,6 +230,7 @@ impl Journal {
         let mut next = rows.clone();
         next.entry(key.clone()).or_default().push(input.clone());
         self.save(&next)?;
+        log_transition(None, &input, "admission");
         *rows = next;
         self.publish(&key, &rows);
         Ok(input)
@@ -209,9 +248,11 @@ impl Journal {
             .get_mut(key)
             .and_then(|rows| rows.iter_mut().find(|row| row.id == id))
             .ok_or("SDK 队列项目不存在")?;
+        let before = input.clone();
         mutate(input)?;
         let input = input.clone();
         self.save(&next)?;
+        log_transition(Some(&before), &input, "update");
         *rows = next;
         self.publish(key, &rows);
         Ok(input)

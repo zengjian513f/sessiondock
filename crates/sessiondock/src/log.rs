@@ -71,6 +71,13 @@ pub fn info(event: &str, fields: Value) {
     emit("info", event, fields);
 }
 
+/// Preserve each low-frequency state transition instead of folding distinct
+/// requests/states into a five-second example. Never use for token/byte streams.
+pub fn transition(level: &str, event: &str, mut fields: Value) {
+    fields["aggregation"] = json!("none");
+    emit(level, event, fields);
+}
+
 pub fn warn(event: &str, fields: Value) {
     emit("warn", event, fields);
 }
