@@ -168,6 +168,13 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 仍记 `FAILED`。开始部署后的上传、构建、重启或健康检查失败仍按失败和回滚处理。回滚命令也会跳过离线节点。
 kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
 
+Linux 节点在 stage 前和 backup 前只读检查 `state/native-sdk-inputs.json`。
+存在 `sending` / `accepted` 输入时，本节点发布失败并保留当前服务运行；等待任务结束后再发布。
+该检查也适用于 web-only，因为它仍会重启节点服务；Hub 不持有这些原生进程，不受此检查影响。
+检查发生在 backup 前，拒绝不会触发自动回滚和重启，不提供强制跳过开关。
+这只是部署前观察，不是原子暂停接收：检查之后新接收的任务仍可能与重启竞争。
+原生 SDK 运行时尚不跨节点服务重启；账本中的 unknown 需要核对，不能自动重发。
+
 测试使用临时清单、模拟 SSH 或回环服务，不连接真实舰队节点；测试结果不依赖节点在线状态。
 
 每个处理器都必须遵守（摘自 `base.py`）：
