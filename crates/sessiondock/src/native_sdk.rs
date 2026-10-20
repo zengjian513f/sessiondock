@@ -715,6 +715,34 @@ impl NativeSdks {
         let Some(first) = self.input_queue.first(key) else {
             return;
         };
+        if first.state == "unknown" {
+            // Reattaching Agy can resolve an old erroneous result. Observe the
+            // existing actor only: missing evidence must never launch or resend.
+            if source == "agy"
+                && let Ok((snapshot, _)) = self.subscribe(source, &native_key)
+            {
+                let raw = &snapshot["raw"];
+                if raw["session_id"] == first.target["session_id"]
+                    && observed_input(source, &first, raw)
+                    && raw["items"].as_array().into_iter().flatten().any(|item| {
+                        item["role"] == "user"
+                            && item["request_id"] == first.delivery_id
+                            // Set by the actor only after execute succeeds, not
+                            // by a native user_input ACK or assistant prose.
+                            && item["status"] == "completed"
+                    })
+                {
+                    let _ = self.input_queue.change(key, &first.id, |entry| {
+                        if entry.state == "unknown" && entry.delivery_id == first.delivery_id {
+                            entry.state = "completed".into();
+                            entry.error = None;
+                        }
+                        Ok(())
+                    });
+                }
+            }
+            return;
+        }
         if first.state == "recovering" {
             let mut input = first.input.clone().unwrap_or_else(|| json!({}));
             input["request_id"] = json!(first.delivery_id);
