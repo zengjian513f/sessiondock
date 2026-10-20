@@ -9,6 +9,7 @@ legacy composer against the fake Claude CLI plus a synthetic shell.
 """
 from browser_runtime import wait_for_async
 from bug_report_node_browser import open_report
+import argparse
 import base64
 import json
 import os
@@ -56,9 +57,16 @@ def wait_server_text(context, base, uid, text, timeout=10.0):
 def open_session(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').first.click()
     page.wait_for_function('uid => composerUid === uid && !composerDraft().loading && takenOver(uid)', arg=uid)
+    page.locator('#a-chat').click()
+    expect(page.locator('#cinput')).to_be_visible()
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     if os.name != 'posix':
         raise SystemExit('Draft sync browser acceptance currently requires POSIX.')
     with tempfile.TemporaryDirectory(prefix='sessiondock-draft-sync-') as temporary, private_hosts(Path(temporary)):
@@ -98,6 +106,8 @@ def main():
                     errors, sends = [], []
 
                     def open_page(context, draft_route=None):
+                        # This suite exercises the legacy CLI composer.
+                        context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                         context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
                         page = context.new_page()
                         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -227,6 +237,27 @@ def main():
                     c = open_page(offline_context, fail_draft)
                     open_session(c, a.evaluate("S.sel"))
                     c.wait_for_function('composerDraft().loadFailed === true')
+                    # A failed read has no local edits to lose. It must not
+                    # block the update button, even while networking is down.
+                    def new_build(route):
+                        response = route.fetch()
+                        data = response.json()
+                        data['build'] = 'new-server-build'
+                        route.fulfill(response=response, json=data)
+                    c.route('**/api/meta', new_build)
+                    c.evaluate('checkServerBuild()')
+                    native = []
+                    def stay(dialog):
+                        native.append(dialog.type)
+                        dialog.dismiss()
+                    c.on('dialog', stay)
+                    assert not c.evaluate('composerUnloadProtected')
+                    c.unroute('**/api/meta', new_build)
+                    with c.expect_navigation(wait_until='domcontentloaded'):
+                        c.locator('.version-stale button[data-act="reload"]').click()
+                    assert not native, native
+                    open_session(c, a.evaluate("S.sel"))
+                    c.wait_for_function('composerDraft().loadFailed === true')
                     c.fill('#cinput', 'early offline edit')
                     c.evaluate('async () => await composerDraftWrites')
                     c.type('#cinput', ' retained')
@@ -240,6 +271,7 @@ def main():
                     wait_server_text(context, base, uid, 'offline draft\nearly offline edit retained')
                     assert len(sends) == 1, sends
                     offline_context.close()
+                    print('PASS draft reads, CAS/idle sync, staged attachments, SEND, offline recovery and read-error reload', flush=True)
 
                     # Deployment notice: the real meta-check path marks this
                     # page stale, but editing still saves with an old build ID.
@@ -253,11 +285,6 @@ def main():
                         else:
                             route.continue_()
                     a.route('**/api/session/conversation', obsolete_build)
-                    def new_build(route):
-                        response = route.fetch()
-                        data = response.json()
-                        data['build'] = 'new-server-build'
-                        route.fulfill(response=response, json=data)
                     a.route('**/api/meta', new_build)
                     a.evaluate('checkServerBuild()')
                     expect(a.locator('.version-stale')).to_contain_text('自动保存草稿')
@@ -267,21 +294,26 @@ def main():
                     a.press('#cinput', 'Enter')
                     assert len(sends) == 1, sends
 
-                    # Failed save must warn on native refresh and cancel the
-                    # banner reload without discarding the editor.
+                    # The banner performs a normal reload. Unsaved input asks
+                    # the browser's leave/stay question, with no application veto.
                     a.route('**/api/session/conversation', fail_draft)
                     a.fill('#cinput', 'unsaved during outage')
                     a.wait_for_function('!!composerDraft().storageError')
                     expect(a.locator('.draft-save-error')).to_be_visible()
                     assert a.evaluate('composerUnloadProtected')
+                    a.on('dialog', stay)
+                    if args.screenshots:
+                        a.screenshot(path=str(args.screenshots / 'reload-unsaved.png'), full_page=True)
                     a.locator('.version-stale button[data-act="reload"]').click()
-                    expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
+                    assert native == ['beforeunload'], native
+                    expect(a.locator('.version-stale button[data-act="reload"]')).to_be_enabled()
                     expect(a.locator('#cinput')).to_have_value('unsaved during outage')
                     a.unroute('**/api/session/conversation', fail_draft)
                     a.wait_for_function('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
 
                     # Report drafts share the same save path. Failed upload
-                    # bytes must prevent reload even after metadata is saved.
+                    # bytes still ask before leaving after metadata is saved,
+                    # including when the report dialog has been closed.
                     open_report(a)
                     expect(a.locator('#bug-report-description')).to_be_enabled()
                     expect(a.locator('#bug-report-go')).to_be_disabled()
@@ -294,18 +326,19 @@ def main():
                     expect(a.locator('#bug-report-items .draft-card.failed')).to_be_visible()
                     a.locator('#bug-report-dialog .modal-close').click()
                     a.locator('.version-stale button[data-act="reload"]').click()
-                    expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
+                    assert native == ['beforeunload', 'beforeunload'], native
                     open_report(a)
                     a.locator('#bug-report-items .draft-remove').click()
                     a.locator('#bug-report-dialog .modal-close').click()
                     a.unroute('**/api/session/conversation/attachment?*', fail_draft)
 
-                    # Reload immediately after typing: the 150ms queued save
-                    # must finish before navigation, and survive the new page.
+                    # Saved text survives normal reload without another prompt.
                     a.unroute('**/api/meta', new_build)
                     a.fill('#cinput', 'last keystrokes before reload')
+                    a.wait_for_function('!composerUnloadProtected')
                     with a.expect_navigation(wait_until='networkidle'):
                         a.locator('.version-stale button[data-act="reload"]').click()
+                    assert len(native) == 2, native
                     open_session(a, reload_uid)
                     expect(a.locator('#cinput')).to_have_value('last keystrokes before reload')
                     wait_server_text(context, base, uid, 'last keystrokes before reload')
@@ -314,7 +347,27 @@ def main():
                     open_report(a)
                     expect(a.locator('#bug-report-description')).to_have_value('report after deployment')
                     a.locator('#bug-report-dialog .modal-close').click()
-                    print('PASS stale-build drafts: old-build save, Enter blocked, failed-save retry, report and upload protection, reload waits for latest text', flush=True)
+                    # An outage must not trap the user. Accepting the native
+                    # warning really reloads and restores the last durable text.
+                    a.route('**/api/meta', new_build)
+                    a.evaluate('checkServerBuild()')
+                    a.route('**/api/session/conversation', fail_draft)
+                    a.fill('#cinput', 'explicitly discarded unsaved edit')
+                    a.wait_for_function('!!composerDraft().storageError')
+                    a.remove_listener('dialog', stay)
+                    def leave(dialog):
+                        native.append(dialog.type)
+                        dialog.accept()
+                    a.on('dialog', leave)
+                    a.unroute('**/api/meta', new_build)
+                    with a.expect_navigation(wait_until='networkidle'):
+                        a.locator('.version-stale button[data-act="reload"]').click()
+                    assert native == ['beforeunload'] * 3, native
+                    open_session(a, reload_uid)
+                    expect(a.locator('#cinput')).to_have_value('last keystrokes before reload')
+                    assert len(sends) == 1, sends
+                    a.unroute('**/api/session/conversation', fail_draft)
+                    print('PASS stale-build drafts: read errors do not block reload; unsaved text/report Files offer native stay/leave; saved drafts restore; no duplicate SEND', flush=True)
 
                     # 5. A console (SSH/shell) command sent from the composer clears
                     #    the server draft; the exited console leaves no

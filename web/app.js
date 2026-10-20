@@ -782,20 +782,9 @@ function markStaleBuild(serverBuild = '') {
   reload.dataset.act = 'reload';
   reload.type = 'button';
   reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
-  reload.onclick = async () => {
-    reload.disabled = true;
-    reload.textContent = '正在保存草稿…';
-    try {
-      if (typeof prepareComposerReload === 'function' && !await prepareComposerReload()) {
-        notice.querySelector('span').textContent = '草稿尚未保存或附件尚未上传完成，已取消重新加载。请等待保存成功或保留内容后重试。';
-        return;
-      }
-      location.reload();
-    } finally {
-      reload.disabled = false;
-      reload.textContent = '重新加载';
-    }
-  };
+  // Use the browser's normal reload, including its beforeunload choice for
+  // unsaved input. A failed draft request must not veto navigation.
+  reload.onclick = () => location.reload();
   const later = el('button', 'btn', '稍后');
   later.type = 'button';
   later.onclick = () => { notice.hidden = true; };

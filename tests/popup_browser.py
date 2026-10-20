@@ -32,7 +32,10 @@ def centered(page, locator, width, height):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sessiondock-popup-") as temporary, sync_playwright() as pw:
         root = Path(temporary)
         corpus = build_corpus(root / "corpus")
@@ -89,6 +92,10 @@ def main():
                 expect(card).to_be_visible()
                 expect(card.locator("strong")).to_have_text("SessionDock 已更新")
                 centered(page, card, width, height)
+                if args.screenshots:
+                    for theme in ('dark', 'light'):
+                        page.emulate_media(color_scheme=theme)
+                        page.screenshot(path=str(args.screenshots / f'reload-{width}-{theme}.png'), full_page=True)
                 stale_card = card.element_handle()
                 expect(page.locator("#float-stack > .app-float:visible")).to_have_count(1)
                 assert card.evaluate("d => d.parentElement.id === 'float-stack'")
@@ -129,10 +136,13 @@ def main():
                         notice.get_by_role('button', name='忽略').click()
                     expect(notice).to_be_hidden()
 
-                # Reload normally before the next network scenario: stale pages
-                # deliberately stop HTTP polling, so no product state is reset here.
+                # Use the update button itself and assert a new document loaded.
+                # Re-show via the normal update-notice path after "later".
+                page.evaluate("markStaleBuild('popup-test-newer')")
                 page.unroute("**/api/meta")
-                page.reload(wait_until="networkidle")
+                with page.expect_navigation(wait_until="networkidle"):
+                    card.get_by_role("button", name="重新加载").click()
+                assert page.evaluate("performance.getEntriesByType('navigation')[0].type") == 'reload'
                 page.wait_for_function("S.sessions.length > 0")
                 page.route("**/__auth/login", lambda route: route.fulfill(
                     content_type="text/html", body="<p>Fixture login</p>"))
@@ -166,7 +176,7 @@ def main():
                 context.close()
         browser.close()
     print("PASS popup browser: delete confirm centered with the dialog look, 取消/Esc keep, 确定 deletes; "
-          "stale-build card centered in the float stack, 稍后 keeps the same card hidden across polling/visibility; "
+          "stale-build card centered, 稍后 keeps its identity, 重新加载 navigates to a new document; "
           "HTTP login redirect shows a matching card, its actual button opens the local app URL; "
           "no native dialogs; desktop + 390px")
 
