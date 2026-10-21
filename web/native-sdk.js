@@ -524,7 +524,15 @@ const SdkView = new Proxy({
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return response.json();
         }),
-        typeof T === 'undefined' ? Promise.resolve() : loadTermList(true),
+        (async () => {
+          // app.js can restore a Kiro Hub selection before the later deferred
+          // term.js initializes node discovery. Wait for that script before
+          // treating absent capabilities as a disabled SDK.
+          if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
+            await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+          if (typeof T === 'undefined') return;
+          await loadTermList(true);
+        })(),
       ]);
       if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
       if (!this.available(uid, agent)) {
@@ -584,8 +592,9 @@ const SdkView = new Proxy({
     this.awaitingRunning = true;
     this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
-    const running = !agent && (this.selection?.key === viewKey(uid,agent)
-      ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid));
+    const running = !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
+      || (this.selection?.key === viewKey(uid,agent)
+        ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
     this.active.open(uid,pane,agent,{...options, readOnly: !options?.start && !running});
     closeWatch();
   },
@@ -602,6 +611,7 @@ const SdkView = new Proxy({
   },
   stopped(uid, selectedAgent = null) {
     if (!selectedAgent) { S.liveSdk.delete(uid); S.live.delete(uid); }
+    if (this.selection?.key === viewKey(uid, selectedAgent)) this.selection.runningSdk = false;
     if (this.uid === uid && this.agent === selectedAgent && this.pane) {
       // This is an intentional stop, not initial discovery still in flight.
       this.awaitingRunning = false;

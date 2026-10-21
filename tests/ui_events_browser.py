@@ -222,6 +222,32 @@ def main():
                     page.wait_for_function('uid=>S.sessions.some(s=>s.uid===uid)', arg=uid_for('events-reconnect'), timeout=30000)
                     assert sum(path == '/api/events' for _, path in requests) >= 2, requests
                     page.unroute('**/api/events', eof_once)
+                    # Keep this page's subscription alive while another page
+                    # connects and reloads. The shared observer's old baseline
+                    # cannot stand in for an observation after each subscriber.
+                    # No session changes are needed to trigger that baseline.
+                    newcomer = context.new_page()
+                    newcomer.add_init_script('''window.uiEventPackets=[];
+                        const NativeEventSource=window.EventSource;
+                        window.EventSource=class extends NativeEventSource {
+                          constructor(url,options){super(url,options);
+                            if(String(url).includes('api/events')) this.addEventListener('change',
+                              e=>window.uiEventPackets.push(JSON.parse(e.data)));}
+                        };''')
+                    for reconnect in (False, True):
+                        if reconnect:
+                            newcomer.reload(wait_until='domcontentloaded')
+                        else:
+                            newcomer.goto(base, wait_until='domcontentloaded')
+                        newcomer.wait_for_function(
+                            'uiEventPackets.filter(packet=>packet.initial).length>=2 && uiEventsReady && !uiEventApplying',
+                            timeout=15000)
+                        assert page.evaluate('uiEventsReady && uiEvents?.readyState===EventSource.OPEN')
+                        if newcomer.locator('#detail .mobile-back').is_visible():
+                            newcomer.locator('#detail .mobile-back').click()
+                        newcomer.locator(f'#side .item[data-uid="{uid_for("events-reconnect")}"] .t').click()
+                        newcomer.wait_for_function("document.querySelector('#msgs')?.innerText.includes('Created while disconnected')")
+                    newcomer.close()
                     assert not errors, errors
                     print(f'PASS UI events {label}: 10s idle={idle_count} requests, '
                           f'list/live/term polling=0 ({idle_paths}); two inactive appends={append_summaries} summaries, '

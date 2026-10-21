@@ -557,7 +557,7 @@ impl NativeSdks {
                     return Err("此创建请求已用于不同的目录".into());
                 }
                 if source == "kiro"
-                    && ["model", "effort", "mode", "autopilot"]
+                    && ["model", "effort", "mode", "autopilot", "permission_mode"]
                         .iter()
                         .any(|key| row["creation_choices"][*key] != input[*key])
                 {
@@ -569,10 +569,15 @@ impl NativeSdks {
             }
         }
         if source == "kiro" && matches!(method, "compact" | "settings") {
+            let startup = if method == "settings" {
+                input.clone()
+            } else {
+                json!({})
+            };
             dispatch!(
                 bridge,
                 bridge,
-                bridge.call("open", target.clone(), json!({})).await
+                bridge.call("open", target.clone(), startup).await
             )?;
             self.remember_binding(&target, true)?;
             // The registered session now blocks CLI startup. Release the mode
@@ -640,7 +645,7 @@ impl NativeSdks {
             }
             row["request_id"] = input["request_id"].clone();
             if source == "kiro" {
-                row["creation_choices"] = json!({"model":input["model"],"effort":input["effort"],"mode":input["mode"],"autopilot":input["autopilot"]});
+                row["creation_choices"] = json!({"model":input["model"],"effort":input["effort"],"mode":input["mode"],"autopilot":input["autopilot"],"permission_mode":input["permission_mode"]});
             }
             row["sdk_operation"] = json!(method);
             if method == "fork" {
