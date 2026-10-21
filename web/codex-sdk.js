@@ -473,6 +473,10 @@ const CodexSdkView = {
       case 'bridge/stopped':
         SdkView.stopped(this.uid, this.agent);
         return;
+      case 'bridge/capacityRetry':
+        if (this.summary) this.summary.capacity_retry = raw.delay_seconds ? raw : null;
+        this.paintStatus();
+        break;
       case 'bridge/queue':
         if (this.summary) this.summary.queue = raw.queue;
         this.paintQueue();
@@ -625,7 +629,7 @@ const CodexSdkView = {
       return;
     }
     const active = !!this.turn;
-    this.pane.querySelector('#sdk-stop').hidden = !active;
+    this.pane.querySelector('#sdk-stop').hidden = !active && !this.summary?.capacity_retry;
     const send = this.pane.querySelector('#sdk-send');
     sdkSyncSettings(this);
     send.textContent = active ? '排队' : '发送';
@@ -652,7 +656,12 @@ const CodexSdkView = {
       && this.historyData?.activity?.state === 'failed'
       ? this.historyData.activity.error : null;
     const errorText = this.summary?.last_error?.message || nativeError;
-    if (errorText) { parts.push(`错误：${errorText}`); kind = 'blocked'; }
+    const capacityRetry = this.summary?.capacity_retry;
+    if (capacityRetry) {
+      parts.push(`容量不足，${capacityRetry.delay_seconds} 秒后自动重试（${new Date(capacityRetry.retry_at).toLocaleTimeString()}）；可停止重试。${capacityRetry.error?.message || ''}`);
+      kind = 'retrying';
+    }
+    else if (errorText) { parts.push(`错误：${errorText}`); kind = 'blocked'; }
     else if (this.summary?.retry_error?.message) { parts.push(`正在重试：${this.summary.retry_error.message}`); kind = 'retrying'; }
     if (!parts.length) {
       if (status.type === 'systemError') { parts.push('系统错误'); kind = 'blocked'; }
@@ -669,7 +678,7 @@ const CodexSdkView = {
       else if (compact?.status === 'completed') parts.push('压缩完成');
       else parts.push('就绪');
     }
-    this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : kind);
+    this.setNotice(parts.join(' '), !capacityRetry && (this.summary?.last_error || status.type === 'systemError') ? 'blocked' : kind);
   },
 
   // ---------------------------------------------------------------- 操作

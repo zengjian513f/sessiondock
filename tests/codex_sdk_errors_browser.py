@@ -67,6 +67,8 @@ def exercise(browser, base, fake, width, theme, screenshots):
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
     box, send, status = page.locator('#sdk-input'), page.locator('#sdk-send'), page.locator('.sdk-pane .sdk-status')
     expect(box).to_be_enabled()
+    box.click()
+    page.wait_for_function('CodexSdkView.connected === true')
 
     def submit(text):
         box.fill(text)

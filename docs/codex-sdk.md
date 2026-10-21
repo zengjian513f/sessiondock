@@ -351,6 +351,22 @@ behavior; they do not require other sources to expose unsupported controls.
   (BUG-20261018-233652-c23d56): when the app-server reports only
   `systemError`, the SDK status uses the latest native `task_complete.error.message`
   so a model capacity failure shows its actual explanation after reload.
+  DELTA (capacity recovery): a subscribed thread's confirmed capacity failure
+  (`serverOverloaded` / native `server_overloaded`, or the exact selected-model
+  capacity message) schedules a node-owned continuation after 15, 30, 60, 120,
+  240, 480, then 600 seconds; subsequent failures keep the 600-second interval.
+  Empty-input `turn/start` continues native context without replaying user input
+  or changing model/effort/tier. A missing live error is recovered only from the
+  matching latest native `task_complete`, never from an older turn. Native
+  `willRetry:true` remains the daemon's responsibility until a failed completion.
+  The existing retry status exposes the delay/time and error; Stop cancels the
+  wait. Reload and closing pages preserve the timer. New input, a different
+  native turn, settings changes, revert, successful/interrupted completion or
+  stopping the session reset it. Unconfirmed queued inputs block continuation.
+  Disconnect/service restart cancels the timer; ordinary open does not revive
+  historical failed turns. A rejected or uncertain continuation RPC stays failed
+  for explicit recovery, without automatic replay. Coverage:
+  [capacity browser regression](../tests/codex_sdk_capacity_browser.py).
   Status, model/effort/mode selectors, action icons and usage all
   share the toolbar above the input, with status left and usage/context immediately before the model picker when space permits;
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /

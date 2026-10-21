@@ -48,6 +48,7 @@ struct State {
     last_error: Value,
     retry_error: Value,
     idle_since: Option<Instant>,
+    capacity: super::capacity::Retry,
 }
 
 struct Request {
@@ -155,6 +156,67 @@ impl LiveThread {
         let _ = self.tx.send(event);
     }
 
+    pub(super) fn capacity_check(&self) -> Option<(String, String)> {
+        let mut state = self.state.lock().expect("live");
+        if state.last_turn["status"] != "failed" || state.capacity.checked {
+            return None;
+        }
+        if !state.last_error.is_null() || state.resume["thread"]["path"].as_str().is_none() {
+            state.capacity.checked = true;
+            return None;
+        }
+        Some((
+            state.last_turn["id"].as_str()?.to_owned(),
+            state.resume["thread"]["path"].as_str()?.to_owned(),
+        ))
+    }
+
+    pub(super) fn capacity_error(&self, turn: &str, error: Value) {
+        let mut state = self.state.lock().expect("live");
+        if state.last_turn["id"] != turn || state.last_turn["status"] != "failed" {
+            return;
+        }
+        if state.capacity.checked {
+            return;
+        }
+        state.capacity.checked = true;
+        if state.capacity.schedule(&error) {
+            state.last_error = error;
+            let retry = state.capacity.summary();
+            let event = state.event("bridge/capacityRetry", retry);
+            let _ = self.tx.send(event);
+        }
+    }
+
+    pub(super) fn take_capacity_retry(&self) -> bool {
+        let mut state = self.state.lock().expect("live");
+        if state.starting
+            || state.turn.is_some()
+            || !state.requests.is_empty()
+            || !matches!(state.status["type"].as_str(), Some("idle" | "systemError"))
+            || !state.capacity.due()
+        {
+            return false;
+        }
+        state.capacity.deadline = None;
+        state.capacity.starting = true;
+        state.starting = true;
+        let event = state.event("bridge/capacityRetry", Value::Null);
+        let _ = self.tx.send(event);
+        true
+    }
+
+    pub(super) fn cancel_capacity_retry(&self) -> bool {
+        let mut state = self.state.lock().expect("live");
+        let pending = state.capacity.deadline.is_some();
+        state.capacity.cancel();
+        if pending {
+            let event = state.event("bridge/capacityRetry", Value::Null);
+            let _ = self.tx.send(event);
+        }
+        pending
+    }
+
     pub fn ready_to_start(&self) -> bool {
         let state = self.state.lock().expect("live");
         !state.starting
@@ -195,6 +257,8 @@ impl LiveThread {
     pub fn idle_for(&self, limit: Duration) -> bool {
         let state = self.state.lock().expect("live");
         state.turn.is_none()
+            && state.capacity.deadline.is_none()
+            && !state.capacity.starting
             && state.requests.is_empty()
             && state
                 .idle_since
@@ -228,9 +292,15 @@ impl LiveThread {
 
     pub fn apply(&self, method: &str, params: Value) {
         let mut state = self.state.lock().expect("live");
+        let previous = state.capacity.summary();
         state.reduce(method, &params);
+        let retry = state.capacity.summary();
         let event = state.event(method, params);
         let _ = self.tx.send(event);
+        if previous != retry {
+            let event = state.event("bridge/capacityRetry", retry);
+            let _ = self.tx.send(event);
+        }
     }
 
     /// Tell attached pages to reload; the sender drops with this thread.
@@ -245,7 +315,7 @@ fn summary(state: &State) -> Value {
     json!({
         "resume": state.resume, "settings": state.settings, "status": state.status,
         "usage": state.usage, "last_error": state.last_error, "retry_error": state.retry_error,
-        "last_turn": state.last_turn,
+        "last_turn": state.last_turn, "capacity_retry": state.capacity.summary(),
         "queue":state.queue,
         "recorded_limits": state.recorded_limits,
     })
@@ -285,6 +355,11 @@ impl State {
         match method {
             "bridge/queue" => self.queue = params["queue"].clone(),
             "turn/started" => {
+                if !self.capacity.starting {
+                    self.capacity.cancel();
+                }
+                self.capacity.starting = false;
+                self.capacity.checked = false;
                 self.starting = false;
                 self.turn = Some(params["turn"].clone());
                 self.last_turn = Value::Null;
@@ -293,6 +368,8 @@ impl State {
                 self.retry_error = Value::Null;
             }
             "turn/completed" => {
+                self.capacity.starting = false;
+                self.capacity.checked = false;
                 self.starting = false;
                 self.turn = None;
                 self.last_turn = json!({
@@ -306,8 +383,16 @@ impl State {
                 {
                     self.last_error = params["turn"]["error"].clone();
                 }
+                if params["turn"]["status"] == "failed" {
+                    if !self.capacity.schedule(&self.last_error) && !self.last_error.is_null() {
+                        self.capacity.cancel();
+                    }
+                } else {
+                    self.capacity.cancel();
+                }
             }
             "thread/reverted" => {
+                self.capacity.cancel();
                 self.turn = None;
                 self.last_turn = Value::Null;
                 self.items.clear();
@@ -360,7 +445,12 @@ impl State {
                 self.requests.shift_remove(&params["requestId"].to_string());
             }
             "thread/status/changed" => self.status = params["status"].clone(),
-            "thread/settings/updated" => self.settings = params["threadSettings"].clone(),
+            "thread/settings/updated" => {
+                if self.settings != params["threadSettings"] {
+                    self.capacity.cancel();
+                }
+                self.settings = params["threadSettings"].clone();
+            }
             "thread/tokenUsage/updated" => self.usage = params["tokenUsage"].clone(),
             "thread/name/updated" => {
                 if self.resume["thread"].is_object() {

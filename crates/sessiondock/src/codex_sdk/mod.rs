@@ -11,6 +11,7 @@
 //! `api::codex_sdk`; nothing here parses HTTP.
 
 mod actions;
+mod capacity;
 mod connection;
 mod controls;
 mod live;
@@ -277,6 +278,8 @@ impl CodexSdk {
         tokio::spawn(async move { inner.reap_idle().await });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.run_queue().await });
+        let inner = sdk.inner.clone();
+        tokio::spawn(async move { inner.run_capacity_retries().await });
         Ok(sdk)
     }
 
@@ -415,8 +418,14 @@ impl CodexSdk {
     }
 
     pub async fn interrupt(&self, thread_id: &str) -> Result<Value, RpcError> {
+        let lock = self.inner.queue.lock(thread_id);
+        let _dispatch = lock.lock().await;
         let thread = self.inner.ensure(thread_id).await?;
+        let cancelled = thread.cancel_capacity_retry();
         let Some(turn_id) = thread.active_turn() else {
+            if cancelled {
+                return Ok(json!({"retry_cancelled":true}));
+            }
             return Err(RpcError::NoActiveTurn);
         };
         let connection = self.inner.connection().await?;
