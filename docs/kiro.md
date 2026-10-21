@@ -27,6 +27,14 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
   `load` 响应可以没有 `sessionId`，桥接保留可信请求中的 SID。
 - `auto` 的原生 `hasEffort=false`，没有 effort 配置项；不能把界面默认强度当作
   原生已生效的值。
+- effort 不是独立的配置项，而是写在 model 配置项每个选项的
+  `_meta.kiro`（`hasEffort`、`effortLevels`、`defaultEffortLevel`，`effortSchemaPath=output_config`）里；
+  `chat --list-models` 不含任何 effort 字段。因此 effort 只能来自实时会话的
+  configOptions：新建/报告选择器在该来源已有运行会话时复用其 configOptions（同时省掉
+  CLI 探测的数秒等待），据此按 `effortLevels` 列出各模型的强度；`hasEffort=false`
+  的模型（如 `auto`）保持无强度。每模型 effort 通过 `session/new` 的
+  `_meta.kiro.effortLevel` 下发，实时修改走 `session/set_config_option` 的
+  `configId=effortLevel`。
 - 早先另一个隔离 Builder ID 登录使用 `qwen3-coder-next` 时返回
   `TemporarilySuspendedError`。这只描述当时那个认证环境的失败，不代表日常
   Google 登录账号整体暂停，也不能据此确定错误由模型、提示词或账号的哪一项造成。
