@@ -91,6 +91,49 @@ const SdkUI = {
     node.append(toggle, menu);
   },
 
+  foldLiveTurns(view, messages, {tailComplete}) {
+    // Native snapshots can replay the whole session. Apply the same completed
+    // turn boundaries as history, but retain the streaming message/tool nodes.
+    const plan = planTurns(messages.map(message => ({...message,
+      turn_id: message.turn_id || String(message.id)})), {tailComplete, openTail: !tailComplete});
+    const previous = view.liveTurns, groups = new Map(), membership = new Map();
+    const place = (parent, nodes) => {
+      let before = parent.firstElementChild;
+      for (const node of nodes) {
+        if (node === before) before = before.nextElementSibling;
+        else parent.insertBefore(node, before);
+      }
+    };
+    for (const {turn, open} of plan) {
+      if (!turn) continue;
+      const ids = turn.items.map(item => String(item.id));
+      const key = `${turn.key}:${ids[0]}`;
+      const shape = JSON.stringify([ids, turnProcessSummary(turn.items),
+        turn.hasConclusion, turn.inferred, turn.interrupted]);
+      let node = previous.get(key);
+      if (!node || node._sdkTurnShape !== shape) {
+        const expanded = node ? !node.classList.contains('folded') : open;
+        // These messages are already materialized by the protocol adapter.
+        // An empty plan prevents the disclosure from creating duplicate nodes.
+        node = turnProcessNode({...turn, plan: []}, expanded);
+        node._sdkTurnShape = shape;
+      }
+      node._turnItems = turn.items;
+      place(node.querySelector('.turn-process-body'), ids.map(id => view.nodes.get(id)).filter(Boolean));
+      groups.set(key, node);
+      for (const id of ids) membership.set(id, node);
+    }
+    const ordered = [], seen = new Set();
+    for (const message of messages) {
+      const id = String(message.id), node = membership.get(id) || view.nodes.get(id);
+      if (node && !seen.has(node)) { ordered.push(node); seen.add(node); }
+    }
+    place(view.live, ordered);
+    for (const [key, node] of previous) if (groups.get(key) !== node) node.remove();
+    view.liveTurns = groups;
+    refreshMessageTimeDividers(view.live);
+  },
+
   paintHistory(view, messages, {tailComplete = true, decorate} = {}) {
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
