@@ -84,15 +84,18 @@ UI 快照和替换基线产生的空闲 heap 页；保留仍被引用的列表�
 在阻塞线程池缓冲写入，序列化借用载荷而不再复制整个列表，失败忽略）。启动/重新启用时加载快照：缓存有了，健康记录为
 `{online:null,last_seen:stamp}`，直到监控探过。`stale_payload(path, cached)`：给
 `sessions`/`pending` 行加 `stale:true,last_seen`；`/api/term/list` 另置
-`enabled:false,sources:{}`；无缓存则 `{}`。
+`enabled:false,sources:{}`；无缓存则 `{}`。离线副本按缓存条目首次读取时构建一次，
+条目 stamp 变化才重建，之后各请求共享同一 `Arc`。
 
 **请求** `query(client,node,path,query,timeout,events)`：非 200 → `http_error`
 （401/403/404/429/503 各有中文说明，其余 `节点返回错误响应（HTTP n）`）；200 非对象 →
-`invalid_response`。`/api/sessions` 的 `{unchanged:true,sig}` 不改缓存。失败返回
+`invalid_response`。列表读取的节点答复带 `list_unchanged` 且包络字段与上游基线相同时，
+复用由同一基线为同一节点改写出的缓存 `Arc`，只刷新条目 stamp，不再执行
+`public_payload`；找不到这样的条目时按完整答复处理。失败返回
 `Fetched{data: stale_payload(...), failure: {node_id,name,error,error_code,last_seen}}`。
-`check(node)` = 带 `X-SessionDock-List` 头的条件请求（见下文 `list_delta`，不再转发 `sig`）；`check_all()` 最多 16 路并发；
+`check(node)` = 带 `X-SessionDock-List` 头的条件请求（见下文 `list_delta`，不转发 `sig`）；`check_all()` 最多 16 路并发；
 `fetch()` 是聚合入口：已知离线的节点不等待，直接给失败记录（含 `offline_since`）和
-过期缓存；空 query 的 `/api/sessions` 先条件探测，`unchanged` 则回最新缓存。
+过期缓存；其余节点直接按上述条件请求读取。
 DELTA（2026-10-08）：清扫读取传 `online_only=1` 时，在选择阶段排除已知离线节点，
 不调用它们的聚合读取，也不返回离线快照；参数仅供 Hub 使用，不转发给节点。
 普通列表仍保留离线快照，当前在线但请求失败的机器仍报告读取错误。
@@ -119,6 +122,8 @@ client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件�
 `tokio::net::TcpStream` 上保证：
 
 - 目标永远是注册表校验过的字面 `SocketAddr`：无 DNS、无 rebinding；
+- 一请求一连接；HTTPS 用平台信任库校验证书链和字面 IP，进程内复用同一个
+  `TlsConnector`（首次构造失败的下一次请求重试）；
 - 不跟随重定向（3xx 只是一个非 200 状态）；`Accept-Encoding: identity`；
 - 每个 socket 操作都有空闲超时：连接 5 s；JSON 请求
   读 5 s；搜索流行间 60 s；代理 10 s、`/api/watch` 45 s（常量 `PROXY_TIMEOUT`/

@@ -4,13 +4,26 @@ use super::{Client, Registry};
 use crate::metadata::{GroupCatalog, GroupCatalogUpdate};
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
-use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 pub struct Groups {
     catalog: Mutex<GroupCatalog>,
     cache: PathBuf,
+    /// Generation of the latest save request, assigned under `catalog`.
+    saves: AtomicU64,
+    /// Generation last written to `cache`.
+    written: Arc<std::sync::Mutex<u64>>,
 }
 impl Groups {
     pub fn open(cache: PathBuf) -> std::io::Result<Self> {
@@ -23,24 +36,30 @@ impl Groups {
         Ok(Self {
             catalog: Mutex::new(catalog),
             cache,
+            saves: AtomicU64::new(0),
+            written: Default::default(),
         })
     }
-    fn save(&self, catalog: &GroupCatalog) -> std::io::Result<()> {
-        let temporary = self.cache.with_extension("tmp");
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(&serde_json::to_vec(catalog)?)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &self.cache)?;
-        #[cfg(unix)]
-        fs::File::open(self.cache.parent().unwrap())?.sync_all()?;
-        Ok(())
+    /// Write the cache off the runtime: `sync_all` and the directory fsync
+    /// block for as long as the disk takes. Call with the catalog locked. A
+    /// cancelled sync leaves its write running, so writes share one temporary
+    /// file under `written`, and one that lost the race to a newer catalog
+    /// is skipped instead of overwriting it.
+    async fn save(&self, catalog: GroupCatalog) -> std::io::Result<()> {
+        let cache = self.cache.clone();
+        let written = self.written.clone();
+        let generation = self.saves.fetch_add(1, Ordering::Relaxed) + 1;
+        tokio::task::spawn_blocking(move || {
+            let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
+            if *written > generation {
+                return Ok(());
+            }
+            save(&cache, &catalog)?;
+            *written = generation;
+            Ok(())
+        })
+        .await
+        .map_err(std::io::Error::other)?
     }
     pub async fn sync(
         &self,
@@ -48,7 +67,10 @@ impl Groups {
         client: &Client,
         incoming: Option<GroupCatalogUpdate>,
     ) -> Value {
-        let mut catalog = self.catalog.lock().await;
+        // Read every node without holding the catalog: a slow or unreachable
+        // node must not stall concurrent syncs and user edits for its timeout.
+        // Merging is last-writer-wins per group, so reads taken before another
+        // sync published its catalog are merged safely afterwards.
         let reads = stream::iter(registry.all().into_iter().map(|node| async move {
             let result = registry
                 .request(
@@ -65,6 +87,9 @@ impl Groups {
         .buffer_unordered(16)
         .collect::<Vec<_>>()
         .await;
+        // The catalog lock serializes merge, publication and save, so the
+        // cache on disk never regresses to an older catalog.
+        let mut catalog = self.catalog.lock().await;
         let mut ready = Vec::new();
         let mut errors = Vec::new();
         for (node, result) in reads {
@@ -118,7 +143,7 @@ impl Groups {
                 );
             }
         }
-        if let Err(error) = self.save(&catalog) {
+        if let Err(error) = self.save(catalog.clone()).await {
             errors.push(json!({"error": format!("分组缓存保存失败：{error}")}));
         }
         json!({"ok": synced > 0, "groups": catalog.groups, "changes": catalog.changes,
@@ -132,6 +157,9 @@ impl Groups {
     ) {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(10));
+            // A sync slower than the period must not be followed by a burst of
+            // catch-up syncs.
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
@@ -140,4 +168,22 @@ impl Groups {
             }
         });
     }
+}
+
+fn save(cache: &Path, catalog: &GroupCatalog) -> std::io::Result<()> {
+    let temporary = cache.with_extension("tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    file.write_all(&serde_json::to_vec(catalog)?)?;
+    file.sync_all()?;
+    fs::rename(&temporary, cache)?;
+    #[cfg(unix)]
+    fs::File::open(cache.parent().unwrap())?.sync_all()?;
+    Ok(())
 }

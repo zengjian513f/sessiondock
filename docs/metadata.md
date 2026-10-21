@@ -230,6 +230,9 @@ back to reachable nodes every ten seconds, independent of browser filters.
 `hub-cache/groups.json` is a rebuildable cache; nodes own the durable catalogs.
 Hub creation requires at least one node to confirm the write. Responses expose
 `synced_nodes` and `sync_errors`; offline nodes catch up after rejoining.
+Node reads run without holding the Hub catalog; merge (last writer wins per
+group), distribution and the off-runtime cache write are serialized, and a
+slow pass delays the next periodic sync instead of queueing catch-up passes.
 A node remains independently usable after restarting without a Hub.
 
 The Group view shows named groups, including empty ones, with a delete button
