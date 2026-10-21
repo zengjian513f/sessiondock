@@ -44,10 +44,12 @@ pub(super) fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&temp)?;
+        // serde writes many small JSON fragments. Buffer them before the
+        // durability boundary, rather than issuing a syscall for every field.
+        let mut file = io::BufWriter::new(options.open(&temp)?);
         serde_json::to_writer(&mut file, value)?;
         file.flush()?;
-        file.sync_all()?;
+        file.get_ref().sync_all()?;
         std::fs::rename(temp, path)?;
         #[cfg(unix)]
         std::fs::File::open(parent)?.sync_all()?;

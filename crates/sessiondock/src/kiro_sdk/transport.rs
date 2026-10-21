@@ -292,7 +292,10 @@ impl Session {
                 .map_err(|e| format!("kiro_sdk_stdout: {e}"))?;
             out_pos = out.next_offset;
             out_buffer.extend_from_slice(&out.bytes);
-            while let Some(end) = out_buffer.iter().position(|b| *b == b'\n') {
+            // Commit all complete frames from this host read together. The durable
+            // cursor never passes an incomplete frame, and no snapshot or RPC waiter
+            // sees the batch before its state and cursor have reached disk.
+            if let Some(end) = out_buffer.iter().rposition(|b| *b == b'\n') {
                 let bytes: Vec<u8> = out_buffer.drain(..=end).collect();
                 let committed = out_pos - out_buffer.len() as u64;
                 self.observe_line(&String::from_utf8_lossy(&bytes), Some(committed))?;
@@ -374,92 +377,97 @@ impl Session {
 
     fn observe_line(self: &Arc<Self>, line: &str, cursor: Option<u64>) -> Result<(), String> {
         self.touch();
-        let value = serde_json::from_str::<Value>(line.trim()).ok();
-        let mut auto = None;
+        let mut auto = Vec::new();
         let mut sid = None;
         {
             let mut st = self.state.lock().unwrap();
             st.observing = true;
-            if let Some(value) = value {
-                if value.get("method").is_none() {
-                    if let Some(id) = value["id"].as_u64() {
-                        if let Some(index) = st.journal.iter().position(|r| r.id == Some(id)) {
-                            if st.journal[index].response.is_none() {
-                                let rpc = st.journal[index].clone();
-                                st.journal[index].response = Some(value.clone());
-                                match response(&value) {
-                                    Ok(result) => {
-                                        match rpc.frame["method"].as_str().unwrap_or("") {
-                                            "initialize" => st.apply_initialize_result(&result),
-                                            "session/new" | "session/load" => {
-                                                let resolved = result["sessionId"]
-                                                    .as_str()
-                                                    .or_else(|| {
-                                                        rpc.frame["params"]["sessionId"].as_str()
-                                                    })
-                                                    .unwrap_or("");
-                                                if !resolved.is_empty() {
-                                                    st.apply_open_result(resolved, &result);
-                                                    sid = Some(resolved.to_string());
+            for line in line.lines() {
+                if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
+                    if value.get("method").is_none() {
+                        if let Some(id) = value["id"].as_u64() {
+                            if let Some(index) = st.journal.iter().position(|r| r.id == Some(id)) {
+                                if st.journal[index].response.is_none() {
+                                    let rpc = st.journal[index].clone();
+                                    st.journal[index].response = Some(value.clone());
+                                    match response(&value) {
+                                        Ok(result) => {
+                                            match rpc.frame["method"].as_str().unwrap_or("") {
+                                                "initialize" => st.apply_initialize_result(&result),
+                                                "session/new" | "session/load" => {
+                                                    let resolved = result["sessionId"]
+                                                        .as_str()
+                                                        .or_else(|| {
+                                                            rpc.frame["params"]["sessionId"]
+                                                                .as_str()
+                                                        })
+                                                        .unwrap_or("");
+                                                    if !resolved.is_empty() {
+                                                        st.apply_open_result(resolved, &result);
+                                                        sid = Some(resolved.to_string());
+                                                    }
+                                                    st.loading = false;
                                                 }
-                                                st.loading = false;
+                                                "session/prompt"
+                                                    if st.active_prompt == Some(id) =>
+                                                {
+                                                    st.finish_turn(&result);
+                                                    st.active_prompt = None;
+                                                    st.requests.clear();
+                                                }
+                                                "session/set_config_option"
+                                                | "session/set_model"
+                                                | "session/set_mode" => {
+                                                    if let Some(opts) =
+                                                        result["configOptions"].as_array()
+                                                    {
+                                                        st.apply_config_options(opts);
+                                                    }
+                                                    st.apply_metadata(&result);
+                                                }
+                                                _ => {}
                                             }
-                                            "session/prompt" if st.active_prompt == Some(id) => {
-                                                st.finish_turn(&result);
+                                        }
+                                        Err(error) => {
+                                            if rpc.frame["method"] == "session/prompt"
+                                                && st.active_prompt == Some(id)
+                                            {
+                                                st.fail_turn(&error);
                                                 st.active_prompt = None;
                                                 st.requests.clear();
+                                            } else {
+                                                st.runtime_error = Some(error);
                                             }
-                                            "session/set_config_option"
-                                            | "session/set_model"
-                                            | "session/set_mode" => {
-                                                if let Some(opts) =
-                                                    result["configOptions"].as_array()
-                                                {
-                                                    st.apply_config_options(opts);
-                                                }
-                                                st.apply_metadata(&result);
+                                            if rpc.frame["method"] == "session/load" {
+                                                st.loading = false;
                                             }
-                                            _ => {}
-                                        }
-                                    }
-                                    Err(error) => {
-                                        if rpc.frame["method"] == "session/prompt"
-                                            && st.active_prompt == Some(id)
-                                        {
-                                            st.fail_turn(&error);
-                                            st.active_prompt = None;
-                                            st.requests.clear();
-                                        } else {
-                                            st.runtime_error = Some(error);
-                                        }
-                                        if rpc.frame["method"] == "session/load" {
-                                            st.loading = false;
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                } else if let Some(method) = value["method"].as_str() {
-                    let params = value.get("params").cloned().unwrap_or(Value::Null);
-                    if let Some(id) = value.get("id").cloned() {
-                        if let Some(reply) = st.handle_incoming_request(id.clone(), method, &params)
-                        {
-                            let frame = if reply.is_null() {
-                                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}})
-                            } else {
-                                json!({"jsonrpc":"2.0","id":id,"result":reply})
-                            };
-                            let key = format!(
-                                "auto:{}:{}",
-                                st.next_request_id,
-                                serde_json::to_string(&id).unwrap_or_default()
-                            );
-                            Self::enqueue(&mut st, &key, frame, None, None)?;
-                            auto = Some(key);
+                    } else if let Some(method) = value["method"].as_str() {
+                        let params = value.get("params").cloned().unwrap_or(Value::Null);
+                        if let Some(id) = value.get("id").cloned() {
+                            if let Some(reply) =
+                                st.handle_incoming_request(id.clone(), method, &params)
+                            {
+                                let frame = if reply.is_null() {
+                                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}})
+                                } else {
+                                    json!({"jsonrpc":"2.0","id":id,"result":reply})
+                                };
+                                let key = format!(
+                                    "auto:{}:{}",
+                                    st.next_request_id,
+                                    serde_json::to_string(&id).unwrap_or_default()
+                                );
+                                Self::enqueue(&mut st, &key, frame, None, None)?;
+                                auto.push(key);
+                            }
+                        } else {
+                            st.handle_notification(method, &params);
                         }
-                    } else {
-                        st.handle_notification(method, &params);
                     }
                 }
             }
@@ -476,7 +484,7 @@ impl Session {
             *self.session_id.lock().unwrap() = sid;
         }
         self.changed.notify_waiters();
-        if let Some(key) = auto {
+        for key in auto {
             let s = self.clone();
             tokio::spawn(async move {
                 let _ = s.deliver(&key).await;
