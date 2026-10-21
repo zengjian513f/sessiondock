@@ -178,7 +178,7 @@ async fn execute(
                 .unwrap_or_else(|| format!("此机器未配置 {source} SDK 模式")),
         ));
     }
-    if method == "usage" && matches!(source, "agy" | "claude") {
+    if method == "usage" && matches!(source, "agy" | "claude" | "kiro") {
         let quotas = if body["refresh"] == true {
             state.quotas.collect_source(source).await
         } else if body["refresh"] == "auto" {

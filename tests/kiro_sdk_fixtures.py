@@ -389,6 +389,19 @@ class FakeKiroAcp:
                 "usedTokens": 37000,
                 "maxTokens": 200000,
             })
+        elif method == "_kiro/account/getUsage":
+            # Real 2.24.1 shape: unadvertised handler, floored percentage, UTC reset date.
+            used_file = self.sessions_root.parent / "kiro-credits-used"
+            used = float(used_file.read_text()) if used_file.exists() else 2500.25
+            now = time.gmtime()
+            year, month = (now.tm_year + 1, 1) if now.tm_mon == 12 else (now.tm_year, now.tm_mon + 1)
+            self.reply(message, {"success": True, "message": "Plan: KIRO POWER | 1 usage breakdowns", "data": {
+                "planName": "KIRO POWER", "billingCycleReset": f"{year:04d}-{month:02d}-01",
+                "overagesEnabled": False, "isEnterprise": False,
+                "usageBreakdowns": [{"resourceType": "CREDIT", "displayName": "Credits", "used": used,
+                                     "limit": 10000, "percentage": int(used / 100), "currentOverages": 0,
+                                     "overageRate": 0.04, "currency": "USD", "hasLimit": True}],
+                "bonusCredits": [], "addOnCredits": [], "overageCapable": True}})
         elif method == "session/cancel":
             self.cancel.set()
             for ev, _ in list(self.pending_rpc.values()):

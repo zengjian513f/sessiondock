@@ -3,9 +3,9 @@
 设置 → 机器 → AI 客户端下方的 Agent 额度打开弹窗，关闭后保留设置页。
 独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
 未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
-Codex、Claude Code、Agy 各一个表格，复用客户端矩阵的表格样式；
+Codex、Claude Code、Agy、Kiro 各一个表格，复用客户端矩阵的表格样式；
 Agy 保留额度组，Claude 不显示额度组，Codex 的特殊模型额度在窗口列注明。
-窗口与 SDK、普通对话状态栏统一显示“5小时 / 7天”，不直接显示 `weekly` 等原生字段。
+窗口与 SDK、普通对话状态栏统一显示“5小时 / 7天 / 月度”，不直接显示 `weekly`、`monthly` 等原生字段。
 Codex 固定显示 Credits 和重置卡列，即使旧快照尚无这些字段也显示 N/A。
 百分比与进度条统一显示已使用（100% − 剩余百分比），缺字段不推算。
 复用 composer 的 sdk-gauge/sdk-bar：40×6 圆角条与百分比同行，达到 80% 时按 composer 规则标红。
@@ -22,7 +22,7 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 ## 采集与快照
 
 - GET `/api/quotas` 只读 `<SESSIONDOCK_STATE_DIR>/quotas/{source}.json`。
-- POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy profile；Claude 只重读快照。
+- POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy、Kiro profile；Claude 只重读快照。
   同节点按来源合并同时发生的查询，不同来源互不阻塞；不打开会话、不发送推理请求，不做定时刷新。
   自动查询使用 `?cached=true`，复用一分钟内的采集或失败尝试；显式刷新跳过有效期。
 - Hub 页面通过已有 `/api/nodes/{nid}/api/...` 代理逐节点读取；一台失败不阻塞其它结果。
@@ -34,7 +34,7 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 - 查询失败保留旧快照并标记失败；重置时间经过不推断额度变成 100%。
   时间按浏览器本地时区显示。打开弹窗、独立页及页面重载先读取快照，再按有效期自动查询一次；
   每个节点独立推进，慢节点不延迟其它节点采集。点击刷新也主动查询，页面停留时不轮询。
-  DELTA：打开页面从只读旧快照改为先显示快照、再检查有效期；Agy SDK 与设置页
+  DELTA：打开页面从只读旧快照改为先显示快照、再检查有效期；Agy、Kiro SDK 与设置页
   共用持久快照、有效期及进行中的查询。失败尝试同样缓存一分钟，手动刷新及网页
   `/usage` 可立即重试。SDK 首屏与菜单条件见[SDK 界面合同](sdk-ui.md)。
 
@@ -48,6 +48,15 @@ Agy：`-p /usage --output-format json`，要求 SUCCESS、num_turns=0、command.
 
 Claude：原生 statusLine JSON 中的 `rate_limits.five_hour`、`seven_day`、`spend_limit`，
 提取 used_percentage 与 resets_at。没有额度字段的回调保留已有快照。
+
+Kiro：与 SDK 相同的命令、HOME 作用域及 `acp --agent-engine=v3 --auth-method=cli`，
+只发 `initialize` 与 `_kiro/account/getUsage`，不建会话、不推理。DELTA：该方法未列入
+`extensionMethods`，`kiro-cli 2.24.1` 实测可用；不支持时按查询失败保留旧快照。
+要求 `success=true`；每个 `usageBreakdowns[]` 一个 `monthly` 窗口，额度组为 `planName`，
+剩余为 `100 − used×100/limit`（原生 `percentage` 取整，不用于显示），附 used/limit/单位。
+`hasLimit=false` 显示“不限量”。`billingCycleReset` 只有日期，按该日 UTC 00:00 倒计时。
+bonus、add-on 与超额 credits 暂不展示。SDK 打开时按一分钟有效期自动查询，
+网页 `/usage` 和刷新按钮立即查询；回合完成只重读快照。
 
 ## Claude 接入
 
@@ -71,6 +80,7 @@ CLI 调用 `sessiondock quota-statusline STATE_DIRECTORY` 时先保存额度，�
 `python3 tests/quotas_browser.py`：真实隔离 Node/Hub 与合成 CLI，点击设置入口、刷新、返回；
 验证 Codex 握手/多桶、Agy 零回合 JSON、Claude wrapper 原输出及字段过滤，
 缺字段/零额度/已过重置时间、失败保留快照、宽窄屏和明暗主题。
+`python3 tests/kiro_sdk_browser.py`：Kiro SDK 底栏月度 credits、`/usage` 刷新、额度页 Kiro 表。
 
 Codex 同时展示结构化 credits 余额与重置卡：数量取 availableCount，
 到期时间取已返回的可用卡片中最近的一次，不用明细条数推算总数，不提供兑换操作。

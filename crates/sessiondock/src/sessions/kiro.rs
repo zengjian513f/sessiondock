@@ -24,6 +24,14 @@ use tokio_util::sync::CancellationToken;
 
 pub const FORMAT: &str = "sessiondock-kiro-projection-v1";
 
+/// Account HOME implied by the `.kiro` scope root, used when the profile sets none.
+pub(crate) fn account_home(native_root: &Path) -> Option<&Path> {
+    native_root
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == ".kiro"))
+        .and_then(Path::parent)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Entry {
     pub uid: String,
@@ -264,14 +272,10 @@ impl Catalog {
             command.env_remove(key);
         }
         command.envs(&self.profile.env);
-        if !self.profile.env.contains_key("HOME") {
-            let root = &self.native_root;
-            let dot = root
-                .ancestors()
-                .find(|p| p.file_name().is_some_and(|n| n == ".kiro"));
-            if let Some(home) = dot.and_then(Path::parent) {
-                command.env("HOME", home);
-            }
+        if !self.profile.env.contains_key("HOME")
+            && let Some(home) = account_home(&self.native_root)
+        {
+            command.env("HOME", home);
         }
         command
     }
