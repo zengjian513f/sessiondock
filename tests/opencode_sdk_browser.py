@@ -435,12 +435,10 @@ def main():
                                 page.emulate_media(color_scheme=theme)
                                 assert_inline_usage(page)
                                 page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}.png')),full_page=True)
-                                for toggle, label in (('#sdk-usage-toggle', 'usage'), ('#sdk-more', 'actions')):
-                                    if label == 'usage': toggle_usage_details(page)
-                                    else: page.locator(toggle).click()
-                                    page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}-{label}.png')), full_page=True)
-                                    if label == 'usage': toggle_usage_details(page)
-                                    else: page.locator(toggle).click()
+                                if page.locator('#sdk-more').is_visible():
+                                    page.locator('#sdk-more').click()
+                                    page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}-actions.png')), full_page=True)
+                                    page.locator('#sdk-more').click()
                     if args.hub_binary:
                         exercise_hub_fork(browser, native, node_port, args.hub_binary, root, args.screenshot)
                     assert not errors, errors

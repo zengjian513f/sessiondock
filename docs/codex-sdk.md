@@ -419,13 +419,13 @@ behavior; they do not require other sources to expose unsupported controls.
   that state preserves text, attachments and quotes, clears only that submission
   ID, and waits for another explicit SEND with a new ID. Unchanged queue entries
   retain their controls during streamed progress, including a pointer click.
-  RPC acceptance is not input consumption: keep the input in `sending` until a
-  matching native `item/completed` userMessage confirms it in the returned turn.
-  Pre-input compaction can end or be interrupted without consuming that input.
-  End/reset before confirmation retains its text and attachments as a failed entry
-  for explicit verification/retry, never automatic replay.
-  [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers both
-  successful consumption and interruption/reload/restart before consumption.
+  Successful `turn/start` or `turn/steer` RPC acceptance completes delivery
+  (`sent`). Native consumption, pre-input compaction, interruption and turn
+  errors remain execution state; they never restore a failed-send entry or
+  offer a resend of the accepted input. Reload and service restart preserve
+  the completed receipt. An RPC rejected before acceptance retains its input.
+  [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers
+  acceptance before consumption, interruption, reload and restart without replay.
 - User bubbles with a native turn identity have a ⋯ button on their left,
   vertically centered on the bubble, including expanded long messages and live items
   (BUG-20261018-043107-c69063). 回退
@@ -508,11 +508,10 @@ Automatic and manual compaction use the same native `contextCompaction` events
 and status display below. When automatic compaction finishes inside an active
 turn, the status returns to “处理中” as the turn continues. Native Codex owns
 the persisted compacted context; SessionDock continues reading its history.
-An accepted input may still be waiting for native consumption during compaction,
-so its queued bubble remains until native confirmation. Refreshing must neither
-lose the input nor submit it again. See the synthetic
+An accepted input has completed delivery even while waiting for native consumption during compaction,
+so it no longer has a pending-send bubble. Refreshing must not submit it again. See the synthetic
 [automatic-compaction browser regression](../tests/codex_sdk_compaction_browser.py)
-for progress/reconnect, completion/continued processing, interrupt/retry and
+for progress/reconnect, completion/continued processing, interruption without send regression and
 service-restart recovery; it validates the bridge, not a real model's threshold.
 
 DELTA (native controls): the operation menu starts fork, paginated turn

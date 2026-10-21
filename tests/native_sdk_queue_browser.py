@@ -80,6 +80,16 @@ def gone(page, request):
     expect(card(page, request)).to_have_count(0)
 
 
+def settled(page, fixture, request):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        row = fixture.entry(request)
+        if row['state'] == 'completed' and not row.get('runtime_state'):
+            return
+        page.wait_for_timeout(25)
+    raise AssertionError(('runtime did not settle', fixture.entry(request)))
+
+
 def click_action(page, request, method, title):
     try:
         with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/' + method), timeout=5000) as response:
@@ -151,7 +161,13 @@ def basic_queue(browser, fixture, screenshots):
                 print('Grok: actual chat/SDK switches restore watch only for the current identity', flush=True)
             first = send(page, fixture.blocker)
             first_id = first['request_id']
-            state(page, first_id, 'accepted')
+            gone(page, first_id)
+            page.wait_for_function('NativeSdkView.raw?.running === true')
+            assert fixture.entry(first_id)['state'] == 'completed'
+            assert fixture.entry(first_id)['runtime_state'] == 'observing'
+            rejected = page.request.post(base + '/api/native-sdk/queue_retry', data={
+                'uid': uid, 'id': 'bridge:' + first_id, 'request_id': 'cannot-retry-delivered', 'confirmed': True})
+            assert not rejected.ok, 'completed delivery must not be reopened through retry'
             expect(page.locator('#sdk-stop')).to_be_visible()
             # A second tab sees the same queue via actual SSE, and cancels only
             # undelivered work. The running native turn must remain active.
@@ -189,6 +205,7 @@ def basic_queue(browser, fixture, screenshots):
             page.locator('#sdk-stop').click()
             gone(page, first_id)
             gone(page, follower_id)
+            settled(page, fixture, follower_id)
             expect(page.locator('#sdk-input')).to_have_value('later editor text 中文 ' + fixture.source)
             assert len(fixture.inputs('queued after blocker ')) == 1
             entry = fixture.entry(follower_id)
@@ -213,7 +230,7 @@ def cancelled_draft(browser, fixture, screenshots):
         try:
             print('Grok: lost HTTP ACK, cancelled submission, attachments publish once', flush=True)
             first = send(page, fixture.blocker)
-            state(page, first['request_id'], 'accepted')
+            gone(page, first['request_id'])
             attach(page)
             original = send(page, 'lost ACK attachment 中文', lose_ack=True)
             original_id = original['request_id']
@@ -247,52 +264,21 @@ def cancelled_draft(browser, fixture, screenshots):
 
 def failure_and_unknown(browser, fixture, screenshots):
     with fixture.server() as base:
-        # This case explicitly exercises cancel/confirm choices itself.
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
-            print('Grok: explicit failure blocks later input; retry action replay is idempotent', flush=True)
-            failed = send(page, 'native-error')
-            request = failed['request_id']
-            state(page, request, 'failed')
-            blocked = send(page, 'blocked behind failure')
-            state(page, blocked['request_id'], 'queued')
-            assert not fixture.inputs('blocked behind failure')
-            retry = click_action(page, request, 'queue_retry', '重试')
-            state(page, request, 'failed', attempts=1)
-            assert len(fixture.inputs('native-error')) == 2
-            replay(page, base, 'queue_retry', retry)
-            assert fixture.entry(request)['attempts'] == 1
-            assert len(fixture.inputs('native-error')) == 2
-            pictures(page, uid, screenshots, 'failed')
-            click_action(page, request, 'queue_cancel', '撤销')
-            gone(page, blocked['request_id'])
-            assert len(fixture.inputs('blocked behind failure')) == 1
-
-            print('Grok: uncertain transport does not replay; explicit confirmed retry uses a fresh delivery ID', flush=True)
-            unknown = send(page, 'disconnect')
-            request = unknown['request_id']
-            state(page, request, 'unknown')
-            blocked = send(page, 'blocked behind unknown')
-            state(page, blocked['request_id'], 'queued')
-            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
-            page.get_by_role('button', name='取消', exact=True).click()
-            state(page, request, 'unknown')
-            assert len(fixture.inputs('disconnect')) == 1
-            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
-            with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/queue_retry')) as response:
-                page.get_by_role('dialog').get_by_role('button', name='重新发送', exact=True).click()
-            assert response.value.ok, response.value.text()
-            retry = response.value.request.post_data_json
-            state(page, request, 'unknown', attempts=1)
-            assert len(fixture.inputs('disconnect')) == 2
-            replay(page, base, 'queue_retry', retry)
-            assert fixture.entry(request)['attempts'] == 1 and len(fixture.inputs('disconnect')) == 2
-            assert not fixture.inputs('blocked behind unknown')
-            card(page, request).get_by_role('button', name='移除记录', exact=True).click()
-            page.get_by_role('button', name='移除记录', exact=True).last.click()
-            gone(page, blocked['request_id'])
-            assert len(fixture.inputs('blocked behind unknown')) == 1
-            print('Grok: failed/unknown pause, explicit retry, action receipt replay and local dismissal passed', flush=True)
+            for text in ('native-error', 'disconnect'):
+                submitted = send(page, text)
+                page.wait_for_function('NativeSdkView.raw?.running === false && NativeSdkView.raw?.error')
+                gone(page, submitted['request_id'])
+                assert fixture.entry(submitted['request_id'])['state'] == 'completed'
+                assert fixture.inputs(text) == [text]
+                assert replay(page, base, 'turn', submitted)['state'] == 'completed'
+                pictures(page, uid, screenshots, 'grok-execution-' + text)
+                follower = send(page, 'continue after ' + text)
+                expect(page.locator('.sdk-live')).to_contain_text('Grok final answer')
+                gone(page, follower['request_id'])
+                assert fixture.inputs(text) == [text]
+            print('Grok: accepted sends stay completed through execution errors and exit; next turn needs no resend/dismissal', flush=True)
         finally:
             context.close()
 
@@ -303,7 +289,7 @@ def restart_queue(browser, fixture, screenshots):
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture)
         first = send(page, fixture.blocker)
-        state(page, first['request_id'], 'accepted')
+        gone(page, first['request_id'])
         native_pid = fixture.native_pid()
         attach(page)
         queued = send(page, 'durable queued attachment after restart')
@@ -318,15 +304,16 @@ def restart_queue(browser, fixture, screenshots):
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture)
         try:
-            state(page, first['request_id'], 'accepted')
+            gone(page, first['request_id'])
             state(page, queued['request_id'], 'queued')
             assert fixture.native_pid() == native_pid and fixture.alive(native_pid)
             expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文')
             assert len(fixture.inputs('hold')) == holds_before + 1 and not fixture.inputs('durable queued attachment')
-            assert replay(page, base, 'turn', first)['state'] == 'accepted'
+            assert replay(page, base, 'turn', first)['state'] == 'completed'
             pictures(page, uid, screenshots, 'restart-running')
             page.locator('#sdk-stop').click()
             gone(page, queued['request_id'])
+            settled(page, fixture, queued['request_id'])
             assert len(fixture.inputs('hold')) == holds_before + 1 and len(fixture.inputs('durable queued attachment')) == 1
             expect(page.locator('#sdk-input')).to_have_value('newer draft survives service restart 中文')
             entry = fixture.entry(queued['request_id'])
@@ -348,7 +335,7 @@ def restart_output(browser, fixture):
         context, page, _ = open_page(browser, base, fixture)
         try:
             first = send(page, text)
-            state(page, first['request_id'], 'accepted')
+            gone(page, first['request_id'])
             expect(page.locator('.sdk-live')).to_contain_text('Agy running offline-replay')
             pid = fixture.native_pid()
         finally:
@@ -372,7 +359,7 @@ def restart_output(browser, fixture):
             # A separate active turn proves explicit session stop still kills
             # its native child after reconnect (unlike merely closing the node).
             stopping = send(page, 'hold:explicit-stop-after-restart')
-            state(page, stopping['request_id'], 'accepted')
+            gone(page, stopping['request_id'])
             stop_pid = fixture.native_pid()
             expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
             page.locator('#a-session-toggle').click()
@@ -406,26 +393,18 @@ def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
-            state(page, request, 'unknown')
-            assert fixture.entry(request)['error'] == row['error']
-            expect(card(page, request)).to_contain_text('原生已读取这条输入，但执行结果尚未确认。')
+            gone(page, request)
+            assert fixture.entry(request)['state'] == 'completed'
+            assert fixture.entry(request)['runtime_error'] == row['error']
+            assert fixture.entry(request)['error'] is None
             assert not fixture.inputs(text)
             follower = send(page, 'continue after checking legacy history')
-            state(page, follower['request_id'], 'queued')
-            assert not fixture.inputs('continue after checking')
-            card(page, request).get_by_role('button', name='重新发送', exact=True).click()
-            expect(page.get_by_role('dialog')).to_contain_text('可能重复执行')
-            page.get_by_role('dialog').get_by_role('button', name='取消', exact=True).click()
-            assert fixture.entry(request)['attempts'] == 0 and not fixture.inputs(text)
-            pictures(page, uid, screenshots, 'legacy-consumed-unknown')
-            card(page, request).get_by_role('button', name='移除记录', exact=True).click()
-            with page.expect_response('**/api/native-sdk/queue_cancel'):
-                page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after checking legacy history')
             gone(page, follower['request_id'])
             assert not fixture.inputs(text)
-            assert fixture.entry(request)['state'] == 'cancelled'
             assert len(fixture.inputs('continue after checking')) == 1
-            print('Agy: consumed legacy unknown stays explicit; cancelling resend sends nothing, removing record unblocks new input once', flush=True)
+            pictures(page, uid, screenshots, 'legacy-delivered-' + original_state)
+            print('Agy: legacy execution verdict migrates to completed delivery without resend or blocking', flush=True)
         finally:
             context.close()
 
@@ -436,7 +415,7 @@ def restart_conflicting_result(browser, fixture, screenshots=None, *, text='__RE
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             submitted = send(page, text)
-            state(page, submitted['request_id'], 'unknown')
+            gone(page, submitted['request_id'])
             expect(page.locator('.sdk-live')).to_contain_text(
                 '最终结果：所有指定检查通过' if conflict else 'agy_sdk_native_ERROR:')
             pid = fixture.native_pid()
@@ -449,20 +428,16 @@ def restart_conflicting_result(browser, fixture, screenshots=None, *, text='__RE
     with fixture.server() as base:
         context, page, _ = open_page(browser, base, fixture, accept_popups=False)
         try:
-            state(page, submitted['request_id'], 'unknown')
+            gone(page, submitted['request_id'])
             assert fixture.native_pid() == pid and fixture.alive(pid)
             assert fixture.inputs(text) == [text]
             assert page.evaluate('NativeSdkView.raw.error_kind') == ('uncertain' if conflict else 'turn')
             queued = send(page, 'continue after result reconciliation')
-            state(page, queued['request_id'], 'queued')
-            assert fixture.inputs('continue after result reconciliation') == []
-            card(page, submitted['request_id']).get_by_role('button', name='移除记录', exact=True).click()
-            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
             expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after result reconciliation')
             gone(page, queued['request_id'])
             assert fixture.native_pid() == pid and fixture.inputs(text) == [text]
             assert len(fixture.inputs('continue after result reconciliation')) == 1
-            print(f'Agy: {text} survives node restart; unknown blocks FIFO until dismissal, same PID resumes once', flush=True)
+            print(f'Agy: {text} survives node restart; delivery remains completed, next input resumes the same PID once', flush=True)
         finally:
             context.close()
 
@@ -476,12 +451,8 @@ def closed_runtime_result(browser, fixture, screenshots, *, conflict=True, dismi
             submitted = send(page, text)
             request = submitted['request_id']
             if conflict:
-                state(page, request, 'unknown')
+                gone(page, request)
                 expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
-                if dismissed:
-                    card(page, request).get_by_role('button', name='移除记录', exact=True).click()
-                    page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
-                    gone(page, request)
             else:
                 gone(page, request)
                 expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + text)
@@ -508,14 +479,10 @@ def closed_runtime_result(browser, fixture, screenshots, *, conflict=True, dismi
                 assert raw['error'].startswith('agy_sdk_result_conflict:' if conflict else 'agy_sdk_runtime_closed:'), raw['error']
                 expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('结果待核对' if conflict else '错误')
                 assert fixture.inputs(text) == [text], 'opening/restarting resent the old input'
-                assert fixture.entry(request)['state'] == ('cancelled' if dismissed else 'unknown' if conflict else 'completed')
+                assert fixture.entry(request)['state'] == 'completed'
                 assert fixture.entry(request)['consumption'] == 'observed'
                 if restart == 1:
                     pictures(page, uid, screenshots, f'agy-closed-{conflict}-{dismissed}')
-                    if conflict and not dismissed:
-                        card(page, request).get_by_role('button', name='移除记录', exact=True).click()
-                        page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
-                        gone(page, request)
                     fresh = send(page, 'new input after closed runtime')
                     expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: new input after closed runtime')
                     gone(page, fresh['request_id'])
@@ -619,6 +586,7 @@ def restart_idle_registry(browser, fixture):
             expect(page.locator('.sdk-live')).to_contain_text(final)
             page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
             gone(page, submitted['request_id'])
+            settled(page, fixture, submitted['request_id'])
             assert fixture.entry(submitted['request_id'])['state'] == 'completed'
             assert not any(row['state'] in ('sending', 'accepted', 'queued') for row in fixture.journal())
             pid = fixture.native_pid()
@@ -673,12 +641,11 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             old = send(page, '__RECOVERED_STREAM__')
-            state(page, old['request_id'], 'unknown')
-            card(page, old['request_id']).get_by_role('button', name='移除记录', exact=True).click()
-            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            gone(page, old['request_id'])
             current = send(page, '__HISTORICAL_ERROR__')
             expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
             gone(page, current['request_id'])
+            settled(page, fixture, current['request_id'])
             assert fixture.entry(current['request_id'])['state'] == 'completed'
             pid = fixture.native_pid()
         finally:
@@ -704,15 +671,6 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
             assert not page.evaluate('NativeSdkView.raw.error')
             assert fixture.native_pid() == pid and fixture.alive(pid)
             assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
-            if mismatched_delivery:
-                state(page, current['request_id'], 'unknown')
-                blocked = send(page, 'must wait for matching delivery')
-                state(page, blocked['request_id'], 'queued')
-                assert fixture.entry(current['request_id']) == saved_entry
-                assert not fixture.inputs('must wait for matching delivery')
-                pictures(page, uid, screenshots, 'agy-unmatched-completion', all_sizes=True)
-                print('Agy: another delivery completion cannot resolve unknown input or release FIFO', flush=True)
-                return
             page.wait_for_function('request => !NativeSdkView.raw?.input_queue?.some(row => row.request_id === request)',
                                    arg=current['request_id'])
             assert fixture.entry(current['request_id'])['state'] == 'completed'
@@ -720,7 +678,7 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
             assert final_entry['error'] is None
             for key in ('request_id', 'delivery_id', 'draft', 'input', 'consumption', 'attempts', 'actions'):
                 assert final_entry[key] == saved_entry[key], key
-            assert fixture.entry(old['request_id'])['state'] == 'cancelled'
+            assert fixture.entry(old['request_id'])['state'] == 'completed'
             replay(page, base, 'turn', current)
             assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
             pictures(page, uid, screenshots, f'agy-reconciled-{persisted_state}', all_sizes=True)
@@ -784,7 +742,7 @@ def main():
                 name = 'error-agy-' + marker
                 fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)
                 restart_conflicting_result(browser, fixtures[name], args.screenshots, text=marker)
-            for conflict, dismissed in ((True, False), (True, True), (False, False)):
+            for conflict, dismissed in ((True, False), (False, False)):
                 name = f'closed-agy-{conflict}-{dismissed}'
                 fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)
                 closed_runtime_result(browser, fixtures[name], args.screenshots, conflict=conflict, dismissed=dismissed)
@@ -805,7 +763,7 @@ def main():
             browser.close()
             for fixture in fixtures.values():
                 fixture.close()
-    print('PASS native SDK durable queues: Grok/Agy/Claude real browser, FIFO admission, shared SSE/cancel, STOP, request/action dedup, failed/unknown retry, attachment publication, editor preservation and service restart', flush=True)
+    print('PASS native SDK durable queues: Grok/Agy/Claude real browser, FIFO admission, shared SSE/cancel, STOP, request/action dedup, execution errors isolated from delivery, attachment publication, editor preservation and service restart', flush=True)
 
 
 if __name__ == '__main__':

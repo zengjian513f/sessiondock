@@ -134,6 +134,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     assert len(fake.methods('turn/steer')) == steers + 1
     assert fake.methods('turn/steer')[-1]['params']['expectedTurnId'] == fake.turn
     page.reload(wait_until='networkidle')
+    page.wait_for_function('CodexSdkView.connected')
     expect(page.locator('.sdk-queued')).to_have_count(2)
     if screenshots:
         page.screenshot(path=str(screenshots / f'{label}-queue.png'))

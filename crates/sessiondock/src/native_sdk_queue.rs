@@ -29,6 +29,11 @@ pub(crate) struct Input {
     pub actions: BTreeMap<String, Value>,
     #[serde(default)]
     pub stop_requested: bool,
+    /// Execution observation is independent of the completed send receipt.
+    #[serde(default)]
+    pub runtime_state: String,
+    #[serde(default)]
+    pub runtime_error: Option<String>,
 }
 
 type Document = BTreeMap<String, Vec<Input>>;
@@ -65,6 +70,7 @@ fn log_transition(before: Option<&Input>, after: &Input, reason: &str) {
             && before.consumption == after.consumption
             && before.delivery_id == after.delivery_id
             && before.stop_requested == after.stop_requested
+            && before.runtime_state == after.runtime_state
     }) {
         return;
     }
@@ -79,6 +85,7 @@ fn log_transition(before: Option<&Input>, after: &Input, reason: &str) {
             "previous_consumption":before.map(|row|row.consumption.as_str()),
             "consumption":after.consumption,"attempts":after.attempts,
             "error_present":after.error.is_some(),"stop_requested":after.stop_requested,
+            "runtime_state":after.runtime_state,"previous_runtime_state":before.map(|row|row.runtime_state.as_str()),
             "reason":reason}),
     );
 }
@@ -103,13 +110,23 @@ impl Journal {
         let mut recovered = Vec::new();
         for input in rows.values_mut().flatten() {
             let before = input.clone();
-            // Older bridges classified execution errors as failed sends even
-            // after observing native consumption. Preserve the evidence and
-            // require explicit reconciliation before any repeat submission.
-            if input.state == "failed" && input.consumption == "observed" {
-                input.state = "unknown".into();
+            // Upgrade legacy execution verdicts without reopening delivery.
+            if input.operation == "turn"
+                && (input.result.is_some() || input.consumption == "observed")
+                && matches!(
+                    input.state.as_str(),
+                    "accepted" | "recovering" | "failed" | "unknown"
+                )
+            {
+                if matches!(input.state.as_str(), "accepted" | "recovering") {
+                    input.runtime_state = "observing".into();
+                }
+                input.state = "completed".into();
+                input.runtime_error = input.error.take();
             }
-            if matches!(input.state.as_str(), "sending" | "accepted" | "recovering") {
+            if !input.runtime_state.is_empty()
+                || matches!(input.state.as_str(), "sending" | "recovering")
+            {
                 if directory.is_some()
                     && cfg!(unix)
                     && input.operation == "turn"
@@ -118,11 +135,21 @@ impl Journal {
                         Some("agy" | "claude" | "grok" | "kiro")
                     )
                 {
-                    input.state = "recovering".into();
-                    input.error = None;
+                    input.runtime_state = "recovering".into();
                 } else {
-                    input.state = "unknown".into();
-                    input.error = Some("服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。".into());
+                    input.runtime_state.clear();
+                    input.runtime_error = Some("服务已重启，原生运行状态未确认。".into());
+                }
+                if input.result.is_none() && input.consumption != "observed" {
+                    if input.runtime_state == "recovering" {
+                        // Fence retry actions while consulting the original
+                        // host receipt for a send interrupted before its ACK.
+                        input.state = "sending".into();
+                        input.error = None;
+                    } else {
+                        input.state = "unknown".into();
+                        input.error = Some("服务已重启，原生投递结果未确认；不会自动重发。".into());
+                    }
                 }
             } else if input.state == "preparing"
                 || (input.operation != "turn" && input.state == "queued")
@@ -131,7 +158,7 @@ impl Journal {
                 input.error =
                     Some("准备输入时服务重启，尚未调用原生发送；请明确重试或撤销。".into());
             }
-            if before.state != input.state {
+            if before.state != input.state || before.runtime_state != input.runtime_state {
                 recovered.push((before, input.clone()));
             }
         }
@@ -183,6 +210,7 @@ impl Journal {
         let mut rows = self.rows.lock().map_err(|_| "SDK input journal poisoned")?;
         let mut next = rows.clone();
         for row in next.get_mut(key).into_iter().flatten() {
+            row.runtime_state.clear();
             if !terminal(row) {
                 row.state = "cancelled".into();
                 row.stop_requested = true;
@@ -229,6 +257,8 @@ impl Journal {
             attempts: 0,
             actions: BTreeMap::new(),
             stop_requested: false,
+            runtime_state: String::new(),
+            runtime_error: None,
         };
         let mut next = rows.clone();
         next.entry(key.clone()).or_default().push(input.clone());
@@ -267,7 +297,9 @@ impl Journal {
             .ok()?
             .get(key)?
             .iter()
-            .find(|row| row.operation == "turn" && !terminal(row))
+            .find(|row| {
+                row.operation == "turn" && (!terminal(row) || !row.runtime_state.is_empty())
+            })
             .cloned()
     }
 
@@ -277,13 +309,10 @@ impl Journal {
             .expect("SDK input journal")
             .iter()
             .filter_map(|(key, rows)| {
-                let row = rows
-                    .iter()
-                    .find(|row| row.operation == "turn" && !terminal(row))?;
-                (matches!(row.state.as_str(), "queued" | "accepted" | "recovering")
-                    || (row.state == "unknown"
-                        && row.consumption == "observed"
-                        && row.target["source"] == "agy"))
+                let row = rows.iter().find(|row| {
+                    row.operation == "turn" && (!terminal(row) || !row.runtime_state.is_empty())
+                })?;
+                (row.state == "queued" || !row.runtime_state.is_empty())
                     .then(|| (key.clone(), row.target.clone()))
             })
             .collect()

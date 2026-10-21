@@ -33,6 +33,13 @@ class RecoveryPeer(FakeKiroAcp):
         if self.previous_prompt:
             # A duplicate old result must not finish this later prompt.
             self.reply(self.previous_prompt, {"stopReason": "end_turn"})
+        if text == "WORK_THEN_ERROR":
+            self.append_v3_message("user", text)
+            self.update("tool_call", toolCallId="completed-work", title="Apply changes", kind="edit", status="completed",
+                        rawOutput={"output": "Changes applied"})
+            self.update("agent_message_chunk", content={"type": "text", "text": "Work executed before the model error"})
+            self.error(message, -32000, "The model is not available after executing work")
+            return
         if text == "RECOVERY_WAIT":
             self.append_v3_message("user", text)
             self.update("agent_message_chunk", content={"type": "text", "text": "Durable partial before restart"})
@@ -206,7 +213,7 @@ def run(args):
                 guard_state.mkdir(parents=True)
                 ledger = json.loads((root / "state/native-sdk-inputs.json").read_text())
                 active = [r for rows in ledger.values() for r in rows
-                          if r["state"] in ("sending", "accepted", "recovering")]
+                          if r["state"] in ("sending", "accepted", "recovering") or r.get("runtime_state")]
                 assert active, ledger
                 for row in active:
                     (row.get("result") or {}).pop("sdkhost", None)
@@ -227,6 +234,15 @@ def run(args):
                     pass
                 print("Deployment guard: active legacy Kiro host allowed; missing host evidence blocked", flush=True)
 
+                # Crash after native write but before the shared admission ACK:
+                # consult the original host receipt, never submit a second time.
+                page.goto("about:blank")
+                stack.close()
+                journal_path = root / "state/native-sdk-inputs.json"
+                interrupted = json.loads(journal_path.read_text())
+                pending = next(r for rows in interrupted.values() for r in rows if r['draft'].get('text') == 'RECOVERY_WAIT')
+                pending.update(state='sending', result=None, runtime_state='')
+                journal_path.write_text(json.dumps(interrupted))
                 restart()
                 page.wait_for_function("window.__kiroSnapshot?.running === true")
                 assert len(fixture.received("session/prompt")) == before_prompts
@@ -273,6 +289,40 @@ def run(args):
                     page.emulate_media(color_scheme="light")
                 malformed_card.get_by_role("button", name="取消", exact=True).click()
                 page.wait_for_function("!window.__kiroSnapshot.running")
+                send("WORK_THEN_ERROR")
+                page.wait_for_function("window.__kiroSnapshot?.error?.includes('after executing work')")
+                queue = page.locator('.sdk-queue')
+                expect(queue.locator('[data-queue-id]')).to_have_count(0)
+                before_error_restart = len(fixture.received("session/prompt"))
+                shot("kiro-execution-error.png")
+                page.goto("about:blank")
+                stack.close()
+                journal_path = root / "state/native-sdk-inputs.json"
+                journal = json.loads(journal_path.read_text())
+                legacy = next(r for rows in journal.values() for r in rows if r['draft'].get('text') == 'WORK_THEN_ERROR')
+                assert legacy['state'] == 'completed' and legacy['result']
+                legacy['state'] = 'failed'
+                legacy['error'] = 'The model is not available after executing work'
+                legacy.pop('runtime_state', None)
+                legacy.pop('runtime_error', None)
+                journal_path.write_text(json.dumps(journal))
+                restart()
+                page.wait_for_function("window.__kiroSnapshot?.error?.includes('after executing work')")
+                page.wait_for_function("NativeSdkView.connected && NativeSdkView.raw?.error?.includes('after executing work')")
+                expect(page.locator('#sdk-send')).to_be_enabled()
+                assert len(fixture.received("session/prompt")) == before_error_restart
+                expect(queue.locator('[data-queue-id]')).to_have_count(0)
+                migrated = next(r for rows in json.loads(journal_path.read_text()).values() for r in rows if r['draft'].get('text') == 'WORK_THEN_ERROR')
+                assert migrated['state'] == 'completed' and migrated['error'] is None
+                assert 'after executing work' in migrated['runtime_error']
+                for width, theme in ((1280, 'light'), (390, 'dark')):
+                    page.set_viewport_size({'width': width, 'height': 900})
+                    page.emulate_media(color_scheme=theme)
+                    if width == 390:
+                        page.evaluate('showMobileDetail()')
+                    shot(f'kiro-execution-error-restored-{width}-{theme}.png')
+                page.set_viewport_size({'width': 1280, 'height': 900})
+                page.emulate_media(color_scheme='light')
                 send("EXIT_RESULT")
                 page.wait_for_function("window.__kiroSnapshot?.runtime_error?.includes('fixture final stderr diagnostic')")
                 assert page.evaluate("window.__kiroSnapshot.last_turn.status") == "completed"
