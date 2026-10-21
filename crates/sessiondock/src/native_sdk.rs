@@ -894,7 +894,7 @@ impl NativeSdks {
     ) -> Result<(), String> {
         let key = input_queue::scope(target);
         if let Some(current) = self.input_queue.first(&key)
-            && matches!(current.state.as_str(), "sending" | "accepted")
+            && (current.state == "sending" || !current.runtime_state.is_empty())
         {
             self.input_queue.change(&key, &current.id, |row| {
                 row.stop_requested = requested;
@@ -980,35 +980,7 @@ impl NativeSdks {
         let Some(first) = self.input_queue.first(key) else {
             return;
         };
-        if first.state == "unknown" {
-            // Reattaching Agy can resolve an old erroneous result. Observe the
-            // existing actor only: missing evidence must never launch or resend.
-            if source == "agy"
-                && let Ok((snapshot, _)) = self.subscribe(source, &native_key)
-            {
-                let raw = &snapshot["raw"];
-                if raw["session_id"] == first.target["session_id"]
-                    && observed_input(source, &first, raw)
-                    && raw["items"].as_array().into_iter().flatten().any(|item| {
-                        item["role"] == "user"
-                            && item["request_id"] == first.delivery_id
-                            // Set by the actor only after execute succeeds, not
-                            // by a native user_input ACK or assistant prose.
-                            && item["status"] == "completed"
-                    })
-                {
-                    let _ = self.input_queue.change(key, &first.id, |entry| {
-                        if entry.state == "unknown" && entry.delivery_id == first.delivery_id {
-                            entry.state = "completed".into();
-                            entry.error = None;
-                        }
-                        Ok(())
-                    });
-                }
-            }
-            return;
-        }
-        if first.state == "recovering" {
+        if first.runtime_state == "recovering" {
             let mut input = first.input.clone().unwrap_or_else(|| json!({}));
             input["request_id"] = json!(first.delivery_id);
             let recovered = self
@@ -1018,13 +990,19 @@ impl NativeSdks {
             let _ = self.input_queue.change(key, &first.id, |row| {
                 match recovered {
                     Ok(result) => {
-                        row.state = "accepted".into();
+                        row.state = "completed".into();
+                        row.runtime_state = "observing".into();
                         row.result = Some(result);
                         row.error = None;
                     }
                     Err(error) => {
-                        row.state = "unknown".into();
-                        row.error = Some(format!("SDK 宿主恢复失败：{error}；不会自动重发输入。"));
+                        row.runtime_state.clear();
+                        row.runtime_error = Some(format!("SDK 宿主恢复失败：{error}"));
+                        if row.state != "completed" {
+                            row.state = "unknown".into();
+                            row.error =
+                                Some(format!("SDK 投递回执恢复失败：{error}；不会自动重发输入。"));
+                        }
                     }
                 }
                 Ok(())
@@ -1035,7 +1013,7 @@ impl NativeSdks {
         }
         // A restored Kiro receipt belongs to its original host generation.
         // Opening here could replace an exited host and hide its final result.
-        if !(source == "kiro" && matches!(first.state.as_str(), "recovering" | "accepted")) {
+        if !(source == "kiro" && !first.runtime_state.is_empty()) {
             if let Err(error) = self
                 .provider_call(source, "open", target.clone(), json!({}))
                 .await
@@ -1062,7 +1040,7 @@ impl NativeSdks {
             let Some(mut row) = self.input_queue.first(key) else {
                 return;
             };
-            if !matches!(row.state.as_str(), "queued" | "accepted") {
+            if row.state != "queued" && row.runtime_state != "observing" {
                 return;
             }
             let raw = &snapshot["raw"];
@@ -1100,7 +1078,8 @@ impl NativeSdks {
                         match result {
                             Ok(result) => {
                                 entry.result = Some(result);
-                                entry.state = "accepted".into();
+                                entry.state = "completed".into();
+                                entry.runtime_state = "observing".into();
                             }
                             Err(error) => {
                                 entry.state = if uncertain(&error) {
@@ -1170,32 +1149,18 @@ impl NativeSdks {
                         .get("error")
                         .filter(|error| !error.is_null() && error.as_str() != Some(""));
                     let _ = self.input_queue.change(key, &row.id, |entry| {
-                        if let Some(error) = error {
-                            entry.state = if raw["error_kind"] == "interrupted"
-                                || (entry.stop_requested && raw["error_kind"] == "turn")
-                            {
-                                "completed"
-                            } else if raw["error_kind"] == "turn" && entry.consumption != "observed"
-                            {
-                                "failed"
-                            } else {
-                                "unknown"
-                            }
-                            .into();
-                            entry.error = Some(
-                                error
-                                    .as_str()
-                                    .map(str::to_owned)
-                                    .unwrap_or_else(|| error.to_string()),
-                            );
-                        } else {
-                            entry.state = "completed".into();
-                            if !observed {
-                                if native_queued {
-                                    entry.consumption = "native_queued".into();
-                                } else if native_admitted {
-                                    entry.consumption = "native_accepted".into();
-                                }
+                        entry.runtime_state.clear();
+                        entry.runtime_error = error.map(|error| {
+                            error
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| error.to_string())
+                        });
+                        if !observed {
+                            if native_queued {
+                                entry.consumption = "native_queued".into();
+                            } else if native_admitted {
+                                entry.consumption = "native_accepted".into();
                             }
                         }
                         Ok(())
@@ -1210,7 +1175,7 @@ impl NativeSdks {
                     Ok(event)=>{if let Ok(value)=serde_json::from_str::<Value>(&event) && value["type"]=="snapshot"{snapshot=value;}},
                     Err(broadcast::error::RecvError::Lagged(_))=>{match self.subscribe(source,&native_key){Ok((current,receiver))=>{snapshot=current;events=receiver;},Err(_)=>return}},
                     Err(broadcast::error::RecvError::Closed)=>{
-                        let _=self.input_queue.change(key,&row.id,|entry|{if entry.state=="accepted"{entry.state="unknown".into();entry.error=Some("原生事件连接结束，投递结果未确认；不会自动重发。".into());}Ok(())});return;
+                        let _=self.input_queue.change(key,&row.id,|entry|{entry.runtime_state.clear();entry.runtime_error=Some("原生事件连接结束，运行状态未确认。".into());Ok(())});return;
                     }
                 }
             }

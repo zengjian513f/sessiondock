@@ -48,6 +48,8 @@ def open_page(browser, base, width, theme):
         button.click()
     expect(page.locator('#sdk-input')).to_be_visible()
     expect(page.locator('#sdk-input')).to_be_enabled()
+    page.locator('#sdk-input').click()
+    page.wait_for_function('CodexSdkView.connected')
     return context, page
 
 
@@ -66,37 +68,34 @@ def main():
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     for width, theme in [(1280, 'light'), (390, 'dark')]:
                         context, page = open_page(browser, base, width, theme)
-                        text = f'压缩之前输入的消息，必须保留并允许重试 · {width}'
+                        text = f'压缩之前输入的消息，接收确认后发送已完成 · {width}'
                         fake.compact_next = True
                         page.locator('#sdk-input').fill(text); page.locator('#sdk-send').click()
                         row = page.locator('.sdk-queued').filter(has_text=text)
-                        expect(row).to_contain_text('正在发送')
+                        expect(row).to_have_count(0)
                         status = page.locator('.sdk-pane .sdk-status')
                         expect(status).to_have_text('压缩中')
                         expect(status).to_have_attribute('data-state', 'maintenance')
                         expect(page.locator('[data-sdk-item="compact"]')).to_have_count(0)
                         starts = len(fake.methods('turn/start'))
                         page.reload(wait_until='networkidle')
-                        expect(row).to_contain_text(text)
+                        expect(row).to_have_count(0)
                         expect(status).to_have_text('压缩中')
                         assert len(fake.methods('turn/start')) == starts, 'reconnect must not resubmit during automatic compaction'
                         assert not fake.methods('thread/compact/start'), 'native automatic compaction needs no manual request'
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'compact-{width}.png'))
                         page.locator('#sdk-stop').click()
-                        expect(row).to_contain_text('内容已保留')
+                        expect(row).to_have_count(0)
                         starts = len(fake.methods('turn/start'))
                         page.reload(wait_until='networkidle')
-                        expect(row).to_contain_text('内容已保留')
+                        expect(row).to_have_count(0)
                         assert len(fake.methods('turn/start')) == starts
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'interrupted-{width}.png'))
-                        row.locator('[data-queue-action="retry"]').click()
-                        expect(page.locator('.sdk-live')).to_contain_text(text)
-                        expect(row).to_have_count(0)
-                        fake.complete()
+                        assert len(fake.methods('turn/start')) == starts
                         expect(page.locator('#sdk-send')).to_have_text('发送')
                         fake.compact_next = True
                         page.locator('#sdk-input').fill('压缩成功后才确认消息'); page.locator('#sdk-send').click()
-                        expect(page.locator('.sdk-queued')).to_contain_text('正在发送')
+                        expect(page.locator('.sdk-queued')).to_have_count(0)
                         expect(status).to_have_text('压缩中')
                         fake.consume()
                         expect(page.locator('.sdk-queued')).to_have_count(0)
@@ -106,24 +105,26 @@ def main():
                         assert not fake.methods('thread/compact/start')
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'continued-{width}.png'))
                         fake.complete(); context.close()
-                        print(f'PASS {width} {theme}: automatic compact/reload/no manual RPC/interrupt/retry/native confirmation/continued turn', flush=True)
+                        print(f'PASS {width} {theme}: automatic compact/reload/no manual RPC/interrupt without send regression/native consumption/continued turn', flush=True)
                     fake.compact_next = True
                     context, page = open_page(browser, base, 1280, 'dark')
                     page.locator('#sdk-input').fill('restart while compacting')
                     page.locator('#sdk-send').click()
-                    expect(page.locator('.sdk-queued')).to_contain_text('正在发送')
+                    expect(page.locator('.sdk-queued')).to_have_count(0)
+                    expect(page.locator('.sdk-pane .sdk-status')).to_have_text('压缩中')
+                    page.wait_for_timeout(200)
+                    starts_before_restart = len(fake.methods('turn/start'))
                     context.close()
                 entries = json.loads((root/'state/codex-sdk-queue.json').read_text())[THREAD]
-                assert entries[-1]['state'] in ('sending', 'failed') and entries[-1]['input']
+                assert entries[-1]['state'] == 'sent'
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     context, page = open_page(browser, base, 1280, 'dark')
-                    expect(page.locator('.sdk-queued')).to_contain_text('restart while compacting')
-                    expect(page.locator('.sdk-queued')).to_contain_text('核对')
-                    page.locator('#sdk-stop').click()
-                    page.locator('.sdk-queued [data-queue-action="cancel"]').click()
                     expect(page.locator('.sdk-queued')).to_have_count(0)
+                    page.locator('#sdk-stop').click()
+                    expect(page.locator('.sdk-queued')).to_have_count(0)
+                    assert len(fake.methods('turn/start')) == starts_before_restart
                     context.close()
-                    print('PASS service restart retains unconfirmed input without replay', flush=True)
+                    print('PASS service restart preserves completed delivery without replay', flush=True)
         finally: browser.close()
 
 

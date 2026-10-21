@@ -217,7 +217,7 @@ def hosted_kiro(row):
                 return True
     return False
 active = [row for queue in rows.values() for row in queue
-          if row.get("state") in ("sending", "accepted", "recovering")
+          if (row.get("state") in ("sending", "accepted", "recovering") or row.get("runtime_state"))
           and not (row.get("result") or {}).get("sdkhost")
           and not hosted_kiro(row)]
 if active:

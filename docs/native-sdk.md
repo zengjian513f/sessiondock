@@ -156,21 +156,24 @@ Grok、Agy、Claude 的独立 TUI 不能像 Codex daemon 那样共享实时上�
 
 Grok/Agy/Claude 按所选 UID/agent 串行调度，前一任务、审批或问题未结束时继续排队。
 OpenCode 保留原生 inbox 的 queue/steer 语义，本地账本只跟踪未确认准入。
-网页区分 preparing、queued、sending、accepted、failed 和 unknown；完成/撤销回执
-隐藏但继续去重。accepted 只表示接收，Agy 的关联 user_input、Claude 的真实 user UUID
-回显和 OpenCode 的已消费原生消息才提供 observed 消费证据。Grok 正常完成仍保留
-consumption:unverified，不把乐观用户气泡当原生回显。
-DELTA（BUG-20261020-085320-73b6ac）：已有 observed 消费证据后的执行错误
-进入 unknown，不回退为“发送失败”或提供无需确认的重试；原生错误继续可见。
-重启读取旧账本时，同样将 observed＋failed 纠正为 unknown，保留正文、错误和去重记录，
-不自动重发，也不以回复文字推断任务成功。
+网页区分 preparing、queued、sending、failed 和 unknown。原生接收回执使发送
+进入 completed；completed 只表示发送结束，不代表任务成功。消费回显独立记录：
+Agy 的关联 user_input、Claude 的真实 user UUID 回显和 OpenCode 的已消费消息
+提供 observed 证据；没有回显的来源仍保留 unverified，不影响已确认的发送完成。
 
-失败或未知投递阻塞本地后续输入。启用[独立宿主](sdkhost.md)的 Agy/Claude/Grok
-重启先复接原进程并核对 sending/accepted 的回执；网页继续显示 accepted，恢复失败
-转为 unknown，绝不自动重发。其他模式重启仍将未确认输入转为 unknown。
-尚未发送的 queued 输入可以继续调度。明确重试生成新的原生投递 ID，原始提交
-ID 保持去重；同一个重试操作 ID 也不会再次执行。未知结果重试前，网页要求核对历史
-并确认重复风险。移除未知记录只解除本地阻塞，不停止原生任务；停止须显式中断。
+DELTA：输入账本的 `runtime_state` 单独跟踪 observing／recovering，保持原生订阅
+及恢复租约；原生忙碌或等待审批时阻止下一条 FIFO 投递。回合完成、中断、模型错误、
+进程退出及恢复失败只更新运行结果，不把已发送输入退回 failed／unknown，不要求
+移除旧发送记录才能继续。执行错误保留在原生 last_turn／状态详情和账本 runtime_error。
+旧账本中带接收回执或消费证据的 failed／unknown 自动归为发送 completed，错误转入
+runtime_error；保留正文、投递身份和去重记录，不重发，不推断任务成功。
+
+只有发送前失败或明确的发送拒绝属于 failed；尚未取得接收确认的断线等结果属于
+unknown，并阻塞后续投递。独立宿主恢复按原投递 ID 核对回执，成功则完成发送，
+无法确认则继续 unknown，绝不自动重发。已发送工作的恢复属于运行阶段。
+明确重试生成新的原生投递 ID，原始提交 ID 保持去重；同一个重试操作 ID 不重复执行。
+未知投递重试前要求核对历史并确认重复风险。移除未知记录只解除本地阻塞，不停止
+原生任务；停止须显式中断。
 “恢复文字”追加到当前输入框，保留新编辑；附件/引用仍由已有草稿与发布路径管理。
 Grok 引导单独记录，不会在重启或失败后变为普通输入自动重试。
 
