@@ -59,7 +59,8 @@ def exercise(browser, base, fixture, screenshots, baseline):
         page.close()
         return
     assert opened.value.ok, opened.value.text()
-    assert elapsed < 8, f"Replay still blocks startup: {elapsed:.3f}s"
+    # Quiet stderr must not add a 250 ms host long-poll per 64 KiB of replay.
+    assert elapsed < 3, f"Replay still blocks startup: {elapsed:.3f}s"
     page.wait_for_function("SdkView.connected && !SdkView.raw.loading")
     # No lost or duplicated replay messages, including frames spanning host reads.
     items = page.evaluate("SdkView.items.map(i => i.text || i.content)")
@@ -85,6 +86,11 @@ def exercise(browser, base, fixture, screenshots, baseline):
     page.wait_for_function("SdkView.pane && !SdkView.historyReady")
     with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open")) as slow:
         page.locator("#sdk-input").click()
+        page.wait_for_function("SdkView.openRead && !SdkView.readOnly")
+        if screenshots:
+            page.screenshot(path=str(screenshots / "kiro-startup-waiting.png"), full_page=True)
+        expect(page.locator("#sdk-composer .sdk-status")).to_contain_text("连接中")
+        expect(page.locator("#sdk-send")).to_be_disabled()
     assert slow.value.ok, slow.value.text()
     page.wait_for_function("SdkView.connected && !SdkView.raw.loading")
     assert not page.evaluate("SdkView.openError")

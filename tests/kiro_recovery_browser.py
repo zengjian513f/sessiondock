@@ -67,7 +67,9 @@ class RecoveryPeer(FakeKiroAcp):
         if text == "EXIT_RESULT":
             self.update("agent_message_chunk", content={"type": "text", "text": "Final result survives process exit"})
             self.reply(message, {"stopReason": "end_turn"})
-            sys.stderr.write("fixture final stderr diagnostic\n")
+            # Both streams may end without LF; skipping quiet stderr during
+            # replay must still drain its final bytes before declaring exit.
+            sys.stderr.write("fixture final stderr diagnostic")
             sys.stderr.flush()
             os._exit(0)
         super().run_prompt(message)
@@ -97,7 +99,9 @@ def run(args):
         root = Path(temporary)
         for name in ("claude", "codex", "grok", "state", "trash"):
             (root / name).mkdir()
-        fixture = KiroFixture(root, args.binary.resolve().with_name("ptyhost"))
+        # This suite uses only SDK hosts; a service-only release has no sibling
+        # ptyhost binary. Keep the fixture's unused launcher placeholder.
+        fixture = KiroFixture(root)
         config = json.loads(fixture.launcher.read_text())
         config["profiles"][0]["args"] = [str(Path(__file__).resolve()), "--fake-recovery"]
         fixture.launcher.write_text(json.dumps(config))

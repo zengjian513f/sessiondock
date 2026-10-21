@@ -311,30 +311,36 @@ impl Session {
                 self.observe_line(&String::from_utf8_lossy(&out_buffer), Some(out_pos))?;
                 out_buffer.clear();
             }
-            let err = client
-                .read(Stream::Stderr, err_pos)
-                .await
-                .map_err(|e| format!("kiro_sdk_stderr: {e}"))?;
-            err_pos = err.next_offset;
-            err_buffer.extend_from_slice(&err.bytes);
-            while let Some(end) = err_buffer.iter().position(|b| *b == b'\n') {
-                let bytes: Vec<u8> = err_buffer.drain(..=end).collect();
-                self.record_stderr(
-                    &String::from_utf8_lossy(&bytes),
-                    err_pos - err_buffer.len() as u64,
-                )?;
-            }
-            if err.eof && !err_buffer.is_empty() {
-                self.record_stderr(&String::from_utf8_lossy(&err_buffer), err_pos)?;
-                err_buffer.clear();
-            }
             let status = client
                 .status()
                 .await
                 .map_err(|e| format!("kiro_sdk_host_disconnected: {e}"))?;
+            // Empty host reads long-poll for 250 ms. Do not put that wait after
+            // every stdout chunk while replaying history; stderr is independent.
+            let mut err_eof = false;
+            if err_pos < status.stderr_len || status.stderr_eof || status.output_error.is_some() {
+                let err = client
+                    .read(Stream::Stderr, err_pos)
+                    .await
+                    .map_err(|e| format!("kiro_sdk_stderr: {e}"))?;
+                err_eof = err.eof;
+                err_pos = err.next_offset;
+                err_buffer.extend_from_slice(&err.bytes);
+                while let Some(end) = err_buffer.iter().position(|b| *b == b'\n') {
+                    let bytes: Vec<u8> = err_buffer.drain(..=end).collect();
+                    self.record_stderr(
+                        &String::from_utf8_lossy(&bytes),
+                        err_pos - err_buffer.len() as u64,
+                    )?;
+                }
+                if err.eof && !err_buffer.is_empty() {
+                    self.record_stderr(&String::from_utf8_lossy(&err_buffer), err_pos)?;
+                    err_buffer.clear();
+                }
+            }
             if let Some(exit) = status.exit.as_ref() {
                 if out.eof
-                    && err.eof
+                    && err_eof
                     && out_pos >= status.stdout_len
                     && err_pos >= status.stderr_len
                 {

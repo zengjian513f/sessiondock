@@ -75,6 +75,7 @@ const NativeSdkView = {
   async start(generation, reconnecting = false) {
     if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     const read = new AbortController(); this.openRead = read;
+    this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
     try {
       const data = await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
       if (!this.current(generation)) return;
