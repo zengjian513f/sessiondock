@@ -129,8 +129,20 @@ def exercise(browser, base, source, screenshots, label):
             page.wait_for_function('!ConsoleUI.busy.has(S.sel)')
             page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-failed.png'))
             opens.clear()
+        # Hold the open at the HTTP boundary: the previous read-only status
+        # must change immediately, while history, focus and draft stay put.
+        endpoint = '**/api/codex-sdk/open' if source == 'codex' else '**/api/native-sdk/open'
+        held = []
+        page.route(endpoint, lambda route: held.append(route), times=1)
         start()
-
+        page.wait_for_function('!!SdkView.openRead')
+        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('连接中')
+        expect(page.locator('#sdk-send')).to_be_disabled()
+        expect(page.locator('#sdk-input')).to_have_value(draft)
+        expect(page.locator('#sdk-input')).to_be_focused()
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-connecting.png'))
+        assert len(held) == 1, held
+        held[0].continue_()
         expect(page.locator('#sdk-input')).to_be_visible()
         connected()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')

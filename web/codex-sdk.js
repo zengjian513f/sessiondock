@@ -128,6 +128,7 @@ const CodexSdkView = {
     this.openRetryTimer = 0;
     const read = new AbortController();
     this.openRead = read;
+    this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
     const uid = this.uid;
     // Account reads do not depend on resuming this thread or recovering its turn.
     this.loadLimits(generation);
