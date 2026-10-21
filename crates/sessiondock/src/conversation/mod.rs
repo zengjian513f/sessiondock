@@ -464,17 +464,32 @@ impl Conversations {
             });
         }
         let requested = uid.to_owned();
-        let (native, cwd) = self
-            .reader
-            .run(move |s| {
-                let view = s.snapshot(&requested, "")?;
-                Ok((
-                    view.native_scope()?,
-                    PathBuf::from(view.metadata()["cwd"].as_str().unwrap_or("")),
-                ))
-            })
-            .await
-            .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
+        let (native, cwd) = if let Some(entry) = self
+            .native_sdks
+            .as_ref()
+            .and_then(|sdks| sdks.kiro_identity(uid))
+        {
+            (
+                crate::sessions::NativeScope {
+                    source: "kiro".into(),
+                    uid: entry.uid,
+                    session_id: entry.sid,
+                    agent_id: None,
+                },
+                PathBuf::from(entry.cwd),
+            )
+        } else {
+            self.reader
+                .run(move |s| {
+                    let view = s.snapshot(&requested, "")?;
+                    Ok((
+                        view.native_scope()?,
+                        PathBuf::from(view.metadata()["cwd"].as_str().unwrap_or("")),
+                    ))
+                })
+                .await
+                .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?
+        };
         let resolution = self.resolver.resolve(&native.uid).await;
         let resolved = resolution.as_ref().ok();
         let bound_uid = resolved
