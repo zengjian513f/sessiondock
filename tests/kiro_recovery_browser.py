@@ -5,6 +5,7 @@ import argparse
 from contextlib import ExitStack
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -194,6 +195,37 @@ def run(args):
                 send("RECOVERY_WAIT")
                 page.wait_for_function("window.__kiroSnapshot?.running && window.__kiroSnapshot.items.some(i => i.text?.includes('Durable partial before restart'))")
                 before_prompts = len(fixture.received("session/prompt"))
+
+                # Exercise the real deployment guard against this running turn,
+                # including old ledgers that omitted the sdkhost result marker.
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy"))
+                from sdtargets.base import Target, DeployOptions, ShellError
+                from sdtargets.linux import LinuxNodeHandler
+                guard_root = root / "deploy-guard"
+                guard_state = guard_root / "state"
+                guard_state.mkdir(parents=True)
+                ledger = json.loads((root / "state/native-sdk-inputs.json").read_text())
+                active = [r for rows in ledger.values() for r in rows
+                          if r["state"] in ("sending", "accepted", "recovering")]
+                assert active, ledger
+                for row in active:
+                    (row.get("result") or {}).pop("sdkhost", None)
+                (guard_state / "native-sdk-inputs.json").write_text(json.dumps(ledger))
+                shutil.copytree(root / "state/sdk-adapters", guard_state / "sdk-adapters")
+                for receipt in (root / "state/sdkhost").glob("*/receipts.jsonl"):
+                    dest = guard_state / "sdkhost" / receipt.parent.name / receipt.name
+                    dest.parent.mkdir(parents=True)
+                    shutil.copyfile(receipt, dest)
+                guard = LinuxNodeHandler(Target("fixture", "linux-node", str(guard_root)),
+                                         None, DeployOptions(), lambda _: None)
+                guard.check_native_work()
+                (guard_state / "sdkhost").rename(guard_state / "sdkhost-hidden")
+                try:
+                    guard.check_native_work()
+                    raise AssertionError("Unconfirmed in-process work must still block restart")
+                except ShellError:
+                    pass
+                print("Deployment guard: active legacy Kiro host allowed; missing host evidence blocked", flush=True)
 
                 restart()
                 page.wait_for_function("window.__kiroSnapshot?.running === true")

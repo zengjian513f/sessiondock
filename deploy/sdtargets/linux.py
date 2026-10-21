@@ -189,9 +189,37 @@ path = pathlib.Path(sys.argv[1])
 if not path.exists():
     sys.exit(0)
 rows = json.loads(path.read_text())
+def hosted_kiro(row):
+    # Older Kiro bridges omitted result.sdkhost. Match the actual prompt's
+    # durable bridge journal and host receipt, not merely the agent name.
+    target = row.get("target") or {}
+    request_id = row.get("request_id")
+    if target.get("source") != "kiro" or not request_id:
+        return False
+    for checkpoint in (path.parent / "sdk-adapters" / "kiro").glob("*.json"):
+        state = json.loads(checkpoint.read_text())
+        if state.get("uid") != target.get("uid"):
+            continue
+        writes = {rpc.get("write_id") for rpc in state.get("journal", [])
+                  if rpc.get("key") == "prompt:" + request_id}
+        if not writes:
+            continue
+        receipts = path.parent / "sdkhost" / checkpoint.stem / "receipts.jsonl"
+        if not receipts.exists():
+            continue
+        for line in receipts.read_text().splitlines(keepends=True):
+            # The host may be appending the last receipt during this read.
+            if not line.endswith("\\n"):
+                continue
+            receipt = json.loads(line)
+            if (receipt.get("id") in writes
+                    and receipt.get("receipt", {}).get("state") == "written"):
+                return True
+    return False
 active = [row for queue in rows.values() for row in queue
           if row.get("state") in ("sending", "accepted", "recovering")
-          and not (row.get("result") or {}).get("sdkhost")]
+          and not (row.get("result") or {}).get("sdkhost")
+          and not hosted_kiro(row)]
 if active:
     print("Native SDK work is unfinished; deployment deferred before backup/swap/restart:")
     for row in active:
