@@ -8,7 +8,7 @@ uses a private PTY running a fixed synthetic shell loop.
 from __future__ import annotations
 
 import argparse
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, close_more, refresh_usage, reveal
 import base64
 import json
 from pathlib import Path
@@ -133,10 +133,11 @@ def browser_check(fixture, base, screenshots):
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
         post(page, "turn", turns[-1])
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
-        toggle_usage_details(page)
-        page.locator('#native-usage-refresh').click()
-        expect(page.locator('#native-usage-detail .sdk-usage-metric').filter(has_text='输入')).to_have_text('输入100')
-        expect(page.locator('#native-usage-detail .sdk-usage-metric').filter(has_text='缓存读取')).to_have_text('缓存读取30')
+        refresh_usage(page)
+        footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+        expect(footer).to_have_attribute('title', re.compile('输入 Token：100'))
+        expect(footer).to_have_attribute('title', re.compile('缓存读取：30'))
+        assert_usage_outside_menu(page)
         usage = wait_snapshot(page, fixture.uid, lambda raw: raw.get('usage', {}).get('tokens', {}).get('total_tokens') == 160)['raw']['usage']
         assert usage['tokens'] == {'input': 100, 'output': 20, 'reasoning': 5, 'cache': {'read': 30, 'write': 10}, 'total_tokens': 160}, usage
         assert usage['cost_usd'] == .01 and usage['context']['used_tokens'] == 1200, usage
@@ -144,12 +145,10 @@ def browser_check(fixture, base, screenshots):
         capture(page, 'claude-sdk-wide-light-usage.png')
         # Multiple assistant blocks and a repeated HTTP acknowledgement never
         # add the cumulative native modelUsage a second time.
-        toggle_usage_details(page)
-        page.locator('#sdk-more').click()
-        page.locator('#native-sdk-permission_mode').select_option('plan')
+        reveal(page, '#native-sdk-permission_mode').select_option('plan')
         wait_snapshot(page, fixture.uid, lambda raw: raw.get('settings', {}).get('permission_mode') == 'plan')
         expect(page.locator('#native-sdk-permission_mode')).to_have_value('plan')
-        page.locator('#native-sdk-fast_mode').select_option('true')
+        reveal(page, '#native-sdk-fast_mode').select_option('true')
         wait_snapshot(page, fixture.uid, lambda raw: raw.get('settings', {}).get('fast_mode') is True)
         expect(page.locator('#native-sdk-fast_mode')).to_have_value('true')
         configured = dict(settings[-1])
@@ -157,7 +156,7 @@ def browser_check(fixture, base, screenshots):
         post(page, 'settings', configured)
         assert len([f for f in fixture.frames('control_request') if f['request']['subtype'] == 'apply_flag_settings']) == before
         capture(page, 'claude-sdk-wide-light-settings.png')
-        page.locator('#sdk-more').click()
+        close_more(page)
 
         send(page, "hold")
         expect(page.locator(".sdk-live")).to_contain_text("streaming Claude progress")
@@ -256,8 +255,7 @@ def browser_check(fixture, base, screenshots):
         send(page, 'rate-limit')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final rate-limit')
         wait_snapshot(page, fixture.uid, lambda raw: raw.get('usage', {}).get('rate_limit_event', {}).get('status') == 'allowed_warning' and not raw['running'])
-        page.locator('#sdk-more').click()
-        page.locator('[data-sdk-action=compact]').click()
+        reveal(page, '[data-sdk-action=compact]').click()
         compact = wait_snapshot(page, fixture.uid, lambda raw: (raw.get('compact') or {}).get('state') == 'success' and not raw['running'])
         assert compact['raw']['compact']['state'] == 'success'
         wait_snapshot(page, fixture.uid, lambda raw: raw.get('usage', {}).get('context', {}).get('used_tokens') == 200)
@@ -267,13 +265,12 @@ def browser_check(fixture, base, screenshots):
 
         send(page, 'usage-unavailable')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final usage-unavailable')
-        toggle_usage_details(page)
-        page.locator('#native-usage-refresh').click()
+        refresh_usage(page)
         degraded = wait_snapshot(page, fixture.uid, lambda raw: bool(raw.get('usage_errors')) and not raw['running'])['raw']
         assert degraded['usage']['context']['used_tokens'] == 200 and not degraded['error'], degraded
-        expect(page.locator('#native-usage-detail')).to_contain_text('synthetic experimental usage unavailable')
+        expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_have_attribute(
+            'title', re.compile('synthetic experimental usage unavailable'))
         capture(page, 'claude-sdk-mobile-dark-usage-unavailable.png')
-        toggle_usage_details(page)
         send(page, "error")
         error = wait_snapshot(page, fixture.uid, lambda raw: bool(raw.get("error")))
         assert "synthetic native execution failure" in error["raw"]["error"]
@@ -285,9 +282,9 @@ def browser_check(fixture, base, screenshots):
         # provider writes the branch on its first actual browser input.
         source_text = fixture.path.read_text()
         source_rows = [json.loads(line) for line in source_text.splitlines()]
-        page.locator('#sdk-more').click()
+        fork = reveal(page, '[data-sdk-action=fork]')
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
-            page.locator('[data-sdk-action=fork]').click()
+            fork.click()
         full = receipt(forked.value.json())
         full_request = forked.value.request.post_data_json
         full_path = fixture.path.with_name(full['session_id'] + '.jsonl')
@@ -393,12 +390,11 @@ def idle_check(fixture, base, clock):
             return fixture.uid in control.request.get(base + '/api/live').json()['sdk_uids']
 
         context, page = open_page()
-        page.locator('#sdk-more').click()
-        page.locator('#native-sdk-permission_mode').select_option('plan')
+        reveal(page, '#native-sdk-permission_mode').select_option('plan')
         expect(page.locator('#native-sdk-permission_mode')).to_have_value('plan')
-        page.locator('#native-sdk-fast_mode').select_option('true')
+        reveal(page, '#native-sdk-fast_mode').select_option('true')
         expect(page.locator('#native-sdk-fast_mode')).to_have_value('true')
-        page.locator('#sdk-more').click()
+        close_more(page)
         send(page, 'hold')
         wait_snapshot(page, fixture.uid, lambda raw: raw['running'])
         first_pid = fixture.frames('spawn')[-1]['pid']
@@ -475,18 +471,18 @@ def fork_restart_check(fixture, binary):
             page = context.new_page()
             page.goto(base, wait_until='networkidle')
             open_sdk(page, fixture, expect)
-            page.locator('#sdk-more').click()
+            fork = reveal(page, '[data-sdk-action=fork]')
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as failed:
-                page.locator('[data-sdk-action=fork]').click()
+                fork.click()
             assert not failed.value.ok
             count = len(fixture.frames('spawn'))
             retried = post(page, 'fork', failed.value.request.post_data_json, ok=False)
             assert 'already attempted' in json.dumps(retried), retried
             assert len(fixture.frames('spawn')) == count, 'unknown native fork was dispatched twice'
             expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('操作失败')
-            page.locator('#sdk-more').click()
+            fork = reveal(page, '[data-sdk-action=fork]')
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
-                page.locator('[data-sdk-action=fork]').click()
+                fork.click()
             assert forked.value.ok, forked.value.text()
             created = receipt(forked.value.json())
             request = forked.value.request.post_data_json

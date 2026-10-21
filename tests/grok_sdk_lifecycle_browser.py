@@ -20,6 +20,7 @@ from codex_sdk_browser import server
 from grok_sdk_browser import api,select,snapshot,watch,capture_state
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY
+from sdk_usage_fixtures import close_more,reveal
 from send_browser import initialize
 from sdkhost_fixtures import stop_private_sdkhosts
 
@@ -70,7 +71,7 @@ def steer_checks(browser,base,fixture,marker,screenshots):
     page.locator("#sdk-input").fill("steer-active");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot?.running && window.__grokSnapshot.items.some(i=>i.content==='Grok streaming ')")
     page.locator("#sdk-input").fill("ordinary draft stays here")
-    page.locator("#sdk-more").click();page.locator('[data-sdk-action="steer"]').click()
+    reveal(page,'[data-sdk-action="steer"]').click()
     page.get_by_role("textbox",name="引导内容",exact=True).fill("Use the native safe point")
     page.get_by_role("button",name="发送引导",exact=True).click()
     page.wait_for_function("window.__grokSnapshot?.steers?.some(r=>r.status==='native_received' && r.accepted===true)")
@@ -125,9 +126,9 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     observer=context.new_page();observer.goto(base+"/api/health")
     advance(observer,marker,20);advance(observer,marker,620)
     assert alive(pid),"a subscribed idle runtime was reclaimed"
-    page.locator("#sdk-more").click();page.locator("#native-sdk-mode").select_option("plan")
+    reveal(page,"#native-sdk-mode").select_option("plan")
     page.wait_for_function("window.__grokSnapshot?.mode==='plan'")
-    page.keyboard.press("Escape")
+    close_more(page)
     page.locator("#sdk-input").fill("wait-for-cancel");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot?.running")
     page.close();advance(observer,marker,620)

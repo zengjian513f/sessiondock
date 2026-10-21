@@ -13,7 +13,7 @@ from agy_sdk_browser import select_sdk, send
 from agy_sdk_fixtures import AgyFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
-from sdk_usage_fixtures import assert_inline_usage, refresh_usage
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
 
 
 def exercise(browser, base, fixture, screenshots):
@@ -39,18 +39,19 @@ def exercise(browser, base, fixture, screenshots):
     context.route('**/api/native-sdk/open',lambda route:held_open.append(route))
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
-    select_sdk(page)
+    # /open is held, so selection must not wait for the native connection.
+    select_sdk(page, connected=False)
     footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
     expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
     assert held_open,'cold quota must render while native open is blocked'
     for route in held_open:route.continue_()
     context.unroute('**/api/native-sdk/open')
-    page.wait_for_function('!NativeSdkView.loadingUsage && !!NativeSdkView.raw.session_id')
+    page.wait_for_function('NativeSdkView.connected && !NativeSdkView.loadingUsage && !!NativeSdkView.raw.session_id')
     # Screenshot 155 combination: no token data, four account windows, native
     # model/mode not yet returned. The menu must not duplicate quota or an empty card.
     if page.locator('#sdk-more').is_visible():page.locator('#sdk-more').click()
     expect(page.locator('#sdk-more-menu .sdk-quota-group')).to_have_count(0)
-    expect(page.locator('#sdk-usage-menu')).to_be_hidden()
+    assert_usage_outside_menu(page)
     page.screenshot(path=str(screenshots/'agy-no-tokens-four-windows-1280-light.png'),full_page=True)
     page.keyboard.press('Escape')
     page.set_viewport_size({'width':390,'height':900})
@@ -60,7 +61,7 @@ def exercise(browser, base, fixture, screenshots):
     for theme in ('light','dark'):
         page.emulate_media(color_scheme=theme)
         if page.locator('#sdk-more').is_visible():page.locator('#sdk-more').click()
-        expect(page.locator('#sdk-usage-menu')).to_be_hidden()
+        assert_usage_outside_menu(page)
         page.screenshot(path=str(screenshots/f'agy-no-tokens-four-windows-390-{theme}.png'),full_page=True)
         page.keyboard.press('Escape')
     page.set_viewport_size({'width':1280,'height':900})
@@ -77,21 +78,21 @@ def exercise(browser, base, fixture, screenshots):
         for theme in ('light','dark'):
             print(f'Agy usage: {width}px {theme}',flush=True)
             page.emulate_media(color_scheme=theme)
-            page.locator('#sdk-more').click()
-            detail=page.locator('#native-usage-detail')
-            expect(detail).to_be_visible()
-            expect(detail.locator('.sdk-usage-total')).to_have_text('12,800')
-            for text in ('12,000','800','9,000'):expect(detail).to_contain_text(text)
-            expect(detail).not_to_contain_text('账号额度')
-            expect(detail).not_to_contain_text('剩余')
+            # Token totals live in the footer description, never in ⋯.
+            for text in ('累计 Token：12,800','输入 Token：12,000','输出 Token：800','缓存读取：9,000'):
+                expect(footer).to_have_attribute('title',re.compile(re.escape(text)))
+            assert_usage_outside_menu(page)
             expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
             expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天','5小时','7天'])
             for raw in ('weekly','seven_day','7d'):expect(footer).not_to_contain_text(raw)
             expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
+            if page.locator('#sdk-more').is_visible():
+                page.locator('#sdk-more').click()
+                menu=page.locator('#sdk-more-menu');bounds=menu.bounding_box()
+                assert bounds['x']>=0 and bounds['y']>=0 and bounds['x']+bounds['width']<=width+1,bounds
+                assert menu.evaluate('n=>n.scrollWidth<=n.clientWidth+1')
+                expect(menu).not_to_contain_text('12,800')
             expect(page.locator('#native-sdk-mode')).to_be_visible()
-            menu=page.locator('#sdk-more-menu');bounds=menu.bounding_box()
-            assert bounds['x']>=0 and bounds['y']>=0 and bounds['x']+bounds['width']<=width+1,bounds
-            assert menu.evaluate('n=>n.scrollWidth<=n.clientWidth+1')
             page.screenshot(path=str(screenshots/f'agy-usage-{width}-{theme}.png'),full_page=True)
             page.keyboard.press('Escape')
             assert_inline_usage(page)
@@ -103,7 +104,7 @@ def exercise(browser, base, fixture, screenshots):
     refresh_usage(page)
     page.wait_for_function('NativeSdkView.loadingUsage')
     expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
-    expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
+    expect(footer).to_have_attribute('title',re.compile('累计 Token：12,800'))
     page.screenshot(path=str(screenshots/'agy-usage-loading.png'),full_page=True)
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()
@@ -128,9 +129,10 @@ def exercise(browser, base, fixture, screenshots):
     expect(footer).to_have_attribute('title',re.compile('Enterprise shared premium'))
     expect(footer).not_to_contain_text('缺失额度字段')
     expect(footer).to_contain_text('100%')
-    menu=page.locator('#sdk-more-menu')
-    expect(menu).to_be_visible()
-    assert menu.bounding_box()['height']<650,menu.bounding_box()
+    # The long diagnostic stays in the footer description and never opens ⋯.
+    expect(footer).to_have_attribute('title',re.compile('Delayed native quota diagnostic.'))
+    expect(page.locator('#sdk-more-menu')).to_be_hidden()
+    assert_inline_usage(page)
     page.screenshot(path=str(screenshots/'agy-usage-long.png'),full_page=True)
     page.wait_for_function('!NativeSdkView.loadingUsage')
     refresh_usage(page)

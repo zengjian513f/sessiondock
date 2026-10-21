@@ -21,7 +21,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import server
 from history_fixtures import BINARY
 from kiro_sdk_fixtures import KiroFixture
-from sdk_usage_fixtures import assert_inline_usage, refresh_usage
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
 
@@ -212,10 +212,29 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     bucket = snapshot["buckets"][0]
     assert bucket["window"] == "monthly" and bucket["used"] == 2500.25 and bucket["limit"] == 10000, snapshot
     assert re.fullmatch(r"\d{4}-\d{2}-01T00:00:00\+00:00", bucket["resets_at"]), bucket
+    # Wide footers hold every control, so ⋯ is absent; usage never moves into it.
+    expect(page.locator("#sdk-more")).to_be_hidden()
+    assert_usage_outside_menu(page)
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-sdk-credits.png"), full_page=True)
-        credits.hover()
-        page.screenshot(path=str(screenshots / "kiro-sdk-credits-hover.png"))
+    page.set_viewport_size({"width": 390, "height": 900})
+    page.evaluate("showMobileDetail()")
+    expect(page.locator("#sdk-input")).to_be_visible()
+    expect(page.locator("#sdk-more")).to_be_visible()
+    page.locator("#sdk-more").click()
+    more = page.locator("#sdk-more-menu")
+    expect(more).to_be_visible()
+    expect(more.locator(".sdk-gauge, .sdk-inline-usage")).to_have_count(0)
+    expect(more).not_to_contain_text("用量")
+    expect(more.locator("select:visible").first).to_be_visible()
+    if screenshots:
+        for theme in ("light", "dark"):
+            page.emulate_media(color_scheme=theme)
+            page.screenshot(path=str(screenshots / f"kiro-sdk-more-390-{theme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+    page.keyboard.press("Escape")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    expect(page.locator("#sdk-more")).to_be_hidden()
     # The web /usage command explicitly refreshes the account snapshot.
     (fixture.root / "kiro-credits-used").write_text("8100")
     refresh_usage(page)

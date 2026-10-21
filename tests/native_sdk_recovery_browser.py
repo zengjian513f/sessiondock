@@ -11,6 +11,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from native_sdk_footer_browser import native_events, provider
 from sdk_ui_fixtures import start_sdk
+from sdk_usage_fixtures import assert_usage_outside_menu, refresh_usage
 
 
 def exercise(browser, base, source, events, screenshots):
@@ -60,29 +61,29 @@ def exercise(browser, base, source, events, screenshots):
     assert reads[1] - reads[0] >= .8, reads
     page.wait_for_function('!NativeSdkView.loadingUsage && !NativeSdkView.usageError')
     assert page.evaluate('NativeSdkView.usageRetryDelay') == 1000
-    page.locator('#sdk-more').click()
-    detail = page.locator('#native-usage-detail')
-    expect(detail).to_contain_text('4,000')
+    detail = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+    expect(detail).to_have_attribute('title', re.compile('4,000'))
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
+    assert_usage_outside_menu(page)
 
     # Repeated failures retain known values, then recover with exponential backoff.
     state.update(failures=2, total=4567)
     start = len(reads)
-    page.locator('#native-usage-refresh').click()
-    expect(detail).to_contain_text('temporarily unavailable')
-    expect(detail).to_contain_text('4,000')
+    refresh_usage(page)
+    expect(detail).to_have_attribute('title', re.compile('temporarily unavailable'))
+    expect(detail).to_have_attribute('title', re.compile('4,000'))
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
     page.screenshot(path=str(screenshots/f'{source}-usage-failed-wide-light.png'))
     page.wait_for_function('NativeSdkView.usageData?.usage?.tokens?.total_tokens === 4567')
     assert reads[start+1] - reads[start] >= .8, reads[start:]
     assert reads[start+2] - reads[start+1] >= 1.8, reads[start:]
     page.wait_for_function('!NativeSdkView.loadingUsage && !NativeSdkView.usageError')
-    expect(detail).not_to_contain_text('temporarily unavailable')
+    expect(detail).not_to_have_attribute('title', re.compile('temporarily unavailable'))
     assert page.evaluate('NativeSdkView.usageRetryDelay') == 1000
 
     state['billing_failures'] = 1
-    page.locator('#native-usage-refresh').click()
-    expect(detail).to_contain_text('billing temporarily unavailable')
+    refresh_usage(page)
+    expect(detail).to_have_attribute('title', re.compile('billing temporarily unavailable'))
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
     page.wait_for_function('!NativeSdkView.loadingUsage && !NativeSdkView.usageError')
     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
@@ -91,13 +92,12 @@ def exercise(browser, base, source, events, screenshots):
     if not page.locator('#sdk-input').is_visible():
         row.click()
         page.locator('#a-sdk').click()
-    if not detail.is_visible():
-        page.locator('#sdk-more').click()
     expect(page.locator('.native-sdk-pane .sdk-model')).to_be_hidden()
     expect(page.locator('.native-sdk-pane .sdk-effort')).to_be_hidden()
     expect(detail).to_be_visible()
+    expect(detail).to_have_attribute('title', re.compile('4,567'))
+    assert_usage_outside_menu(page)
     page.screenshot(path=str(screenshots/f'{source}-usage-recovered-mobile-dark.png'))
-    page.keyboard.press('Escape')
 
     # A real click starts a mutation. A subsequent SSE snapshot must not replace
     # the disabled buttons or permit a second operation while the first is pending.
@@ -127,9 +127,8 @@ def exercise(browser, base, source, events, screenshots):
     expect(page.locator('[data-queue-id="bridge:next"]')).to_contain_text('next input')
 
     # Switching away cancels the pending read; its response cannot update a new view.
-    page.locator('#sdk-more').click()
     state['hold'] = True
-    page.locator('#native-usage-refresh').click()
+    refresh_usage(page)
     page.wait_for_function('!!NativeSdkView.usageRead')
     with page.expect_event('requestfailed', predicate=lambda r: r.url.endswith('/api/native-sdk/usage')):
         page.locator('#a-chat').click()
@@ -154,8 +153,7 @@ def exercise(browser, base, source, events, screenshots):
 
     # Close with a scheduled retry and prove there is no background usage request.
     state['failures'] = 10
-    page.locator('#sdk-more').click()
-    page.locator('#native-usage-refresh').click()
+    refresh_usage(page)
     page.wait_for_function('!!NativeSdkView.usageRetryTimer')
     page.locator('#a-chat').click()
     count = len(reads)
