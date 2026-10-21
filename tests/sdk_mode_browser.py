@@ -27,6 +27,15 @@ def exercise(browser, base, source, peer, screenshots, label):
         page.set_default_timeout(15000)
         errors, opens = [], []
         state = {'mode': 'sdk'}
+        page.add_init_script("""(() => {
+          const original = window.fetch;
+          window.sdkOpenCount = 0;
+          window.fetch = function(url, options) {
+            if (String(url).endsWith('/open')
+                && (SdkView.discovering || SdkView.selection?.mode === 'loading')) window.sdkOpenCount++;
+            return original.apply(this, arguments);
+          };
+        })();""")
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.on('request', lambda request: opens.append(request.post_data_json)
                 if request.method == 'POST' and request.url.split('?')[0].endswith('/open') else None)
@@ -73,7 +82,31 @@ def exercise(browser, base, source, peer, screenshots, label):
         page.locator('#a-chat').click()
         choose()
         expect(page.locator('#sdk-input')).to_be_visible()  # prior chat unsupported by SDK-only owner
+        page.wait_for_function("SdkView.selection?.mode !== 'loading' && !SdkView.discovering && SdkView.connected")
+        expect(page.locator('#sdk-send')).to_be_enabled()
         capture('sdk')
+        # Reopening a warm session must paint before ownership/network reads.
+        held = []
+        def hold_live(route):
+            held.append(route)
+        page.route('**/api/live?*force=1*', hold_live)
+        count = page.evaluate('window.sdkOpenCount')
+        choose()
+        expect(page.locator('.sdk-history .msg').first).to_be_visible(timeout=1000)
+        expect(page.locator('#sdk-send')).to_be_disabled()
+        page.wait_for_function("SdkView.discovering && SdkView.selection?.mode === 'loading'")
+        assert page.evaluate('window.sdkOpenCount') == count
+        capture('cached-pending')
+        page.unroute('**/api/live?*force=1*', hold_live)
+        assert held, 'forced discovery request was not intercepted'
+        for route in held:
+            live(route)
+        try:
+            expect(page.locator('#sdk-send')).to_be_enabled()
+        except Exception:
+            print(page.evaluate('({selection:SdkView.selection,discovering:SdkView.discovering,readOnly:SdkView.readOnly,connected:SdkView.connected,notice:SdkView.notice?.textContent})'), flush=True)
+            raise
+
         # A stale SDK view must yield when the server now reports an external
         # CLI; ordinary chat cannot silently create a second SDK writer.
         page.locator('#a-chat').click()

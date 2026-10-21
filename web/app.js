@@ -5953,7 +5953,25 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     auditDetailRendered('loading');
   }
   showMobileDetail();
-  if (!follow) await SdkView.selectFor(uid, selectedAgent);
+  if (!follow) {
+    const selectionReady = SdkView.selectFor(uid, selectedAgent);
+    const remembered = cacheGet(viewKey(uid, selectedAgent));
+    const mode = SdkView.views.get(viewKey(uid, selectedAgent))
+      || savedSessionView(uid, selectedAgent) || defaultSessionView(uid);
+    // Reading cached history does not require fresh runtime ownership. Keep
+    // actions disconnected until discovery has selected the current owner.
+    if (remembered) {
+      if (SessionContentView.kind === 'sdk') SessionContentView.close();
+      await renderSession(remembered.meta, remembered.msgs, remembered.activity,
+        {startWatch: false, preview: true});
+      if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
+      if (mode === 'sdk' && SdkView.available(uid, selectedAgent))
+        SessionContentView.open('sdk', uid, selectedAgent, {discovering: true});
+    }
+    await selectionReady;
+    if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
+    if (SdkView.discovering) SessionContentView.close();
+  }
   if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
   if (SessionContentView.kind === 'sdk') {
     if (SdkView.defaultFor(uid, selectedAgent)) SdkView.retryOpen();
@@ -6493,7 +6511,7 @@ async function loadFullHistory(uid, agent, button) {
 
 // Ordinary navigation and background updates use the conversation's own loading
 // state. Global progress is reserved for an explicit full-history request.
-async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = false } = {}) {
+async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = false, preview = false } = {}) {
   const seq = ++renderSeq;
   const uid = meta.uid;
   const agent = meta.agent_id || null;
@@ -6564,11 +6582,11 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
 
   markMatches(box);
   updateMatchNav({jump: true});
-  if (typeof renderComposer === 'function') {
+  if (!preview && typeof renderComposer === 'function') {
     if (S.agent) $('#composer').classList.add('hidden');
     else renderComposer();
   }
-  if (seq === renderSeq && S.sel === uid && S.agent === agent) {
+  if (!preview && seq === renderSeq && S.sel === uid && S.agent === agent) {
     renderMigrationReadFailure(uid, agent);
     if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
     if (!SessionContentView.kind && SdkView.defaultFor(uid, agent)) SessionContentView.open('sdk', uid, agent);

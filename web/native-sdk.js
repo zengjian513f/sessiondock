@@ -482,6 +482,7 @@ function defaultSessionView(uid) {
 const SdkView = new Proxy({
   active: CodexSdkView,
   awaitingRunning: false,
+  discovering: false,
   selectController: null,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   views: new Map(),
@@ -575,7 +576,7 @@ const SdkView = new Proxy({
   pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
     const view = this.active;
-    if (!this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
+    if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
         || SessionContentView.kind !== 'sdk' || !S.liveSdk.has(view.uid)) return;
     // Discovery can arrive after history was opened read-only on reload.
     // Attach to the observed running instance without replacing history/drafts.
@@ -590,12 +591,17 @@ const SdkView = new Proxy({
   open(uid,pane,agent,options) {
     this.close();
     this.awaitingRunning = true;
-    this.selectMode(uid, agent, 'sdk');
+    this.discovering = options?.discovering === true;
+    if (!this.discovering) this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     const running = !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
       || (this.selection?.key === viewKey(uid,agent)
         ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
-    this.active.open(uid,pane,agent,{...options, readOnly: !options?.start && !running});
+    this.active.open(uid,pane,agent,{...options, readOnly: this.discovering || (!options?.start && !running)});
+    if (this.discovering) {
+      this.active.input.onclick = null;
+      this.active.setNotice('确认状态中', 'neutral');
+    }
     closeWatch();
   },
   async startSession(uid, agent = null) {
@@ -622,6 +628,7 @@ const SdkView = new Proxy({
     paintLive();
   },
   close() {
+    this.discovering = false;
     const uid = this.active.uid, agent = this.active.agent;
     CodexSdkView.close(); NativeSdkView.close();
     if (uid) queueMicrotask(() => {
