@@ -35,14 +35,16 @@ const CodexSdkActions = {
   },
 
   paint(view) {
+    CodexSdkGoal.paint(view);
     for (const button of view.pane?.querySelectorAll('[data-sdk-action]') || [])
       button.disabled = !view.summary || !!this.pending;
   },
 
   // Returns true only for these exact slash commands; quoted prose is chat.
   async command(view, text) {
-    const match = /^\/(fork|revert|compact|review|rename)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    const match = /^\/(fork|revert|compact|review|rename|goal)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (!match) return false;
+    if (match[1] === 'goal') return CodexSdkGoal.command(view, text, (match[2] || '').trim());
     if (this.pending) { view.setNotice('会话操作正在进行，请稍候。'); return true; }
     const action = match[1], argument = (match[2] || '').trim();
     const uid = view.uid, generation = view.generation, input = view.input;

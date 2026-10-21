@@ -3,7 +3,7 @@
 
 Private fake app-server only: no shell, model, CLI, account or production data.
 Exercises desktop/mobile, light/dark, actual controls and slash commands, live
-settings notifications, removed goal controls, failures preserving drafts, reload and daemon reconnect.
+settings notifications, separate goal controls, failures preserving drafts, reload and daemon reconnect.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import tempfile
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build, server
+from sdk_ui_fixtures import start_sdk
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY, codex_message, encoded
 
@@ -97,6 +98,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(base, wait_until="domcontentloaded")
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+    start_sdk(page)
     expect(page.locator("#sdk-input")).to_be_visible()
     mode, box = page.locator("#sdk-mode"), page.locator("#sdk-input")
     expect(mode).to_have_value(fake.settings["collaborationMode"]["mode"])
@@ -176,7 +178,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('#sdk-control-sandbox')).to_be_visible()
     expect(dialog.locator('#sdk-shell-command, #sdk-shell-run')).to_have_count(0)
     expect(dialog).not_to_contain_text('直接执行命令')
-    expect(page.locator('#sdk-controls, [id^="sdk-goal-"]')).to_have_count(0)
+    expect(page.locator('#sdk-controls')).to_have_count(0)
+    expect(page.locator('#sdk-goal')).to_be_visible()
     expect(dialog).not_to_contain_text('目标')
     expect(dialog.locator('#sdk-permission-save')).to_have_count(0)
     approval = page.locator('#sdk-control-approval')
@@ -208,12 +211,12 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         page.screenshot(path=str(screenshots / (label + '-settings.png')))
     page.locator('#sdk-input').click()
 
-    send('/goal status')
+    send('/unknown-goal-command')
     expect(page.locator('#sdk-status-menu')).to_contain_text('不支持的命令')
-    expect(box).to_have_value('/goal status')
+    expect(box).to_have_value('/unknown-goal-command')
     assert not [row for row in fake.received if row.get('method', '').startswith('thread/goal/')]
     send('/help')
-    expect(page.locator('#sdk-status-menu')).not_to_contain_text('/goal')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('/goal resume')
     normal_color = box.evaluate('(el) => getComputedStyle(el).color')
     box.fill('!')
     expect(box).to_have_class('shell-mode')
@@ -286,7 +289,7 @@ def main():
                         exercise(browser, base, corpus, fake, width, theme, args.screenshots)
                 finally:
                     browser.close()
-    print("PASS SDK controls: native mode/policy settings, flat action menu, removed goal controls, shell output, errors, reload and reconnect in desktop/mobile light/dark")
+    print("PASS SDK controls: native mode/policy settings, flat action menu, separate goal controls, shell output, errors, reload and reconnect in desktop/mobile light/dark")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ import tempfile
 from types import SimpleNamespace
 
 from codex_sdk_browser import THREAD, server
+from sdk_ui_fixtures import start_sdk
+from sdk_usage_fixtures import assert_inline_usage
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY, REPO, Corpus, codex_message, codex_row, encoded
 from hub_fixtures import Hub, free_port
@@ -129,11 +131,12 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
     page = context.new_page()
     errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("pageerror", lambda error: errors.append(error.stack))
     page.goto(base, wait_until="networkidle")
     row = page.locator('#side .item').filter(has_text="第一轮 retained question")
     source_uid = row.get_attribute("data-uid")
     row.click()
+    start_sdk(page)
     pane = page.locator("#session-content-view.sdk-pane")
     expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
@@ -183,24 +186,9 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(progress).to_have_count(0)
     status=pane.locator('.sdk-status')
     expect(status).to_be_visible()
-    right=pane.locator('#sdk-usage-toggle') if pane.locator('#sdk-usage-toggle').is_visible() else pane.locator('.sdk-status-row > .sdk-gauges')
-    expect(right).to_be_visible()
-    left_box,right_box=status.bounding_box(),right.bounding_box()
-    model_box=pane.locator('#sdk-model').bounding_box()
-    wrapped = 'sdk-gauges-wrapped' in (right.get_attribute('class') or '')
-    if wrapped:
-        assert right_box['y'] + right_box['height'] <= left_box['y'] + 1
-        assert left_box['x'] + left_box['width'] <= model_box['x'] + 1
-    else:
-        gap=model_box['x']-right_box['x']-right_box['width']
-        assert 0 <= gap <= 11, 'usage/context must sit immediately before GPT: '+str(gap)
-        assert left_box['x']+left_box['width']<=right_box['x']+1
-        assert right_box['x'] - left_box['x'] - left_box['width'] <= 11, 'status must use all space before usage'
-        assert abs(left_box['y']+left_box['height']/2-right_box['y']-right_box['height']/2)<1
-    assert pane.locator('.sdk-status-row').evaluate('n => n.scrollWidth<=n.clientWidth')
-    row=pane.locator('.sdk-status-row').bounding_box()
-    assert row['height'] <= (60 if wrapped else 30)
-    assert left_box['width'] >= min(60, row['width'] * .22) - 1, 'action icons must not consume the status space'
+    assert_inline_usage(page)
+    row = pane.locator('.sdk-status-row').bounding_box()
+    assert status.bounding_box()['width'] >= 59, 'status must remain readable'
     for control in pane.locator('.sdk-pickers > *').all():
         if control.is_visible() and control.get_attribute('popover') is None:
             rect=control.bounding_box()
@@ -214,7 +202,9 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
             return [s.fontFamily, s.fontSize, s.lineHeight];
         });
     }""")
-    assert all(style == typography[0] for style in typography), typography
+    assert all(style[:2] == typography[0][:2] for style in typography), typography
+    # Native selects use the browser's normal line-height; status/usage share 20px.
+    assert typography[0][2] == typography[1][2] == '20px', typography
     if screenshots:
         page.screenshot(path=str(screenshots / f"actions-{label}-compacting.png"))
     page.reload(wait_until="networkidle")

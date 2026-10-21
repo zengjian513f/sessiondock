@@ -4,6 +4,31 @@ use serde_json::{Value, json};
 use super::{CodexSdk, RpcError};
 
 impl CodexSdk {
+    pub async fn goal(
+        &self,
+        thread_id: &str,
+        action: &str,
+        values: Value,
+    ) -> Result<Value, RpcError> {
+        self.inner.ensure(thread_id).await?;
+        let mut params = json!({"threadId":thread_id});
+        if action != "get" {
+            params["origin"] = json!("user");
+        }
+        if action == "set" {
+            for key in ["objective", "status", "tokenBudget"] {
+                if let Some(value) = values.get(key) {
+                    params[key] = value.clone();
+                }
+            }
+        }
+        self.inner
+            .connection()
+            .await?
+            .request(&format!("thread/goal/{action}"), params)
+            .await
+    }
+
     pub async fn rename_thread(&self, thread_id: &str, name: &str) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
         let raw = self
