@@ -44,7 +44,6 @@ function agentStartUnavailable(source, node = '') {
   const cap = HUB_MODE ? Nodes.capabilities[node] || {} : T;
   return cap.sources?.[source] ? '' : `本机找不到 ${source} 命令`;
 }
-function newCodexSdkEnabled() { return agentSdkAvailable('codex', newNodeId()); }
 function newSdkEnabled(source) {
   return agentStartMode(source) === 'sdk' && agentSdkAvailable(source, newNodeId());
 }
