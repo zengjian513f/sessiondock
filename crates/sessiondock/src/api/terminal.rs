@@ -176,6 +176,11 @@ async fn claim_inner(
             "终端预约请求格式无效",
         )
     })?;
+    let _kiro_mode = if let Some(uid) = body.uid.as_deref().filter(|uid| uid.starts_with("kiro:")) {
+        Some(state.native_sdks.kiro_mode_lock(uid).lock_owned().await)
+    } else {
+        None
+    };
     let ip = claimant_ip(
         hub.is_some(),
         &headers,
@@ -282,6 +287,12 @@ pub async fn attach(
             "终端连接参数无效",
         )
     })?;
+    let _kiro_mode = if let Some(uid) = query.uid.as_deref().filter(|uid| uid.starts_with("kiro:"))
+    {
+        Some(state.native_sdks.kiro_mode_lock(uid).lock_owned().await)
+    } else {
+        None
+    };
     let binding_validation = match (
         &query.uid,
         &query.instance_id,
@@ -538,6 +549,12 @@ pub async fn grid_history(
             "历史行范围无效",
         ));
     }
+    let _kiro_mode = if let Some(uid) = query.uid.as_deref().filter(|uid| uid.starts_with("kiro:"))
+    {
+        Some(state.native_sdks.kiro_mode_lock(uid).lock_owned().await)
+    } else {
+        None
+    };
     let expected = match (
         &query.uid,
         &query.instance_id,
@@ -654,6 +671,11 @@ pub async fn send(
             InputPayload::Keys(names)
         }
         _ => return Err(invalid_input("必须且只能提供 data、paste 或 keys 之一")),
+    };
+    let _kiro_mode = if let Some(uid) = body.uid.as_deref().filter(|uid| uid.starts_with("kiro:")) {
+        Some(state.native_sdks.kiro_mode_lock(uid).lock_owned().await)
+    } else {
+        None
     };
     let expected = match (
         &body.uid,

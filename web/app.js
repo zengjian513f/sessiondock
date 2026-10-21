@@ -1656,7 +1656,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.pending_delete,
-    m.source === 'agy' ? (m.migration_warnings || []) : null,
+    ['agy', 'kiro'].includes(m.source) ? (m.migration_warnings || []) : null,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
@@ -1710,17 +1710,8 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   if (S.sel !== uid || S.agent !== agent) return;
   const oldHead = $('#detail > .dhead');
   if (!oldHead) return;
-  const wasOpen = oldHead.querySelector('#session-view-menu')?.hidden === false;
-  const next = head(meta, entryTotal(entry));
-  if (wasOpen) {
-    const menu = next.querySelector('#session-view-menu');
-    if (menu) menu.hidden = false;
-    next.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'true');
-  }
-  oldHead.replaceWith(next);
-  layoutSessionHead();
-  if (wasOpen && next.querySelector('#session-view-menu'))
-    placeDropdown(next.querySelector('#session-view-menu'), next.querySelector('#a-view-switch'));
+  replaceSessionHead(oldHead, meta, entryTotal(entry));
+
 }
 
 async function applyDiff(uid, data, bytes = 0, agent = null) {
@@ -2901,8 +2892,7 @@ function refreshSessionMeta() {
   if (currentEventAdded && current) {
     renderSession(current.meta, current.msgs, current.activity);
   } else if (current && oldHead && headerKey(current.meta) !== beforeKey) {
-    oldHead.replaceWith(head(current.meta, entryTotal(current)));
-    layoutSessionHead();
+    replaceSessionHead(oldHead, current.meta, entryTotal(current));
     auditDetailRendered('meta-refresh');
   }
 }
@@ -3621,13 +3611,16 @@ async function deleteSessions(uids, button = null) {
   // with their child sessions, and never reach the recycle bin.
   const opencode = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'opencode');
   const agy = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'agy');
+  const kiro = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'kiro');
   // Unpersisted launches discard immediately. Recorded sessions still confirm
   // because they move into the recycle bin.
   if (recorded.length && !await appConfirm((uids.length === 1
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
     + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
-    + (opencode.length + agy.length < recorded.length ? trashLocationNote() : '')
+    + (opencode.length + agy.length + kiro.length < recorded.length ? trashLocationNote() : '')
     + (agy.length ? `\n其中 ${agy.length} 个 ${agyDeleteNote()}` : '')
+    + (kiro.length ? (kiro.length === recorded.length ? '' : '\n')
+      + (kiro.length === 1 && uids.length === 1 ? '' : `其中 ${kiro.length} 个 `) + kiroDeleteNote() : '')
     + (opencode.length ? (opencode.length === recorded.length ? '' : '\n')
       + (opencode.length === 1 && uids.length === 1 ? '' : `其中 ${opencode.length} 个 `) + opencodeDeleteNote() : '')
     + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
@@ -3679,10 +3672,10 @@ async function deleteSessions(uids, button = null) {
     if (gone.has(S.sel)) {
       S.sel = null;
       store.set('sel', null);
-      const trashed = !opencode.includes(watched || '') && !agy.includes(watched || '');
+      const trashed = !opencode.includes(watched || '') && !agy.includes(watched || '') && !kiro.includes(watched || '');
       $('#detail').innerHTML = trashed ? '<div class="empty">已移入回收站'
         + '<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>'
-        : `<div class="empty">会话已从 ${agy.includes(watched || '') ? 'Agy' : 'OpenCode'} 删除</div>`;
+        : `<div class="empty">会话已从 ${kiro.includes(watched || '') ? 'Kiro' : agy.includes(watched || '') ? 'Agy' : 'OpenCode'} 删除</div>`;
       if (trashed) $('#detail-open-trash').onclick = openTrash;
       ensureConsolePlaceholder();
       auditDetailRendered('trashed');
@@ -7069,6 +7062,27 @@ function continueSessionButtonMarkup(info) {
     type="button" title="接续会话" aria-label="接续会话">${uiIcon('continue')}</button>`;
 }
 
+// Metadata refreshes keep the operation the user has already opened available.
+function replaceSessionHead(previous, meta, total) {
+  const menus = [['session-view-menu', 'a-view-switch'], ['session-actions-menu', 'a-more']]
+    .filter(([id]) => previous.querySelector('#' + id)?.hidden === false);
+  const focused = previous.contains(document.activeElement) ? document.activeElement?.id : null;
+  const next = head(meta, total);
+  previous.replaceWith(next);
+  for (const [id, anchor] of menus) {
+    const menu = next.querySelector('#' + id);
+    if (!menu) continue;
+    menu.hidden = false;
+    next.querySelector('#' + anchor)?.setAttribute('aria-expanded', 'true');
+  }
+  layoutSessionHead(next);
+  for (const [id, anchor] of menus) {
+    const menu = next.querySelector('#' + id), button = next.querySelector('#' + anchor);
+    if (menu && button) placeDropdown(menu, button);
+  }
+  if (focused) next.querySelector('#' + CSS.escape(focused))?.focus({preventScroll: true});
+}
+
 function head(m, total) {
   const h = el('div', 'dhead');
   h.dataset.uid = m.uid;
@@ -7124,7 +7138,7 @@ function head(m, total) {
       </div>
     </div>`;
   paintHeadDirectory(h);
-  if (m.source === 'agy' && Array.isArray(m.migration_warnings)) {
+  if (['agy', 'kiro'].includes(m.source) && Array.isArray(m.migration_warnings)) {
     for (const warning of m.migration_warnings) {
       const notice = el('div', 'tool-change-warning native-history-warning', warning);
       notice.setAttribute('role', 'status');
@@ -7638,12 +7652,14 @@ async function requestSessionDelete(uid) {
 // OpenCode 会话在它自己的数据库里：直接删除（连同子会话），不进回收站。
 const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。';
 const agyDeleteNote = () => 'Agy 会话会永久删除，不进回收站，无法恢复。';
+const kiroDeleteNote = () => 'Kiro 会话会通过原生接口永久删除，不进回收站，无法恢复。';
 
 async function del(m) {
   if (SdkView.pending(m.uid)) return deleteSessions([m.uid]);
   const opencode = m.source === 'opencode';
   const agy = m.source === 'agy';
-  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : (m.fork_parent || forkChildren(m).length) ? '父会话将标记待删除并隐藏，可从回收站恢复。子会话仍可使用；最后一个子会话彻底删除后，父会话也会彻底删除。' : trashLocationNote()}`)) return;
+  const kiro = m.source === 'kiro';
+  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : kiro ? kiroDeleteNote() : (m.fork_parent || forkChildren(m).length) ? '父会话将标记待删除并隐藏，可从回收站恢复。子会话仍可使用；最后一个子会话彻底删除后，父会话也会彻底删除。' : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   const { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok) {
@@ -7656,8 +7672,8 @@ async function del(m) {
   S.sel = null;
   store.set('sel', null);
   renderChips(); renderSide();
-  if (opencode || agy) {
-    $('#detail').innerHTML = `<div class="empty">会话已从 ${agy ? 'Agy' : 'OpenCode'} 删除</div>`;
+  if (opencode || agy || kiro) {
+    $('#detail').innerHTML = `<div class="empty">会话已从 ${kiro ? 'Kiro' : agy ? 'Agy' : 'OpenCode'} 删除</div>`;
   } else {
     $('#detail').innerHTML = `<div class="empty">${data.deferred ? '已标记待删除；子会话依赖的历史暂时保留，可从回收站恢复。' : '已移入回收站'}<br><code>${esc(data.trash)}</code>`
       + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
@@ -11632,9 +11648,18 @@ function uidOfDeepLink(spec, sessions = S.sessions) {
     }
     return row.uid;
   }));
+  const specifiedNode = typeof nodeOf === 'function' ? nodeOf(spec) : '';
+  const localAlias = specifiedNode ? spec.replace(`kiro:${specifiedNode}~`, 'kiro:') : spec;
+  const aliases = source === 'kiro' ? sessions.filter(row => row.source === 'kiro'
+    && (!deepNode() || row.node_id === deepNode())
+    && (!specifiedNode || row.node_id === specifiedNode)
+    && (row.aliases || []).some(alias => alias === spec || alias === localAlias
+      || (row.node_id && alias === `kiro:${row.node_id}~${sid}`))) : [];
+  const aliasUids = new Map(aliases.map(row => [row.uid, row]));
   const hit = (matches.length === 1 ? matches[0]
     : current.size === 1 ? byUid.get(current.values().next().value) : null)
-    || sessions.find(s => s.uid === spec);
+    || sessions.find(s => s.uid === spec && (!deepNode() || s.node_id === deepNode()))
+    || (aliasUids.size === 1 ? aliasUids.values().next().value : null);
   return hit ? hit.uid : null;
 }
 function agentOfDeepLink(spec, sessions = S.sessions) {

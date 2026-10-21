@@ -604,6 +604,14 @@ impl TrashService {
 
     /// Restore to the recorded paths when those paths are available.
     fn restorable(&self, manifest: &Manifest) -> Result<(), TrashError> {
+        if manifest.source == "kiro" || manifest.sessions.iter().any(|row| row["source"] == "kiro")
+        {
+            return Err(TrashError::new(
+                409,
+                "kiro_restore_unavailable",
+                "旧 Kiro 文件回收站条目不支持写回原生目录；当前官方接口未提供恢复能力",
+            ));
+        }
         if manifest.run_state.detail.starts_with("move:") {
             return Err(TrashError::new(
                 409,

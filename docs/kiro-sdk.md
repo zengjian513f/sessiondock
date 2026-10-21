@@ -1,41 +1,46 @@
 # Kiro 原生 SDK 桥接
 
-目标链路为公共 SDK HTTP/SSE、草稿和队列 → Kiro ACP 适配器 → sdkhost →
-`kiro-cli acp --agent-engine=v3`。当前实现尚未通过
-[实施计划](../implementation_plan_codex_for_kiro.md)的原生身份与恢复验收，不能按
-初稿硬编码的能力表宣称所有 V3 操作可用。
+公共 SDK HTTP/SSE、草稿和输入队列 → Kiro ACP 适配器 → sdkhost →
+`kiro-cli acp --agent-engine=v3 --auth-method=cli`。不静默回退到 V2 或直接子进程；
+无持久 state 的开发通道不宣称能跨服务重启恢复。
 
-## 版本与能力证据
+## 协议与恢复
 
-2026-10-21 实际安装为 `2.24.1`；此前文档写的 `1.29.0` 不能作为现场版本依据。
-隔离空认证探测在 `initialize` 返回前结束，因此尚无该安装版的真实能力广告。
-[官方迁移说明](https://kiro.dev/docs/cli/v3/acp-migration/)与目标安装版可能有差异，
-所有可选操作须以运行时 `initialize`、配置选项和扩展目录为准。
+`initialize` 的标准能力及 `_meta.kiro.extensionMethods` 门控高级动作。
+配置菜单使用原生目录和确认的值；未广告的设置、改名、steer、额度接口不伪装支持。
+模型菜单使用官方 CLI 目录或已观测缓存，不通过 `session/new` 探测模型。
 
-| 接口 | 接入依据及验证边界 |
-| --- | --- |
-| `initialize` | 读取真实能力与扩展目录，不能只按版本号启用功能 |
-| `session/new` | 使用返回的 SID；先持久化创建意图，再保存稳定 UID 与宿主绑定；真实双模式闭环未验收 |
-| `session/list` | 按广告能力分页发现；标准字段含 SID/cwd，不提供原生文件路径；目标版返回尚未取得 |
-| `session/load` | 显式恢复并接收回放；在调用前注册更新处理；不当作普通只读历史接口 |
-| `session/prompt` | 稳定投递 ID、原生最终结果与实例退出分开；重启不重发已写入或结果未知的输入 |
-| `session/cancel` | 请求取消不等于回合结束，须等待对应 prompt 结果或确定退出才能释放队列 |
-| 权限与问题请求 | 按实际请求结构答复；回答持久化及宿主写入确认后再退卡，刷新不能丢失待回答项 |
-| 模型、effort、mode | 仅使用原生返回的配置选项与确认值，不硬编码 V2/V3 参数回退 |
-| 改名、分支、压缩、历史导出 | 仅按广告的标准或扩展接口接线；未知方法和参数不能用私有文件改写模拟 |
-| 删除 | 标准 ACP 有可选删除能力，但目标版是否支持、能否恢复、如何处理活动会话仍未验证；不能模拟回收站语义 |
+私有 `<state>/sdk-adapters/kiro` 保存 RPC/写入 ID、完整待发送 frame、宿主写入证据、
+原生响应、回合归属、stdout/stderr 游标及 live 投影。处理一行先保存状态与游标，
+再通知网页。重附着追赶原宿主，不重新 initialize/load，不重发 written 或结果未知
+的 prompt。恢复后的公共队列观察原结果；宿主缺失明确待核对，不启动替代实例。
 
-标准协议参考：[会话建立](https://agentclientprotocol.com/protocol/v1/session-setup)、
-[会话目录](https://agentclientprotocol.com/protocol/v1/session-list)、
-[可选删除](https://agentclientprotocol.com/protocol/v1/session-delete)。
-这些是接口依据，不是 Kiro `2.24.1` 的实测结果。
+- 创建／分支先保存稳定操作意图与宿主键，再发 mutation。HTTP 回应丢失重取原 RPC
+  结果，不重新造 SID。显式 open 的初始化中断窗口也复用原 setup 请求。
+- prompt 的最终响应才结束当前回合；无关联 `turn_end` 通知不释放 FIFO。
+- cancel 表示请求取消，保持 busy 至对应 prompt 最终结果或确认退出。取消写失败
+  保留错误与归属，旧回合迟到响应不覆盖新回合。
+- 权限／问题请求持久化后显示；回答先保存原 response frame，确认宿主写入后退卡。
+  双页面重复回答使用原写入 ID。权限只呈现并接受原生提供的选项，空选项不合成允许。
+- stdout 最后一个无 LF 响应和 stderr 尾部读完后再确认退出。最后回合结果与实例
+  退出原因分开保存；进程退出不覆盖已经收到的成功或失败结果。
+- 用户停止确认原宿主退出后才解绑。服务停机只断开托管通道，原生进程由 sdkhost
+  保留；CLI／SDK 模式互斥与原创建宿主移交见 [Kiro sessions](kiro.md)。
 
-## 恢复与验收
+普通查看只读缓存。官方 history 的默认响应未证实是完整历史，不能通过普通查看
+调用激活式 load；用户显式启动 SDK 后同步回放。缓存投影与 live 检查点分开，历史
+分页不移动 live 游标。
 
-已有宿主恢复须重建持久 RPC 关联、输出游标、消息、待回答请求和最后回合结果，
-不能仅重新连接 stdout 尾部。宿主不存在或写入不确定时据实报告，不启动替代进程
-假装无损恢复。新建宿主与最终 UID 必须持久绑定，停止不能依赖私有历史文件存在。
+## 验收入口与证据边界
 
-当前合成浏览器套件覆盖基本 SDK 页面、审批、问答及部分动作，不证明上述重启、
-创建和真实原生接口都已完成。[TODO](../TODO.md#kiro-integration)记录具体缺口；
-历史和双模式边界见 [Kiro sessions](kiro.md)。
+- [SDK 浏览器](../tests/kiro_sdk_browser.py)：官方目录及缓存、显式启动、流式消息、
+  审批／问答、配置、分支、取消、原生删除与确认文案。
+- [CLI 浏览器](../tests/kiro_cli_browser.py)：原生终端恢复／新建、双模式互斥、停止切换，
+  以及旧创建请求重试不影响后来 SDK 实例。
+- [恢复浏览器](../tests/kiro_recovery_browser.py)：服务重启附着、审批和输入去重、
+  延迟取消与 FIFO、旧 RPC 迟到、空审批选项、退出尾部与终态。
+
+这些套件使用合成 CLI，不能证明真实模型服务行为。`2.24.1` 的登录、初始化、
+目录与零模型同 SID 恢复已经实测；成功回答的双向连续性被测试账号暂停阻断，
+仍待完成。原生能力与未验证项见 [Kiro sessions](kiro.md)，剩余工作只记在
+[TODO](../TODO.md#kiro-integration)。

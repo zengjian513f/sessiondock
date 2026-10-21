@@ -356,6 +356,11 @@ const NativeSdkView = {
       if (request.questions) add('拒绝', {behavior:'deny'});
       body.append(actions); return card;
     }
+    if (request.type === 'approval' && this.uid.startsWith('kiro:') && !(request.options || []).length) {
+      body.append(el('p', 'sdk-control-note', 'Kiro 未提供可选的审批项，无法批准此请求。'));
+      add('取消', 'cancelled');
+      body.append(actions); return card;
+    }
     for (const option of request.options || []) add(option.label || option.name || String(option.value), option.value ?? option.id ?? option.label);
     if (request.type === 'question' || !(request.options || []).length) {
       const input = document.createElement('textarea'); input.className = 'sdk-json'; input.setAttribute('aria-label','回答'); body.append(input);

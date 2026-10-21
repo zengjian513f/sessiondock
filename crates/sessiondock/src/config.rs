@@ -55,6 +55,8 @@ pub struct Config {
     pub opencode_db: Option<PathBuf>,
     /// Agy native data directory, read-only; paired with the private agy mirror root.
     pub agy_home: Option<PathBuf>,
+    /// Kiro account scope only. Never scanned or rewritten by SessionDock.
+    pub kiro_native_root: Option<PathBuf>,
     /// Login-shell wrapper the service itself was started through
     /// (`SESSIONDOCK_SHELL_ENV_COMMAND`); enables `/api/shell-env`.
     pub shell_env_command: Option<PathBuf>,
@@ -286,6 +288,7 @@ impl Default for Config {
             grok_active: None,
             opencode_db: None,
             agy_home: None,
+            kiro_native_root: None,
             shell_env_command: None,
             shell_env_watch: Vec::new(),
             node_bind: None,
@@ -443,6 +446,18 @@ impl Config {
         };
         config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;
+        config.kiro_native_root = config.roots.kiro.take();
+        if config.kiro_native_root.is_some() {
+            config.roots.kiro = env::var_os("SESSIONDOCK_KIRO_PROJECTION_ROOT")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    config
+                        .state_dir
+                        .as_ref()
+                        .map(|dir| dir.join("kiro-catalog"))
+                });
+        }
         // Keep the original spelling for the store's no-follow checks. Unlike
         // the legacy root helper, this must not canonicalize and store an alias.
         config.lifecycle_dir = env::var_os("SESSIONDOCK_LIFECYCLE_DIR").map(PathBuf::from);

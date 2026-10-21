@@ -13,6 +13,7 @@ mod history;
 pub(crate) mod index;
 pub(crate) use index::codex_rollout_id;
 pub mod agy;
+pub(crate) mod kiro;
 mod native_input;
 mod native_media;
 pub mod opencode;
@@ -255,6 +256,7 @@ impl FileStamp {
 /// from a request; `Views` restamps before every open.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Candidate {
+    pub uid: String,
     pub source: &'static str,
     pub root: PathBuf,
     pub path: PathBuf,
@@ -286,6 +288,7 @@ impl Candidate {
     /// parse as an append or rewrite of that one file.
     fn of(entry: &CandidateRef) -> Self {
         Self {
+            uid: entry.uid.clone(),
             source: entry.source,
             root: entry.root.clone(),
             path: entry.path.clone(),
@@ -1160,6 +1163,7 @@ fn prepare(published: &Arc<Published>, uid: &str, agent: &str) -> Result<Prepare
     let owner = index
         .candidate(uid)
         .ok_or_else(|| SessionError::new(404, "会话不存在"))?;
+    let uid = owner.uid.as_str();
     if owner.is_agent() {
         return Err(owner
             .owner_error

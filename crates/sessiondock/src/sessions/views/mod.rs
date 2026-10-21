@@ -23,7 +23,7 @@ use sha1::{Digest, Sha1};
 use super::{
     CURSOR_SCHEMA, Candidate, MessageQuery, NativeScope, PageStore, RewindTarget, SessionError,
     budgets, claude_agent_of, hash, history, media_projection, native_input, pages, providers,
-    records, restamp, scope, timestamp, uid_for,
+    records, restamp, scope, timestamp,
 };
 use crate::metadata::TimelinePin;
 
@@ -637,7 +637,7 @@ pub(crate) fn parse_candidate_retaining(
     let committed = raw_index.committed() as usize;
     let records = &record_batch.records;
     let mut unsupported = record_batch.error.clone();
-    let uid = uid_for(candidate.source, &candidate.path);
+    let uid = candidate.uid.clone();
     // Grok falls back to chat mtime, or summary mtime if chat is absent;
     // this is metadata fallback only, never a fictional chat file version.
     let fallback = timestamp(
@@ -1219,7 +1219,7 @@ impl PrefixCache {
         candidate: &Candidate,
         cut: usize,
     ) -> Option<(Value, Arc<Vec<Event>>, String)> {
-        let key = (uid_for(candidate.source, &candidate.path), cut);
+        let key = (candidate.uid.clone(), cut);
         let entry = self.entries.get_mut(&key)?;
         if entry.candidate != *candidate {
             return None;
@@ -1258,7 +1258,7 @@ impl PrefixCache {
                 .prefixes
                 .push(self.entries.remove(&oldest).expect("selected prefix"));
         }
-        let key = (uid_for(entry.candidate.source, &entry.candidate.path), cut);
+        let key = (entry.candidate.uid.clone(), cut);
         if let Some(old) = self.entries.insert(key, entry) {
             retired.prefixes.push(old);
         }
@@ -1555,7 +1555,7 @@ impl Views {
             .filter(|(_, cached)| {
                 let current = |parsed: &Arc<Parsed>| {
                     files
-                        .get(&uid_for(parsed.candidate.source, &parsed.candidate.path))
+                        .get(&parsed.candidate.uid.clone())
                         .is_some_and(|entry| Arc::ptr_eq(&entry.parsed, parsed))
                 };
                 !current(&cached.snapshot.view.parsed) || !cached.owner.as_ref().is_none_or(current)
@@ -1773,7 +1773,7 @@ impl FileSource for CachedFiles<'_> {
         pin: Pin<'_>,
         deps: &dyn Dependencies,
     ) -> Result<(Arc<Parsed>, usize), SessionError> {
-        let id = uid_for(candidate.source, &candidate.path);
+        let id = candidate.uid.clone();
         let matches = |entry: &FileEntry| {
             entry.parsed.candidate == candidate
                 && match pin {
@@ -2065,12 +2065,12 @@ fn build(
                 segments: Vec::new(),
                 raw_bytes: 0,
                 prefixes: Vec::new(),
-                seen: BTreeSet::from([uid_for(parsed.candidate.source, &parsed.candidate.path)]),
+                seen: BTreeSet::from([parsed.candidate.uid.clone()]),
             };
             chain.inherit(
                 parsed.candidate.source,
                 &parsed.meta,
-                &uid_for(parsed.candidate.source, &parsed.candidate.path),
+                &parsed.candidate.uid.clone(),
             )?;
             let prefixes = std::mem::take(&mut chain.prefixes);
             let inherited = chain.inherited();
@@ -2093,9 +2093,9 @@ fn build(
     let mut sources = vec![parsed.candidate.clone()];
     sources.extend(prefixes.iter().map(|prefix| prefix.candidate.clone()));
     let mut dependencies = BTreeSet::from([request.uid.clone()]);
-    dependencies.insert(uid_for(parsed.candidate.source, &parsed.candidate.path));
+    dependencies.insert(parsed.candidate.uid.clone());
     for prefix in &prefixes {
-        dependencies.insert(uid_for(prefix.candidate.source, &prefix.candidate.path));
+        dependencies.insert(prefix.candidate.uid.clone());
     }
     Ok(Built {
         view: View::new(ViewParts {
@@ -2248,7 +2248,7 @@ impl Chain<'_> {
         let candidate = self
             .deps
             .thread_from("codex", sid, child, &meta["history_base"])?;
-        let uid = uid_for(candidate.source, &candidate.path);
+        let uid = candidate.uid.clone();
         if !self.seen.insert(uid.clone()) {
             return Err(SessionError::new(501, "分叉历史依赖存在循环"));
         }

@@ -56,35 +56,15 @@ pub(super) fn summary_native_identity(
     }
 }
 
-/// Kiro session identity comes from `session.json` (`id` / `sessionId` in V3 KAS or `session_id` in V2 CLI).
+/// Kiro identity in the SessionDock-owned catalog projection.
 pub(super) fn kiro_native_identity(
     summary: Option<&Value>,
 ) -> (Result<String, SessionError>, Vec<String>) {
-    let id = summary.and_then(|s| {
-        s.get("id")
-            .and_then(Value::as_str)
-            .filter(|v| !v.trim().is_empty())
-            .or_else(|| {
-                s.get("sessionId")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.trim().is_empty())
-            })
-            .or_else(|| {
-                s.get("session_id")
-                    .and_then(Value::as_str)
-                    .filter(|v| !v.trim().is_empty())
-            })
-    });
-    match id {
-        Some(id) => (Ok(id.to_owned()), vec![id.to_owned()]),
-        None => (
-            Err(SessionError::new(
-                501,
-                "原生记录缺少明确会话 ID，不能用文件名或显示名称推断",
-            )),
-            Vec::new(),
-        ),
-    }
+    summary_native_identity(
+        summary
+            .filter(|s| s["format"] == super::kiro::FORMAT)
+            .map(|s| &s["session"]["id"]),
+    )
 }
 
 /// The scope rules over declared ID values from the records seen.

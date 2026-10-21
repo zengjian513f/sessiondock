@@ -304,20 +304,16 @@ fn parse_context<'a>(
             return (meta, Vec::new(), Some(reason));
         }
     }
-    if source == "kiro"
-        && records.is_empty()
-        && let Some(hist) = summary
-            .and_then(|s| s.get("history"))
-            .and_then(Value::as_array)
-    {
-        for item in hist {
-            if let Err(reason) = parser.kiro(item, 0) {
-                return (meta, Vec::new(), Some(reason));
-            }
-        }
-    }
     // Non-fatal: the session stays supported; the row reports what was skipped.
     meta["migration_warnings"] = json!(parser.skipped.warnings());
+    if source == "kiro" && summary.is_none_or(|summary| summary["history_synced"] != true) {
+        meta["migration_warnings"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(
+                "Kiro 历史尚未同步；请显式启动 SDK 同步。当前搜索仅覆盖已缓存正文。"
+            ));
+    }
     (meta, parser.events, None)
 }
 
@@ -544,7 +540,6 @@ struct Parser<'a> {
     turn: String,
     previous_title: String,
     codex_meta_seen: bool,
-    kiro_history: Vec<(String, usize)>,
     source: String,
     media: Option<MediaContext<'a>>,
     skipped: Skipped,

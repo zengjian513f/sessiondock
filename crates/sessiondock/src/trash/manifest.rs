@@ -234,9 +234,6 @@ impl Manifest {
         }
         fs::rename(&temp, Self::path(entry_dir))
             .map_err(|_| TrashError::new(500, "manifest_write", "回收站清单无法替换"))?;
-        if self.source == "kiro" && self.state == EntryState::Trashed {
-            clean_kiro_session_index(&self.root, &self.sid);
-        }
         Ok(())
     }
 
@@ -338,61 +335,4 @@ pub fn rfc3339(unix: u64) -> String {
     chrono::DateTime::from_timestamp(i64::try_from(unix).unwrap_or(0), 0)
         .unwrap_or_default()
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn clean_kiro_session_index(root: &Path, sid: &str) {
-    let sid = sid.trim();
-    if sid.is_empty() || sid.contains('/') || sid.contains('\\') || sid == "." || sid == ".." {
-        return;
-    }
-    let mut dirs = vec![root.join("session-index")];
-    if let Some(parent) = root.parent() {
-        dirs.push(parent.join("session-index"));
-    }
-    for dir in dirs {
-        let entry_file = dir.join(format!("{sid}.json"));
-        if entry_file.is_file() {
-            let _ = fs::remove_file(&entry_file);
-        }
-        let index_json = dir.join("index.json");
-        if index_json.is_file()
-            && let Ok(bytes) = fs::read(&index_json)
-            && let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        {
-            let mut changed = false;
-            if let Some(obj) = val.as_object_mut() {
-                if obj.remove(sid).is_some() {
-                    changed = true;
-                }
-                if let Some(sessions) = obj.get_mut("sessions").and_then(|s| s.as_array_mut()) {
-                    let before = sessions.len();
-                    sessions.retain(|item| {
-                        item.get("id")
-                            .or_else(|| item.get("sessionId"))
-                            .or_else(|| item.get("session_id"))
-                            .and_then(|v| v.as_str())
-                            != Some(sid)
-                    });
-                    if sessions.len() != before {
-                        changed = true;
-                    }
-                }
-            } else if let Some(arr) = val.as_array_mut() {
-                let before = arr.len();
-                arr.retain(|item| {
-                    item.get("id")
-                        .or_else(|| item.get("sessionId"))
-                        .or_else(|| item.get("session_id"))
-                        .and_then(|v| v.as_str())
-                        != Some(sid)
-                });
-                if arr.len() != before {
-                    changed = true;
-                }
-            }
-            if changed && let Ok(encoded) = serde_json::to_vec_pretty(&val) {
-                let _ = fs::write(&index_json, encoded);
-            }
-        }
-    }
 }

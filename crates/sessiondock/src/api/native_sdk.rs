@@ -29,9 +29,9 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
     if agent.is_empty()
         && let Some(row) = state.native_sdks.receipt(uid)
     {
-        return Ok(
-            json!({"uid":uid,"session_id":row["sid"],"cwd":row["cwd"],"source":row["source"],"agent":"","sdk_fork":row["sdk_fork"]}),
-        );
+        return Ok(state.native_sdks.canonical_target(
+            &json!({"uid":uid,"session_id":row["sid"],"cwd":row["cwd"],"source":row["source"],"agent":"","sdk_fork":row["sdk_fork"]})
+        ));
     }
     let uid = uid.to_owned();
     let agent = agent.to_owned();
@@ -40,7 +40,7 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
         let snapshot = store.snapshot(&uid, &agent)?;
         Ok(json!({"uid":uid,"session_id":scope.session_id,"cwd":snapshot.metadata()["cwd"],"source":scope.source,"agent":agent,
             "observed_model":snapshot.metadata()["model"]}))
-    }).await
+    }).await.map(|target| state.native_sdks.canonical_target(&target))
 }
 
 pub async fn call(
@@ -365,17 +365,34 @@ pub async fn events(
 ) -> Result<Response, ApiError> {
     let target = target(&state, &query.uid, &query.agent).await?;
     let source = target["source"].as_str().unwrap_or_default();
-    state
-        .native_sdks
-        .call(source, "open", target.clone(), json!({}))
-        .await
-        .map_err(failure)?;
+    let uid = target["uid"].as_str().unwrap_or(&query.uid);
     let key = if query.agent.is_empty() {
-        query.uid
+        uid.to_owned()
     } else {
-        format!("{}:{}", query.uid, query.agent)
+        format!("{}:{}", uid, query.agent)
     };
-    let native = state.native_sdks.subscribe(source, &key);
+    let native = if source == "kiro" {
+        // An SSE subscription is observation, including after process exit or
+        // browser reconnection. Never turn it into a replacement native launch.
+        match state.native_sdks.subscribe(source, &key) {
+            Ok(native) => Ok(native),
+            Err(_) => match state
+                .native_sdks
+                .call(source, "reattach", target.clone(), json!({}))
+                .await
+            {
+                Ok(_) => state.native_sdks.subscribe(source, &key),
+                Err(error) => Err(error),
+            },
+        }
+    } else {
+        state
+            .native_sdks
+            .call(source, "open", target.clone(), json!({}))
+            .await
+            .map_err(failure)?;
+        state.native_sdks.subscribe(source, &key)
+    };
     let (snapshot, mut events) = match native {
         Ok((snapshot, events)) => (snapshot, Some(events)),
         Err(error) => (state.native_sdks.input_fallback(&target, &error), None),

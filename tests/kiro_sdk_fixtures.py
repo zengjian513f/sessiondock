@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import sys
 import threading
 import time
@@ -21,7 +22,7 @@ class KiroFixture:
     def __init__(self, root: Path, host_binary: Path | None = None):
         self.root = Path(root)
         self.home = self.root / "kiro-home"
-        self.sessions = self.home / ".kiro" / "sessions"
+        self.sessions = self.root / "fake-native-store"
         self.sessions.mkdir(parents=True)
         (self.sessions / "cli").mkdir(parents=True)
         self.work = self.root / "work-kiro"
@@ -114,7 +115,7 @@ class KiroFixture:
                     "resume_args": ["chat", "--agent-engine=v3", "--resume-id", "{sid}"],
                     "env": {
                         "HOME": str(self.home),
-                        "SESSIONDOCK_KIRO_ROOT": str(self.sessions),
+                        "KIRO_SDK_FAKE_ROOT": str(self.sessions),
                         "KIRO_SDK_FAKE_LOG": str(self.log),
                     },
                 }
@@ -148,7 +149,9 @@ class KiroFixture:
     @property
     def env(self):
         return {
-            "SESSIONDOCK_KIRO_ROOT": str(self.sessions),
+            # An account-scope identifier only. This path intentionally does not exist.
+            "SESSIONDOCK_KIRO_ROOT": str(self.home / ".kiro" / "sessions"),
+            "KIRO_SDK_FAKE_ROOT": str(self.sessions),
             "SESSIONDOCK_LAUNCHER_CONFIG": str(self.launcher),
             "SESSIONDOCK_PROC_ROOT": str(self.proc),
         }
@@ -162,7 +165,7 @@ class KiroFixture:
 
 class FakeKiroAcp:
     def __init__(self):
-        self.sessions_root = Path(os.environ["SESSIONDOCK_KIRO_ROOT"])
+        self.sessions_root = Path(os.environ["KIRO_SDK_FAKE_ROOT"])
         self.log = Path(os.environ["KIRO_SDK_FAKE_LOG"])
         self.lock = threading.Lock()
         self.sid = None
@@ -170,8 +173,8 @@ class FakeKiroAcp:
         self.cwd = None
         self.model = "claude-haiku-4.5"
         self.effort = "low"
-        self.mode = "kiro_default"
-        self.autopilot = "false"
+        self.mode = "vibe"
+        self.autopilot = "off"
         self.cancel = threading.Event()
         self.pending_rpc = {}
         self.turn_thread = None
@@ -233,7 +236,7 @@ class FakeKiroAcp:
                 "type": "select",
                 "currentValue": self.mode,
                 "options": [
-                    {"value": "kiro_default", "name": "kiro_default"},
+                    {"value": "vibe", "name": "vibe"},
                     {"value": "plan", "name": "Plan"},
                 ],
             },
@@ -244,8 +247,8 @@ class FakeKiroAcp:
                 "type": "select",
                 "currentValue": self.autopilot,
                 "options": [
-                    {"value": "true", "name": "Enabled"},
-                    {"value": "false", "name": "Disabled"},
+                    {"value": "on", "name": "Enabled"},
+                    {"value": "off", "name": "Disabled"},
                 ],
             },
         ]
@@ -257,7 +260,7 @@ class FakeKiroAcp:
             "modes": {
                 "currentModeId": self.mode,
                 "availableModes": [
-                    {"id": "kiro_default", "name": "Default"},
+                    {"id": "vibe", "name": "Default"},
                     {"id": "plan", "name": "Plan"},
                 ],
             },
@@ -279,48 +282,83 @@ class FakeKiroAcp:
         if method == "initialize":
             self.reply(message, {
                 "protocolVersion": 1,
-                "agentInfo": {"name": "kiro-cli", "version": "1.29.0"},
+                "agentInfo": {"name": "kiro-cli", "version": "2.24.1"},
                 "agentCapabilities": {
                     "loadSession": True,
                     "promptCapabilities": {"image": True, "embeddedContext": True},
-                    "sessionCapabilities": {"fork": {}, "list": {}},
+                    "sessionCapabilities": {"fork": {}, "list": {}, "delete": {}},
+                    "_meta": {"kiro": {"extensionMethods": ["_kiro/session/compact", "_kiro/session/context", "_kiro/session/history"], "replayMarking": True, "sessionSources": ["local"], "sessionListScopes": ["workspace", "user"]}},
                 },
-                "_meta": {"kiro": {"compaction": True, "context": True}},
             })
+        elif method == "session/list":
+            rows = []
+            for path in sorted((self.sessions_root / "bucket_v3").glob("*/session.json")):
+                meta = json.loads(path.read_text())
+                if params.get("cwd") and params["cwd"] != meta["cwd"]:
+                    continue
+                rows.append({"sessionId": meta["id"], "cwd": meta["cwd"],
+                             "title": meta.get("title", ""), "updatedAt": meta["updatedAt"],
+                             "_meta": {"kiro": {"modelId": meta["modelId"],
+                             "effortLevel": meta["effortLevel"], "agentMode": "vibe",
+                             "createdAt": meta["createdAt"], "source": "local",
+                             "executionTarget": {"kind": "local"}, "status": "idle"}}})
+            # Force the real catalog through opaque cursor pagination.
+            offset = 1 if params.get("cursor") == "fixture-second-page" else 0
+            result = {"sessions": rows[offset:offset + 1]}
+            if offset == 0 and len(rows) > 1:
+                result["nextCursor"] = "fixture-second-page"
+            if offset:
+                result["sessions"] = rows[offset:]
+            self.reply(message, result)
         elif method == "session/new":
-            self.cwd = params.get("cwd") or "/tmp"
-            self.sid = str(uuid.uuid4())
+            self.cwd = params.get("cwd") or os.getcwd()
+            self.sid = "sess_" + str(uuid.uuid4())
+            initial = params.get("_meta", {}).get("kiro", {})
+            self.model = initial.get("modelId", self.model)
+            self.effort = initial.get("effortLevel", self.effort)
+            self.mode = initial.get("modeId", self.mode)
             self.session_dir = self.sessions_root / "bucket_v3" / self.sid
             self.session_dir.mkdir(parents=True, exist_ok=True)
-            KiroFixture.write_v3_session(
-                self.session_dir,
-                self.sid,
-                self.cwd,
-                "",
-                model=self.model,
-                effort=self.effort,
-            )
+            KiroFixture.write_v3_session(self.session_dir, self.sid, self.cwd, "", self.model, self.effort)
             self.reply(message, self.open_payload())
         elif method == "session/load":
-            self.cwd = params.get("cwd") or "/tmp"
             self.sid = params["sessionId"]
-            v3_candidate = self.sessions_root / "bucket_v3" / self.sid
-            if v3_candidate.is_dir():
-                self.session_dir = v3_candidate
-                meta = json.loads((self.session_dir / "session.json").read_text())
-                self.model = meta.get("modelId") or self.model
-                self.effort = meta.get("effortLevel") or self.effort
-            else:
-                self.session_dir = v3_candidate
-                self.session_dir.mkdir(parents=True, exist_ok=True)
-                KiroFixture.write_v3_session(self.session_dir, self.sid, self.cwd, "Loaded Session")
-            # Emit a replay chunk during session/load to verify bridge ignores replay chunks
-            self.update(
-                "agent_message_chunk",
-                content={"type": "text", "text": "Replay chunk during session/load should not duplicate"},
-                _meta={"isReplay": True},
-            )
-            self.reply(message, self.open_payload())
+            self.session_dir = self.sessions_root / "bucket_v3" / self.sid
+            if not (self.session_dir / "session.json").is_file():
+                self.error(message, -32000, "Session not found")
+                return
+            meta = json.loads((self.session_dir / "session.json").read_text())
+            self.cwd = meta["cwd"]
+            self.model = meta["modelId"]
+            self.effort = meta["effortLevel"]
+            for update in self.history_updates(self.session_dir):
+                self.send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": self.sid, "update": update}})
+            result = self.open_payload()
+            # Real V3 load omits sessionId: the client retains the requested SID.
+            result.pop("sessionId")
+            self.reply(message, result)
+        elif method == "_kiro/session/history":
+            # Real default history returns older pages, not the initial load replay.
+            self.reply(message, {"updates": [], "hasMore": False})
+        elif method == "session/delete":
+            directory = self.sessions_root / "bucket_v3" / params["sessionId"]
+            if not directory.is_dir():
+                self.error(message, -32000, "Session not found")
+                return
+            shutil.rmtree(directory)
+            self.reply(message, {})
+        elif method == "session/fork":
+            source = self.sessions_root / "bucket_v3" / params["sessionId"]
+            if not source.is_dir():
+                self.error(message, -32000, "Session not found")
+                return
+            fork_sid = "sess_" + str(uuid.uuid4())
+            target = self.sessions_root / "bucket_v3" / fork_sid
+            shutil.copytree(source, target)
+            meta = json.loads((target / "session.json").read_text())
+            meta["id"] = meta["sessionId"] = fork_sid
+            (target / "session.json").write_text(json.dumps(meta))
+            self.reply(message, {"sessionId": fork_sid, "configOptions": self.config_options()})
         elif method == "session/set_config_option":
             cid = params.get("configId")
             val = str(params.get("value", ""))
@@ -340,28 +378,16 @@ class FakeKiroAcp:
             self.reply(message, {"configOptions": self.config_options()})
             self.update("config_option_update", configOptions=self.config_options())
         elif method == "session/set_mode":
-            self.mode = params.get("modeId", "kiro_default")
+            self.mode = params.get("modeId", "vibe")
             self.reply(message, {})
             self.update("current_mode_update", currentModeId=self.mode)
-        elif method in ("_kiro/session/compact", "session/compact"):
+        elif method == "_kiro/session/compact":
             self.reply(message, {"compacted": True, "contextUsagePercentage": 6.5})
-        elif method == "_kiro.dev/commands/execute":
-            cmd = params.get("command")
-            if cmd == "compact":
-                self.reply(message, {"compacted": True, "contextUsagePercentage": 6.5})
-            else:
-                self.reply(message, {"ok": True})
         elif method == "_kiro/session/context":
             self.reply(message, {
                 "contextUsagePercentage": 18.5,
                 "usedTokens": 37000,
                 "maxTokens": 200000,
-            })
-        elif method == "_kiro/account/getUsage":
-            self.reply(message, {
-                "creditsUsed": 1.25,
-                "creditsLimit": 50.0,
-                "planName": "Kiro Pro",
             })
         elif method == "session/cancel":
             self.cancel.set()
@@ -373,6 +399,20 @@ class FakeKiroAcp:
             self.turn_thread.start()
         else:
             self.error(message, -32601, f"Unsupported method {method}")
+
+    @staticmethod
+    def history_updates(directory):
+        path = directory / "messages.jsonl"
+        if not path.exists():
+            return []
+        result = []
+        for line in path.read_text().splitlines():
+            row = json.loads(line)
+            msg = row["message"]
+            result.append({"sessionUpdate": "user_message_chunk" if msg["kind"] == "user" else "agent_message_chunk",
+                           "content": {"type": "text", "text": msg["data"]["content"][0]["data"]},
+                           "_meta": {"kiro": {"messageId": row["id"], "timestamp": row["timestamp"], "replay": True}}})
+        return result
 
     def append_v3_message(self, kind: str, text: str):
         if not self.session_dir:
@@ -516,22 +556,16 @@ class FakeKiroAcp:
             "agent_message_chunk",
             content={"type": "text", "text": reply_text},
         )
-        self.send({
-            "jsonrpc": "2.0",
-            "method": "_kiro.dev/metadata",
-            "params": {
-                "sessionId": self.sid,
-                "contextUsagePercentage": 18.5,
-                "meteringUsage": {"credits": 0.05},
-                "tokens": {"input": 1200, "output": 300, "total": 1500},
-            },
-        })
+        self.update("session_info_update", _meta={"kiro": {
+            "kind": "context_usage", "contextUsage": {"usagePercentage": 18.5}, "usagePercentage": 18.5,
+            "breakdown": {"yourPrompts": {"tokens": 1200, "percent": 12}, "kiroResponses": {"tokens": 650, "percent": 6.5}},
+        }})
         self.append_v3_message("assistant", reply_text)
         self.reply(message, {"stopReason": "end_turn"})
 
 
 def run_fake_cli_chat(args: list[str]):
-    sessions_root = Path(os.environ["SESSIONDOCK_KIRO_ROOT"])
+    sessions_root = Path(os.environ["KIRO_SDK_FAKE_ROOT"])
     sid = None
     for i, arg in enumerate(args):
         if arg in ("--resume-id", "--resume") and i + 1 < len(args):
@@ -554,16 +588,16 @@ def run_fake_cli_chat(args: list[str]):
             }) + "\n"
         )
 
-    lock_dir = sessions_root / "cli"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_file = lock_dir / f"{sid}.lock"
-    lock_file.write_text(str(os.getpid()))
+    session_dir = sessions_root / "bucket_v3" / sid
+    if not (session_dir / "session.json").is_file():
+        raise SystemExit("Unknown native session ID")
+    log = Path(os.environ["KIRO_SDK_FAKE_LOG"])
+    with log.open("a") as f:
+        f.write(json.dumps({"fixture_cli_start": {"pid": os.getpid(), "argv": args, "sessionId": sid}}) + "\n")
 
     def cleanup(*_):
-        try:
-            lock_file.unlink(missing_ok=True)
-        except Exception:
-            pass
+        with log.open("a") as f:
+            f.write(json.dumps({"fixture_cli_exit": {"pid": os.getpid(), "sessionId": sid}}) + "\n")
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, cleanup)
@@ -576,6 +610,9 @@ def run_fake_cli_chat(args: list[str]):
             cmd = line.strip()
             if cmd in ("exit", "/quit", "/exit"):
                 break
+            with (session_dir / "messages.jsonl").open("a") as f:
+                f.write(json.dumps({"id": "cli-" + uuid.uuid4().hex, "timestamp": "2026-10-18T02:00:00Z",
+                                   "message": {"kind": "user", "data": {"content": [{"kind": "text", "data": cmd}]}}}) + "\n")
             sys.stdout.write(f"Kiro CLI echoed: {cmd}\r\n> ")
             sys.stdout.flush()
     finally:
@@ -587,7 +624,7 @@ def main():
     if args and args[0] == "--fake-kiro":
         args = args[1:]
     if any(a in ("--version", "-V", "--help", "-h") for a in args):
-        sys.stdout.write("kiro-cli 1.29.0\n")
+        sys.stdout.write("kiro-cli 2.24.1\n")
         sys.stdout.flush()
         return
     if "--list-models" in args:

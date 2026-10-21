@@ -39,6 +39,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
 
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
+    page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(row => row.sid === sid); }", arg=fixture.sid, polling=500, timeout=30000)
     rows = page.evaluate("S.sessions")
     v3_row = next(r for r in rows if r.get("sid") == fixture.sid)
     uid = v3_row["uid"]
@@ -62,16 +63,22 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
         "T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('Kiro CLI v3 Interactive Terminal')"
     )
 
-    # Verify fake CLI wrote its lock file
-    lock_file = fixture.sessions / "cli" / f"{fixture.sid}.lock"
+    # Observe the configured native process through the fake peer's protocol log,
+    # never through Kiro's private lock file layout.
     deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline and not lock_file.exists():
+    starts = []
+    while time.monotonic() < deadline:
+        starts = [r["fixture_cli_start"] for r in fixture.received() if "fixture_cli_start" in r]
+        if starts:
+            break
         time.sleep(0.05)
-    assert lock_file.exists(), "Fake Kiro CLI did not create lock file"
-    cli_pid = int(lock_file.read_text().strip())
-    proc_dir = fixture.proc / str(cli_pid)
-    proc_dir.mkdir(exist_ok=True)
-    (proc_dir / "stat").write_text(f"{cli_pid} (kiro-cli) S 1 " + "0 " * 30 + "\n")
+    assert starts and starts[-1]["sessionId"] == fixture.sid, starts
+    assert starts[-1]["argv"][starts[-1]["argv"].index("--resume-id") + 1] == fixture.sid
+    # Send through xterm and retain the same native identity for SDK replay.
+    page.locator("#termpane .xterm-helper-textarea").focus()
+    page.keyboard.type("CLI_TO_SDK_CONTINUITY")
+    page.keyboard.press("Enter")
+    page.wait_for_function("Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('Kiro CLI echoed: CLI_TO_SDK_CONTINUITY')")
 
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-cli-terminal.png"), full_page=True)
@@ -104,8 +111,6 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
         {"uid": uid},
     )
     assert stop_res["status"] < 300 and stop_res["body"].get("ok") is True, stop_res
-    (proc_dir / "stat").unlink(missing_ok=True)
-    proc_dir.rmdir()
 
     # 5. Now switch to SDK mode (#a-sdk) and verify SDK open succeeds!
     sdk_open_after_stop = page.evaluate(
@@ -121,6 +126,57 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     )
     assert sdk_open_after_stop["status"] == 200 and sdk_open_after_stop["body"].get("session_id") == fixture.sid, sdk_open_after_stop
 
+    assert any("CLI_TO_SDK_CONTINUITY" in (item.get("content") or "") for item in sdk_open_after_stop["body"]["raw"]["items"]), sdk_open_after_stop
+    # Create through the CLI preference: backend assigns a native SID before PTY resume.
+    page.evaluate("async uid => fetch('/api/native-sdk/stop', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid})})", uid)
+    if not page.locator("#settings").is_visible():
+        page.locator("#header-more-btn").click()
+    page.locator("#settings").click()
+    page.locator('.settings-tab[data-tab="features"]').click()
+    page.locator('[data-agent-start-mode="kiro"]').select_option("cli")
+    page.locator("#settings-dialog .modal-close").click()
+    new_before = len(fixture.received("session/new"))
+    page.locator("#new-session").click()
+    page.locator('label:has(input[name="new-source"][value="kiro"])').click()
+    page.locator("#new-cwd").fill(str(fixture.work))
+    with page.expect_response(lambda r: r.url.endswith("/api/term/create")) as created:
+        page.locator("#new-session-go").click()
+    assert created.value.status == 200, created.value.text()
+    create_request = created.value.request.post_data_json
+    create_receipt = created.value.json()
+    assert create_receipt.get("record_id") and create_receipt.get("name"), create_receipt
+    assert create_request.get("request_id"), create_request
+    assert len(fixture.received("session/new")) == new_before + 1
+    expect(page.locator("#termpane")).to_be_visible()
+    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    deadline = time.monotonic() + 5
+    new_start = None
+    while time.monotonic() < deadline:
+        candidates = [r["fixture_cli_start"] for r in fixture.received() if "fixture_cli_start" in r and r["fixture_cli_start"]["sessionId"] != fixture.sid]
+        if candidates:
+            new_start = candidates[-1]
+            break
+        time.sleep(0.05)
+    assert new_start, fixture.received()
+    new_sid = new_start["sessionId"]
+    assert new_start["argv"][new_start["argv"].index("--resume-id") + 1] == new_sid
+    page.wait_for_function("sid => Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes(sid)", arg=new_sid)
+    expect(page.locator("#a-chat")).to_be_hidden()
+    page.wait_for_function("async sid => {await loadSessions(true); return S.sessions.some(row => row.sid === sid)}", arg=new_sid, polling=500, timeout=30000)
+    new_uid = page.evaluate("sid => S.sessions.find(row => row.sid === sid).uid", new_sid)
+    if screenshots:
+        page.screenshot(path=str(screenshots / "kiro-cli-new-native-sid.png"), full_page=True)
+    stopped = page.evaluate("async uid => (await fetch('/api/session/stop', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})})).json()", new_uid)
+    assert stopped.get("ok"), stopped
+    opened = page.evaluate("async uid => (await fetch('/api/native-sdk/open', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})})).json()", new_uid)
+    assert opened.get("session_id") == new_sid, opened
+    loads_before_retry = len(fixture.received("session/load"))
+    retried = page.evaluate("async body => (await fetch('/api/term/create', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()", create_request)
+    assert retried.get("record_id") == create_receipt.get("record_id") and retried.get("name") == create_receipt.get("name"), (retried, create_receipt)
+    reopened = page.evaluate("async uid => (await fetch('/api/native-sdk/open', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})})).json()", new_uid)
+    assert reopened.get("session_id") == new_sid, reopened
+    assert len(fixture.received("session/new")) == new_before + 1
+    assert len(fixture.received("session/load")) == loads_before_retry, "Retry stopped or replaced an independently reopened SDK host"
     assert not failures, failures
     context.close()
 

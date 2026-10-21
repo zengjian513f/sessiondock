@@ -76,12 +76,7 @@ pub const SPAWN_ENV_KEYS: [&str; 5] = [
     "GROK_SESSION_ID",
     "CLAUDE_PID",
 ];
-const SESSION_FILE_MARKERS: [&str; 4] = [
-    "/.codex/sessions/",
-    "/.claude/projects/",
-    "/.grok/",
-    "/.kiro/sessions/",
-];
+const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects/", "/.grok/"];
 
 /// Where session files may live: the literal home markers plus the
 /// configured read roots. On the real machine the roots are exactly those
@@ -91,7 +86,6 @@ const SESSION_FILE_MARKERS: [&str; 4] = [
 pub struct SessionRoots {
     prefixes: Vec<String>,
     agy_home: Option<PathBuf>,
-    kiro_root: Option<PathBuf>,
 }
 
 impl SessionRoots {
@@ -105,25 +99,12 @@ impl SessionRoots {
                 .filter(|prefix| prefix.len() > 1)
                 .collect(),
             agy_home: None,
-            kiro_root: None,
         }
     }
 
     /// Agy holds the native conversation SQLite file, not its text projection.
     pub fn with_agy_home(mut self, home: Option<PathBuf>) -> Self {
         self.agy_home = home;
-        self
-    }
-
-    /// Optional Kiro sessions root for lock/fd discovery.
-    pub fn with_kiro_root(mut self, root: Option<PathBuf>) -> Self {
-        if let Some(path) = &root {
-            let prefix = format!("{}/", path.to_string_lossy().trim_end_matches('/'));
-            if prefix.len() > 1 && !self.prefixes.contains(&prefix) {
-                self.prefixes.push(prefix);
-            }
-        }
-        self.kiro_root = root;
         self
     }
 
@@ -146,50 +127,6 @@ impl SessionRoots {
             .to_str()
             .filter(|sid| !sid.is_empty())
             .map(str::to_owned)
-    }
-
-    fn kiro_sid(&self, target: &Path) -> Option<String> {
-        let text = target.to_string_lossy();
-        let in_root = text.contains("/.kiro/")
-            || text.contains("/kiro/")
-            || self
-                .prefixes
-                .iter()
-                .any(|prefix| text.starts_with(prefix.as_str()));
-        let ext = target.extension().and_then(|e| e.to_str());
-        if ext == Some("lock")
-            && let Some(stem) = target.file_stem().and_then(|s| s.to_str())
-            && (stem.starts_with("sess_") || (in_root && !stem.is_empty() && stem != "session"))
-        {
-            return Some(stem.to_owned());
-        }
-        if matches!(
-            target.file_name().and_then(|n| n.to_str()),
-            Some("session.json" | "events.jsonl" | "messages.jsonl" | "session.lock")
-        ) && let Some(parent) = target
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            && (parent.starts_with("sess_")
-                || (in_root && !parent.is_empty() && parent != "cli" && parent != "sessions"))
-        {
-            return Some(parent.to_owned());
-        }
-        if in_root
-            && matches!(ext, Some("json" | "jsonl"))
-            && target
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                == Some("cli")
-            && let Some(stem) = target.file_stem().and_then(|s| s.to_str())
-            && !stem.is_empty()
-            && stem != "session"
-            && stem != "index"
-        {
-            return Some(stem.to_owned());
-        }
-        None
     }
 
     fn holds(&self, target: &str) -> bool {
@@ -307,6 +244,23 @@ pub fn command_sids(cmd: &str) -> BTreeSet<String> {
         })
         .map(|found| found.as_str().to_ascii_lowercase())
         .collect()
+}
+
+/// Only an explicit interactive Kiro resume argument establishes native identity.
+fn kiro_resume_sids(cmd: &str) -> BTreeSet<String> {
+    let mut args = cmd.split_ascii_whitespace();
+    let mut result = BTreeSet::new();
+    while let Some(arg) = args.next() {
+        let sid = if arg == "--resume-id" {
+            args.next()
+        } else {
+            arg.strip_prefix("--resume-id=")
+        };
+        if let Some(sid) = sid.filter(|sid| !sid.is_empty() && !sid.starts_with('-')) {
+            result.insert(sid.to_ascii_lowercase());
+        }
+    }
+    result
 }
 
 /// An existing
@@ -739,7 +693,12 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         // The id in a resume command is this process's authoritative identity:
         // an inherited `CLAUDE_CODE_SESSION_ID` from an older session must not
         // mark both sessions live.
-        let cmd_sids = command_sids(&cmd);
+        let kiro = main && cli_family(argv0) == Some("kiro");
+        let cmd_sids = if kiro {
+            kiro_resume_sids(&cmd)
+        } else {
+            command_sids(&cmd)
+        };
         for sid in &cmd_sids {
             let holder = if main {
                 i64::from(pid)
@@ -748,7 +707,12 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             } else {
                 i64::from(pid)
             };
-            sids.entry(sid.clone()).or_default().insert(holder);
+            let key = if kiro {
+                format!("kiro:{sid}")
+            } else {
+                sid.clone()
+            };
+            sids.entry(key).or_default().insert(holder);
         }
         let head = argv0.rsplit('/').next().unwrap_or(argv0);
         if main && head == "claude" && cmd_sids.is_empty() {
@@ -791,7 +755,6 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let agy_conversations = (main && cli_family(argv0) == Some("agy"))
             .then(|| roots.agy_conversations())
             .flatten();
-        let is_kiro_proc = cli_family(argv0) == Some("kiro") || lower.contains("kiro");
         for entry in fds.flatten() {
             let Ok(target) = std::fs::read_link(entry.path()) else {
                 continue;
@@ -803,17 +766,6 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
                     .or_default()
                     .insert(i64::from(pid));
             }
-            if is_kiro_proc && let Some(sid) = roots.kiro_sid(&target) {
-                let entry = sids.entry(sid.to_ascii_lowercase()).or_default();
-                if main {
-                    entry.insert(i64::from(pid));
-                } else {
-                    if let Some(owner) = tree.cli_ancestor(pid) {
-                        entry.insert(i64::from(owner));
-                    }
-                    entry.insert(-i64::from(pid));
-                }
-            }
             let target = target.to_string_lossy();
             if roots.holds(&target) {
                 let holder = if main {
@@ -823,19 +775,12 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
                 };
                 let holders = paths.entry(target.into_owned()).or_default();
                 holders.insert(holder);
-                if !main
-                    && is_kiro_proc
-                    && let Some(owner) = tree.cli_ancestor(pid)
-                {
-                    holders.insert(i64::from(owner));
-                }
             }
         }
     }
     if let Some(file) = grok_active {
         note_grok_sessions(&mut sids, file, &tree);
     }
-    note_kiro_locks(&mut sids, roots, &tree);
     stats.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Scan {
         sids,
@@ -917,97 +862,6 @@ fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path, t
     }
 }
 
-/// Resolve a Kiro V3 `<sess_id>.lock` file's `pid` to owning CLI PIDs,
-/// excluding zombie processes and `sdkhost`-hosted ACP process trees.
-fn kiro_lock_pids_from_file(lock_file: &Path, tree: &ProcTree) -> BTreeSet<i64> {
-    let mut found = BTreeSet::new();
-    let Some(data) = std::fs::read(lock_file)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-    else {
-        return found;
-    };
-    let Some(pid) = data
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|pid| u32::try_from(pid).ok())
-    else {
-        return found;
-    };
-    if !process_stamp(tree.root(), pid).is_some_and(|(state, _)| state != 'Z') {
-        return found;
-    }
-    if tree.is_sdkhost_descendant(pid) {
-        return found;
-    }
-    if tree.is_cli_process(pid) {
-        found.insert(i64::from(pid));
-    } else if let Some(owner) = tree.cli_ancestor(pid)
-        && !tree.is_sdkhost_descendant(owner)
-    {
-        found.insert(i64::from(owner));
-        found.insert(-i64::from(pid));
-    }
-    found
-}
-
-fn note_kiro_locks(
-    sids: &mut BTreeMap<String, BTreeSet<i64>>,
-    roots: &SessionRoots,
-    tree: &ProcTree,
-) {
-    let mut dirs: Vec<PathBuf> = roots
-        .prefixes
-        .iter()
-        .map(|prefix| PathBuf::from(prefix.trim_end_matches('/')))
-        .collect();
-    if let Some(root) = &roots.kiro_root
-        && !dirs.contains(root)
-    {
-        dirs.push(root.clone());
-    }
-    for root in dirs {
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("lock")
-                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-                && stem.starts_with("sess_")
-            {
-                let pids = kiro_lock_pids_from_file(&path, tree);
-                if !pids.is_empty() {
-                    sids.entry(stem.to_ascii_lowercase())
-                        .or_default()
-                        .extend(pids);
-                }
-                continue;
-            }
-            if !path.is_dir() {
-                continue;
-            }
-            let Ok(sub_entries) = std::fs::read_dir(&path) else {
-                continue;
-            };
-            for sub in sub_entries.flatten() {
-                let sub_path = sub.path();
-                if sub_path.extension().and_then(|e| e.to_str()) == Some("lock")
-                    && let Some(stem) = sub_path.file_stem().and_then(|s| s.to_str())
-                    && stem.starts_with("sess_")
-                {
-                    let pids = kiro_lock_pids_from_file(&sub_path, tree);
-                    if !pids.is_empty() {
-                        sids.entry(stem.to_ascii_lowercase())
-                            .or_default()
-                            .extend(pids);
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Live uids in list order and the pids each
 /// one owns after Codex fork-chain folding.
 pub struct ActiveProcesses {
@@ -1017,64 +871,22 @@ pub struct ActiveProcesses {
 
 impl Scan {
     /// Holders of the session file and of any
-    /// JSONL under a Grok/Kiro session directory (`events.jsonl` for `grok -p`
-    /// or `kiro-cli chat`).
+    /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
     pub(crate) fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
-        if session.path.is_empty() {
+        if session.source == "kiro" || session.path.is_empty() {
             return found;
         }
         if let Some(pids) = self.paths.get(&session.path) {
             found.extend(pids);
         }
-        let base = if session.source == "kiro"
-            && (session.path.ends_with("/session.json") || session.path.ends_with("/events.jsonl"))
-        {
-            Path::new(&session.path)
-                .parent()
-                .and_then(|p| p.to_str())
-                .unwrap_or(&session.path)
-        } else {
-            session.path.as_str()
-        };
+        let base = session.path.as_str();
         let prefix = format!("{}/", base.trim_end_matches('/'));
         for (held, pids) in self.paths.range(prefix.clone()..) {
             if !held.starts_with(&prefix) {
                 break;
             }
             found.extend(pids);
-        }
-        found
-    }
-
-    fn kiro_session_lock_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
-        let mut found = BTreeSet::new();
-        if session.source != "kiro" || session.path.is_empty() {
-            return found;
-        }
-        let path = Path::new(&session.path);
-        let mut candidates = Vec::new();
-        if matches!(
-            path.file_name().and_then(|n| n.to_str()),
-            Some("session.json" | "events.jsonl")
-        ) && let Some(dir) = path.parent()
-        {
-            candidates.push(dir.with_extension("lock"));
-        }
-        candidates.push(path.with_extension("lock"));
-        if !session.sid.is_empty()
-            && let Some(parent) = path.parent()
-        {
-            candidates.push(parent.join(format!("{}.lock", session.sid)));
-            if let Some(grandparent) = parent.parent() {
-                candidates.push(grandparent.join(format!("{}.lock", session.sid)));
-            }
-        }
-        for lock_path in candidates {
-            if lock_path.is_file() {
-                found.extend(kiro_lock_pids_from_file(&lock_path, &self.tree));
-                break;
-            }
         }
         found
     }
@@ -1112,7 +924,6 @@ impl Scan {
             found.extend(pids);
         }
         found.extend(self.session_path_pids(session));
-        found.extend(self.kiro_session_lock_pids(session));
         found.extend(self.bare_claude_pids(session));
         if session.source == "codex" {
             // One app-server can hold many independent threads. Its file
@@ -1145,8 +956,8 @@ impl Scan {
 
     fn identity_key(session: &SessionRow) -> String {
         let sid = session.sid.to_ascii_lowercase();
-        if session.source == "agy" && !sid.is_empty() {
-            format!("agy:{sid}")
+        if matches!(session.source.as_str(), "agy" | "kiro") && !sid.is_empty() {
+            format!("{}:{sid}", session.source)
         } else {
             sid
         }

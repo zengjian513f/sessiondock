@@ -237,14 +237,19 @@ struct BuiltApp {
 }
 
 fn build_app(
-    config: Config,
+    mut config: Config,
     shutdown: tokio_util::sync::CancellationToken,
     lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     terminal: Option<Arc<terminal::TerminalService>>,
     launch_adapters: Vec<state::LaunchAdapter>,
     quotas: Arc<quotas::Quotas>,
 ) -> io::Result<BuiltApp> {
-    let native_sdks = native_sdk::NativeSdks::new(&config, lifecycle.clone(), shutdown.clone())?;
+    let kiro_catalog = sessions::kiro::Catalog::new(&config, shutdown.clone())?;
+    if let Some(catalog) = &kiro_catalog {
+        config.roots.kiro = Some(catalog.root.clone());
+    }
+    let native_sdks =
+        native_sdk::NativeSdks::new(&config, lifecycle.clone(), shutdown.clone(), kiro_catalog)?;
     let audit = config
         .audit_dir
         .clone()
@@ -358,8 +363,7 @@ fn build_app(
                 .flatten()
                 .map(std::path::PathBuf::as_path),
             )
-            .with_agy_home(config.agy_home.clone())
-            .with_kiro_root(config.roots.kiro.clone()),
+            .with_agy_home(config.agy_home.clone()),
         ))
     });
     capabilities["live"] = serde_json::json!(proc_scan.is_some());
