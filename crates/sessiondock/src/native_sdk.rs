@@ -504,6 +504,9 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        if source == "kiro" && target["agent"].as_str().is_some_and(|id| !id.is_empty()) {
+            return Err("Kiro 子代理只提供历史视图，不是可独立控制的原生会话".into());
+        }
         let target = self.canonical_target(&target);
         if source == "kiro" && method == "discard" {
             return self.discard_native(source, target).await;

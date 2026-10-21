@@ -2122,6 +2122,12 @@ fn native_scope(
     selected: &Parsed,
 ) -> Result<NativeScope, SessionError> {
     let source = owner.candidate.source;
+    if source == "kiro" && !request.agent.is_empty() {
+        return Err(SessionError::new(
+            501,
+            "Kiro 子代理只提供历史视图，不是可独立控制的原生会话",
+        ));
+    }
     if source != selected.candidate.source
         || !matches!(
             source,

@@ -1,7 +1,7 @@
 //! Summaries of SessionDock's own Kiro cache; native files are never parsed.
 use super::{
-    Input, RowSummary, SidecarBytes, committed_end, cursor_head, iso_seconds, native_identity,
-    norm_ts,
+    AgentMeta, Input, RowSummary, SidecarBytes, committed_end, cursor_head, iso_seconds,
+    native_identity, norm_ts,
 };
 use serde_json::Value;
 pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
@@ -36,7 +36,20 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model: session["model"].clone(),
         branch: Value::Null,
         codex: None,
-        agent: None,
+        agent: info["agent"]["id"].as_str().map(|id| AgentMeta {
+            id: id.to_owned(),
+            parent_sid: info["agent"]["parent_sid"].as_str().map(str::to_owned),
+            title: info["agent"]["title"].as_str().unwrap_or("").to_owned(),
+            kind: info["agent"]["type"]
+                .as_str()
+                .unwrap_or("subagent")
+                .to_owned(),
+            open_turn: matches!(
+                info["agent"]["status"].as_str(),
+                Some("pending" | "in_progress")
+            ),
+            turn_at: None,
+        }),
         grok: None,
         continued_in_sid: None,
         native_id,

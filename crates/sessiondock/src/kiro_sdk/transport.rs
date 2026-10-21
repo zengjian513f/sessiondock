@@ -185,6 +185,13 @@ impl Session {
         if state.cwd.is_empty() {
             state.cwd = cwd.into();
         }
+        let stdout = dir.join(sanitize_host_key(key)).join("stdout");
+        let mut state = tokio::task::spawn_blocking(move || {
+            state.upgrade_transcript(&stdout)?;
+            Ok::<_, String>(state)
+        })
+        .await
+        .map_err(|e| format!("kiro_sdk_projection_upgrade: {e}"))??;
         state.checkpoint = Some(path);
         let client = Client::attach(dir, &sanitize_host_key(key))
             .await

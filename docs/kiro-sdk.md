@@ -47,6 +47,18 @@ Hub 刷新等待最新节点能力和运行状态后恢复 SDK 视图。
 调用激活式 load；用户显式启动 SDK 后同步回放。缓存投影与 live 检查点分开，历史
 分页不移动 live 游标。
 
+## 子代理投影
+
+DELTA：ACP 的 `_meta.kiro.agentSubtaskId` 将并行子代理的消息、工具及元数据
+分流到独立投影，调用及最终结果仍留在主会话。列表复用 `agent_items` 和现有
+子代理切换菜单；`pending`／`in_progress` 显示运行中，完成或失败结束运行状态。
+子代理只有只读历史，不将 subtask ID 当作可恢复、发送或删除的原生 session ID。
+其缓存位于主会话私有投影内，删除主会话时随之清理；搜索和分页复用公共历史管线。
+
+旧桥接检查点重附着时，从 sdkhost 已保存且已消费的 stdout 重建消息归属，保留
+原 RPC 回执、输入队列、审批和读取游标，不调用 initialize/load/prompt。没有
+原始子代理证据时不猜归属；缺少宿主日志时不能重建旧归属。普通读取不激活原生会话。
+
 ## 验收入口与证据边界
 
 - [SDK 浏览器](../tests/kiro_sdk_browser.py)：官方目录及缓存、显式启动、流式消息、
@@ -55,6 +67,8 @@ Hub 刷新等待最新节点能力和运行状态后恢复 SDK 视图。
   以及旧创建请求重试不影响后来 SDK 实例。
 - [Hub 浏览器](../tests/kiro_hub_browser.py)：经实际隔离节点与 Hub 验证顶部 SDK／CLI
   入口、模式切换和节点能力门控；不能以节点直连或其他来源的 Hub 验收替代。
+- [子代理浏览器](../tests/kiro_subagents_browser.py)：并行同名消息／工具的隔离、
+  活跃与失败状态、子代理历史切换、服务重附着和旧检查点升级不重发输入。
 - [恢复浏览器](../tests/kiro_recovery_browser.py)：服务重启附着、审批和输入去重、
   延迟取消与 FIFO、旧 RPC 迟到、空审批选项、退出尾部与终态。
 - [默认权限浏览器](../tests/kiro_autopilot_browser.py)：节点及 Hub 的 SDK／CLI 默认

@@ -18,6 +18,10 @@ pub(super) struct PendingRequest {
 #[derive(Serialize, Deserialize)]
 pub(super) struct LiveState {
     #[serde(default)]
+    transcript_version: u8,
+    #[serde(default)]
+    pub(super) subtasks: std::collections::BTreeMap<String, Subtask>,
+    #[serde(default)]
     pub(super) journal: Vec<Rpc>,
     #[serde(default)]
     pub(super) next_rpc: u64,
@@ -82,6 +86,14 @@ pub(super) struct LiveState {
     replay_ids: HashSet<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub(super) struct Subtask {
+    pub(super) title: String,
+    pub(super) kind: String,
+    pub(super) status: String,
+    pub(super) state: LiveState,
+}
+
 fn events() -> broadcast::Sender<Arc<str>> {
     broadcast::channel(256).0
 }
@@ -90,6 +102,8 @@ impl LiveState {
     pub(super) fn new() -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
+            transcript_version: 1,
+            subtasks: Default::default(),
             journal: Vec::new(),
             next_rpc: 1,
             next_request_id: 0,
@@ -140,6 +154,101 @@ impl LiveState {
             message_item_ids: HashMap::new(),
             replay_ids: HashSet::new(),
         }
+    }
+
+    /// Upgrade only the read projection using already-received sdkhost frames.
+    /// Delivery, prompts, permissions and stdout checkpoints remain authoritative.
+    pub(super) fn upgrade_transcript(&mut self, stdout: &std::path::Path) -> Result<(), String> {
+        use std::io::{BufRead, BufReader, Read};
+        if self.transcript_version >= 1 {
+            return Ok(());
+        }
+        if !self.items.iter().any(|item| {
+            item["toolCallId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("invoke_subagent_"))
+        }) {
+            self.transcript_version = 1;
+            return Ok(());
+        }
+        let file = std::fs::File::open(stdout).map_err(|e| e.to_string())?;
+        let prompts: Vec<_> = self
+            .journal
+            .iter()
+            .filter(|rpc| {
+                rpc.frame["method"] == "session/prompt"
+                    && rpc.delivery.as_deref() == Some("written")
+            })
+            .collect();
+        let mut replay = Self::new();
+        replay.observing = true;
+        replay.session_id = self.session_id.clone();
+        let mut prompt_index = 0;
+        let mut started = false;
+        for line in BufReader::new(file.take(self.stdout_offset)).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            let Ok(frame) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if frame["method"] == "session/update" {
+                let u = &frame["params"]["update"];
+                if !started
+                    && u["_meta"]["kiro"]["replay"] != true
+                    && matches!(
+                        u["sessionUpdate"].as_str(),
+                        Some("agent_message_chunk" | "agent_thought_chunk" | "tool_call")
+                    )
+                    && let Some(rpc) = prompts.get(prompt_index)
+                {
+                    replay.replay_prompt(rpc);
+                    started = true;
+                }
+                replay.handle_notification("session/update", &frame["params"]);
+            } else if frame.get("method").is_none()
+                && prompts
+                    .get(prompt_index)
+                    .is_some_and(|rpc| rpc.id == frame["id"].as_u64())
+            {
+                if !started {
+                    replay.replay_prompt(prompts[prompt_index]);
+                }
+                if frame.get("result").is_some() {
+                    replay.finish_turn(&frame["result"]);
+                }
+                replay.current_assistant_id = None;
+                replay.current_thinking_id = None;
+                replay.running = false;
+                prompt_index += 1;
+                started = false;
+            }
+        }
+        if !started && let Some(rpc) = prompts.get(prompt_index) {
+            replay.replay_prompt(rpc);
+        }
+        // No native subtask evidence: retain the old projection instead of guessing.
+        if !replay.subtasks.is_empty() {
+            self.items = replay.items;
+            self.subtasks = replay.subtasks;
+            self.next_item_id = replay.next_item_id;
+            self.current_assistant_id = replay.current_assistant_id;
+            self.current_thinking_id = replay.current_thinking_id;
+            self.tool_item_ids = replay.tool_item_ids;
+            self.message_item_ids = replay.message_item_ids;
+            self.replay_ids = replay.replay_ids;
+        }
+        self.transcript_version = 1;
+        Ok(())
+    }
+
+    fn replay_prompt(&mut self, rpc: &Rpc) {
+        let text = rpc.frame["params"]["prompt"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|block| block["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.begin_turn(&text, rpc.request_key.as_deref(), None, None);
     }
 
     pub(super) fn alloc_item_id(&mut self, prefix: &str) -> String {
@@ -595,6 +704,47 @@ impl LiveState {
             return;
         }
         let u = params.get("update").unwrap_or(params);
+        // Kiro multiplexes subtask streams on the parent's native session ID.
+        // Route before reducing chunks or metadata so parallel agents cannot
+        // concatenate text or overwrite the parent's usage/settings.
+        if let Some(id) = u["_meta"]["kiro"]["agentSubtaskId"].as_str() {
+            let task = self.subtasks.entry(id.to_owned()).or_insert_with(|| {
+                let mut state = LiveState::new();
+                state.observing = true;
+                Subtask {
+                    title: String::new(),
+                    kind: "subagent".into(),
+                    status: "in_progress".into(),
+                    state,
+                }
+            });
+            task.state.observing = true;
+            if u["_meta"]["kiro"]["kind"] == "agent-subtask" {
+                if let Some(kind) = u["rawInput"]["name"].as_str() {
+                    task.kind = kind.into();
+                }
+                if let Some(title) = u["rawInput"]["explanation"]
+                    .as_str()
+                    .or_else(|| u["title"].as_str())
+                {
+                    if task.title.is_empty() || u["rawInput"]["explanation"].is_string() {
+                        task.title = title.into();
+                    }
+                }
+                if let Some(status) = u["status"].as_str() {
+                    task.status = status.into();
+                }
+                // The invocation and its result belong to the parent transcript.
+            } else {
+                let mut routed = params.clone();
+                if let Some(meta) = routed["update"]["_meta"]["kiro"].as_object_mut() {
+                    meta.remove("agentSubtaskId");
+                }
+                task.state.handle_notification(method, &routed);
+                self.publish();
+                return;
+            }
+        }
         let kind = u["sessionUpdate"]
             .as_str()
             .or_else(|| u["type"].as_str())
@@ -613,6 +763,7 @@ impl LiveState {
             .or_else(|| params["messageId"].as_str())
             .or_else(|| u["_meta"]["kiro"]["messageId"].as_str())
             .or_else(|| params["_meta"]["kiro"]["messageId"].as_str())
+            .or_else(|| u["_meta"]["kiro"]["replayId"].as_str())
             .map(str::to_string);
 
         match kind {
@@ -1334,6 +1485,10 @@ impl LiveState {
             "running": self.running,
             "loading": self.loading,
             "items": self.items,
+            "subtasks": self.subtasks.iter().map(|(id, task)| json!({
+                "id": id, "title": task.title, "type": task.kind,
+                "status": task.status, "items": task.state.items,
+            })).collect::<Vec<_>>(),
             "requests": requests,
             "last_turn": self.last_turn,
             "runtime_error": self.runtime_error,
