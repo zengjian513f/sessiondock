@@ -452,6 +452,7 @@ impl LiveState {
     }
 
     pub(super) fn effort_supported(&self) -> bool {
+        // Schema 1: a standalone effort config option (Codex-style).
         let advertised = self.config_options.iter().any(|option| {
             let id = option["id"]
                 .as_str()
@@ -465,8 +466,8 @@ impl LiveState {
                     .iter()
                     .any(|name| category.eq_ignore_ascii_case(name))
         });
-        advertised
-            && !self
+        if advertised {
+            return !self
                 .config_options
                 .iter()
                 .filter_map(|option| option["options"].as_array())
@@ -475,7 +476,28 @@ impl LiveState {
                     option["value"].as_str().or_else(|| option["id"].as_str())
                         == self.model.as_deref()
                         && option["_meta"]["kiro"]["hasEffort"] == false
-                })
+                });
+        }
+        // Schema 2: Kiro embeds effort per model via the model option's
+        // `_meta.kiro` (`hasEffort` + `effortLevels`). Effort is selectable
+        // when the currently selected model advertises non-empty levels. The
+        // native set/echo path for this schema is not yet verified against the
+        // real ACP, so the live footer gate is handled separately; here we only
+        // report selectability for the picker surfaces.
+        self.config_options
+            .iter()
+            .filter_map(|option| option["options"].as_array())
+            .flatten()
+            .any(|option| {
+                let is_current = option["value"].as_str().or_else(|| option["id"].as_str())
+                    == self.model.as_deref();
+                let meta = &option["_meta"]["kiro"];
+                is_current
+                    && meta["hasEffort"].as_bool() != Some(false)
+                    && meta["effortLevels"]
+                        .as_array()
+                        .is_some_and(|levels| !levels.is_empty())
+            })
     }
 
     pub(super) fn update_config_option_value(&mut self, config_id: &str, value: &str) {

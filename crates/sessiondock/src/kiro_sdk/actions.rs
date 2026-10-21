@@ -167,9 +167,14 @@ pub(super) fn extract_models_from_config_options(
                         .as_str()
                         .or_else(|| item["label"].as_str())
                         .unwrap_or(mid);
+                    // Kiro advertises a model's effort levels only inside its
+                    // per-model `_meta.kiro.effortLevels`; `efforts`/
+                    // `supportedReasoningEfforts` are absent. Fall back to that
+                    // schema before the config-wide effort list.
                     let mut item_efforts: Vec<String> = item["efforts"]
                         .as_array()
                         .or_else(|| item["supportedReasoningEfforts"].as_array())
+                        .or_else(|| item["_meta"]["kiro"]["effortLevels"].as_array())
                         .map(|ea| {
                             ea.iter()
                                 .filter_map(|e| {
@@ -185,6 +190,14 @@ pub(super) fn extract_models_from_config_options(
                     if has_effort == Some(false) {
                         item_efforts.clear();
                     }
+                    // A model may carry its own default effort (Kiro's
+                    // `_meta.kiro.defaultEffortLevel`); prefer it over the
+                    // config-wide effort currentValue for this row.
+                    let item_default_effort = item["_meta"]["kiro"]["defaultEffortLevel"]
+                        .as_str()
+                        .map(str::to_string)
+                        .filter(|d| item_efforts.contains(d))
+                        .or_else(|| default_effort.clone());
                     let mut row = json!({
                         "hasEffort": has_effort,
                         "id": mid,
@@ -196,7 +209,10 @@ pub(super) fn extract_models_from_config_options(
                     if let Some(desc) = item["description"].as_str() {
                         row["description"] = json!(desc);
                     }
-                    if let Some(de) = default_effort.as_ref().filter(|_| !item_efforts.is_empty()) {
+                    if let Some(de) = item_default_effort
+                        .as_ref()
+                        .filter(|_| !item_efforts.is_empty())
+                    {
                         row["default_effort"] = json!(de);
                         row["defaultReasoningEffort"] = json!(de);
                     }
@@ -316,6 +332,28 @@ impl Bridge {
                 return Err(
                     "kiro_sdk_setting_unavailable: 当前 Kiro 模型未广告 effort 配置".into(),
                 );
+            }
+            let effort_option = matches!(kind, "effort" | "effortLevel")
+                && state.config_options.iter().any(|option| {
+                    let id = option["id"]
+                        .as_str()
+                        .or_else(|| option["configId"].as_str())
+                        .unwrap_or("");
+                    let category = option["category"].as_str().unwrap_or("");
+                    ["effortLevel", "effort", "reasoningEffort"]
+                        .iter()
+                        .any(|name| id.eq_ignore_ascii_case(name))
+                        || ["thought_level", "effort"]
+                            .iter()
+                            .any(|name| category.eq_ignore_ascii_case(name))
+                });
+            // Schema 2: Kiro embeds effort per model (`_meta.kiro.effortLevels`)
+            // without a standalone config option. `effort_supported()` already
+            // confirmed the selected model advertises levels; set it through the
+            // native `effortLevel` config id, mirroring the create-time
+            // `_meta.kiro.effortLevel` the CLI accepts.
+            if matches!(kind, "effort" | "effortLevel") && !effort_option {
+                return Ok(json!({"sessionId": sid, "configId": "effortLevel", "value": val}));
             }
             let option = state
                 .config_options
@@ -560,8 +598,13 @@ impl Bridge {
         _cwd: &str,
         refresh: bool,
     ) -> (Vec<Value>, Option<String>) {
-        // First check if any active session already has config_options/models
-        if !refresh {
+        // A running session's live config_options are the authoritative, always
+        // fresh catalog and carry per-model effort metadata the CLI's
+        // `--list-models` never reports. Prefer them even under `refresh`
+        // (which only exists to bypass the time-based cache below): this gives
+        // the new-session/bug-report picker real effort choices and skips the
+        // multi-second CLI probe whenever a session of this source is live.
+        {
             let sessions: Vec<Arc<Session>> =
                 self.sessions.lock().unwrap().values().cloned().collect();
             for s in sessions {
