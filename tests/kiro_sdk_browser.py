@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import server
 from history_fixtures import BINARY
 from kiro_sdk_fixtures import KiroFixture
+from sdk_usage_fixtures import assert_inline_usage, refresh_usage
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
 
@@ -194,6 +196,33 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert sum("Kiro V3 uses ACP over JSON-RPC 2.0." in (item.get("content") or "") for item in replay_items) == 1, replay_items
     watch(page, uid)
 
+    # Account credits: a separate zero-turn ACP query fills the footer after open.
+    credits = page.locator(".sdk-pane .sdk-status-row > .sdk-gauges .sdk-gauge").filter(has_text="月度")
+    expect(credits).to_have_count(1, timeout=30000)
+    expect(credits.locator("b")).to_have_text("25%")
+    expect(credits.get_by_role("progressbar")).to_have_attribute("aria-label", "KIRO POWER 月度 已用")
+    expect(credits).to_have_attribute("title", re.compile(
+        r"^KIRO POWER · 月度 已用 25%，剩余 75%；重置剩余 (?:\d+d )?\d{2}:\d{2}；更新于 "))
+    expect(page.locator(".sdk-pane .sdk-gauges")).to_have_attribute("title", re.compile(
+        r"KIRO POWER · 月度：2,500\.25 / 10,000 Credits · 剩余 75%；重置剩余 (?:\d+d )?\d{2}:\d{2}"))
+    assert_inline_usage(page)
+    usage_calls = fixture.received("_kiro/account/getUsage")
+    assert len(usage_calls) == 1 and usage_calls[0]["params"] == {}, usage_calls
+    snapshot = json.loads((fixture.root / "state/quotas/kiro.json").read_text())
+    bucket = snapshot["buckets"][0]
+    assert bucket["window"] == "monthly" and bucket["used"] == 2500.25 and bucket["limit"] == 10000, snapshot
+    assert re.fullmatch(r"\d{4}-\d{2}-01T00:00:00\+00:00", bucket["resets_at"]), bucket
+    if screenshots:
+        page.screenshot(path=str(screenshots / "kiro-sdk-credits.png"), full_page=True)
+        credits.hover()
+        page.screenshot(path=str(screenshots / "kiro-sdk-credits-hover.png"))
+    # The web /usage command explicitly refreshes the account snapshot.
+    (fixture.root / "kiro-credits-used").write_text("8100")
+    refresh_usage(page)
+    expect(credits.locator("b")).to_have_text("81%")
+    expect(credits).to_have_class(re.compile(r"\blow\b"))
+    assert len(fixture.received("_kiro/account/getUsage")) == 2
+
     # 5. Standard streaming turn (thought + tool_call + message + metadata)
     page.locator("#sdk-input").fill("Verify Kiro V3 streaming turn")
     page.locator("#sdk-send").click()
@@ -280,7 +309,9 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert rename_res["status"] >= 400 or rename_res["body"].get("ok") is False, rename_res
     assert (fixture.v3_dir / "session.json").read_bytes() == native_before
     assert not fixture.received("_kiro/session/rename")
-    assert not fixture.received("_kiro/account/getUsage"), "Unadvertised account RPC was guessed"
+    # Completed turns and plain usage reads reuse the account snapshot.
+    assert len(fixture.received("_kiro/account/getUsage")) == 2, "Turns re-queried account usage"
+    assert usage_res["quota"]["buckets"][0]["remaining_percent"] == 19, usage_res["quota"]
 
     fork_res = api(page, "fork", {"uid": uid, "cwd": str(fixture.work), "request_id": "kiro-fork-1"})
     assert fork_res["uid"] != uid and fork_res["session_id"] != fixture.sid, fork_res
@@ -340,6 +371,26 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     deletes_before = len(fixture.received("session/delete"))
     page.locator("dialog.app-popup").get_by_role("button", name="取消", exact=True).click()
     assert len(fixture.received("session/delete")) == deletes_before
+
+    # The stopped session keeps the account snapshot; the Agent quota page lists Kiro too.
+    expect(page.locator(".sdk-gauges .sdk-gauge:visible").filter(has_text="月度").locator("b")).to_have_text("81%")
+    page.locator("#settings").click()
+    page.get_by_role("tab", name="机器", exact=True).click()
+    page.locator("#quota-open").click()
+    table = page.locator("#quota-dialog").get_by_role("table", name="Kiro", exact=True)
+    expect(table.get_by_role("columnheader")).to_have_text(["机器", "窗口", "已使用", "重置倒计时", "采集"])
+    expect(table.locator("tbody tr").first).to_contain_text("月度")
+    expect(table.locator(".quota-remaining b")).to_have_text("81%")
+    expect(table.locator("[data-deadline]")).to_have_text(re.compile(r"^(?:\d+d )?\d{2}:\d{2}$"))
+    expect(page.locator("#quota-refresh")).to_be_enabled()
+    if screenshots:
+        for theme in ("light", "dark"):
+            page.emulate_media(color_scheme=theme)
+            page.screenshot(path=str(screenshots / f"kiro-quota-table-{theme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+    page.keyboard.press("Escape")
+    expect(page.locator("#quota-dialog")).to_have_count(0)
+    page.keyboard.press("Escape")
 
     if screenshots:
         for width in (1280, 390):

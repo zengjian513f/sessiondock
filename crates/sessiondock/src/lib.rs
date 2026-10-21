@@ -85,7 +85,11 @@ pub fn app_pair_with_shutdown(
         ));
     }
     let terminal = prepare_terminal(&config)?;
-    let quotas = Arc::new(quotas::Quotas::new(config.state_dir.as_deref(), None));
+    let quotas = Arc::new(quotas::Quotas::new(
+        config.state_dir.as_deref(),
+        None,
+        config.kiro_native_root.as_deref(),
+    ));
     let built = build_app(config, shutdown.clone(), None, terminal, Vec::new(), quotas)?;
     Ok((built.router, built.node_router))
 }
@@ -134,6 +138,7 @@ pub async fn prepare_app(
     let quotas = Arc::new(quotas::Quotas::new(
         config.state_dir.as_deref(),
         launcher.as_ref(),
+        config.kiro_native_root.as_deref(),
     ));
     let lifecycle = match (config.lifecycle_dir.clone(), launcher) {
         (Some(directory), Some(launcher)) => {

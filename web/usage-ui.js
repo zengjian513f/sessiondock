@@ -32,6 +32,7 @@ const UsageUI = {
   },
   window(value) {
     if(value==='spend_limit')return '消费限额';
+    if(value==='monthly')return '月度';
     const minutes = this.minutes(value);
     if (!Number.isFinite(minutes) || minutes <= 0) return value || '额度';
     return minutes % 1440 === 0 ? `${minutes/1440}天` : minutes % 60 === 0 ? `${minutes/60}小时` : `${minutes}分钟`;

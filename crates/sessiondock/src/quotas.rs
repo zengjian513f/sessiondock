@@ -18,8 +18,11 @@ use tokio::{
 pub struct Quotas {
     directory: Option<PathBuf>,
     profiles: Vec<CliProfile>,
-    refresh: [Mutex<Option<Instant>>; 2],
+    /// Kiro account HOME derived from the configured scope root, as for SDK sessions.
+    kiro_home: Option<PathBuf>,
+    refresh: [Mutex<Option<Instant>>; 3],
 }
+const COLLECTED: [&str; 3] = ["codex", "agy", "kiro"];
 fn now() -> String {
     chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339()
 }
@@ -65,10 +68,13 @@ pub fn save(path: &Path, value: &Value) -> std::io::Result<()> {
     result
 }
 impl Quotas {
-    pub fn new(state: Option<&Path>, config: Option<&Config>) -> Self {
+    pub fn new(state: Option<&Path>, config: Option<&Config>, kiro_root: Option<&Path>) -> Self {
         Self {
             directory: state.map(|p| p.join("quotas")),
             profiles: config.map(|c| c.profiles.clone()).unwrap_or_default(),
+            kiro_home: kiro_root
+                .and_then(crate::sessions::kiro::account_home)
+                .map(Path::to_path_buf),
             refresh: std::array::from_fn(|_| Mutex::new(None)),
         }
     }
@@ -82,7 +88,7 @@ impl Quotas {
             None => false,
         };
         let mut agents = Vec::new();
-        for source in ["codex", "claude", "agy"] {
+        for source in ["codex", "claude", "agy", "kiro"] {
             let mut value = empty(source);
             if let Some(dir) = &self.directory
                 && let Ok(bytes) = tokio::fs::read(dir.join(format!("{source}.json"))).await
@@ -125,7 +131,8 @@ impl Quotas {
                 .profiles
                 .iter()
                 .find(|p| source_name(p.source) == source)?;
-            let mut completed = self.refresh[usize::from(source == "agy")].lock().await;
+            let slot = COLLECTED.iter().position(|name| *name == source)?;
+            let mut completed = self.refresh[slot].lock().await;
             let path = dir.join(format!("{source}.json"));
             let previous = tokio::fs::read(&path)
                 .await
@@ -152,7 +159,11 @@ impl Quotas {
             {
                 return None;
             }
-            let result = tokio::time::timeout(Duration::from_secs(25), query(profile)).await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(25),
+                query(profile, self.kiro_home.as_deref()),
+            )
+            .await;
             let mut value = match result {
                 Ok(Ok(value)) => value,
                 _ => {
@@ -173,9 +184,9 @@ impl Quotas {
             value["configured"] = json!(true);
             Some(value)
         };
-        let (codex, agy) = tokio::join!(collect("codex"), collect("agy"));
+        let (codex, agy, kiro) = tokio::join!(collect("codex"), collect("agy"), collect("kiro"));
         let mut data = self.read().await;
-        for value in [codex, agy].into_iter().flatten() {
+        for value in [codex, agy, kiro].into_iter().flatten() {
             if let Some(row) = data["agents"]
                 .as_array_mut()
                 .unwrap()
@@ -193,10 +204,11 @@ fn source_name(source: Source) -> &'static str {
         Source::Codex => "codex",
         Source::Claude => "claude",
         Source::Agy => "agy",
+        Source::Kiro => "kiro",
         _ => "",
     }
 }
-async fn query(profile: &CliProfile) -> Result<Value, ()> {
+async fn query(profile: &CliProfile, kiro_home: Option<&Path>) -> Result<Value, ()> {
     let mut command = Command::new(&profile.executable);
     crate::lifecycle::launcher::background_command(command.as_std_mut());
     command
@@ -214,6 +226,9 @@ async fn query(profile: &CliProfile) -> Result<Value, ()> {
         .chain(crate::lifecycle::launcher::DENIED_ENV)
     {
         command.env_remove(key);
+    }
+    if profile.source == Source::Kiro {
+        return kiro_query(command, profile, kiro_home).await;
     }
     if profile.source == Source::Agy {
         if profile
@@ -303,6 +318,94 @@ async fn query(profile: &CliProfile) -> Result<Value, ()> {
     let _ = child.kill().await;
     let _ = child.wait().await;
     result
+}
+/// Kiro account usage through the CLI's own ACP `_kiro/account/getUsage` handler.
+/// It is not listed in `extensionMethods`; an unsupported CLI fails like any query.
+async fn kiro_query(
+    mut command: Command,
+    profile: &CliProfile,
+    home: Option<&Path>,
+) -> Result<Value, ()> {
+    if !profile.env.contains_key("HOME")
+        && let Some(home) = home
+    {
+        command.env("HOME", home);
+    }
+    let mut child = command
+        .args(["acp", "--agent-engine=v3", "--auth-method=cli"])
+        .spawn()
+        .map_err(|_| ())?;
+    let mut input = child.stdin.take().ok_or(())?;
+    let mut lines = BufReader::new(child.stdout.take().ok_or(())?).lines();
+    input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1,\"clientInfo\":{\"name\":\"sessiondock-quota\",\"version\":\"1\"},\"clientCapabilities\":{}}}\n").await.map_err(|_| ())?;
+    let result = async {
+        loop {
+            let line = lines.next_line().await.map_err(|_| ())?.ok_or(())?;
+            // Notifications and log lines do not answer either request.
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if value.get("method").is_some() {
+                continue;
+            }
+            if value["id"] == 1 {
+                if value.get("error").is_some() {
+                    return Err(());
+                }
+                input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"_kiro/account/getUsage\",\"params\":{}}\n").await.map_err(|_| ())?;
+            }
+            if value["id"] == 2 {
+                return kiro_snapshot(&value).ok_or(());
+            }
+        }
+    }
+    .await;
+    drop(input);
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    result
+}
+fn kiro_snapshot(response: &Value) -> Option<Value> {
+    let result = &response["result"];
+    if response.get("error").is_some() || result["success"] != true {
+        return None;
+    }
+    let data = &result["data"];
+    // The native reply carries only the UTC reset date of the billing cycle.
+    let reset = data["billingCycleReset"]
+        .as_str()
+        .and_then(|day| chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
+        .and_then(|day| day.and_hms_opt(0, 0, 0))
+        .map(|time| json!(time.and_utc().to_rfc3339()))
+        .unwrap_or(Value::Null);
+    let plan = data["planName"].as_str().unwrap_or("Kiro");
+    let mut buckets = Vec::new();
+    for row in data["usageBreakdowns"].as_array()? {
+        let (Some(used), Some(limit)) = (row["used"].as_f64(), row["limit"].as_f64()) else {
+            continue;
+        };
+        let limited = row["hasLimit"] != false && limit > 0.;
+        // Native `percentage` is floored to an integer; keep the exact ratio.
+        let remaining = limited.then(|| (100. - used * 100. / limit).clamp(0., 100.));
+        let kind = row["resourceType"].as_str().unwrap_or("usage");
+        let mut value = bucket(
+            &format!("kiro:{}", kind.to_ascii_lowercase()),
+            plan,
+            json!("monthly"),
+            remaining,
+            reset.clone(),
+        );
+        value["used"] = json!(used);
+        value["limit"] = json!(limit);
+        if let Some(unit) = row["displayName"].as_str() {
+            value["unit"] = json!(unit);
+        }
+        if !limited {
+            value["remaining_text"] = json!("不限量");
+        }
+        buckets.push(value);
+    }
+    Some(snapshot("kiro", buckets))
 }
 pub fn claude_snapshot(value: &Value) -> Option<Value> {
     let limits = value.get("rate_limits")?.as_object()?;

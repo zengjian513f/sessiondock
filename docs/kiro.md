@@ -15,6 +15,8 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
   `session/fork`（支持 `messageId`），以及 `_kiro/session/history`、
   `_kiro/session/export`、`_kiro/session/context`、`_kiro/session/compact`。
   没有广告改名、steer 或账户额度接口。能力仍以每次运行的广告为准。
+  未广告的 `_kiro/account/getUsage` 在同版本 ACP 中可直接调用，返回套餐、
+  `billingCycleReset`（UTC 日期）及 credits used/limit；额度查询只用它，见[额度合同](quotas.md)。
 - ACP `session/list {}` 能跨本地工作目录列出会话；显式 `cwd` 会筛选。
   分页使用 `nextCursor`；尚无真实多页或远程来源的验收证据。
   同一安装版 CLI `--list-sessions --all-cwds --format json` 返回空列表，

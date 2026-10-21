@@ -4,7 +4,7 @@ async function initQuotas(container) {
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
-  const names = {codex:'Codex', claude:'Claude Code', agy:'Agy'};
+  const names = {codex:'Codex', claude:'Claude Code', agy:'Agy', kiro:'Kiro'};
   let nodes = [], hub = false, stopped = false;
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
   async function request(path, method='GET') {
