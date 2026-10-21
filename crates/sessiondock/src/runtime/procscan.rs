@@ -1147,14 +1147,17 @@ pub struct ScanSnapshot {
 }
 
 /// TTL-cached, single-flight scanner: concurrent callers
-/// wait for one scan and reuse it; `force` bypasses the TTL but still serializes.
+/// wait for one scan and reuse it; `force` bypasses the TTL and coalesces:
+/// a forced caller reuses a scan that started after its own request.
 pub struct ProcScanner {
     root: PathBuf,
     grok_active: Option<PathBuf>,
     roots: SessionRoots,
     ttl: Duration,
     cached: Mutex<Option<Arc<Scan>>>,
-    refresh: tokio::sync::Mutex<()>,
+    /// Held across one scan; holds the start time of the cached scan
+    /// (`Scan::completed` is its completion time).
+    refresh: tokio::sync::Mutex<Option<Instant>>,
 }
 
 impl ProcScanner {
@@ -1174,7 +1177,7 @@ impl ProcScanner {
             roots,
             ttl,
             cached: Mutex::new(None),
-            refresh: tokio::sync::Mutex::new(()),
+            refresh: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -1215,10 +1218,25 @@ impl ProcScanner {
         if !force && let Some(hit) = self.fresh() {
             return Ok(hit);
         }
-        let _refresh = self.refresh.lock().await;
+        let requested = Instant::now();
+        let mut started = self.refresh.lock().await;
         if !force && let Some(hit) = self.fresh() {
             return Ok(hit);
         }
+        // A forced caller queued behind another scan reuses it when that
+        // scan began after this request: it is as fresh as one of its own.
+        if force
+            && started.is_some_and(|at| at >= requested)
+            && let Some(scan) = self.last()
+        {
+            let age = scan.completed.elapsed();
+            return Ok(ScanSnapshot {
+                scan,
+                cached: true,
+                age,
+            });
+        }
+        let begun = Instant::now();
         let root = self.root.clone();
         let grok_active = self.grok_active.clone();
         let roots = self.roots.clone();
@@ -1230,6 +1248,7 @@ impl ProcScanner {
         .map_err(|_| ScanError::Failed)?;
         let scan = Arc::new(scan);
         *lock(&self.cached) = Some(scan.clone());
+        *started = Some(begun);
         Ok(ScanSnapshot {
             scan,
             cached: false,

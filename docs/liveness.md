@@ -30,7 +30,9 @@ privileges (another user's `environ`/`fd` are unreadable and simply skipped;
 Results are cached for 3 s counted from the moment a scan completes (a slow
 scan must not expire its own result), refreshes are single-flight (waiters
 reuse the one in progress) and `?force=1` bypasses the TTL while still
-serializing. On this machine (256 cores, ~3000 processes,
+serializing; a forced caller queued behind a scan that started after its
+request reuses that scan (`cache.hit: true`) instead of scanning again, so
+concurrent forced requests share one fresh scan. On this machine (256 cores, ~3000 processes,
 ~180 keyword matches) one debug-build scan takes 60–70 ms.
 
 ## Rules kept from `live.py` (commit 16cc89c)

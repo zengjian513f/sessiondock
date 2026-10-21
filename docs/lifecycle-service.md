@@ -103,8 +103,10 @@ acceptance is inferred from readiness, terminal output or a timestamp.
 
 Every successful spawn immediately transfers its exact `std::process::Child` to
 a process-wide reaper before leaving blocking work. The reaper has one thread and
-a growing collection of owned children. It uses `try_wait`, retains wait-error
-handles as unknown, and removes jobs only on known child exit. It never kills children. No service/store is retained by the
+a growing collection of owned children. It blocks while it owns none and is
+woken by adoption; otherwise it polls `try_wait` every 50 ms, retains
+wait-error handles as unknown (reported once, retried every 5 s), and
+removes jobs only on known child exit. It never kills children. No service/store is retained by the
 reaper. Reopening in the same process can subscribe to a still-owned Child only
 by matching host root and complete record/name/source/launch/instance identity;
 completed jobs are removed, not retained as an unbounded tombstone map. Thus
