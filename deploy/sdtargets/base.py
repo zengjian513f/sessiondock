@@ -269,9 +269,32 @@ class TargetHandler:
         """Upload binaries as `.new` and web to a staging dir; build natively if needed."""
         raise NotImplementedError
 
+    def discard_staging(self) -> None:
+        """Remove what `stage()` uploaded when the run stops before `backup()` succeeds.
+
+        Raises when removal fails. The default is a no-op for kinds whose staging
+        leaves nothing beside the live files."""
+
     def backup(self) -> str:
         """Copy current bin/ and web/ into the backup dir; return its path."""
         raise NotImplementedError
+
+    def backup_versions(self, backup_dir: str) -> dict[str, str]:
+        """Release markers saved in `backup_dir` (`bin/<name>.version`); old backups may have none."""
+        versions = {}
+        names = list(self.t.binaries)
+        if self.o.with_ptyhost:
+            names.append("ptyhost")
+        if self.o.with_sdkhost and self.kind in ("linux-node", "macos-node"):
+            names.append("sdkhost")
+        for name in names:
+            if self.kind.startswith("windows"):
+                rc, out = self.sh.run(f'type "{backup_dir}\\bin\\{name}.exe.version" 2>nul')
+            else:
+                rc, out = self.sh.run(f'cat {shlex.quote(backup_dir + "/bin/" + name + ".version")} 2>/dev/null')
+            if rc == 0 and out.strip():
+                versions[name] = out.strip()
+        return versions
 
     def swap(self) -> None:
         """Rename staged binaries into place and sync web/ (the only mutations)."""

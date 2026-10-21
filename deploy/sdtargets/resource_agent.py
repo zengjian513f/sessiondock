@@ -1,6 +1,7 @@
 """Opt-in Linux system collector. No dependency from workloads or SSH to this unit."""
 from __future__ import annotations
 import json
+import re
 import shlex
 import time
 import tarfile
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from .base import TargetHandler, ProbeResult, VerifyResult, register, failed_probe
 
 q = shlex.quote
+BACKUP_RE = re.compile(r'^backup-deploy-[0-9a-f]+-[0-9]{8}-[0-9]{6}$')
 UNIT = 'resource-agent.service'
 SOCKET = '/run/resource-agent/agent.sock'
 HEALTH = """import socket,json
@@ -42,6 +44,15 @@ class ResourceAgentHandler(TargetHandler):
     def stage(self):
         _, temp = self.sh.run('mktemp -d /tmp/resource-agent-deploy.XXXXXX', check=True)
         self.temp = temp.strip()
+        try:
+            self._stage()
+        except Exception:
+            try:
+                self.discard_staging()
+            except Exception as e:
+                self.log(f'discard staging failed: {e}')
+            raise
+    def _stage(self):
         self.sh.upload(self.a.binaries['resource-agent'], self.temp+'/resource-agent')
         if not self.a.source_archive:
             raise RuntimeError('collector requires the committed source archive')
@@ -56,6 +67,13 @@ class ResourceAgentHandler(TargetHandler):
         self.sh.run("printf '%s\n' "+q(self.a.version)+' > '+q(self.temp+'/resource-agent.version'), check=True)
         config = f'MONITOR_UID={self.uid}\nNODE_ID_FILE={self.node_file}\n'
         self.sh.run("printf '%s' "+q(config)+' > '+q(self.temp+'/resource-agent.env'),check=True)
+    def discard_staging(self):
+        """Remove the private /tmp staging dir (binary, units, env config)."""
+        temp = getattr(self, 'temp', None)
+        if temp:
+            self.sh.run('rm -rf '+q(temp),check=True)
+            self.temp = None
+            self.log('discarded staging '+temp)
     def backup(self):
         stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
         self.backup_dir = self.t.prefix+'/backup-deploy-'+self.a.short+'-'+stamp
@@ -99,6 +117,17 @@ class ResourceAgentHandler(TargetHandler):
         detail = 'collector health/events/version verified' if ok else 'collector health, BPF events, service state or version verification failed'
         return VerifyResult(ok,detail,build='resource-agent',active=active.strip()=='active',binary_versions={'resource-agent':have})
     def rollback(self, backup_dir):
+        try:
+            self._rollback(backup_dir)
+        finally:
+            temp = getattr(self, 'temp', None)
+            if temp:  # staging is never needed after a rollback attempt
+                try:
+                    code, _ = self.sh.run('rm -rf '+q(temp))
+                    if code == 0: self.temp = None
+                except Exception as e:  # never mask the rollback outcome
+                    self.log(f'staging cleanup failed: {e}')
+    def _rollback(self, backup_dir):
         if not backup_dir.startswith(self.t.prefix+'/backup-deploy-'): raise RuntimeError('invalid backup path')
         self.sh.run('sudo -n systemctl stop '+UNIT, timeout=20)
         self.sh.run('sudo -n rm -f '+q(self.t.prefix+'/deployed-commit')+'; if sudo -n test -f '+q(backup_dir+'/deployed-commit')+'; then sudo -n cp '+q(backup_dir+'/deployed-commit')+' '+q(self.t.prefix+'/deployed-commit')+'; fi',check=True)
@@ -118,7 +147,23 @@ class ResourceAgentHandler(TargetHandler):
             self.sh.run('sudo -n systemctl disable '+UNIT,check=True)
             self.sh.run('sudo -n rm -f /etc/systemd/system/resource-agent.service /etc/resource-agent.env '+q(self.t.prefix+'/bin/resource-agent'),check=True)
             self.sh.run('sudo -n systemctl daemon-reload',check=True)
+    def backup_versions(self, backup_dir):
+        """Collector backups are flat: `<backup>/resource-agent.version`."""
+        versions = {}
+        for name in self.t.binaries:
+            code, out = self.sh.run('sudo -n cat '+q(backup_dir+'/'+name+'.version')+' 2>/dev/null')
+            if code == 0 and out.strip(): versions[name] = out.strip()
+        return versions
+    def list_backups(self):
+        """Newest first by directory mtime, like the Linux node handler."""
+        _, out = self.sh.run('ls -1td '+q(self.t.prefix)+'/backup-deploy-* 2>/dev/null || true', timeout=30)
+        return [p.strip() for p in out.splitlines() if BACKUP_RE.match(p.strip().rsplit('/', 1)[-1])]
     def write_marker(self):
-        self.sh.run("printf '%s\\n' "+q(self.a.commit)+' | sudo -n tee '+q(self.t.prefix+'/deployed-commit')+' >/dev/null',check=True)
-        self.sh.run('rm -rf '+q(self.temp),check=True)
+        # Same marker text as base.py/fleet_status.py expect; the collector keeps it at <prefix>/deployed-commit.
+        text = f'{self.a.commit} {self.a.short} {self.a.built_at} dirty={int(self.a.dirty)}'
+        try:
+            self.sh.run("printf '%s\\n' "+q(text)+' | sudo -n tee '+q(self.t.prefix+'/deployed-commit')+' >/dev/null',check=True)
+        finally:
+            self.sh.run('rm -rf '+q(self.temp),check=True)
+            self.temp = None
     def prune_backups(self, keep): return []  # Keep explicit collector rollback records.

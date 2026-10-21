@@ -348,6 +348,17 @@ class WindowsNode(TargetHandler):
                         f"'{self.deploy_dir}\\web.zip' -DestinationPath '{staging}' -Force\" & "
                         f'if exist "{staging}\\index.html" (echo WEB_STAGED) else (exit /b 5)', timeout=120, check=True)
 
+    def discard_staging(self) -> None:
+        """Remove bin\\<name>.new.exe{,.version} and web.staging\\; source_dir\\.deploy is reused by the next run."""
+        p = self.prefix
+        staging = f"{p}\\{WEB_STAGING}"
+        news = [f"{p}\\bin\\{name}{suffix}" for name in self.bins for suffix in (".new.exe", ".new.exe.version")]
+        left = " else ".join(f'if exist "{path}" (exit /b 5)' for path in [staging, *news])
+        dels = "".join(f'del /q /f "{path}" 2>nul & ' for path in news)
+        self.sh.run(f'rd /s /q "{staging}" 2>nul & {dels}{left} else (echo DISCARDED)', timeout=60, check=True)
+        self.staged, self.expected_versions = [], {}
+        self.log("discarded staged bin\\*.new.exe and web.staging\\")
+
     def backup(self) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         self.backup_dir = f"{self.prefix}\\backup-deploy-{self.a.short}-{stamp}"
