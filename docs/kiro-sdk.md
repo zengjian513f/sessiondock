@@ -9,10 +9,14 @@
 `initialize` 的标准能力及 `_meta.kiro.extensionMethods` 门控高级动作。
 配置菜单使用原生目录和确认的值；未广告的设置、改名、steer、额度接口不伪装支持。
 模型菜单使用官方 CLI 目录或已观测缓存，不通过 `session/new` 探测模型。
+新建菜单继续强制刷新账号目录；CLI 查询在阻塞线程池执行，不占用 SDK 事件循环。
+已有会话优先读取原生配置，目录失败保留之前的缓存。
 
 私有 `<state>/sdk-adapters/kiro` 保存 RPC/写入 ID、完整待发送 frame、宿主写入证据、
-原生响应、回合归属、stdout/stderr 游标及 live 投影。处理一行先保存状态与游标，
-再通知网页。重附着追赶原宿主，不重新 initialize/load，不重发 written 或结果未知
+原生响应、回合归属、stdout/stderr 游标及 live 投影。每次宿主读取中的完整 ACP 帧
+按顺序合并处理，先持久化状态与最后完整帧的游标，再通知网页和 RPC 等待者；未完整
+的尾帧保留到下一次读取。检查点缓冲序列化后 flush/fsync，不逐字段写盘。
+重附着追赶原宿主，不重新 initialize/load，不重发 written 或结果未知
 的 prompt。恢复后的公共队列观察原结果；宿主缺失明确待核对，不启动替代实例。
 
 - 创建／分支先保存稳定操作意图与宿主键，再发 mutation。HTTP 回应丢失重取原 RPC

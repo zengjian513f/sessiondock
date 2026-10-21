@@ -126,6 +126,9 @@ client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件�
   等节点唯一的答复 50 s（`BULK_WRITE_TIMEOUT`，低于前置代理常见的 60 s）：节点处理完
   整批才答复，逐条删除 OpenCode 会话要调用 `opencode api`，5 s 会在节点还在删时放弃，
   并随断开中止节点剩余的删除；
+- DELTA（SDK 启动）：`native-sdk` 和 `codex-sdk` 的 `open/create/models` 代理等待
+  采用 50 s，允许原生初始化、历史回放和账号模型目录查询超过普通代理的 10 s。
+  超时仍报告结果未知，不自动重试写操作；其它代理保持原等待规则。
 - 响应框架按 `http.client` 规则：1xx/204/304/HEAD 无正文；`Transfer-Encoding: chunked`；
   `Content-Length`（多值必须相同）；否则读到对端关闭；`100 Continue` 跳过；
 - 状态行与每条响应头分别以 64 KiB 为界，响应头最多 100 条；不对全部响应头另设累计上限；

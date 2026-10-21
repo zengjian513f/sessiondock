@@ -573,7 +573,12 @@ impl Bridge {
             }
         }
 
-        let cat = crate::lifecycle::models::catalog(&self.profile);
+        // The CLI may wait for its account catalog over the network. Keep it
+        // off Tokio workers so opening/replaying sessions and SSE keep progressing.
+        let profile = self.profile.clone();
+        let cat = tokio::task::spawn_blocking(move || crate::lifecycle::models::catalog(&profile))
+            .await
+            .unwrap_or_default();
         if !cat.models.is_empty() {
             let list: Vec<Value> = cat
                 .models

@@ -684,7 +684,17 @@ pub async fn proxy(
     let websocket = forward.path == "/api/term/attach";
     let idle = if forward.path == "/api/watch" {
         WATCH_TIMEOUT
-    } else if forward.path.starts_with("/api/session/clone") {
+    } else if forward.path.starts_with("/api/session/clone")
+        || matches!(
+            forward.path,
+            "/api/native-sdk/open"
+                | "/api/native-sdk/create"
+                | "/api/native-sdk/models"
+                | "/api/codex-sdk/open"
+                | "/api/codex-sdk/create"
+                | "/api/codex-sdk/models"
+        )
+    {
         super::client::BULK_WRITE_TIMEOUT
     } else {
         PROXY_TIMEOUT
