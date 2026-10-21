@@ -7200,11 +7200,13 @@ function head(m, total) {
     const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
     turnMode.title = turnMode.ariaLabel = label;
     labelSessionAction(turnMode);
-    const box = SessionContentView.kind === 'sdk' ? SdkView.history : $('#msgs');
-    box?.querySelectorAll(':scope > .turn-process').forEach(
-      node => S.compactTurns ? node._fold?.() : node._open?.());
-    refreshMessageTimeDividers(box);
-    if (SessionContentView.kind !== 'sdk') settle(box);
+    const boxes = SessionContentView.kind === 'sdk' ? [SdkView.history, SdkView.live] : [$('#msgs')];
+    for (const box of boxes) {
+      box?.querySelectorAll(':scope > .turn-process').forEach(
+        node => S.compactTurns ? node._fold?.() : node._open?.());
+      refreshMessageTimeDividers(box);
+    }
+    if (SessionContentView.kind !== 'sdk') settle(boxes[0]);
   };
   const viewSwitch = h.querySelector('#a-view-switch');
   const viewMenu = h.querySelector('#session-view-menu');

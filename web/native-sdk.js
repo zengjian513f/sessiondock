@@ -38,6 +38,7 @@ const NativeSdkView = {
     this.readOnly = readOnly;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     this.items = []; this.requests = new Map(); this.nodes = new Map();
+    this.liveTurns = new Map();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null;
@@ -265,6 +266,7 @@ const NativeSdkView = {
       this.nodes.set(id, node);
     }
     for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
+    SdkUI.foldLiveTurns(this, this.items, {tailComplete: !this.running});
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
