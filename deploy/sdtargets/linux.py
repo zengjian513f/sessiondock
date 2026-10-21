@@ -253,10 +253,14 @@ if active:
             self._discard_staging()
             raise
 
-    def _discard_staging(self) -> None:
+    def _discard_staging(self, check: bool = False) -> None:
         news = " ".join(q(self.path("bin", n)) for name in self.binaries() for n in (name + ".new", name + ".new.version"))
         cmd = f"rm -rf {q(self.path('web.staging'))}" + (f" && rm -f {news}" if news else "")
-        self.sh.run(cmd, timeout=60)
+        self.sh.run(cmd, timeout=60, check=check)
+
+    def discard_staging(self) -> None:
+        self._discard_staging(check=True)
+        self.log("discarded staged bin/*.new and web.staging/")
 
     def backup_names(self) -> list[str]:
         names = list(self.t.binaries)

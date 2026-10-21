@@ -81,8 +81,7 @@ def suites(binary):
     """Build the declarative SUITES list: rust, then python."""
     items = []
     for name, argv, kind, timeout, tags in RUST:
-        items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags,
-                      "skip": None})
+        items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags})
 
     for path in sorted((ROOT / "tests").glob("*.py")):
         if path.name in SKIP_PY:
@@ -92,7 +91,6 @@ def suites(binary):
             continue
         rel = str(path.relative_to(ROOT))
         argv = [sys.executable, rel]
-        skip = None
         head = text.splitlines()[:40]
         serial = SERIAL_MARK in head
         browser = "playwright" in text
@@ -105,14 +103,14 @@ def suites(binary):
             argv.append("--browser")
         if has_flag(text, "--binary"):
             argv += ["--binary", binary]
-        items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
-                      "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real, "binary": binary, "output_dir": has_flag(text, "--output") and path.stem != "terminal_rtt_browser"})
+        item = {"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
+                "tags": ("python",), "serial": serial, "browser": browser,
+                "real": real, "binary": binary, "output_dir": has_flag(text, "--output") and path.stem != "terminal_rtt_browser"}
+        items.append(item)
         if path.name == "lifecycle_browser.py":
-            items.append({"name": "lifecycle_browser_native_binding",
-                          "argv": [sys.executable, rel, "--native-binding"],
-                          "kind": "python", "timeout": 900, "tags": ("python",), "skip": None,
-                          "serial": serial, "browser": browser, "real": False})
+            # Same binary and environment as the ordinary entry, plus the mode flag.
+            items.append({**item, "name": "lifecycle_browser_native_binding",
+                          "argv": [*argv, "--native-binding"]})
     return items
 
 
@@ -130,9 +128,6 @@ def tail(path, n=3):
 
 def run_one(suite, env, log_dir, scale):
     log = log_dir / f"{suite['name']}.log"
-    if suite["skip"]:
-        log.write_text(f"SKIP {suite['skip']}\n", encoding="utf-8")
-        return "SKIP", 0.0, suite["skip"]
     timeout = suite["timeout"] * scale
     started = time.monotonic()
     try:
@@ -247,10 +242,7 @@ def main(argv=None):
     if args.list:
         print(f"frontend: {selected_web}")
         for suite in plan:
-            line = f"{suite['name']:<36} {suite['kind']:<7} {suite['timeout']:4d}s  {shlex.join(suite['argv'])}"
-            if suite["skip"]:
-                line += f"  SKIP: {suite['skip']}"
-            print(line)
+            print(f"{suite['name']:<36} {suite['kind']:<7} {suite['timeout']:4d}s  {shlex.join(suite['argv'])}")
         print(f"{len(plan)} suites")
         if args.json:
             dump_json(args.json, {"plan": [{"name": s["name"], "kind": s["kind"],
@@ -284,7 +276,10 @@ def main(argv=None):
 
     def execute(suite):
         idx = index_label(order[suite["name"]], n)
-        if stop.is_set() and not suite["skip"]:
+        if stop.is_set():
+            # Stopped after an earlier failure: report the suite as not run.
+            with lock:
+                outcome[suite["name"]] = ("SKIP", 0.0, "not run: stopped after an earlier failure")
             return
         with lock:
             print(f"{idx} START {suite['name']}", flush=True)

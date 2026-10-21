@@ -15,7 +15,9 @@ python3 tests/run_validation.py --only legacy_browser
 
 `--tags` defaults to `rust,python`. Validation is by headless Chromium browser
 suites. `--only NAME[,NAME…]` and `--skip`
-filter by suite name. `--keep-going` continues after a failure. Per-suite logs
+filter by suite name. `--keep-going` continues after a failure; without it,
+suites not started after the first failure appear in the summary and JSON as
+`SKIP` (`not run`). Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
 share no cargo build directory (`cargo_clippy`; `cargo_build`;
 `cargo_check_windows`; `cargo_fmt`), then Python (`tests/*.py` with

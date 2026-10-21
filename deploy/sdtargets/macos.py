@@ -240,6 +240,14 @@ class MacOSNode(TargetHandler):
             # a trailing slash selects directory-content semantics, so this must stay a str
             self.sh.upload(str(self.a.web_dir).rstrip("/") + "/", staging + "/", delete=True)
 
+    def discard_staging(self) -> None:
+        """Remove bin/<name>.new{,.version} and web.staging/; source_dir stays as the warm build tree."""
+        p = self.prefix
+        news = " ".join(_q(f"{p}/bin/{name}{suffix}") for name in self.bins for suffix in (".new", ".new.version"))
+        self.sh.run(f"rm -rf {_q(p + '/' + WEB_STAGING)}" + (f" && rm -f {news}" if news else ""), timeout=60, check=True)
+        self.staged, self.expected_versions = [], {}
+        self.log("discarded staged bin/*.new and web.staging/")
+
     def backup(self) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         d = f"{self.prefix}/backup-deploy-{self.a.short}-{stamp}"

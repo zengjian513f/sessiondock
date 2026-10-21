@@ -407,19 +407,6 @@ def rollback_problems(before: ProbeResult, after: ProbeResult, names: list[str],
     return out
 
 
-def backup_versions(h, backup: str) -> dict[str, str]:
-    """Read release markers from a backup; old backups may have none."""
-    versions = {}
-    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []) + (["sdkhost"] if h.o.with_sdkhost and h.kind in ("linux-node", "macos-node") else []):
-        if h.kind.startswith("windows"):
-            rc, out = h.sh.run(f'type "{backup}\\bin\\{name}.exe.version" 2>nul')
-        else:
-            rc, out = h.sh.run(f'cat {shlex.quote(backup + "/bin/" + name + ".version")} 2>/dev/null')
-        if rc == 0 and out.strip():
-            versions[name] = out.strip()
-    return versions
-
-
 def finisher(row: dict, log: Log, t0: float):
     def finish(result: str, detail: str = "") -> dict:
         row["result"], row["detail"], row["seconds"] = result, detail, time.monotonic() - t0
@@ -464,8 +451,10 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
     if opts.dry_run:
         return finish("PLANNED", f"dry run; {len(row['plan'])} steps, nothing uploaded")
     backup = None
+    staged = False
     try:
         h.stage()
+        staged = True
         backup = row["backup"] = h.backup()
         h.swap()
         h.restart()
@@ -477,7 +466,15 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
         err = f"{type(e).__name__}: {e}".splitlines()[0][:300]
         log(f"FAILED: {e}")
         if backup is None:
-            return finish("FAILED", err + " (nothing was changed on the target)")
+            if not staged:  # Linux/hub and resource-agent stage() remove their own partial uploads
+                return finish("FAILED", err + " (nothing was changed on the target)")
+            try:
+                h.discard_staging()
+            except Exception as e2:
+                log(f"discard staging failed: {e2}")
+                why = f"{type(e2).__name__}: {e2}".splitlines()[0][:200]
+                return finish("FAILED", err + f" (live files unchanged; staged files may remain, discard raised {why})")
+            return finish("FAILED", err + " (staged files removed; live files unchanged)")
         try:
             log(f"rolling back from {backup}")
             h.rollback(backup)
@@ -521,7 +518,7 @@ def run_rollback(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path,
                 return finish("FAILED", "no backup-deploy-* dir found on the target; pass --backup DIR")
             backup = found[0]
         row["backup"] = backup
-        expect = backup_versions(h, backup)
+        expect = h.backup_versions(backup)
         if h.kind.startswith("windows"):
             rc, restored_build = h.sh.run(f'type "{backup}\\web\\release-version.txt" 2>nul')
         else:

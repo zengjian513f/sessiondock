@@ -180,7 +180,9 @@ Hub 和资源代理没有本地 Kiro 目录，排除。捕获失败的节点先�
 ## 每台目标的步骤与不变量
 
 顺序固定为 `probe → plan → stage → backup → swap → restart → verify → write_marker → prune_backups`
-（`deploy/sdtargets/base.py` 是合同，每个 kind 一个模块实现这些步骤）。`backup` 成功之后任何一步失败：
+（`deploy/sdtargets/base.py` 是合同，每个 kind 一个模块实现这些步骤）。`stage` 完成而 `backup` 失败时，
+`discard_staging()` 删除本轮暂存（`bin/*.new`、`web.staging`，资源代理的 `/tmp` 暂存目录），结果记 `FAILED`
+并说明暂存已删除或可能残留。`backup` 成功之后任何一步失败：
 `rollback(backup_dir) → restart → 再 probe`，结果记 `ROLLED_BACK`（仍算失败）；SSH 连接超时、拒绝、
 断开或网络不可达记 `SKIPPED`，不计测试或部署失败；身份不匹配、认证失败、目录缺失、探测程序异常
 仍记 `FAILED`。开始部署后的上传、构建、重启或健康检查失败仍按失败和回滚处理。回滚命令也会跳过离线节点。
@@ -276,5 +278,10 @@ the same explicit SSH routing/hostname checks as its node, and
 SSH user is the monitored UID; sudo is required for installing the system unit.
 The target verifies the local socket, release version and active BPF event capture;
 a failed installation restores the previous collector, or disables/removes a
-new installation. It never restarts SSH or workload/session hosts. Non-Linux
+new installation. It never restarts SSH or workload/session hosts.
+Staging lives in a private `/tmp` directory, removed after the marker, on
+discard and after rollback. Backups are flat
+(`backup-deploy-*/resource-agent.version`); `rollback` without `--backup`
+uses the newest by mtime. The marker `<prefix>/deployed-commit` uses the
+standard `<full sha> <short> <built_at> dirty=<0|1>` text. Non-Linux
 nodes without a collector retain the compatibility API.
