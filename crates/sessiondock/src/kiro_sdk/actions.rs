@@ -412,6 +412,7 @@ impl Bridge {
         uid: &str,
         cwd: &str,
         target: &Value,
+        refresh: bool,
     ) -> Result<Value, String> {
         let observed_from_target = target["observed_model"]
             .as_str()
@@ -472,7 +473,7 @@ impl Bridge {
             }
 
             if list.is_empty() {
-                let (catalog_list, default_m) = self.catalog_or_probe_models(cwd).await;
+                let (catalog_list, default_m) = self.catalog_or_probe_models(cwd, refresh).await;
                 list = catalog_list;
                 if cur_model.is_none() {
                     cur_model = default_m;
@@ -490,7 +491,7 @@ impl Bridge {
         }
 
         // 2. Use confirmed official catalog metadata when no SDK process is running.
-        let (mut list, default_model) = self.catalog_or_probe_models(cwd).await;
+        let (mut list, default_model) = self.catalog_or_probe_models(cwd, refresh).await;
         if !uid.is_empty() {
             let sid = self.resolve_sid(uid, target, &Value::Null);
             let mut catalog_model = None;
@@ -548,9 +549,9 @@ impl Bridge {
         }))
     }
 
-    pub(super) async fn catalog_or_probe_models(&self, _cwd: &str) -> (Vec<Value>, Option<String>) {
+    pub(super) async fn catalog_or_probe_models(&self, _cwd: &str, refresh: bool) -> (Vec<Value>, Option<String>) {
         // First check if any active session already has config_options/models
-        {
+        if !refresh {
             let sessions: Vec<Arc<Session>> =
                 self.sessions.lock().unwrap().values().cloned().collect();
             for s in sessions {
@@ -563,11 +564,13 @@ impl Bridge {
             }
         }
 
-        if let Some(cached) = self.models_cache.lock().unwrap().as_ref()
-            && cached.at.elapsed() < Duration::from_secs(600)
-            && !cached.models.is_empty()
-        {
-            return (cached.models.clone(), cached.default_model.clone());
+        if !refresh {
+            if let Some(cached) = self.models_cache.lock().unwrap().as_ref()
+                && cached.at.elapsed() < Duration::from_secs(600)
+                && !cached.models.is_empty()
+            {
+                return (cached.models.clone(), cached.default_model.clone());
+            }
         }
 
         let cat = crate::lifecycle::models::catalog(&self.profile);

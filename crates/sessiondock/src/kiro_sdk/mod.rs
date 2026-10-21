@@ -313,7 +313,10 @@ impl Bridge {
             "steer" => self.steer(uid, &payload).await,
             "input_queue" => self.handle_queue_action(uid, &payload).await,
             "respond" => self.respond(uid, &payload).await,
-            "models" => self.models_action(uid, &cwd, &target).await,
+            "models" => {
+                let refresh = payload["refresh"] == true;
+                self.models_action(uid, &cwd, &target, refresh).await
+            }
             "settings" => {
                 let session = self.get_session(uid)?;
                 if let (Some(cid), Some(val)) =

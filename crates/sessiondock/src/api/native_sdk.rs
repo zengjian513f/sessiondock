@@ -123,6 +123,9 @@ async fn execute(
     body.as_object_mut().unwrap().remove("images");
     body.as_object_mut().unwrap().remove("files");
     let target = if method == "models" && body["uid"].as_str().is_none() {
+        // New-session model picker: always fetch fresh catalog, ignoring cache TTL.
+        // Users opening the dialog after subscription changes expect to see new models.
+        body["refresh"] = json!(true);
         let cwd = body["cwd"]
             .as_str()
             .filter(|s| !s.is_empty())
