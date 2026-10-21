@@ -281,7 +281,8 @@ impl LiveState {
     }
 
     pub(super) fn broadcast(&self) {
-        let snap = self.snapshot(&self.uid, &self.cwd);
+        // Public SSE frame: windowed items, no subtask transcripts.
+        let snap = self.snapshot(&self.uid, &self.cwd, true);
         let _ = self.events.send(Arc::from(snap.to_string()));
     }
 
@@ -1475,7 +1476,49 @@ impl LiveState {
         }
     }
 
-    pub(super) fn snapshot(&self, uid: &str, cwd: &str) -> Value {
+    /// Live items carried in a wire snapshot. Earlier history is served by the
+    /// paginated `/api/messages` endpoint, which stitches in front of these live
+    /// items at the first live user turn. Sending the whole transcript in every
+    /// SSE frame was the bulk of the payload; cap it to a recent window like the
+    /// terminal view.
+    ///
+    /// The window is counted in USER TURNS (not raw items) and begins on a user
+    /// boundary, because the client dedups history against the first live user
+    /// turn by identity. `MAX_TURNS` stays well under the history window's tail
+    /// (`pages::WINDOW_TAIL_EVENTS` = 200 events, i.e. far more than this many
+    /// turns) so that first live user turn is always present in `/api/messages`
+    /// and the seam never gaps.
+    fn windowed_items(&self) -> &[Value] {
+        const MAX_TURNS: usize = 40;
+        // Walk backward counting user-turn starts; stop once we've included
+        // MAX_TURNS of them (or reach the beginning).
+        let mut turns = 0usize;
+        let mut start = self.items.len();
+        for (i, item) in self.items.iter().enumerate().rev() {
+            if item["role"].as_str() == Some("user") {
+                turns += 1;
+                start = i;
+                if turns >= MAX_TURNS {
+                    break;
+                }
+            }
+        }
+        // No user turn at all (or fewer than the cap): send everything.
+        if start == self.items.len() {
+            return &self.items;
+        }
+        &self.items[start..]
+    }
+
+    /// `wire` selects the payload shape:
+    /// - `false` (projection): the COMPLETE transcript. SessionDock's durable
+    ///   message store and subagent projections are written from this, and
+    ///   `/api/messages` serves history from that store, so it must be full.
+    /// - `true` (SSE broadcast / open response): a recent windowed `items` tail
+    ///   and subtask metadata only, so the public link does not carry the whole
+    ///   (multi-MB) transcript on every frame. Earlier history is fetched by the
+    ///   client from `/api/messages`.
+    pub(super) fn snapshot(&self, uid: &str, cwd: &str, wire: bool) -> Value {
         let mut requests: Vec<Value> = self.requests.values().map(|r| r.card.clone()).collect();
         requests.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
         let capabilities = json!({
@@ -1506,11 +1549,20 @@ impl LiveState {
             "cwd": cwd,
             "running": self.running,
             "loading": self.loading,
-            "items": self.items,
-            "subtasks": self.subtasks.iter().map(|(id, task)| json!({
-                "id": id, "title": task.title, "type": task.kind,
-                "status": task.status, "items": task.state.items,
-            })).collect::<Vec<_>>(),
+            "items": if wire { json!(self.windowed_items()) } else { json!(self.items) },
+            // The projection needs each subtask's full `state.items` to write the
+            // per-subagent message store that `/api/messages` serves. The wire
+            // never renders subtask items from the snapshot (subagent views read
+            // their own projected history), so the public frame carries only
+            // lightweight subtask metadata.
+            "subtasks": self.subtasks.iter().map(|(id, task)| {
+                if wire {
+                    json!({"id": id, "title": task.title, "type": task.kind, "status": task.status})
+                } else {
+                    json!({"id": id, "title": task.title, "type": task.kind,
+                        "status": task.status, "items": task.state.items})
+                }
+            }).collect::<Vec<_>>(),
             "requests": requests,
             "last_turn": self.last_turn,
             "runtime_error": self.runtime_error,

@@ -335,12 +335,22 @@ async fn execute(
             .input_stop_requested(&target, false)
             .map_err(failure)?;
     }
-    let result = native_result.map_err(failure)?;
+    let mut result = native_result.map_err(failure)?;
     if matches!(method.as_str(), "create" | "fork") {
         state.reader.store.invalidate_inventory();
-        let mut result = result;
         result["ok"] = json!(true);
         return Ok(Json(result));
+    }
+    if method == "open" && source == "kiro" {
+        // The Kiro open HTTP response is consumed only for `capabilities`/config;
+        // the transcript is rendered from the SSE snapshot and the paginated
+        // `/api/messages`. Dropping the (potentially multi-MB) `items`/`subtasks`
+        // here avoids sending the whole history a second time over the public
+        // link on every session switch. Other sources keep their open contract.
+        if let Some(raw) = result.get_mut("raw").and_then(Value::as_object_mut) {
+            raw.remove("items");
+            raw.remove("subtasks");
+        }
     }
     Ok(Json(response(result)))
 }

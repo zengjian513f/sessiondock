@@ -191,10 +191,17 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert opened["session_id"] == fixture.sid, opened
     assert len(fixture.received("session/load")) == 1, "Composer click must load the selected native SID once"
     assert fixture.received("session/load")[0]["params"]["sessionId"] == fixture.sid
-    replay_items = opened["raw"]["items"]
+    # The open HTTP response no longer carries the transcript (items/subtasks):
+    # the open path needs only capabilities, and the transcript is delivered via
+    # the SSE snapshot + paginated /api/messages. Verify the replayed history is
+    # visible through the live snapshot instead of the open body.
+    assert "items" not in opened["raw"], "open response should not carry items"
+    assert "subtasks" not in opened["raw"], "open response should not carry subtasks"
+    watch(page, uid)
+    page.wait_for_function("window.__kiroSnapshot && Array.isArray(window.__kiroSnapshot.items)")
+    replay_items = page.evaluate("window.__kiroSnapshot.items")
     assert sum("Explain Kiro V3 ACP architecture" in (item.get("content") or "") for item in replay_items) == 1, replay_items
     assert sum("Kiro V3 uses ACP over JSON-RPC 2.0." in (item.get("content") or "") for item in replay_items) == 1, replay_items
-    watch(page, uid)
 
     # Account credits: a separate zero-turn ACP query fills the footer after open.
     credits = page.locator(".sdk-pane .sdk-status-row > .sdk-gauges .sdk-gauge").filter(has_text="月度")

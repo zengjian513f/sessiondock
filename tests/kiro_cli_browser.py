@@ -126,7 +126,18 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     )
     assert sdk_open_after_stop["status"] == 200 and sdk_open_after_stop["body"].get("session_id") == fixture.sid, sdk_open_after_stop
 
-    assert any("CLI_TO_SDK_CONTINUITY" in (item.get("content") or "") for item in sdk_open_after_stop["body"]["raw"]["items"]), sdk_open_after_stop
+    # The open response no longer carries the transcript; CLI->SDK continuity is
+    # verified through the projected history (/api/messages), which the snapshot
+    # projection fills with the full transcript.
+    continuity = page.evaluate(
+        """async uid => {
+          const r = await fetch('/api/messages/' + encodeURIComponent(uid) + '?window=1');
+          const j = await r.json();
+          return (j.messages || []).some(m => (m.text || '').includes('CLI_TO_SDK_CONTINUITY'));
+        }""",
+        uid,
+    )
+    assert continuity, "CLI->SDK continuity missing from projected history"
     # Stopping from the toolbar must repaint the terminal action after its
     # shared busy flag is cleared, including when the native stop is fast.
     page.locator('#a-sdk').click()

@@ -521,23 +521,35 @@ const SdkView = new Proxy({
     const controller = this.selectController = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const query = new URLSearchParams({force: '1'});
+      // Choosing the view mode needs the run-status of THIS one session, not a
+      // whole-fleet scan. Ask the per-session endpoint (O(1): in-memory SDK
+      // status + the last cached live membership) instead of forcing a full
+      // /api/live + /api/term/list, which cost ~1.5s on a large fleet for no
+      // decision benefit. Terminal presence comes from the cached term list.
+      // A background full refresh self-heals any staleness off the hot path.
+      // Hub-restore timing: term.js may define T only after this script runs;
+      // wait for it before treating absent capabilities as a disabled SDK, but
+      // do NOT fetch any list here — the per-session GET carries everything the
+      // mode decision needs (sdk + terminal presence).
+      if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
+        await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+      const query = new URLSearchParams({uid});
       if (HUB_MODE) query.set('nodes', nodeOf(uid));
-      const [live] = await Promise.allSettled([
-        fetch(appUrl('api/live?' + query), {signal: controller.signal}).then(async response => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.json();
-        }),
-        (async () => {
-          // app.js can restore a Kiro Hub selection before the later deferred
-          // term.js initializes node discovery. Wait for that script before
-          // treating absent capabilities as a disabled SDK.
-          if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
-            await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
-          if (typeof T === 'undefined') return;
-          await loadTermList(true);
-        })(),
-      ]);
+      let state = null;
+      try {
+        const response = await fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal});
+        if (response.ok) state = await response.json();
+      } catch { /* unknown run-status falls back to the saved/default view */ }
+      // Self-heal staleness off the critical path: a background full-fleet
+      // refresh converges a just-changed terminal/external owner shortly, and
+      // updates the per-session cache the next GET reads, without delaying the
+      // view. Never awaited.
+      const bgQuery = new URLSearchParams({force: '1'});
+      if (HUB_MODE) bgQuery.set('nodes', nodeOf(uid));
+      void fetch(appUrl('api/live?' + bgQuery)).then(r => r.ok && r.json()).then(() => {
+        if (typeof paintLive === 'function') paintLive();
+      }).catch(() => {});
+      if (typeof T !== 'undefined') void loadTermList(true).catch(() => {});
       if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
       if (!this.available(uid, agent)) {
         if (!hasChat && !agent) {
@@ -547,13 +559,14 @@ const SdkView = new Proxy({
         this.selection = null;
         return;
       }
-      const state = live.status === 'fulfilled' ? live.value : null;
-      const name = typeof T === 'undefined' ? null : takenOver(uid);
-      const console = (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
-        || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
-      const unknown = !Array.isArray(state?.uids) || state.errors?.some(error => error.node_id === nodeOf(uid));
-      const sdk = !unknown && state.sdk_uids?.includes(uid) === true;
-      const external = state?.uids?.includes(uid) && !sdk;
+      // Everything the mode decision needs is in the per-session GET: `sdk`
+      // (fresh, authoritative), `tmux` (a running terminal instance owns it),
+      // `external` (a non-SDK process owns it). No list fetch, no T.list read.
+      // A failed GET means run-status is unknown -> saved/default view.
+      const unknown = !state;
+      const sdk = !unknown && state.sdk === true;
+      const console = !unknown && state.known === true && state.tmux === true;
+      const external = !unknown && state.known === true && state.external === true;
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {
         selection.mode = sdk ? 'sdk'

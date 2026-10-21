@@ -137,6 +137,16 @@ impl PollCache {
         *lock(&self.live) = Some(LiveEntry { key, response });
     }
 
+    /// The most recently assembled `/api/live` body regardless of key. Used by
+    /// the cheap per-session runtime read, which must not recompute a full-fleet
+    /// scan: it reports fresh SDK status plus the last known external/tmux
+    /// membership, and a background full refresh corrects any staleness.
+    pub fn latest_live(&self) -> Option<Arc<Value>> {
+        lock(&self.live)
+            .as_ref()
+            .map(|entry| entry.response.clone())
+    }
+
     /// The `/api/term/list` bytes assembled under `generation`, younger than [`TERM_LIST_TTL`].
     pub fn term_list(&self, generation: Generation) -> Option<Bytes> {
         self.term_list_at(generation, Instant::now())
