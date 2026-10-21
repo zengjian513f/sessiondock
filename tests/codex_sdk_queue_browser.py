@@ -37,7 +37,7 @@ class QueueServer(ControlsServer):
             await self.send(writer, {'id': message['id'], 'result': {'turn': {'id': self.turn}}})
         elif method == 'thread/resume':
             await self.send(writer, {'id': message['id'], 'result': {'thread': {'id': THREAD,
-                'status': {'type': 'active' if self.turn else 'idle'}, 'turns': []},
+                'path': str(self.rollout), 'status': {'type': 'active' if self.turn else 'idle'}, 'turns': []},
                 'model': self.settings['model'], 'reasoningEffort': self.settings['effort']}})
         elif method == 'thread/turns/list':
             assert params['limit'] == 1 and params['sortDirection'] == 'desc', params

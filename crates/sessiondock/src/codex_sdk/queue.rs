@@ -92,6 +92,10 @@ impl Queue {
             .cloned()
     }
 
+    pub(super) fn pending_state(&self, thread: &str) -> Option<String> {
+        self.first(thread).map(|item| item.state)
+    }
+
     fn first(&self, thread: &str) -> Option<Input> {
         self.rows
             .lock()
@@ -176,6 +180,7 @@ impl CodexSdk {
                     error: None,
                 },
             )?;
+            live.cancel_capacity_retry();
             self.inner.queue_event(&live);
         }
         let item = self
@@ -249,6 +254,7 @@ impl Inner {
             .first(live.id())
             .filter(|item| item.state == "queued")
         {
+            live.cancel_capacity_retry();
             self.deliver(live, item, None).await?;
         }
         Ok(())
