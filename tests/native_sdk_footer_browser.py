@@ -21,7 +21,8 @@ from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode
-from sdk_usage_fixtures import assert_inline_usage, assert_single_status_row, toggle_usage_details, assert_reset_countdown
+from sdk_usage_fixtures import (assert_inline_usage, assert_single_status_row, assert_reset_countdown,
+                                assert_usage_outside_menu, close_more, reveal)
 from send_browser import initialize
 from sdk_selection_fixtures import snapshots as native_events
 
@@ -166,11 +167,14 @@ def exercise(browser, base, source, screenshots, events):
         for control in page.locator('.native-sdk-pane .sdk-native-setting:not([hidden])').all():
             assert control.evaluate('e=>e.parentElement.classList.contains("sdk-pickers")')
         expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+        # Every control fits, so there is no ⋯ menu.
+        expect(page.locator('#sdk-more')).to_be_hidden()
         for width in (1440, 390, 320):
             page.set_viewport_size({'width': width, 'height': 900})
             if not page.locator('#sdk-input').is_visible():
-                row.click()
-                page.locator('#a-sdk').click()
+                # Return to the running view; reselecting would reopen it read-only.
+                page.evaluate('showMobileDetail()')
+            expect(page.locator('#sdk-input')).to_be_visible()
             expect(pane.locator('.sdk-gauges')).to_contain_text('123.5M tok')
             expect(pane.locator('.sdk-gauges')).to_contain_text('上下文')
             progress=pane.locator('.sdk-status-row [role="progressbar"][aria-label="上下文 已用"]')
@@ -191,35 +195,36 @@ def exercise(browser, base, source, screenshots, events):
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
             expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
-            toggle_usage_details(page)
-            expect(page.locator('#native-usage-detail')).to_contain_text('123,456,789')
-            expect(page.locator('#native-usage-detail')).not_to_contain_text(long_quota)
-            expect(page.locator('#sdk-more-menu .sdk-quota-group')).to_have_count(0)
-            expect(page.locator('#native-usage-detail')).not_to_contain_text('seven_day')
-            for gauge in page.locator('#native-usage-detail .sdk-gauge').all():
-                end=gauge.locator('b').bounding_box();bounds=gauge.bounding_box()
-                assert end['x']+end['width']<=bounds['x']+bounds['width']+1,(bounds,end)
+            expect(gauges).to_have_attribute('title', re.compile('累计 Token：123,456,789'))
+            assert_usage_outside_menu(page)
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)
-            expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
-            for picker in page.locator('#sdk-more-menu > .new-effort').all():
-                bounds=picker.locator('.sdk-picker-label').bounding_box()
-                assert bounds['x']+bounds['width'] <= picker.locator('select').bounding_box()['x']-4
-            page.screenshot(path=str(screenshots/f'{source}-menu-{width}-{theme}.png'))
-            toggle_usage_details(page)
-            page.locator('#sdk-more').click()
-            page.keyboard.press('Escape')
+            # ⋯ appears only when controls overflow and then holds only those controls.
+            if page.locator('#sdk-more').is_visible():
+                page.locator('#sdk-more').click()
+                menu = page.locator('#sdk-more-menu')
+                expect(menu).to_be_visible()
+                expect(menu.locator('.sdk-quota-group, .sdk-gauge, .sdk-inline-usage')).to_have_count(0)
+                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+                for picker in page.locator('#sdk-more-menu > .new-effort').all():
+                    bounds=picker.locator('.sdk-picker-label').bounding_box()
+                    assert bounds['x']+bounds['width'] <= picker.locator('select').bounding_box()['x']-4
+                page.screenshot(path=str(screenshots/f'{source}-menu-{width}-{theme}.png'))
+                page.keyboard.press('Escape')
+            else:
+                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
             expect(page.locator('#sdk-input')).to_have_value('底栏测试草稿 retained while changing models')
             page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}.png'))
         if source=='claude':
-            page.locator('#sdk-more').click()
+            mode = reveal(page, '#native-sdk-permission_mode')
             with page.expect_request('**/api/native-sdk/settings') as changed:
-                page.locator('#native-sdk-permission_mode').select_option('plan')
+                mode.select_option('plan')
             assert changed.value.post_data_json['permission_mode']=='plan'
+            fast = reveal(page, '#native-sdk-fast_mode')
             with page.expect_request('**/api/native-sdk/settings') as changed:
-                page.locator('#native-sdk-fast_mode').select_option('true')
+                fast.select_option('true')
             assert changed.value.post_data_json['fast_mode'] is True
-            page.keyboard.press('Escape')
+            close_more(page)
         page.set_viewport_size({'width':1912,'height':900})
         submitted=[]
         def submit(route):

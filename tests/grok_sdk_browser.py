@@ -15,7 +15,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, close_more, refresh_usage, reveal
 
 from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
@@ -61,12 +61,10 @@ def watch(page, uid):
     page.wait_for_function("window.__grokSnapshot !== null")
 
 
-def capture_state(page, screenshots, name, target=None, popover=False):
+def capture_state(page, screenshots, name, target=None):
     if not screenshots:
         return
     for width in (1280,390,320):
-        if popover and page.locator("#sdk-usage-menu").is_visible():
-            toggle_usage_details(page)
         page.set_viewport_size({"width":width,"height":900})
         # Let the media-query handler choose the mobile list/detail scene.
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -74,8 +72,6 @@ def capture_state(page, screenshots, name, target=None, popover=False):
             selected=page.evaluate("S.sel")
             page.locator(f'#side .item[data-uid="{selected}"]').click()
         expect(page.locator("#sdk-input")).to_be_visible()
-        if popover:
-            toggle_usage_details(page)
         if target is not None:
             target.scroll_into_view_if_needed()
         for theme in ("light","dark"):
@@ -253,30 +249,28 @@ def exercise(browser, base, fixture, screenshots):
     assert "costUsdTicks" not in snapshot(page,uid)["usage"]["last_turn"]
 
     # Read the native process ledger and account billing through the toolbar.
-    toggle_usage_details(page)
-    page.locator("#native-usage-refresh").click()
-    expect(page.locator("#native-usage-detail")).to_contain_text("1,500")
-    expect(page.locator(".native-sdk-pane .sdk-gauges")).to_have_attribute("title",re.compile("42.5"))
+    refresh_usage(page)
+    footer = page.locator(".native-sdk-pane .sdk-status-row > .sdk-gauges")
+    expect(footer).to_have_attribute("title",re.compile("1,500"))
+    expect(footer).to_have_attribute("title",re.compile("42.5"))
+    assert_usage_outside_menu(page)
     assert fixture.received("x.ai/session/usage") and fixture.received("x.ai/billing")
-    capture_state(page,screenshots,"usage",popover=True)
-    page.keyboard.press("Escape")
-    page.locator("#sdk-more").click()
-    page.locator("#native-sdk-mode").select_option("plan")
+    capture_state(page,screenshots,"usage")
+    reveal(page,"#native-sdk-mode").select_option("plan")
     page.wait_for_function("window.__grokSnapshot?.mode === 'plan'")
     assert fixture.received("session/set_mode")[-1]["params"]["modeId"] == "plan"
-    page.keyboard.press("Escape")
+    close_more(page)
 
     # Native compaction and direct shell use their own protocol operations.
-    page.locator("#sdk-more").click()
+    compact = reveal(page,'[data-sdk-action="compact"]')
     with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/compact") and response.request.method == "POST") as compact_response:
-        page.locator('[data-sdk-action="compact"]').click()
+        compact.click()
     assert compact_response.value.status < 300
     compact_body = next(body for method,body in reversed(operations) if method == "compact")
     count = len(fixture.received("x.ai/compact_conversation"))
     api(page,"compact",compact_body)
     assert len(fixture.received("x.ai/compact_conversation")) == count == 1
-    page.locator("#sdk-more").click()
-    page.locator('[data-sdk-action="shell"]').click()
+    reveal(page,'[data-sdk-action="shell"]').click()
     page.get_by_role("textbox",name="命令",exact=True).fill("printf direct-native-shell")
     page.get_by_role("button",name="运行",exact=True).click()
     expect(page.locator(".sdk-live")).to_contain_text("Grok direct shell output")
@@ -285,8 +279,7 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
 
     # Only native rewind points are selectable; file rewind is never requested.
-    page.locator("#sdk-more").click()
-    page.locator('[data-sdk-action="rewind"]').click()
+    reveal(page,'[data-sdk-action="rewind"]').click()
     page.get_by_role("combobox",name="回退消息",exact=True).select_option("0")
     with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST") as rewind_response:
         page.get_by_role("button",name="回退",exact=True).click()
@@ -298,8 +291,7 @@ def exercise(browser, base, fixture, screenshots):
     assert len(fixture.received("x.ai/rewind/execute")) == 1
 
     # Native fork returns its new exact identity and the UI navigates there.
-    page.locator("#sdk-more").click()
-    page.locator('[data-sdk-action="fork"]').click()
+    reveal(page,'[data-sdk-action="fork"]').click()
     page.wait_for_function("uid => S.sel !== uid",arg=uid)
     fork_body = next(body for method,body in reversed(operations) if method == "fork")
     forked = api(page,"fork",fork_body)
@@ -425,13 +417,11 @@ def exercise(browser, base, fixture, screenshots):
     page.locator("#sdk-input").fill("disable-extensions")
     page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content==='disable-extensions')")
-    toggle_usage_details(page)
-    page.locator("#native-usage-refresh").click()
-    expect(page.locator("#native-usage-detail")).to_contain_text("grok_sdk_native_error")
+    refresh_usage(page)
+    expect(page.locator(".native-sdk-pane .sdk-status-row > .sdk-gauges")).to_have_attribute("title",re.compile("grok_sdk_native_error"))
     unsupported = api(page,"open",{"uid":uid})
     assert unsupported["capabilities"]["usage"] is False
     assert unsupported["raw"]["extension_support"]["usage"] is False
-    page.keyboard.press("Escape")
 
     # A synthetic independently owned TUI is refused and never signalled.
     pid = 987654

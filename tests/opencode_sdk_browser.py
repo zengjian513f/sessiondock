@@ -11,11 +11,12 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, reveal
 from sdk_ui_fixtures import start_sdk
 
 from browser_runtime import wait_for_async
@@ -48,9 +49,9 @@ def exercise_hub_fork(browser, native, node_port, binary, root, screenshot):
         assert parent.startswith('opencode:') and '~' in parent, parent
         page.locator(f'#side .item[data-uid="{parent}"]').click()
         expect(page.locator('#sdk-input')).to_be_visible()
-        page.locator('#sdk-more').click()
+        fork = reveal(page, '[data-sdk-action="fork"]')
         with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as forked:
-            page.locator('[data-sdk-action="fork"]').click()
+            fork.click()
         assert forked.value.ok, forked.value.text()
         receipt = forked.value.json()
         uid = receipt['uid']
@@ -153,8 +154,7 @@ def main():
                     page.locator('#sdk-send').click()
 
                 def action(method):
-                    page.locator('#sdk-more').click()
-                    page.locator(f'[data-sdk-action="{method}"]').click()
+                    reveal(page, f'[data-sdk-action="{method}"]').click()
 
                 def return_to_seed():
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
@@ -192,11 +192,10 @@ def main():
                     assert final['raw']['usage']['tokens']['cache']['read'] == 600
                     assert final['raw']['usage']['cost_usd'] == 0.0125
                     assert final['raw']['usage']['context']['used_tokens'] == 2100
-                    toggle_usage_details(page)
-                    expect(page.locator('#native-usage-detail')).to_contain_text('1,200')
-                    expect(page.locator('#native-usage-detail')).to_contain_text('0.0125')
-                    expect(page.locator('#native-usage-detail')).to_contain_text('上下文')
-                    toggle_usage_details(page)
+                    footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+                    for text in ('1,200', '0.0125', '上下文'):
+                        expect(footer).to_have_attribute('title', re.compile(re.escape(text)))
+                    assert_usage_outside_menu(page)
 
                     # Queue entries are native durable inbox items. Steering only
                     # changes delivery, while cancel removes undelivered input.
@@ -296,10 +295,10 @@ def main():
                     assert 'sdk-image.png' in image_prompt['text'] and 'sessiondock_attachments' in image_prompt['text']
                     assert list(native.cwd.rglob('sdk-image.png'))
 
-                    page.locator('#sdk-more').click()
-                    page.locator('#native-sdk-native_agent').select_option('plan')
+                    reveal(page, '#native-sdk-native_agent').select_option('plan')
                     snapshot("r => r.agent === 'plan'")
-                    page.locator('#sdk-more').click()
+                    if page.locator('#sdk-more-menu').is_visible():
+                        page.locator('#sdk-more').click()
                     action('permissions')
                     permissions = [{'action': 'shell', 'resource': '*', 'effect': 'ask'}]
                     page.locator('textarea[aria-label="权限规则 JSON"]').fill(json.dumps(permissions))

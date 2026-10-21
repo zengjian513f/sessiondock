@@ -270,6 +270,4 @@ function sdkSyncSettings(view) {
   const button = view.pane.querySelector('#sdk-send');
   button.disabled = unavailable || pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
   CodexSdkCompose.states.get(view)?.initialSendReady?.();
-  const refresh = view.pane.querySelector('#native-usage-refresh');
-  if (refresh) refresh.disabled = unavailable || !!view.loadingUsage;
 }

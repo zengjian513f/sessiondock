@@ -17,6 +17,8 @@ def assert_reset_countdown(page, node, end):
 
 
 def assert_inline_usage(page):
+    # Footer layout settles after asynchronous model/settings paints.
+    page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     gauges = page.locator('.sdk-pane .sdk-status-row > .sdk-gauges')
     expect(gauges).to_be_visible()
     expect(page.locator('.sdk-pane .sdk-status-row > #sdk-usage-toggle')).to_be_hidden()
@@ -43,7 +45,7 @@ def assert_single_status_row(row):
           return last ? e.getBoundingClientRect().right - last.getBoundingClientRect().right : 0;
         }''')
         assert abs(alignment) <= 2, ('usage must align right', alignment)
-    model = row.locator('.sdk-pickers > .sdk-model')
+    model = row.locator('.sdk-pickers > .sdk-model:visible')
     if model.count():
         assert gauges.bounding_box()['x'] + gauges.bounding_box()['width'] <= model.bounding_box()['x'] + 1, 'usage must stay left of model'
     # Large quota sets scroll inside their single line; controls yield first.
@@ -51,19 +53,29 @@ def assert_single_status_row(row):
         assert row.locator('.sdk-pickers > label').count() == 0
 
 
-def toggle_usage_details(page):
-    menu = page.locator('#sdk-usage-menu')
-    if menu.is_visible():
-        page.keyboard.press('Escape')
-        expect(menu).to_be_hidden()
-        return
-    if page.locator('.sdk-gauges > :not([hidden])').count():
-        assert_inline_usage(page)
-    if not page.locator('#sdk-more-menu').is_visible():
+def reveal(page, selector):
+    """Open ⋯ only when the control did not fit in the footer."""
+    control = page.locator(selector)
+    if not control.is_visible():
         page.locator('#sdk-more').click()
-    if menu.get_attribute('popover') is not None:
-        page.get_by_role('button', name='用量明细', exact=True).click()
-    expect(menu).to_be_visible()
+    expect(control).to_be_visible()
+    return control
+
+
+def close_more(page):
+    if page.locator('#sdk-more-menu').is_visible():
+        page.keyboard.press('Escape')
+        expect(page.locator('#sdk-more-menu')).to_be_hidden()
+
+
+def assert_usage_outside_menu(page):
+    """Native SDK ⋯ only collects controls that do not fit; usage stays in the footer."""
+    assert_inline_usage(page)
+    pane = page.locator('.native-sdk-pane')
+    expect(pane.locator('#sdk-more-menu .sdk-inline-usage')).to_have_count(0)
+    expect(pane.locator('#native-usage-refresh')).to_have_count(0)
+    gauges = pane.locator('.sdk-status-row > .sdk-gauges')
+    assert gauges.get_attribute('title'), 'usage details must remain in the footer description'
 
 
 def refresh_usage(page):

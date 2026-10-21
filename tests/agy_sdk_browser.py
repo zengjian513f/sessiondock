@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details, refresh_usage
+from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, close_more, refresh_usage
 from agy_sdk_fixtures import AgyFixture, MODEL, SID, TITLE
 from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
 from new_session_model_browser import open_dialog
@@ -62,7 +62,7 @@ def post(page, base, method, body, *, ok=True):
     return response.json()
 
 
-def select_sdk(page, uid=None):
+def select_sdk(page, uid=None, connected=True):
     row = page.locator('#side .item[data-uid]').filter(has_text=TITLE).first if uid is None else page.locator(f'#side .item[data-uid="{uid}"]')
     expect(row).to_be_visible()
     uid = row.get_attribute('data-uid')
@@ -71,7 +71,8 @@ def select_sdk(page, uid=None):
     page.locator('#a-sdk').click()
     expect(page.locator('#sdk-input')).to_be_visible()
     page.locator('#sdk-input').click()
-    page.wait_for_function('NativeSdkView.connected')
+    if connected:
+        page.wait_for_function('NativeSdkView.connected')
     return uid
 
 
@@ -157,7 +158,7 @@ def exercise(browser, base, fixture, screenshots=None):
         page.reload()
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('39%')
         page.wait_for_function('!NativeSdkView.loadingUsage')
-        toggle_usage_details(page)
+        assert_inline_usage(page)
         expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('查询失败'))
         assert len(quota_calls()) == 3, 'automatic reads must reuse a recent failed attempt'
         (fixture.root / 'quota-fail').unlink()
@@ -196,10 +197,10 @@ def exercise(browser, base, fixture, screenshots=None):
         assert fixture.inputs('SDK 中文\nsecond line')[0]['model'] == 'synthetic-agy-high'
         assert fixture.inputs('SDK 中文\nsecond line')[0]['effort'] is None
         assert fixture.inputs('SDK 中文\nsecond line')[0]['mode'] == 'plan'
-        toggle_usage_details(page)
-        expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
-        # Native quota may arrive after the menu opens, with a long diagnostic.
-        # Reposition the growing popover so the actual refresh button is usable.
+        footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+        expect(footer).to_have_attribute('title', re.compile('累计 Token：12,800'))
+        assert_usage_outside_menu(page)
+        # A long native diagnostic stays in the footer description; /usage clears it again.
         def expanded_usage(route):
             response = route.fetch()
             data = response.json()
@@ -207,20 +208,14 @@ def exercise(browser, base, fixture, screenshots=None):
             payload.setdefault('quota', {})['error'] = 'Delayed native quota diagnostic. ' * 80
             route.fulfill(response=response, json=data)
         page.route('**/api/native-sdk/usage', expanded_usage, times=1)
-        page.locator('#native-usage-refresh').click()
-        expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('72%'))
-        expect(page.locator('#native-usage-detail')).to_contain_text('Delayed native quota diagnostic.')
-        menu_box = page.locator('#sdk-more-menu').bounding_box()
-        assert menu_box['y'] >= 0 and menu_box['y'] + menu_box['height'] <= 900, menu_box
-        page.locator('#native-usage-refresh').click()
-        expect(page.locator('#native-usage-detail')).not_to_contain_text('Delayed native quota diagnostic.')
-        toggle_usage_details(page)
         before = len(fixture.inputs())
-        page.locator('#sdk-input').fill('/usage')
-        page.locator('#sdk-send').click()
-        expect(page.locator('#sdk-input')).to_have_value('')
+        refresh_usage(page)
+        expect(footer).to_have_attribute('title', re.compile('72%'))
+        expect(footer).to_have_attribute('title', re.compile('Delayed native quota diagnostic.'))
+        expect(page.locator('#sdk-more-menu')).to_be_hidden()
+        refresh_usage(page)
+        expect(footer).not_to_have_attribute('title', re.compile('Delayed native quota diagnostic.'))
         assert len(fixture.inputs()) == before, 'slash query must never reach NDJSON user input'
-        toggle_usage_details(page)
         page.locator('#sdk-input').fill('/unknown-native-command')
         page.locator('#sdk-send').click()
         expect(page.locator('.native-sdk-pane #sdk-status-menu')).to_contain_text('尚未映射')
@@ -525,13 +520,11 @@ def exercise(browser, base, fixture, screenshots=None):
                     assert_inline_usage(page)
                     expect(page.locator('#native-media-note')).to_have_count(0)
                     page.screenshot(path=str(screenshots / f'agy-sdk-{width}-{theme}.png'), full_page=True)
-                    toggle_usage_details(page)
-                    expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
-                    page.screenshot(path=str(screenshots / f'agy-sdk-usage-{width}-{theme}.png'), full_page=True)
-                    toggle_usage_details(page)
-                    page.locator('#sdk-more').click()
-                    page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
-                    page.locator('#sdk-more').click()
+                    assert_usage_outside_menu(page)
+                    if page.locator('#sdk-more').is_visible():
+                        page.locator('#sdk-more').click()
+                        page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
+                        close_more(page)
         assert not errors, errors
     except Exception:
         if screenshots:page.screenshot(path=str(screenshots/'agy-failure.png'),full_page=True)

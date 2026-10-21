@@ -28,11 +28,7 @@ const NativeSdkControls = {
     view.nativeSettings=[];
     const menu = view.pane.querySelector('#sdk-more-menu');
     menu.classList.add('sdk-native-menu');
-    const usageMenu = el('section','sdk-inline-usage'); usageMenu.id='sdk-usage-menu'; usageMenu.setAttribute('aria-label','用量');
-    const detail = el('div','sdk-control-section'); detail.id='native-usage-detail';
-    const refresh = el('button','btn','刷新'); refresh.type='button'; refresh.id='native-usage-refresh'; refresh.setAttribute('aria-label','刷新用量');
-    refresh.onclick=()=>this.loadUsage(view,true);
-    const heading=el('div','sdk-usage-heading'); heading.append(el('h3','','用量'),refresh); usageMenu.append(heading,detail);
+    // ⋯ only holds controls that do not fit; usage stays in the footer and its tooltip.
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
       const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=label;button.setAttribute('aria-label',label);
@@ -40,7 +36,6 @@ const NativeSdkControls = {
       button.onclick = () => { view.closeToolbarMenus(); void this.action(view,method); }; actions.append(button);
     }
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
-    menu.append(usageMenu);
     this.paint(view);
     // Account snapshots are independent of native startup; never wait for /open.
     if(['agy','claude','kiro'].includes(view.uid.split(':')[0])) {
@@ -73,7 +68,6 @@ const NativeSdkControls = {
     clearTimeout(view.usageRetryTimer);view.usageRetryTimer=0;
     const read=new AbortController();view.usageRead=read;
     view.loadingUsage=true;
-    const button=view.pane?.querySelector('#native-usage-refresh'); if (button) button.disabled=true;
     try {
       let response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh:refresh === 'auto' ? false : refresh},read.signal);
       if (!view.current(generation)) return;
@@ -93,7 +87,7 @@ const NativeSdkControls = {
       }
     } catch (error) { if (view.current(generation)) view.usageError=error.message; }
     finally { if (view.current(generation)) {
-      view.usageRead=null;view.loadingUsage=false;if(button)button.disabled=false;this.paintUsage(view);
+      view.usageRead=null;view.loadingUsage=false;this.paintUsage(view);
       if(view.usageError){
         view.usageRetryTimer=setTimeout(()=>{if(view.current(generation))void this.loadUsage(view,refresh);},view.usageRetryDelay);
         view.usageRetryDelay=Math.min(view.usageRetryDelay*2,30000);
@@ -119,7 +113,7 @@ const NativeSdkControls = {
   },
   paintUsage(view) {
     if (!view.pane) return;
-    const gauges=view.pane.querySelector('.sdk-gauges'),detail=view.pane.querySelector('#native-usage-detail');if(!gauges || !detail)return;
+    const gauges=view.pane.querySelector('.sdk-gauges');if(!gauges)return;
     gauges.replaceChildren();
     const usage=Object.keys(view.raw?.usage || {}).length ? view.raw.usage : view.usageData?.usage || {},t=usage.tokens || usage;
     const number=(...values)=>values.find(value=>typeof value==='number' && Number.isFinite(value));
@@ -173,9 +167,6 @@ const NativeSdkControls = {
     if(view.usageError)text('查询未完成',view.usageError);
     if(!lines.length)text('用量','原生尚未提供用量数据');
     UsageUI.title(gauges,()=>lines.map(line=>line()).join(''),true);
-    this.paintUsageDetail(detail,view,usage,t,total,input,output,credits,creditLimit,creditUnit,creditResetRaw);
-    const usageMenu=view.pane.querySelector('#sdk-usage-menu');
-    usageMenu.hidden=!detail.childElementCount;
     this.rememberUsage(view);
     this.layout(view);
   },
@@ -369,12 +360,8 @@ const NativeSdkControls = {
       if(command==='usage' || command==='context')void this.loadUsage(view,true);
       if(command==='help')view.setNotice('网页命令：/usage、/context、/status、/model ID、/effort 档位、/mode 模式、/plan、/stop、/new、/rename 名称、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
       else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();ConversationUI.placePopover(menu,view.notice);}
-      else {
-        const menu=view.pane.querySelector('#sdk-more-menu'),button=view.pane.querySelector('#sdk-more'),usageMenu=view.pane.querySelector('#sdk-usage-menu');
-        if(usageMenu)usageMenu.hidden=false;
-        if(button)button.hidden=false;
-        if(menu && !menu.matches(':popover-open')){menu.showPopover();ConversationUI.placePopover(menu,button && !button.hidden ? button : view.pane.querySelector('.sdk-status-row'));}
-      }success=true;
+      // /usage and /context refresh the always-visible footer; no menu opens.
+      success=true;
     }else if(command==='new'){
       const source=view.uid.split(':')[0];
       document.querySelector('#new-session')?.click();
