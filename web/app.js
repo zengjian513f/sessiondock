@@ -5966,11 +5966,35 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     auditDetailRendered('loading');
   }
   showMobileDetail();
+  const key = viewKey(uid, selectedAgent);
+  let historyReady;
+  const readHistory = () => historyReady ||= fetchMessages(uid, {
+    agent: selectedAgent, signal: ac.signal, windowed: true,
+  }).then(result => {
+    if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return result;
+    const {data, bytes} = result;
+    cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+      end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+      prompt: data.prompt || null, cli: data.cli ?? null,
+      total: data.message_total, partial: data.partial || null});
+    return result;
+  });
   if (!follow) {
     const selectionReady = SdkView.selectFor(uid, selectedAgent);
-    const remembered = cacheGet(viewKey(uid, selectedAgent));
+    let remembered = cacheGet(key);
     const mode = SdkView.views.get(viewKey(uid, selectedAgent))
       || savedSessionView(uid, selectedAgent) || defaultSessionView(uid);
+    // Cold history is read-only too. Start its finite window alongside runtime
+    // discovery and show it if it arrives first, just like a warm cache hit.
+    // Keep the original promise for normal error handling and final rendering.
+    if (!remembered && (selectedAgent || !SdkView.pending(uid))) {
+      const early = await Promise.race([
+        selectionReady.then(() => null),
+        readHistory().catch(() => null),
+      ]);
+      if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
+      if (early) remembered = cacheGet(key);
+    }
     // Reading cached history does not require fresh runtime ownership. Keep
     // actions disconnected until discovery has selected the current owner.
     if (remembered) {
@@ -5991,14 +6015,13 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     else SessionContentView.close();
   }
 
-  const key = viewKey(uid, selectedAgent);
   const sdkPending = !selectedAgent && SdkView.pending(uid);
   if (sdkPending) {
     await renderSession(sdkPending, [], null, {startWatch:false});
     return;
   }
   const hit = cacheGet(key);
-  if (hit) {
+  if (hit && !historyReady) {
     // 先把缓存立即画出来，但暂不占一个长期 SSE 连接。补齐缓存游标之后再
     // 建 watch，避免 HTTP/1 连接池紧张时增量 fetch 永远排在 EventSource 后。
     await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
@@ -6015,18 +6038,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   // screen. Keep its header/composer intact until the native view is ready.
   let res;
   try {
-    const historyReady = fetchMessages(uid, {
-      agent: selectedAgent, signal: ac.signal,
-      windowed: true,
-    }).then(result => {
-      if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return result;
-      const {data, bytes} = result;
-      cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
-        end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-        prompt: data.prompt || null, cli: data.cli ?? null,
-        total: data.message_total, partial: data.partial || null});
-      return result;
-    });
+    readHistory();
     // Choose the requested surface before waiting for history. Its independent
     // SDK connection can start now; history reuses this read once cached.
     if (!SessionContentView.kind && SdkView.defaultFor(uid, selectedAgent))
@@ -6051,8 +6063,13 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   const { data } = res;
   migrationReadFailures.delete(key); openRetries.delete(key);
 
-  S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
-  await renderSession(data.meta, data.messages, data.activity);
+  // A visible preview may already have received a newer tail while ownership
+  // was pending. Finalizing selection must not rewind that accepted history.
+  const current = cacheGet(key);
+  const checkpoint = current || data;
+  S.cursors.set(key, {end: checkpoint.end, head: checkpoint.version.head, anchor: checkpoint.anchor});
+  await renderSession(current?.meta || data.meta, current?.msgs || data.messages,
+    current ? current.activity : data.activity);
 }
 
 // ---- 保持贴底 ----

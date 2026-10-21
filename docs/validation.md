@@ -450,6 +450,8 @@ checks the preserved prompt, idempotent report replay and one bundle/launch.
 
 Frontend performance regressions also run as ordinary browser suites:
 
+- `tests/cold_history_browser.py`: six sources on node/Hub, cold window rendering while
+  runtime discovery is held, read-only actions, discovery failure and CPU profiles.
 - `conversation_performance_browser`: click to expand a lazy tool group,
   append synthetic native history, cancel a backtracking regex and search again.
 - `render_assets_browser`: open ordinary/formula/code sessions, verify optional
