@@ -64,8 +64,9 @@ receipts，保留旧 UID。不能逆推路径哈希，不能按目录、标题�
 
 ## 生命周期与管理
 
-SessionDock 启动 Kiro 默认使用 YOLO：SDK 在新建或显式加载后，通过原生广告的
-Autopilot 配置开启自动批准；CLI 新建／恢复默认传 `--trust-all-tools`。SDK 界面只显示
+SessionDock 启动 Kiro 默认使用 YOLO：SDK 新建／显式加载传原生 `allow-all` 权限预设，
+并开启原生广告的 Autopilot；两者分别控制工具权限和自主执行。
+CLI 新建／恢复默认传 `--trust-all-tools`。SDK 界面只显示
 原生确认后的权限状态。运行中手动关闭后，刷新、重连或服务重附着不改回；停止后
 重新启动采用默认值。显式 SDK 权限参数及 CLI profile 的工具信任选项优先于默认。
 

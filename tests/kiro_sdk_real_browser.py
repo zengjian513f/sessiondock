@@ -3,7 +3,8 @@
 
 Requires an explicitly supplied, already authenticated temporary environment.
 No credentials/configuration are copied. The model must be explicitly selected
-as auto (the operator-authorized model for this acceptance). --prepare-only
+as auto, claude-haiku-4.5 or qwen3-coder-next. --verify-permissions exercises external reads and
+workspace writes without answering approval cards. --prepare-only
 opens the model picker without creating a native session or sending a prompt.
 The default validation sweep excludes this *_real_browser suite.
 """
@@ -42,20 +43,20 @@ def stop_from_toolbar(page):
     page.wait_for_function('uid => !ConsoleUI.busy.has(uid)', arg=uid)
 
 
-def exercise(page, base, work, evidence, prepare_only):
+def exercise(page, base, work, evidence, prepare_only, model="auto", verify_permissions=False):
     page.set_default_timeout(30000)
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
     page.locator('#new-session').click()
     page.locator('label:has(input[name="new-source"][value="kiro"])').click()
     page.locator('#new-model').click()
-    option = page.locator('#new-model-options [title="auto"]')
+    option = page.locator(f'#new-model-options [title="{model}"]')
     expect(option).to_be_visible()
     page.screenshot(path=str(evidence / 'real-model-catalog.png'), full_page=True)
     option.click()
     page.locator('#new-cwd').fill(str(work))
     if prepare_only:
-        return {'prepared': True, 'model': 'auto', 'prompt_submissions': 0}
+        return {'prepared': True, 'model': model, 'prompt_submissions': 0}
 
     with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/create')) as created:
         page.locator('#new-session-go').click()
@@ -63,19 +64,31 @@ def exercise(page, base, work, evidence, prepare_only):
     receipt = created.value.json()
     uid, sid = receipt['uid'], receipt['session']['sid']
     watch(page, uid)
-    page.wait_for_function('window.__kiroSnapshot?.model === "auto" && window.__kiroSnapshot?.configOptions?.some(o => (o.id === "model" || o.category === "model") && o.currentValue === "auto")')
-    expect(page.locator('#sdk-model')).to_have_value('auto')
+    page.wait_for_function('model => window.__kiroSnapshot?.model === model && window.__kiroSnapshot?.configOptions?.some(o => (o.id === "model" || o.category === "model") && o.currentValue === model)', arg=model)
+    expect(page.locator('#sdk-model')).to_have_value(model)
     (evidence / 'native-config.json').write_text(json.dumps(page.evaluate('({model:__kiroSnapshot.model, configOptions:__kiroSnapshot.configOptions, session_id:__kiroSnapshot.session_id})'), indent=2))
     prompt = '你好，可以用一句话说说你能怎样帮我整理一个小项目吗？'
+    if verify_permissions:
+        outside = work.parent / 'outside-permission-browser.txt'
+        outside.write_text('OUTSIDE_BROWSER_READ_OK_7281')
+        result_file = work / 'permission-result.txt'
+        result_file.unlink(missing_ok=True)
+        prompt = f'请使用文件读取工具读取 {outside}，然后在当前工作目录创建 permission-result.txt 写入读到的原文，再用 shell 执行 pwd。完成后简短报告。'
     page.locator('#sdk-input').click()
     page.locator('#sdk-input').fill(prompt)
     page.locator('#sdk-send').click()
     page.wait_for_function('!window.__kiroSnapshot?.running && window.__kiroSnapshot?.items?.some(i => i.role === "assistant" && i.content?.trim())', timeout=120000)
     reply = page.evaluate('window.__kiroSnapshot.items.filter(i => i.role === "assistant" && i.content?.trim()).at(-1).content.trim()')
     assert reply and reply != prompt, 'Expected a nonempty assistant answer, not the user prompt'
-    expect(page.locator('.sdk-live')).to_contain_text(reply)
+    if not verify_permissions:
+        expect(page.locator('.sdk-live')).to_contain_text(reply)
+    if verify_permissions:
+        expect(page.locator('.sdk-live')).to_contain_text('OUTSIDE_BROWSER_READ_OK_7281')
+        assert result_file.read_text().strip() == outside.read_text(), 'Native tools did not complete without permission answers'
     page.screenshot(path=str(evidence / 'real-sdk-answer.png'), full_page=True)
     stop_from_toolbar(page)
+    if verify_permissions:
+        return {'passed': True, 'uid': uid, 'sid': sid, 'model': model, 'permission_tools_completed': True, 'prompt_submissions': 1}
 
     with page.expect_response(lambda r: r.url.endswith('/api/term/takeover')) as takeover:
         page.locator('#a-term').click()
@@ -86,7 +99,7 @@ def exercise(page, base, work, evidence, prepare_only):
     # The real native terminal must replay the SDK answer on the same SID.
     page.wait_for_function(r'''reply => Array.from({length:T.term?.buffer?.active?.length||0}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString(true)||"").join("\n").replace(/\s+/g, '').includes(reply.replace(/\s+/g, ''))''', arg=reply, timeout=60000)
     terminal_text = page.evaluate('Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString(true)||"").join("\\n")')
-    assert 'auto' in terminal_text.lower(), terminal_text
+    assert {'auto': 'auto', 'claude-haiku-4.5': 'haiku', 'qwen3-coder-next': 'qwen'}[model] in terminal_text.lower(), terminal_text
     page.screenshot(path=str(evidence / 'real-cli-resume.png'), full_page=True)
     stop_from_toolbar(page)
 
@@ -99,7 +112,7 @@ def exercise(page, base, work, evidence, prepare_only):
     assert any(i.get('role') == 'assistant' and ''.join(reply.split()) == ''.join((i.get('content') or '').split()) for i in loaded['raw']['items']), loaded
     page.screenshot(path=str(evidence / 'real-sdk-replay.png'), full_page=True)
     stop_from_toolbar(page)
-    return {'passed': True, 'uid': uid, 'sid': sid, 'model': 'auto', 'reply_excerpt': reply[:240], 'prompt_submissions': 1}
+    return {'passed': True, 'uid': uid, 'sid': sid, 'model': model, 'reply_excerpt': reply[:240], 'prompt_submissions': 1}
 
 
 def main():
@@ -107,8 +120,9 @@ def main():
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--auth-environment', type=Path, required=True)
     parser.add_argument('--kiro', type=Path, required=True)
-    parser.add_argument('--model', choices=['auto'], required=True)
+    parser.add_argument('--model', choices=['auto', 'claude-haiku-4.5', 'qwen3-coder-next'], required=True)
     parser.add_argument('--proxy-environment', action='store_true', help='Pass only standard SSH proxy variables, without saving their values')
+    parser.add_argument('--verify-permissions', action='store_true')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--screenshots', type=Path, required=True)
     args = parser.parse_args()
@@ -134,7 +148,7 @@ def main():
             (root / name).mkdir(mode=0o700)
         initialize('--initialize-lifecycle', root / 'ledger', binary)
         launcher = root / 'launcher.json'
-        launcher.write_text(json.dumps({'schema':2, 'host_binary':str(binary.with_name('ptyhost')), 'host_dir':str(root/'host'), 'profiles':[{'id':'kiro','source':'kiro','label':'Kiro','executable':str(kiro),'args':[], 'new_args':['chat','--agent-engine=v3','--model','auto'], 'resume_args':['chat','--agent-engine=v3','--model','auto','--resume-id','{sid}'], 'env':{k:v for k,v in env.items() if k in config['env']}}]}))
+        launcher.write_text(json.dumps({'schema':2, 'host_binary':str(binary.with_name('ptyhost')), 'host_dir':str(root/'host'), 'profiles':[{'id':'kiro','source':'kiro','label':'Kiro','executable':str(kiro),'args':[], 'new_args':['chat','--agent-engine=v3','--model',args.model], 'resume_args':['chat','--agent-engine=v3','--model',args.model,'--resume-id','{sid}'], 'env':{k:v for k,v in env.items() if k in config['env']}}]}))
         launcher.chmod(0o600)
         extra = {'SESSIONDOCK_KIRO_ROOT':str(auth_root/'account-scope'), 'SESSIONDOCK_LAUNCHER_CONFIG':str(launcher), 'SESSIONDOCK_NATIVE_SDKS':'auto', 'SESSIONDOCK_STATE_DIR':str(root/'state'), 'SESSIONDOCK_LIFECYCLE_DIR':str(root/'ledger'), 'SESSIONDOCK_PTYHOST_DIR':str(root/'host'), 'SESSIONDOCK_TRASH_DIR':str(root/'trash')}
         chromium_path = playwright.chromium.executable_path
@@ -145,7 +159,7 @@ def main():
                 context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base+'/') else route.abort())
                 page = context.new_page()
                 try:
-                    result = exercise(page,base,work,evidence,args.prepare_only)
+                    result = exercise(page,base,work,evidence,args.prepare_only,args.model,args.verify_permissions)
                     (evidence/'result.json').write_text(json.dumps(result,indent=2))
                     print(json.dumps(result), flush=True)
                 except BaseException:

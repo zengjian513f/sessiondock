@@ -554,6 +554,7 @@ impl Bridge {
                 settings[to] = json!(value);
             }
         }
+        settings["policyPreset"] = startup_policy(payload);
         let new_params = json!({"cwd":cwd,"mcpServers":[],"_meta":{"kiro":settings}});
         let mut result = match session.creation_result() {
             Some(result) => result?,
@@ -667,16 +668,7 @@ impl Bridge {
         payload: &Value,
     ) -> Result<(), String> {
         const KEY: &str = "startup:autopilot";
-        let explicit = payload["permission_mode"]
-            .as_str()
-            .or_else(|| payload["autopilot"].as_str())
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .or_else(|| {
-                payload["autopilot"]
-                    .as_bool()
-                    .map(|value| value.to_string())
-            });
+        let explicit = startup_autopilot_value(payload);
         let params =
             match Self::setting_params(session, "autopilot", explicit.as_deref().unwrap_or("true"))
             {
@@ -797,7 +789,7 @@ impl Bridge {
                 .unwrap_or_else(|| {
                     (
                         "open:load".into(),
-                        json!({"sessionId":sid,"cwd":cwd,"mcpServers":[]}),
+                        json!({"sessionId":sid,"cwd":cwd,"mcpServers":[],"_meta":{"kiro":{"policyPreset":startup_policy(payload)}}}),
                     )
                 });
             session.request_once(&key, "session/load", params).await?;
@@ -937,4 +929,42 @@ impl Bridge {
         session.prompt_starting.store(false, Ordering::Release);
         result
     }
+}
+
+// Autopilot controls autonomy, not tool consent. Seed the native V3 policy at
+// creation/load; do not auto-answer permission requests or rewrite user rules.
+fn startup_policy(payload: &Value) -> Value {
+    let enabled = startup_autopilot_value(payload)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true"
+                    | "1"
+                    | "on"
+                    | "enabled"
+                    | "autopilot"
+                    | "auto"
+                    | "always"
+                    | "bypasspermissions"
+            )
+        })
+        .unwrap_or(true);
+    if enabled {
+        json!(["allow-all"])
+    } else {
+        json!([])
+    }
+}
+
+fn startup_autopilot_value(payload: &Value) -> Option<String> {
+    payload["permission_mode"]
+        .as_str()
+        .or_else(|| payload["autopilot"].as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            payload["autopilot"]
+                .as_bool()
+                .map(|value| value.to_string())
+        })
 }

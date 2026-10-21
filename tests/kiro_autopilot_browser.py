@@ -25,7 +25,25 @@ def fake_main():
                 options = [option for option in options if option["id"] != "autopilot"]
             return options
 
+        def run_prompt(self, message):
+            text = " ".join(block.get("text", "") for block in message["params"].get("prompt", []))
+            if text == "verify-policy-tools":
+                # Autopilot alone must not satisfy the separate native policy.
+                if "allow-all" not in getattr(self, "policy", []):
+                    self.error(message, -32000, "Tool consent required: no allow-all policy")
+                    return
+                outside = self.sessions_root.parent / "outside-workspace.txt"
+                outside.write_text("Outside workspace read succeeded")
+                result = Path(self.cwd) / "policy-result.txt"
+                result.write_text(outside.read_text())
+                self.update("agent_message_chunk", content={"type": "text", "text": "Policy tools completed"})
+                self.reply(message, {"stopReason": "end_turn"})
+                return
+            super().run_prompt(message)
+
         def handle(self, message):
+            if message.get("method") in ("session/new", "session/load"):
+                self.policy = message["params"].get("_meta", {}).get("kiro", {}).get("policyPreset", [])
             behavior = os.environ.get("KIRO_TEST_AUTOPILOT")
             if behavior in ("refuse", "unchanged") and message.get("method") == "session/set_config_option" and message.get("params", {}).get("configId") == "autopilot":
                 with self.log.open("a") as output:
@@ -59,6 +77,8 @@ def negative(browser, fixture, restart, behavior, screenshots=None):
         payload = {"uid": uid, **({"autopilot": False} if behavior == "explicit-open" else {"permission_mode": "default"})}
         result = api_raw(page, action, payload)
         assert result["status"] == 200 and result["body"]["raw"]["autopilot"] is False, result
+        loads = fixture.received("session/load")
+        assert loads[-1]["params"]["_meta"]["kiro"]["policyPreset"] == [], loads
         writes = fixture.received("session/set_config_option")
         assert all(row["params"].get("value") != "on" for row in writes if row["params"].get("configId") == "autopilot"), writes
         page.locator("#a-sdk").click()
@@ -188,6 +208,18 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     settings = native_settings()
     assert len(settings) == 1 and settings[0]["params"]["value"] == "on", settings
     assert settings[0]["params"]["sessionId"] == fixture.sid
+    def verify_tools(method):
+        assert fixture.received(method)[-1]["params"]["_meta"]["kiro"]["policyPreset"] == ["allow-all"]
+        result = fixture.work / "policy-result.txt"
+        result.unlink(missing_ok=True)
+        page.locator("#sdk-input").fill("verify-policy-tools")
+        page.locator("#sdk-send").click()
+        expect(page.locator(".sdk-live")).to_contain_text("Policy tools completed")
+        page.wait_for_function("!SdkView.raw?.running")
+        assert result.read_text() == "Outside workspace read succeeded"
+        assert not any(row.get("result", {}).get("outcome") for row in fixture.received()), "Bridge must not auto-answer consent"
+
+    verify_tools("session/load")
     capture("loaded-on")
 
     def opt_out_and_reconnect(current_uid, name):
@@ -269,6 +301,7 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     confirmed(True)
     assert len(native_settings()) == before + 1 and native_settings()[-1]["params"]["value"] == "on"
     assert native_settings()[-1]["params"]["sessionId"] == created["session"]["sid"]
+    verify_tools("session/new")
     capture("created-on")
     opt_out_and_reconnect(created["uid"], "created")
     stop()
@@ -284,6 +317,7 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     opened = api_raw(page, "open", {"uid": explicit_uid})
     assert opened["status"] == 200 and opened["body"]["raw"]["autopilot"] is False, opened
     assert not any(row["params"]["sessionId"] == opened["body"]["session_id"] and row["params"]["value"] == "on" for row in native_settings())
+    assert fixture.received("session/new")[-1]["params"]["_meta"]["kiro"]["policyPreset"] == []
     creations = len(fixture.received("session/new"))
     conflict = api_raw(page, "create", {**explicit, "permission_mode": "autopilot"})
     assert conflict["status"] >= 400, conflict
@@ -312,7 +346,7 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     launched = [row["fixture_cli_start"] for row in fixture.received() if "fixture_cli_start" in row][-1]
     assert launched["sessionId"] != fixture.sid and "--trust-all-tools" in launched["argv"], launched
     stop()
-    assert not fixture.received("session/prompt"), "Permission defaults must not trigger a model request"
+    assert len(fixture.received("session/prompt")) == 2, "Only the two user-submitted tool checks may prompt"
     assert not errors, errors
     context.close()
     print(f"Kiro Autopilot {label}: load/create on, explicit off survives refresh/service restart, new host on, CLI trust flag PASS", flush=True)
