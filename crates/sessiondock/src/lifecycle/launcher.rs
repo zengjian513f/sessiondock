@@ -699,6 +699,17 @@ impl Launcher {
                 argv.push(OsString::from(arg));
             }
         }
+        // Managed Kiro CLI sessions default to YOLO. An explicit tool-trust
+        // selection in the profile remains authoritative.
+        if spec.source() == Source::Kiro
+            && !argv.iter().skip(1).any(|arg| {
+                let arg = arg.to_string_lossy();
+                matches!(arg.as_ref(), "-a" | "--trust-all-tools" | "--trust-tools")
+                    || arg.starts_with("--trust-tools=")
+            })
+        {
+            argv.push("--trust-all-tools".into());
+        }
         // An in-session update exits Codex before it creates native history,
         // abandoning new sessions and report workers. Keep updates outside
         // managed sessions; this invocation override never edits user config.

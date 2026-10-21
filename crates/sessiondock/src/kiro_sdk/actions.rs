@@ -301,12 +301,11 @@ impl Bridge {
         Ok(())
     }
 
-    pub(super) async fn apply_setting(
-        &self,
+    pub(super) fn setting_params(
         session: &Arc<Session>,
         kind: &str,
         val: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         let sid = session.session_id.lock().unwrap().clone();
         if sid.is_empty() {
             return Err("session_id not initialized".into());
@@ -390,12 +389,19 @@ impl Bridge {
             };
             (id.to_owned(), wire)
         };
+        Ok(json!({"sessionId":sid,"configId":config_id,"value":wire_value}))
+    }
+
+    pub(super) async fn apply_setting(
+        &self,
+        session: &Arc<Session>,
+        kind: &str,
+        val: &str,
+    ) -> Result<(), String> {
         let body = session
             .request(
                 "session/set_config_option",
-                json!({
-                    "sessionId":sid,"configId":config_id,"value":wire_value
-                }),
+                Self::setting_params(session, kind, val)?,
             )
             .await?;
         let options = body["configOptions"]
@@ -549,7 +555,11 @@ impl Bridge {
         }))
     }
 
-    pub(super) async fn catalog_or_probe_models(&self, _cwd: &str, refresh: bool) -> (Vec<Value>, Option<String>) {
+    pub(super) async fn catalog_or_probe_models(
+        &self,
+        _cwd: &str,
+        refresh: bool,
+    ) -> (Vec<Value>, Option<String>) {
         // First check if any active session already has config_options/models
         if !refresh {
             let sessions: Vec<Arc<Session>> =

@@ -301,7 +301,7 @@ impl Bridge {
             }
             "create" => self.create_session(&cwd, &payload).await,
             "open" => {
-                let session = self.ensure_open(uid, &cwd, &target).await?;
+                let session = self.ensure_open(uid, &cwd, &payload).await?;
                 Ok(session.snapshot())
             }
             "turn" => self.turn(uid, &cwd, &target, &payload).await,
@@ -487,7 +487,10 @@ impl Bridge {
         let lock = self.lock_for(&format!("create:{request_id}"));
         let _guard = lock.lock().await;
         let path = self.create_intent_path(request_id);
-        let choices = json!({"model":payload["model"],"effort":payload["effort"],"mode":payload["mode"],"autopilot":payload["autopilot"]});
+        let mut choices = json!({"model":payload["model"],"effort":payload["effort"],"mode":payload["mode"],"autopilot":payload["autopilot"]});
+        if let Some(permission_mode) = payload.get("permission_mode") {
+            choices["permission_mode"] = permission_mode.clone();
+        }
         let (mut intent, fresh) = match std::fs::read(&path) {
             Ok(bytes) => (
                 serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())?,
@@ -551,6 +554,7 @@ impl Bridge {
                 settings[to] = json!(value);
             }
         }
+        settings["policyPreset"] = startup_policy(payload);
         let new_params = json!({"cwd":cwd,"mcpServers":[],"_meta":{"kiro":settings}});
         let mut result = match session.creation_result() {
             Some(result) => result?,
@@ -585,6 +589,7 @@ impl Bridge {
                 result["configOptions"] = confirmed["configOptions"].clone();
             }
         }
+        self.apply_startup_autopilot(&session, payload).await?;
         let sid = result["sessionId"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -657,12 +662,80 @@ impl Bridge {
         Ok(json!({"uid":uid,"released":true,"released_now":true}))
     }
 
+    async fn apply_startup_autopilot(
+        &self,
+        session: &Arc<Session>,
+        payload: &Value,
+    ) -> Result<(), String> {
+        const KEY: &str = "startup:autopilot";
+        let explicit = startup_autopilot_value(payload);
+        let params =
+            match Self::setting_params(session, "autopilot", explicit.as_deref().unwrap_or("true"))
+            {
+                Ok(params) => params,
+                // A native version without this advertised option remains usable;
+                // its own state stays visible instead of claiming YOLO was enabled.
+                Err(error)
+                    if explicit.is_none() && error.starts_with("kiro_sdk_setting_unavailable:") =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+        let (startup, user_setting, current_matches) = {
+            let state = session.state.lock().unwrap();
+            let startup = state.journal.iter().find(|rpc| rpc.key == KEY).cloned();
+            // This also protects a user setting queued before an upgrade or a
+            // disconnect: defaults must not overtake that existing intent.
+            let user_setting = state.journal.iter().any(|rpc| {
+                rpc.key != KEY
+                    && rpc.frame["method"] == "session/set_config_option"
+                    && rpc.frame["params"]["configId"] == params["configId"]
+            });
+            let current_matches = state.config_options.iter().any(|option| {
+                option.get("id").or_else(|| option.get("configId")) == params.get("configId")
+                    && option["currentValue"] == params["value"]
+            });
+            (startup, user_setting, current_matches)
+        };
+        if explicit.is_some() && (startup.is_some() || user_setting) {
+            if !current_matches {
+                self.apply_setting(session, "autopilot", explicit.as_deref().unwrap())
+                    .await?;
+            }
+            return Ok(());
+        }
+        if user_setting {
+            return Ok(());
+        }
+        // One default per persistent host generation. Reuse the original wire
+        // request after a crash, but never apply its old reply over newer live
+        // settings during a refresh or service reattachment.
+        let params = startup
+            .map(|rpc| rpc.frame["params"].clone())
+            .unwrap_or(params);
+        let result = session
+            .request_once(KEY, "session/set_config_option", params.clone())
+            .await?;
+        let confirmed = result["configOptions"].as_array().is_some_and(|options| {
+            options.iter().any(|option| {
+                option.get("id").or_else(|| option.get("configId")) == params.get("configId")
+                    && option["currentValue"] == params["value"]
+            })
+        });
+        if !confirmed {
+            return Err("kiro_sdk_setting_unconfirmed: Kiro 未确认启动时的自动批准设置".into());
+        }
+        Ok(())
+    }
+
     async fn finish_open_setup(
         &self,
         session: &Arc<Session>,
         uid: &str,
         sid: &str,
         cwd: &str,
+        payload: &Value,
     ) -> Result<(), String> {
         if session.unavailable.load(Ordering::Acquire) {
             return Err("kiro_sdk_transport_unavailable: original host retained".into());
@@ -716,13 +789,14 @@ impl Bridge {
                 .unwrap_or_else(|| {
                     (
                         "open:load".into(),
-                        json!({"sessionId":sid,"cwd":cwd,"mcpServers":[]}),
+                        json!({"sessionId":sid,"cwd":cwd,"mcpServers":[],"_meta":{"kiro":{"policyPreset":startup_policy(payload)}}}),
                     )
                 });
             session.request_once(&key, "session/load", params).await?;
         }
         session.bind_identity(uid, sid)?;
         session.set_projection(self.catalog.clone())?;
+        self.apply_startup_autopilot(session, payload).await?;
         Ok(())
     }
 
@@ -730,7 +804,7 @@ impl Bridge {
         &self,
         uid: &str,
         _cwd: &str,
-        _target: &Value,
+        payload: &Value,
     ) -> Result<Arc<Session>, String> {
         let lock = self.lock_for(uid);
         let _guard = lock.lock().await;
@@ -739,7 +813,7 @@ impl Bridge {
         if let Some(session) = existing
             .filter(|s| !s.dead.load(Ordering::Acquire) && !s.unavailable.load(Ordering::Acquire))
         {
-            self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+            self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd, payload)
                 .await?;
             session.touch();
             return Ok(session);
@@ -769,7 +843,7 @@ impl Bridge {
                     .lock()
                     .unwrap()
                     .insert(uid.into(), session.clone());
-                self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+                self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd, payload)
                     .await?;
                 return Ok(session);
             }
@@ -795,7 +869,7 @@ impl Bridge {
             .lock()
             .unwrap()
             .insert(uid.into(), session.clone());
-        self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd)
+        self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd, payload)
             .await?;
         Ok(session)
     }
@@ -813,7 +887,7 @@ impl Bridge {
         &self,
         uid: &str,
         cwd: &str,
-        target: &Value,
+        _target: &Value,
         payload: &Value,
     ) -> Result<Value, String> {
         let session = if uid.is_empty() {
@@ -821,7 +895,7 @@ impl Bridge {
             let new_uid = snap["uid"].as_str().unwrap_or("").to_string();
             self.get_session(&new_uid)?
         } else {
-            self.ensure_open(uid, cwd, target).await?
+            self.ensure_open(uid, cwd, payload).await?
         };
 
         let lock = self.lock_for(&session.uid());
@@ -855,4 +929,42 @@ impl Bridge {
         session.prompt_starting.store(false, Ordering::Release);
         result
     }
+}
+
+// Autopilot controls autonomy, not tool consent. Seed the native V3 policy at
+// creation/load; do not auto-answer permission requests or rewrite user rules.
+fn startup_policy(payload: &Value) -> Value {
+    let enabled = startup_autopilot_value(payload)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true"
+                    | "1"
+                    | "on"
+                    | "enabled"
+                    | "autopilot"
+                    | "auto"
+                    | "always"
+                    | "bypasspermissions"
+            )
+        })
+        .unwrap_or(true);
+    if enabled {
+        json!(["allow-all"])
+    } else {
+        json!([])
+    }
+}
+
+fn startup_autopilot_value(payload: &Value) -> Option<String> {
+    payload["permission_mode"]
+        .as_str()
+        .or_else(|| payload["autopilot"].as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            payload["autopilot"]
+                .as_bool()
+                .map(|value| value.to_string())
+        })
 }

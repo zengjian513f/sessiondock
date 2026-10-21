@@ -12,6 +12,17 @@
 新建菜单继续强制刷新账号目录；CLI 查询在阻塞线程池执行，不占用 SDK 事件循环。
 已有会话优先读取原生配置，目录失败保留之前的缓存。
 
+新建及显式启动默认开启原生 Autopilot，并在 `session/new`／`session/load` 的
+`_meta.kiro.policyPreset` 中传入 `["allow-all"]`。Autopilot 只控制自主执行，
+不替代工具权限；缺少策略时，工作区外读取仍会请求授权。显式关闭启动权限时传空预设。
+原生显式 ask／deny 与硬性限制仍优先，SessionDock 不自动回答授权卡片。
+运行中 Autopilot 开关只改变原生自主执行设置，不重写启动时的权限预设。
+协议依据：[官方权限文档](https://kiro.dev/docs/permissions/)。
+每个宿主只初始化一次默认权限，
+通过持久 RPC 记录确认；显式权限选择优先，重连不覆盖运行中的手动设置。
+普通历史读取和后台恢复不借此启动或变更权限。
+Hub 刷新等待最新节点能力和运行状态后恢复 SDK 视图。
+
 私有 `<state>/sdk-adapters/kiro` 保存 RPC/写入 ID、完整待发送 frame、宿主写入证据、
 原生响应、回合归属、stdout/stderr 游标及 live 投影。每次宿主读取中的完整 ACP 帧
 按顺序合并处理，先持久化状态与最后完整帧的游标，再通知网页和 RPC 等待者；未完整
@@ -45,10 +56,15 @@
   入口、模式切换和节点能力门控；不能以节点直连或其他来源的 Hub 验收替代。
 - [恢复浏览器](../tests/kiro_recovery_browser.py)：服务重启附着、审批和输入去重、
   延迟取消与 FIFO、旧 RPC 迟到、空审批选项、退出尾部与终态。
+- [默认权限浏览器](../tests/kiro_autopilot_browser.py)：节点及 Hub 的 SDK／CLI 默认
+  YOLO、显式关闭、刷新和服务重启保留手动设置，以及原生拒绝或未广告设置时的状态。
 
 以上套件使用合成 CLI，不能证明真实模型服务行为。
 [真实浏览器验收](../tests/kiro_sdk_real_browser.py)显式接收隔离登录环境、CLI 路径和
-用户授权的 `--model auto`，默认验证扫描不运行它。2.24.1 已通过标准 Google
+显式 `--model auto`、`--model claude-haiku-4.5` 或`--model qwen3-coder-next`，默认验证扫描不运行它。
+`--verify-permissions` 通过真实网页发送工作区外读取、工作区内写入和 shell 请求，
+不点击授权按钮，以实际文件结果验证权限策略。Kiro CLI 2.24.1 已通过此真实网页
+验收（`qwen3-coder-next`），完成工作区外读取、写入与 `pwd`，未人工回答授权。2.24.1 已通过标准 Google
 设备登录与真实网页 SDK 回复 → 停止 → CLI 同 SID 回放 → 停止 → SDK 回放；
 原生模型配置已确认。此后验收脚本改用自然中文问题，恢复断言核对实际收到的助手正文；
 修改后的脚本已通过合成浏览器闭环，未为措辞调整重复发起真实请求。

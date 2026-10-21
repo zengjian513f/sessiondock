@@ -164,6 +164,9 @@ pub struct EventBus {
     /// Draft changes so far; `/api/live` reports it so the Hub's observer
     /// can relay a node's draft change to Hub pages.
     draft_epoch: AtomicU64,
+    /// Each new page needs a baseline observed after it subscribed, even when
+    /// the shared observer never saw a short-lived reconnect state.
+    subscriber_epoch: AtomicU64,
 }
 impl EventBus {
     /// Invalidate directory reads after a completed metadata write. Snapshot
@@ -196,13 +199,17 @@ impl EventBus {
     {
         let mut sender_slot = self.sender.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(sender) = sender_slot.as_ref() {
-            return sender.subscribe();
+            let receiver = sender.subscribe();
+            self.subscriber_epoch.fetch_add(1, Ordering::AcqRel);
+            return receiver;
         }
         let (sender, receiver) = broadcast::channel(32);
+        self.subscriber_epoch.fetch_add(1, Ordering::AcqRel);
         *sender_slot = Some(sender.clone());
         let bus = self.clone();
         tokio::spawn(async move {
             let mut previous = None;
+            let mut reconciled_epoch = 0;
             loop {
                 // Check and remove under the subscribe lock so a new subscriber
                 // cannot attach between the last-receiver check and removal.
@@ -213,15 +220,17 @@ impl EventBus {
                         break;
                     }
                 }
+                // Subscriptions arriving during this observation must wait
+                // for the next one; this snapshot may predate their HTTP reads.
+                let observed_epoch = bus.subscriber_epoch.load(Ordering::Acquire);
                 if let Some(snapshot) = observe().await {
-                    if let Some(old) = &previous {
+                    if previous.is_none() || observed_epoch != reconciled_epoch {
+                        let _ = sender.send(json!({"initial":true}));
+                        reconciled_epoch = observed_epoch;
+                    } else if let Some(old) = &previous {
                         if let Some(change) = snapshot.change(old) {
                             let _ = sender.send(change);
                         }
-                    } else {
-                        // Reconcile after the first baseline is captured too:
-                        // a browser's initial HTTP reads may have preceded it.
-                        let _ = sender.send(json!({"initial":true}));
                     }
                     previous = Some(snapshot);
                 } else {
