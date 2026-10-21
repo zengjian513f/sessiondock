@@ -124,6 +124,11 @@ def run(args):
                 page.locator("#sdk-effort").select_option("high")
                 page.wait_for_function("window.__kiroSnapshot.effort === 'high'")
                 expect(page.locator("#sdk-effort")).to_be_enabled()
+                # The snapshot can confirm before the settings receipt. An idle
+                # session must not keep the receipt text until a later snapshot.
+                expect(page.locator(".native-sdk-pane .sdk-status")).to_have_attribute("title", "就绪", timeout=5000)
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots / "kiro-effort-confirmed-1280.png"), full_page=True)
                 page.locator("#sdk-effort").select_option("max")
                 page.wait_for_function("window.__kiroSnapshot.model === 'auto' && window.__kiroSnapshot.effort === null")
                 expect(page.locator("#sdk-effort")).to_be_hidden()
