@@ -630,9 +630,9 @@ def main():
     if "--list-models" in args:
         sys.stdout.write(json.dumps({
             "models": [
-                {"model_id": "auto", "model_name": "Auto", "default_effort": "medium"},
-                {"model_id": "claude-haiku-4.5", "model_name": "Claude Haiku 4.5", "default_effort": "low"},
-                {"model_id": "qwen3-coder-next", "model_name": "Qwen3 Coder Next", "default_effort": "low"},
+                {"model_id": "auto", "model_name": "Auto", "default_effort": "medium", "efforts": ["low", "medium", "high", "max"]},
+                {"model_id": "claude-haiku-4.5", "model_name": "Claude Haiku 4.5", "default_effort": "low", "efforts": ["low", "medium", "high", "max"]},
+                {"model_id": "qwen3-coder-next", "model_name": "Qwen3 Coder Next", "default_effort": "low", "efforts": ["low", "medium", "high", "max"]},
             ],
             "default_model": "claude-haiku-4.5",
         }) + "\n")

@@ -127,8 +127,39 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert sdk_open_after_stop["status"] == 200 and sdk_open_after_stop["body"].get("session_id") == fixture.sid, sdk_open_after_stop
 
     assert any("CLI_TO_SDK_CONTINUITY" in (item.get("content") or "") for item in sdk_open_after_stop["body"]["raw"]["items"]), sdk_open_after_stop
+    # Stopping from the toolbar must repaint the terminal action after its
+    # shared busy flag is cleared, including when the native stop is fast.
+    page.locator('#a-sdk').click()
+    page.wait_for_function('uid => SdkView.uid === uid && SdkView.connected && !SdkView.readOnly', arg=uid)
+    stop = page.locator('#a-session-toggle[aria-label="停止会话"]')
+    if not stop.is_visible():
+        page.locator('#a-more').click()
+    with page.expect_response(lambda r: r.url.endswith(('/api/session/stop', '/api/native-sdk/stop')) and r.request.method == 'POST') as stopped_sdk:
+        stop.click()
+        popup = page.locator('dialog.app-popup')
+        if popup.is_visible():
+            popup.get_by_role('button', name='确定', exact=True).click()
+    assert stopped_sdk.value.ok, stopped_sdk.value.text()
+    try:
+        expect(page.locator('#a-term')).to_be_enabled()
+    except AssertionError:
+        print('Stopped terminal diagnostics', page.evaluate("""async () => ({
+          busy:[...ConsoleUI.busy], live:[...S.liveSdk], sdkSessions:T.sdkSessions,
+          active:{uid:SdkView.uid,connected:SdkView.connected,readOnly:SdkView.readOnly},
+          reason:consoleUnavailableReason(S.sel),
+          inventory:await (await fetch('/api/live?force=1')).json(),
+          term:await (await fetch('/api/term/list')).json()
+        })"""), flush=True)
+        raise
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'kiro-stopped-terminal-available.png'), full_page=True)
+    with page.expect_response(lambda r: r.url.endswith('/api/term/takeover')) as resumed_cli:
+        page.locator('#a-term').click()
+    assert resumed_cli.value.ok, resumed_cli.value.text()
+    stopped_cli = page.evaluate("async uid => (await fetch('/api/session/stop', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid})})).json()", uid)
+    assert stopped_cli.get('ok'), stopped_cli
+
     # Create through the CLI preference: backend assigns a native SID before PTY resume.
-    page.evaluate("async uid => fetch('/api/native-sdk/stop', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid})})", uid)
     if not page.locator("#settings").is_visible():
         page.locator("#header-more-btn").click()
     page.locator("#settings").click()

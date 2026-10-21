@@ -7449,6 +7449,7 @@ async function toggleSessionRun(row, button = null, intent = null, composerMode 
     } finally {
       ConsoleUI.busy.delete(row.uid);
       refreshSessionRunControls();
+      renderTakeoverBtn();
     }
     return;
   }

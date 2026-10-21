@@ -242,6 +242,9 @@ impl LiveState {
     }
 
     pub(super) fn sync_from_config_options(&mut self) {
+        // Config options are the native authority; an omitted control must not
+        // retain an effort value from a previous model or creation draft.
+        self.effort = None;
         let opts = self.config_options.clone();
         for opt in &opts {
             let id = opt["id"]
@@ -334,6 +337,36 @@ impl LiveState {
                 self.permission_mode = Some(if enabled { "autopilot" } else { "default" }.into());
             }
         }
+        if !self.effort_supported() {
+            self.effort = None;
+        }
+    }
+
+    pub(super) fn effort_supported(&self) -> bool {
+        let advertised = self.config_options.iter().any(|option| {
+            let id = option["id"]
+                .as_str()
+                .or_else(|| option["configId"].as_str())
+                .unwrap_or("");
+            let category = option["category"].as_str().unwrap_or("");
+            ["effortLevel", "effort", "reasoningEffort"]
+                .iter()
+                .any(|name| id.eq_ignore_ascii_case(name))
+                || ["thought_level", "effort"]
+                    .iter()
+                    .any(|name| category.eq_ignore_ascii_case(name))
+        });
+        advertised
+            && !self
+                .config_options
+                .iter()
+                .filter_map(|option| option["options"].as_array())
+                .flatten()
+                .any(|option| {
+                    option["value"].as_str().or_else(|| option["id"].as_str())
+                        == self.model.as_deref()
+                        && option["_meta"]["kiro"]["hasEffort"] == false
+                })
     }
 
     pub(super) fn update_config_option_value(&mut self, config_id: &str, value: &str) {
@@ -425,7 +458,7 @@ impl LiveState {
             self.model = Some(m);
             self.model_observed = false;
         }
-        if let Some(e) = effort.filter(|s| !s.is_empty()) {
+        if let Some(e) = effort.filter(|s| !s.is_empty() && self.effort_supported()) {
             self.effort = Some(e);
         }
         let user_id = self.alloc_item_id("user");
@@ -686,7 +719,10 @@ impl LiveState {
             self.model = Some(m.to_string());
             self.model_observed = false;
         }
-        if let Some(e) = u["effortLevel"].as_str().filter(|s| !s.trim().is_empty()) {
+        if let Some(e) = u["effortLevel"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && self.effort_supported())
+        {
             self.effort = Some(e.to_string());
         }
         if let Some(mode) = u["currentModeId"]
@@ -1273,6 +1309,7 @@ impl LiveState {
             "send": true,
             "models": !self.config_options.is_empty() || !self.models.is_null(),
             "settings": !self.config_options.is_empty() || !self.modes.is_null(),
+            "effort": self.effort_supported(),
             "usage": self.supports_method("_kiro/session/context") || !self.usage.is_null(),
             "billing": self.billing.is_some(),
             "interrupt": true,
@@ -1310,12 +1347,12 @@ impl LiveState {
             "mode": self.mode,
             "model": self.model,
             "model_observed": self.model_observed,
-            "effort": self.effort,
+            "effort": self.effort.as_ref().filter(|_| self.effort_supported()),
             "permission_mode": self.permission_mode,
             "autopilot": self.autopilot,
             "settings": {
                 "model": self.model,
-                "effort": self.effort,
+                "effort": self.effort.as_ref().filter(|_| self.effort_supported()),
                 "mode": self.mode,
                 "permission_mode": self.permission_mode,
                 "autopilot": self.autopilot,

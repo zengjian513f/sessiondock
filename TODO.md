@@ -5,10 +5,6 @@
 
 ## Kiro integration
 
-- [ ] 完成[实施计划](implementation_plan_codex_for_kiro.md)的真实成功对话验收。
-  2.24.1 隔离登录、模型确认及 SDK 创建 → CLI 同 SID 恢复 → SDK replay 已验证；
-  用户输入连续保留，但首个模型请求返回 `TemporarilySuspendedError`，未取得成功回复。
-  等测试账号恢复后继续显式最低成本模型验收，不自动重试或换用更贵模型。
 - [ ] 补真实非空分页历史、审批／问答、取消、fork/delete/compact、设置回读与消费
   对账证据。当前能力来自已认证 initialize，相关恢复路径有合成 Chromium 验证；
   不能以合成事件替代原生高级能力验收。普通历史暂只读自有缓存，显式 SDK load

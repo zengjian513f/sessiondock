@@ -8,7 +8,9 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
 
 2026-10-21 在独立 HOME/XDG、配置目录和工作目录中验证 `kiro-cli 2.24.1`：
 
-- 用户通过设备授权登录，认证只留在隔离环境。
+- 使用标准 `kiro-cli login --use-device-flow`，在菜单中选择用户日常使用的 Google
+  登录；认证只留在隔离 HOME/XDG 环境。不要把菜单默认的 Builder ID 当作用户的
+  日常登录方式。当前 `whoami` 类型为 Social。
 - `initialize` 广告 `loadSession`、标准 `session/list`、`session/delete`、
   `session/fork`（支持 `messageId`），以及 `_kiro/session/history`、
   `_kiro/session/export`、`_kiro/session/context`、`_kiro/session/compact`。
@@ -17,15 +19,16 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
   分页使用 `nextCursor`；尚无真实多页或远程来源的验收证据。
   同一安装版 CLI `--list-sessions --all-cwds --format json` 返回空列表，
   不能替代 ACP 目录或据此删除缓存。
-- SDK 创建的 SID 可用于 CLI `--agent-engine=v3 --resume-id`；CLI 界面显示原
-  用户消息。停止 CLI 后，独立 ACP `session/load` 接受同 SID 并回放原用户消息。
+- 真实 Chromium 页面以用户指定的 `auto` 新建 SDK 会话，原生配置确认模型后
+  发送消息并收到成功回复；通过页面停止 SDK、CLI 按同 SID 恢复并显示原回复，
+  再停止 CLI、显式启动 SDK 后回放同一助手回复。完整身份与回复连续性验收通过。
   `load` 响应可以没有 `sessionId`，桥接保留可信请求中的 SID。
-- 显式选择目录中最低费率的 `qwen3-coder-next`，原生配置确认该模型。
-  其 `hasEffort=false`，无 effort 选项，强度标为不适用，不伪造确认值。
-- 首个模型请求被服务以 `TemporarilySuspendedError` 拒绝，提示测试账号临时暂停。
-  没有成功的模型回答，**完整 SDK → CLI → SDK 对话连续性仍未通过真实验收**；
-  未重试付费请求或回退到其他模型。[Kiro 支持](https://support.aws.amazon.com/#/contacts/kiro)
-  处理账号限制后，须继续真实验收。
+- `auto` 的原生 `hasEffort=false`，没有 effort 配置项；不能把界面默认强度当作
+  原生已生效的值。
+- 早先另一个隔离 Builder ID 登录使用 `qwen3-coder-next` 时返回
+  `TemporarilySuspendedError`。这只描述当时那个认证环境的失败，不代表日常
+  Google 登录账号整体暂停，也不能据此确定错误由模型、提示词或账号的哪一项造成。
+- 真实测试使用自然语言问题，核对实际助手回复及其恢复，不要求模型回显测试标记。
 
 `history {sessionId}` 在独立 ACP 中能返回结果，但会发初始化通知；实测其默认
 `updates:[]` 与随后 `load` 回放的用户消息不一致。因此不能将它当作完整只读历史，
@@ -71,4 +74,5 @@ CLI／SDK 的启动检查、受管实例绑定和停止使用同一会话锁；�
 通用复制／移动不模拟原生恢复能力，混合组保留具体阻碍项。
 
 原生参考：[V3 ACP 迁移](https://kiro.dev/docs/cli/v3/acp-migration/)、
-[CLI 命令](https://kiro.dev/docs/reference/cli-commands/)。
+[CLI 命令](https://kiro.dev/docs/reference/cli-commands/)、
+[认证方式](https://kiro.dev/docs/cli/authentication/)。

@@ -167,7 +167,7 @@ pub(super) fn extract_models_from_config_options(
                         .as_str()
                         .or_else(|| item["label"].as_str())
                         .unwrap_or(mid);
-                    let item_efforts: Vec<String> = item["efforts"]
+                    let mut item_efforts: Vec<String> = item["efforts"]
                         .as_array()
                         .or_else(|| item["supportedReasoningEfforts"].as_array())
                         .map(|ea| {
@@ -181,7 +181,12 @@ pub(super) fn extract_models_from_config_options(
                                 .collect()
                         })
                         .unwrap_or_else(|| efforts_list.clone());
+                    let has_effort = item["_meta"]["kiro"]["hasEffort"].as_bool();
+                    if has_effort == Some(false) {
+                        item_efforts.clear();
+                    }
                     let mut row = json!({
+                        "hasEffort": has_effort,
                         "id": mid,
                         "name": name,
                         "displayName": name,
@@ -191,7 +196,7 @@ pub(super) fn extract_models_from_config_options(
                     if let Some(desc) = item["description"].as_str() {
                         row["description"] = json!(desc);
                     }
-                    if let Some(ref de) = default_effort {
+                    if let Some(de) = default_effort.as_ref().filter(|_| !item_efforts.is_empty()) {
                         row["default_effort"] = json!(de);
                         row["defaultReasoningEffort"] = json!(de);
                     }
@@ -225,13 +230,8 @@ pub(super) fn extract_models_from_config_options(
                     .as_str()
                     .or_else(|| m["displayName"].as_str())
                     .unwrap_or(mid);
-                let item_efforts = if efforts_list.is_empty() {
-                    vec![
-                        "low".to_string(),
-                        "medium".to_string(),
-                        "high".to_string(),
-                        "max".to_string(),
-                    ]
+                let item_efforts = if m["_meta"]["kiro"]["hasEffort"] == false {
+                    Vec::new()
                 } else {
                     efforts_list.clone()
                 };
@@ -257,11 +257,7 @@ fn ensure_model_in_list(list: &mut Vec<Value>, model_id: Option<&str>) {
         .iter()
         .any(|item| item["id"].as_str() == Some(mid) || item["name"].as_str() == Some(mid));
     if !exists {
-        let efforts = list
-            .first()
-            .and_then(|first| first["efforts"].as_array())
-            .cloned()
-            .unwrap_or_else(|| vec![json!("low"), json!("medium"), json!("high"), json!("max")]);
+        let efforts: Vec<Value> = Vec::new();
         list.insert(
             0,
             json!({
@@ -317,6 +313,11 @@ impl Bridge {
         }
         let (config_id, wire_value) = {
             let state = session.state.lock().unwrap();
+            if matches!(kind, "effort" | "effortLevel") && !state.effort_supported() {
+                return Err(
+                    "kiro_sdk_setting_unavailable: 当前 Kiro 模型未广告 effort 配置".into(),
+                );
+            }
             let option = state
                 .config_options
                 .iter()
@@ -433,7 +434,11 @@ impl Bridge {
                     list,
                     st.model.clone().or(extracted_model),
                     st.model_observed,
-                    st.effort.clone().or(extracted_effort),
+                    if st.effort_supported() {
+                        st.effort.clone().or(extracted_effort)
+                    } else {
+                        None
+                    },
                     st.config_options.clone(),
                 )
             };
