@@ -37,6 +37,8 @@
   审批／问答、配置、分支、取消、原生删除与确认文案。
 - [CLI 浏览器](../tests/kiro_cli_browser.py)：原生终端恢复／新建、双模式互斥、停止切换，
   以及旧创建请求重试不影响后来 SDK 实例。
+- [Hub 浏览器](../tests/kiro_hub_browser.py)：经实际隔离节点与 Hub 验证顶部 SDK／CLI
+  入口、模式切换和节点能力门控；不能以节点直连或其他来源的 Hub 验收替代。
 - [恢复浏览器](../tests/kiro_recovery_browser.py)：服务重启附着、审批和输入去重、
   延迟取消与 FIFO、旧 RPC 迟到、空审批选项、退出尾部与终态。
 
