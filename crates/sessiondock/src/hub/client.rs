@@ -349,6 +349,21 @@ impl Client {
     }
 }
 
+/// `TlsConnector::new` uses the platform trust store and verifies both the
+/// certificate chain and the literal IP passed to `connect` (the registry never
+/// permits DNS). Loading the trust store is the expensive part, so one
+/// connector serves the whole process; every request still opens its own
+/// connection. A failed construction is retried by the next request.
+fn tls_connector() -> Result<&'static tokio_native_tls::TlsConnector, ClientError> {
+    static CONNECTOR: std::sync::OnceLock<tokio_native_tls::TlsConnector> =
+        std::sync::OnceLock::new();
+    if let Some(connector) = CONNECTOR.get() {
+        return Ok(connector);
+    }
+    let connector = native_tls::TlsConnector::new().map_err(|_| ClientError::ConnectionFailed)?;
+    Ok(CONNECTOR.get_or_init(|| tokio_native_tls::TlsConnector::from(connector)))
+}
+
 async fn connect_stream(target: &Target) -> Result<UpstreamStream, ClientError> {
     let stream = TcpStream::connect(target.addr)
         .await
@@ -357,10 +372,7 @@ async fn connect_stream(target: &Target) -> Result<UpstreamStream, ClientError> 
     if !target.tls {
         return Ok(UpstreamStream::new(stream));
     }
-    // `TlsConnector::new` uses the platform trust store and verifies both the
-    // certificate chain and this literal IP (the registry never permits DNS).
-    let connector = native_tls::TlsConnector::new().map_err(|_| ClientError::ConnectionFailed)?;
-    let connector = tokio_native_tls::TlsConnector::from(connector);
+    let connector = tls_connector()?;
     let domain = target.addr.ip().to_string();
     let stream = connector
         .connect(&domain, stream)

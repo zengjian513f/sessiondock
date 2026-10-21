@@ -173,6 +173,19 @@ impl RemoteCache {
             entries.pop_front();
         }
     }
+
+    /// Mark `scope` recently used while it still holds `data`; a concurrent
+    /// read that already stored a newer revision is left in place.
+    pub fn refresh(&self, scope: &str, data: &Arc<Value>) {
+        let mut entries = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(index) = entries
+            .iter()
+            .position(|(key, current)| key == scope && Arc::ptr_eq(current, data))
+            && let Some(entry) = entries.remove(index)
+        {
+            entries.push_back(entry);
+        }
+    }
 }
 
 impl Store {
@@ -236,15 +249,28 @@ impl Store {
     }
 }
 
+/// A reconstructed hub→node list response.
+pub enum Expanded {
+    /// The complete response.
+    Complete(Value),
+    /// The node reported `list_unchanged` and every envelope field equals the
+    /// baseline: the complete response is the baseline itself, so callers can
+    /// keep sharing it and everything derived from it.
+    Baseline,
+}
+
 /// Reconstruct a complete response, also used by hub→node reads. Apply against
 /// the baseline captured when the request began, never a concurrent newer one.
-pub fn expand(mut data: Value, baseline: Option<&Value>) -> Option<Value> {
+pub fn expand(mut data: Value, baseline: Option<&Value>) -> Option<Expanded> {
     let Some(delta) = data.get("list_delta") else {
-        return Some(data);
+        return Some(Expanded::Complete(data));
     };
     let baseline = baseline?;
     if delta["base"] != baseline["list_version"] {
         return None;
+    }
+    if is_baseline(&data, baseline)? {
+        return Some(Expanded::Baseline);
     }
     let mut arrays = BTreeMap::new();
     for (name, patch) in delta["collections"].as_object()? {
@@ -254,15 +280,51 @@ pub fn expand(mut data: Value, baseline: Option<&Value>) -> Option<Value> {
     object.remove("list_delta");
     object.remove("list_unchanged");
     object.extend(arrays);
-    Some(data)
+    Some(Expanded::Complete(data))
+}
+
+/// Whether the complete response equals `baseline` without rebuilding it.
+/// `None` exactly where `expand_rows` would reject the patch; `Some(false)`
+/// leaves the decision to the ordinary expansion.
+fn is_baseline(data: &Value, baseline: &Value) -> Option<bool> {
+    if data["list_unchanged"] != true {
+        return Some(false);
+    }
+    let (Some(data), Some(base)) = (data.as_object(), baseline.as_object()) else {
+        return Some(false);
+    };
+    let collections = data["list_delta"]["collections"].as_object()?;
+    for (name, patch) in collections {
+        let field = patch["key"].as_str()?;
+        let removed = patch["remove"].as_array()?;
+        let upsert = patch["upsert"].as_array()?;
+        if !removed.is_empty() || !upsert.is_empty() || patch.get("order").is_some() {
+            return Some(false);
+        }
+        // An empty patch reproduces the baseline rows when each has a key.
+        let rows = baseline[name].as_array()?;
+        if !rows.iter().all(|row| row[field].is_string()) {
+            return None;
+        }
+    }
+    // The envelope fields of this read must equal the baseline as well.
+    let envelope = |key: &String| key != "list_delta" && key != "list_unchanged";
+    let same = data
+        .iter()
+        .filter(|(key, _)| envelope(key) && !collections.contains_key(*key))
+        .all(|(key, value)| base.get(key) == Some(value))
+        && base
+            .keys()
+            .all(|key| collections.contains_key(key) || (envelope(key) && data.contains_key(key)));
+    Some(same)
 }
 
 fn expand_rows(baseline: &Value, patch: &Value) -> Option<Value> {
     let field = patch["key"].as_str()?;
-    let mut rows: Vec<Value> = baseline.as_array()?.clone();
-    let old: BTreeMap<_, _> = rows
+    let baseline = baseline.as_array()?;
+    let old: BTreeMap<_, &Value> = baseline
         .iter()
-        .map(|row| Some((key(row, field)?, row.clone())))
+        .map(|row| Some((key(row, field)?, row)))
         .collect::<Option<_>>()?;
     let removed: BTreeSet<String> = patch["remove"]
         .as_array()?
@@ -279,16 +341,21 @@ fn expand_rows(baseline: &Value, patch: &Value) -> Option<Value> {
                 .or_else(|| key(&v["row"], field))
         })
         .collect::<Option<_>>()?;
-    rows.retain(|row| {
-        key(row, field).is_some_and(|id| !removed.contains(&id) && !replaced.contains(&id))
-    });
+    // Only retained rows are copied; replaced rows are cloned from `old` once.
+    let mut rows: Vec<Value> = baseline
+        .iter()
+        .filter(|row| {
+            key(row, field).is_some_and(|id| !removed.contains(&id) && !replaced.contains(&id))
+        })
+        .cloned()
+        .collect();
     for item in upsert {
         let index = usize::try_from(item["index"].as_u64()?).ok()?;
         if index > rows.len() {
             return None;
         }
         let row = if let Some(id) = item["id"].as_str() {
-            let mut row = old.get(id)?.clone();
+            let mut row = (*old.get(id)?).clone();
             let object = row.as_object_mut()?;
             for field in item["unset"].as_array()? {
                 object.remove(field.as_str()?);

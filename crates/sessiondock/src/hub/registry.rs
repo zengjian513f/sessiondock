@@ -21,7 +21,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -321,10 +321,60 @@ impl Fetched {
 
 type CacheKey = (String, String, String);
 
+/// One cached public payload.
+#[derive(Clone)]
+struct Cached {
+    stamp: f64,
+    data: Arc<Value>,
+    /// The upstream list response `data` was rewritten from, and the node it
+    /// was rewritten for. A node read that reports this exact list unchanged
+    /// reuses `data` instead of rewriting the list again. Weak: the list
+    /// transport alone decides how long upstream baselines live.
+    origin: Option<(Weak<Value>, Node)>,
+    /// `stale_payload` of this entry, built on the first offline read. A new
+    /// stamp replaces it.
+    stale: Arc<OnceLock<Arc<Value>>>,
+}
+
+impl Cached {
+    fn new(stamp: f64, data: Arc<Value>, origin: Option<(Weak<Value>, Node)>) -> Self {
+        Self {
+            stamp,
+            data,
+            origin,
+            stale: Default::default(),
+        }
+    }
+
+    /// The offline copy, shared by every request until the entry changes.
+    fn stale(&self, path: &str) -> Arc<Value> {
+        self.stale
+            .get_or_init(|| Arc::new(stale_payload(path, Some((self.stamp, &self.data)))))
+            .clone()
+    }
+}
+
+/// A node answer before `public_payload`.
+enum Answer {
+    Value(Value),
+    /// A list read; the complete response is also the next upstream baseline.
+    List(Arc<Value>),
+    /// The node reported the list unchanged against this baseline.
+    Baseline(Arc<Value>),
+}
+
+fn is_list(method: &str, path: &str) -> bool {
+    method == "GET"
+        && matches!(
+            path.split('?').next(),
+            Some("/api/sessions" | "/api/term/list")
+        )
+}
+
 struct Inner {
     nodes: Vec<Node>,
     /// Insertion-ordered so the variant bound evicts the oldest entry.
-    cache: IndexMap<CacheKey, (f64, Arc<Value>)>,
+    cache: IndexMap<CacheKey, Cached>,
     health: HashMap<String, Health>,
     snapshot_sigs: HashMap<String, Value>,
 }
@@ -430,9 +480,10 @@ impl Registry {
         if !data.is_object() || !data["sessions"].is_array() {
             return;
         }
-        inner
-            .cache
-            .insert(sessions_key(&node.id), (stamp, Arc::new(data)));
+        inner.cache.insert(
+            sessions_key(&node.id),
+            Cached::new(stamp, Arc::new(data), None),
+        );
         inner.health.entry(node.id.clone()).or_insert(Health {
             online: None,
             last_seen: Some(stamp),
@@ -480,24 +531,11 @@ impl Registry {
             .is_some_and(|health| health.online == Some(false))
     }
 
-    fn sessions_sig(&self, nid: &str) -> Option<String> {
-        self.lock()
-            .cache
-            .get(&sessions_key(nid))
-            .and_then(|(_, data)| data.get("sig"))
-            .and_then(|sig| sig.as_str())
-            .filter(|sig| !sig.is_empty())
-            .map(str::to_string)
-    }
-
-    /// Conditional session fetch: the node answers a tiny `unchanged` when its
-    /// list signature still matches, so heartbeats cost bytes, not megabytes.
+    /// Conditional session fetch: the list transport sends only the changed
+    /// rows, and an unchanged list reuses the cached payload, so heartbeats
+    /// cost bytes, not megabytes.
     pub async fn check(&self, client: &Client, node: &Node) -> Fetched {
-        let query: Vec<(String, String)> = match self.sessions_sig(&node.id) {
-            Some(sig) => vec![("sig".to_string(), sig)],
-            None => Vec::new(),
-        };
-        self.query(client, node, "/api/sessions", &query, client.timeout, None)
+        self.query(client, node, "/api/sessions", &[], client.timeout, None)
             .await
     }
 
@@ -799,65 +837,91 @@ impl Registry {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<(u16, Value), ClientError> {
+        if is_list(method, path) {
+            let (status, answer) = self.list_request(client, node, path, timeout).await?;
+            return Ok(match answer {
+                Answer::Value(data) => (status, data),
+                Answer::List(data) | Answer::Baseline(data) => (status, Arc::unwrap_or_clone(data)),
+            });
+        }
         let target = self
             .target(node)
             .map_err(|_| ClientError::Invalid("invalid node url"))?;
-        if method == "GET"
-            && matches!(
-                path.split('?').next(),
-                Some("/api/sessions" | "/api/term/list")
-            )
-        {
-            // The transport revision supersedes the node's conditional sig. It
-            // also covers terminal lists, which otherwise cross WG in full.
-            let (route, query) = path.split_once('?').unwrap_or((path, ""));
-            let query = query
-                .split('&')
-                .filter(|part| !part.starts_with("sig=") && !part.is_empty())
-                .collect::<Vec<_>>()
-                .join("&");
-            let path = if query.is_empty() {
-                route.to_owned()
-            } else {
-                format!("{route}?{query}")
-            };
-            let scope = format!("{}\n{}\n{}", node.url, node.token, path);
-            let baseline = self.list_responses.get(&scope);
-            let known = baseline
-                .as_ref()
-                .and_then(|v| v["list_version"].as_str())
-                .unwrap_or("new");
-            let response = client
-                .open(
-                    &target,
-                    Request {
-                        method,
-                        target: &path,
-                        headers: &[(crate::list_sync::HEADER, known)],
-                        body: None,
-                        connect: timeout,
-                        idle: timeout,
-                    },
-                )
-                .await?;
-            let status = response.status;
-            let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
-            let responses = self.list_responses.clone();
-            return client
-                .work(move || {
-                    let data = serde_json::from_slice(&raw)
-                        .map_err(|_| ClientError::Invalid("body is not JSON"))?;
-                    if status != 200 {
-                        return Ok((status, data));
-                    }
-                    let data = crate::list_sync::expand(data, baseline.as_deref())
-                        .ok_or(ClientError::Invalid("invalid list delta"))?;
-                    responses.put(scope, Arc::new(data.clone()));
-                    Ok((status, data))
-                })
-                .await?;
-        }
         client.json(&target, method, path, body, timeout).await
+    }
+
+    /// A list `GET` over the list transport. The transport revision supersedes
+    /// the node's conditional `sig`, which is never forwarded. It also covers
+    /// terminal lists, which otherwise cross WG in full.
+    async fn list_request(
+        &self,
+        client: &Client,
+        node: &Node,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<(u16, Answer), ClientError> {
+        let target = self
+            .target(node)
+            .map_err(|_| ClientError::Invalid("invalid node url"))?;
+        let (route, query) = path.split_once('?').unwrap_or((path, ""));
+        let query = query
+            .split('&')
+            .filter(|part| !part.starts_with("sig=") && !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("&");
+        let path = if query.is_empty() {
+            route.to_owned()
+        } else {
+            format!("{route}?{query}")
+        };
+        let scope = format!("{}\n{}\n{}", node.url, node.token, path);
+        let baseline = self.list_responses.get(&scope);
+        let known = baseline
+            .as_ref()
+            .and_then(|v| v["list_version"].as_str())
+            .unwrap_or("new");
+        let response = client
+            .open(
+                &target,
+                Request {
+                    method: "GET",
+                    target: &path,
+                    headers: &[(crate::list_sync::HEADER, known)],
+                    body: None,
+                    connect: timeout,
+                    idle: timeout,
+                },
+            )
+            .await?;
+        let status = response.status;
+        let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
+        let responses = self.list_responses.clone();
+        client
+            .work(move || {
+                let data = serde_json::from_slice(&raw)
+                    .map_err(|_| ClientError::Invalid("body is not JSON"))?;
+                if status != 200 {
+                    return Ok((status, Answer::Value(data)));
+                }
+                let expanded = crate::list_sync::expand(data, baseline.as_deref())
+                    .ok_or(ClientError::Invalid("invalid list delta"))?;
+                Ok(match (expanded, baseline) {
+                    (crate::list_sync::Expanded::Baseline, Some(baseline)) => {
+                        responses.refresh(&scope, &baseline);
+                        (status, Answer::Baseline(baseline))
+                    }
+                    (crate::list_sync::Expanded::Complete(data), _) => {
+                        let data = Arc::new(data);
+                        responses.put(scope, data.clone());
+                        (status, Answer::List(data))
+                    }
+                    // `expand` only reports the baseline when there is one.
+                    (crate::list_sync::Expanded::Baseline, None) => {
+                        return Err(ClientError::Invalid("invalid list delta"));
+                    }
+                })
+            })
+            .await?
     }
 
     /// A bulk write: connect within `client.timeout`, then wait up to
@@ -1020,50 +1084,77 @@ impl Registry {
         let outcome = if search {
             self.search_request(client, node, query, events, &mut found)
                 .await
+                .map(|(status, data)| (status, Answer::Value(data)))
         } else {
             let target = if encoded.is_empty() {
                 format!("{path}?")
             } else {
                 format!("{path}?{encoded}")
             };
-            self.request(client, node, &target, "GET", None, timeout)
-                .await
+            if is_list("GET", &target) {
+                self.list_request(client, node, &target, timeout).await
+            } else {
+                self.request(client, node, &target, "GET", None, timeout)
+                    .await
+                    .map(|(status, data)| (status, Answer::Value(data)))
+            }
         };
-        let outcome = match outcome {
-            Ok((status, data)) => {
+        let reused = match &outcome {
+            Ok((_, Answer::Baseline(base))) => self.reusable(&key, node, base),
+            _ => None,
+        };
+        let outcome = match (outcome, reused) {
+            (Ok((status, _)), Some(data)) => Ok((status, data, None, true)),
+            (Ok((status, answer)), None) => {
                 let node = node.clone();
                 let path = path.to_owned();
                 let public_payload = self.public_payload;
                 client
                     .work(move || {
-                        let unchanged = path == "/api/sessions" && truthy(&data["unchanged"]);
-                        let data = if status == 200 && data.is_object() && !unchanged {
+                        // The cache holds the upstream baseline too, so a
+                        // rewritten list needs its own copy.
+                        let (data, origin) = match answer {
+                            Answer::Value(data) => (data, None),
+                            Answer::List(base) | Answer::Baseline(base) => {
+                                ((*base).clone(), Some(base))
+                            }
+                        };
+                        let data = if status == 200 && data.is_object() {
                             public_payload(data, &node, &path)
                         } else {
                             data
                         };
-                        (status, Arc::new(data))
+                        let origin = origin.map(|base| (Arc::downgrade(&base), node));
+                        (status, Arc::new(data), origin, false)
                     })
                     .await
             }
-            Err(error) => Err(error),
+            (Err(error), _) => Err(error),
         };
         let (status, error) = match outcome {
-            Ok((status, data)) if status == 200 => {
+            Ok((status, data, origin, reused)) if status == 200 => {
                 if !data.is_object() {
                     (Some(status), ClientError::Invalid("body is not an object"))
                 } else {
-                    let unchanged = path == "/api/sessions" && truthy(&data["unchanged"]);
                     let snapshot = {
                         let mut inner = self.lock();
-                        if !search && !unchanged {
-                            inner.cache.insert(key.clone(), (stamp, data.clone()));
+                        if reused {
+                            // Same payload, seen now: offline rows report this
+                            // read as their `last_seen`.
+                            if let Some(entry) = inner.cache.get_mut(&key)
+                                && Arc::ptr_eq(&entry.data, &data)
+                            {
+                                *entry = Cached::new(stamp, data.clone(), entry.origin.take());
+                            }
+                        } else if !search {
+                            inner
+                                .cache
+                                .insert(key.clone(), Cached::new(stamp, data.clone(), origin));
                             // Bound variant caches (debug views / forced refreshes).
                             while inner.cache.len() > CACHE_LIMIT {
                                 inner.cache.shift_remove_index(0);
                             }
                         }
-                        let snapshot = canonical_sessions && !unchanged;
                         inner.health.insert(
                             node.id.clone(),
                             Health {
@@ -1073,7 +1164,7 @@ impl Registry {
                                 ..Health::default()
                             },
                         );
-                        snapshot && self.snapshot_needed(&mut inner, &node.id, &data)
+                        canonical_sessions && self.snapshot_needed(&mut inner, &node.id, &data)
                     };
                     if snapshot {
                         self.write_snapshot(&node.id, stamp, &data).await;
@@ -1084,7 +1175,7 @@ impl Registry {
                     };
                 }
             }
-            Ok((status, _)) => (Some(status), ClientError::Invalid("non-200 status")),
+            Ok((status, ..)) => (Some(status), ClientError::Invalid("non-200 status")),
             Err(error) => (None, error),
         };
         // Errors intentionally omit URL / token / upstream text.
@@ -1123,12 +1214,18 @@ impl Registry {
             let cached = self.cached(&inner, &node.id, path, &key);
             (prior, cached)
         };
-        let mut data = stale_payload(path, cached.as_ref());
+        let mut data = match &cached {
+            Some(cached) => cached.stale(path),
+            None => Arc::new(stale_payload(path, None)),
+        };
         if search && !found.is_empty() {
-            data["results"] = Value::Array(found.into_values().collect());
+            // Search answers are never cached, so this copy is the small `{}`.
+            let mut partial = Arc::unwrap_or_clone(data);
+            partial["results"] = Value::Array(found.into_values().collect());
+            data = Arc::new(partial);
         }
         Fetched {
-            data: Arc::new(data),
+            data,
             failure: Some(json!({
                 "node_id": node.id, "name": node.name,
                 "error": reason, "error_code": code, "last_seen": prior.last_seen,
@@ -1136,13 +1233,18 @@ impl Registry {
         }
     }
 
-    fn cached(
-        &self,
-        inner: &Inner,
-        nid: &str,
-        path: &str,
-        key: &CacheKey,
-    ) -> Option<(f64, Arc<Value>)> {
+    /// The cached payload a node read reporting `base` unchanged may reuse:
+    /// rewritten from that exact upstream list for this exact node.
+    fn reusable(&self, key: &CacheKey, node: &Node, base: &Arc<Value>) -> Option<Arc<Value>> {
+        let inner = self.lock();
+        let entry = inner.cache.get(key)?;
+        let (origin, from) = entry.origin.as_ref()?;
+        // The weak reference keeps the allocation, so its address is not reused.
+        (std::ptr::eq(origin.as_ptr(), Arc::as_ptr(base)) && from == node)
+            .then(|| entry.data.clone())
+    }
+
+    fn cached(&self, inner: &Inner, nid: &str, path: &str, key: &CacheKey) -> Option<Cached> {
         let mut cached = if CACHED_PATHS.contains(&path) {
             inner.cache.get(key).cloned()
         } else {
@@ -1176,30 +1278,15 @@ impl Registry {
         // Never hold registry state while waiting for network I/O. A cold search
         // otherwise serializes every node, heartbeat, list and creation response.
         if health.online != Some(false) {
-            if path == "/api/sessions"
-                && query.is_empty()
-                && let Some((_, data)) = &cached
-                && truthy(&data["sig"])
-            {
-                let checked = self.check(client, node).await;
-                if !checked.ok() || !truthy(&checked.data["unchanged"]) {
-                    return checked;
-                }
-                let inner = self.lock();
-                let latest = inner.cache.get(&sessions_key(nid)).cloned().or(cached);
-                return Fetched {
-                    data: latest
-                        .map(|(_, data)| data)
-                        .unwrap_or_else(|| Arc::new(json!({}))),
-                    failure: None,
-                };
-            }
             return self
                 .query(client, node, path, query, client.timeout, events)
                 .await;
         }
         Fetched {
-            data: Arc::new(stale_payload(path, cached.as_ref())),
+            data: match &cached {
+                Some(cached) => cached.stale(path),
+                None => Arc::new(stale_payload(path, None)),
+            },
             failure: Some(json!({
                 "node_id": nid, "name": node.name,
                 "error": health.error.clone().unwrap_or_else(|| "节点暂时离线".to_string()),
@@ -1295,11 +1382,12 @@ impl Registry {
     }
 }
 
-/// Deep copy of the last good answer with rows marked stale;
-/// a terminal list additionally reports itself disabled.
-pub fn stale_payload(path: &str, cached: Option<&(f64, Arc<Value>)>) -> Value {
+/// Deep copy of the last good answer `(stamp, data)` with rows marked stale;
+/// a terminal list additionally reports itself disabled. The registry builds
+/// it once per cache entry (`Cached::stale`).
+pub fn stale_payload(path: &str, cached: Option<(f64, &Value)>) -> Value {
     let mut data = cached
-        .map(|(_, data)| data.as_ref().clone())
+        .map(|(_, data)| data.clone())
         .unwrap_or_else(|| json!({}));
     if let Some((stamp, _)) = cached {
         for key in ["sessions", "pending"] {
