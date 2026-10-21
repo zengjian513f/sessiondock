@@ -86,6 +86,10 @@ impl Session {
     pub(super) fn uid(&self) -> String {
         self.uid.lock().unwrap().clone()
     }
+    /// Whether the native process lives in sdkhost and survives a service restart.
+    pub(super) fn hosted(&self) -> bool {
+        matches!(self.transport, Transport::Host { .. })
+    }
     pub(super) fn bind_identity(&self, uid: &str, sid: &str) -> Result<(), String> {
         let mut st = self.state.lock().unwrap();
         if !st.session_id.is_empty() && st.session_id != sid {
@@ -105,7 +109,7 @@ impl Session {
     ) -> Result<(), String> {
         let st = self.state.lock().unwrap();
         if !st.uid.is_empty() {
-            catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd)["raw"])?;
+            catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])?;
         }
         *self.projection.lock().unwrap() = Some(catalog);
         Ok(())
@@ -113,7 +117,8 @@ impl Session {
     fn project(&self, st: &mut LiveState) {
         if let Some(catalog) = self.projection.lock().unwrap().as_ref() {
             if !st.uid.is_empty() {
-                if let Err(error) = catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd)["raw"])
+                if let Err(error) =
+                    catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])
                 {
                     st.runtime_error = Some(format!("kiro_sdk_projection: {error}"));
                 }
@@ -781,6 +786,7 @@ impl Session {
         self.deliver(&key).await?;
         let mut snap = self.snapshot();
         snap["accepted"] = json!(true);
+        snap["sdkhost"] = json!(self.hosted());
         if let Some(id) = delivery_id {
             snap["request_id"] = json!(id);
         }
@@ -799,8 +805,9 @@ impl Session {
         if entry.response.is_none() && entry.delivery.as_deref() != Some("written") {
             return Err("kiro_sdk_recovery_unknown: native delivery not confirmed".into());
         }
-        let mut snap = st.snapshot(&st.uid, &st.cwd);
+        let mut snap = st.snapshot(&st.uid, &st.cwd, true);
         snap["accepted"] = json!(true);
+        snap["sdkhost"] = json!(self.hosted());
         snap["request_id"] = json!(id);
         Ok(snap)
     }
@@ -809,7 +816,7 @@ impl Session {
         {
             let mut st = self.state.lock().unwrap();
             let Some(turn) = st.active_prompt else {
-                return Ok(st.snapshot(&st.uid, &st.cwd));
+                return Ok(st.snapshot(&st.uid, &st.cwd, true));
             };
             key = format!("cancel:{turn}");
             let sid = st.session_id.clone();
@@ -898,7 +905,8 @@ impl Session {
     }
     pub(super) fn snapshot(&self) -> Value {
         let st = self.state.lock().unwrap();
-        st.snapshot(&st.uid, &st.cwd)
+        // The public API/SSE shape: windowed items, subtask metadata only.
+        st.snapshot(&st.uid, &st.cwd, true)
     }
     pub(super) async fn kill(self: &Arc<Self>) -> Result<(), String> {
         if !self.dead.load(Ordering::Acquire) {

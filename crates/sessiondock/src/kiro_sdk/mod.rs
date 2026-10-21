@@ -207,7 +207,8 @@ impl Bridge {
             .ok_or_else(|| "kiro_sdk_not_open".to_string())?;
         session.touch();
         let st = session.state.lock().unwrap();
-        let snap = st.snapshot(&session.uid(), &session.cwd);
+        // First SSE frame uses the public wire shape (windowed items).
+        let snap = st.snapshot(&session.uid(), &session.cwd, true);
         let rx = st.events.subscribe();
         Ok((snap, rx))
     }

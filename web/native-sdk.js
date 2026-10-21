@@ -521,10 +521,17 @@ const SdkView = new Proxy({
     const controller = this.selectController = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const query = new URLSearchParams({force: '1'});
+      // Choosing the view mode needs current run-status, not a fresh fleet
+      // scan. `sdk_uids` comes from the in-memory SDK session map (always
+      // current regardless of force); external ownership and terminal presence
+      // from the cached `live`/`term/list` are accurate enough to pick the
+      // mode. A forced full /proc + per-host probe on every selection cost ~1.5s
+      // on a large fleet for no decision benefit. Read cached here and let a
+      // background force refresh self-heal any staleness without blocking 就绪.
+      const query = new URLSearchParams();
       if (HUB_MODE) query.set('nodes', nodeOf(uid));
       const [live] = await Promise.allSettled([
-        fetch(appUrl('api/live?' + query), {signal: controller.signal}).then(async response => {
+        fetch(appUrl('api/live' + (query.size ? '?' + query : '')), {signal: controller.signal}).then(async response => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return response.json();
         }),
@@ -535,9 +542,18 @@ const SdkView = new Proxy({
           if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
             await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
           if (typeof T === 'undefined') return;
-          await loadTermList(true);
+          await loadTermList(false);
         })(),
       ]);
+      // Self-heal staleness off the critical path: refresh the fleet view in the
+      // background so a just-changed terminal/external owner converges shortly,
+      // without making the user wait for it on every switch.
+      const bgQuery = new URLSearchParams({force: '1'});
+      if (HUB_MODE) bgQuery.set('nodes', nodeOf(uid));
+      void fetch(appUrl('api/live?' + bgQuery)).then(r => r.ok && r.json()).then(() => {
+        if (typeof paintLive === 'function') paintLive();
+      }).catch(() => {});
+      if (typeof T !== 'undefined') void loadTermList(true).catch(() => {});
       if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
       if (!this.available(uid, agent)) {
         if (!hasChat && !agent) {
