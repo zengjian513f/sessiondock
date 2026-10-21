@@ -189,6 +189,8 @@ kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
 Linux 节点在 stage 前和 backup 前只读检查 `state/native-sdk-inputs.json`。
 存在旧进程内 `sending` / `accepted` 输入时，本节点发布失败并保留当前服务运行。
 已确认由 [sdkhost](sdkhost.md) 托管的输入不阻止节点发布，任务在独立宿主继续运行。
+旧 Kiro 结果缺少 `sdkhost` 标记时，部署检查按会话 UID 和请求 ID 匹配桥接检查点，
+再核对独立宿主对该次写入的 `written` 回执；证据匹配即允许发布，不修改投递账本。
 该检查也适用于 web-only，因为它仍会重启节点服务；Hub 不持有这些原生进程，不受此检查影响。
 检查发生在 backup 前，拒绝不会触发自动回滚和重启，不提供强制跳过开关。
 这只是旧运行时的迁移保护；不能把旧进程内管道在线转移到宿主。
