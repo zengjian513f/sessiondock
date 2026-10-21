@@ -160,7 +160,13 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
         if page.locator("#sdk-more-menu").is_visible():
             page.locator("#sdk-more").click()
 
+    def settle_header():
+        # History and pushed metadata can replace the header after the SDK
+        # connects. Open its action menu only after those reads have settled.
+        page.wait_for_function("!uiEventApplying && !sessionPollRequest && (SessionContentView.kind !== 'sdk' || !SdkView.historyReady)")
+
     def stop():
+        settle_header()
         button = page.locator('#a-session-toggle[aria-label="停止会话"]')
         expect(button).to_be_enabled()
         if not button.is_visible():
@@ -176,6 +182,7 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     uid = navigate(base)
     assert not native_settings(), "Read-only selection must not change permissions"
     page.locator("#a-sdk").click()
+    settle_header()
     start_sdk(page)
     confirmed(True)
     settings = native_settings()
@@ -239,6 +246,7 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
     stop()
     before = len(native_settings())
     page.locator("#a-sdk").click()
+    settle_header()
     start_sdk(page)
     confirmed(True)
     assert len(native_settings()) == before + 1 and native_settings()[-1]["params"]["value"] == "on"
