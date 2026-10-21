@@ -403,7 +403,6 @@ const CodexSdkView = {
   paintHistory() {
     const data = this.historyData;
     if (!data || !this.history) return;
-    const stick = this.nearBottom();
     let messages = data?.messages || [];
     let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
     const userText = this.activeUserText();
@@ -430,7 +429,6 @@ const CodexSdkView = {
       if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
     }
     if (this.summary) this.paintStatus();
-    if (stick) this.scrollBottom();
   },
 
   activeUserText() {
