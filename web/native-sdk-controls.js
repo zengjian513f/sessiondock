@@ -242,7 +242,12 @@ const NativeSdkControls = {
     await sdkUpdateSettings(view,choices,()=>view.request('api/native-sdk/settings',{
       uid:view.uid,...values,request_id:crypto.randomUUID(),
     }),()=>{view.paintPickers();this.paintSettings(view);this.layout(view);});
-    if(view.current(generation))view.setNotice(view.uid.startsWith('agy:')?'设置已保存；当前运行回合保持原设置':'设置已交给原生确认');
+    if(!view.current(generation))return;
+    // The authoritative snapshot may confirm before this receipt. Then no later
+    // snapshot repaints the status, so restore it now instead of a stale notice.
+    const agy=view.uid.startsWith('agy:');
+    if(view.settingChoices.size || agy && view.running)view.setNotice(agy?'设置已保存；当前运行回合保持原设置':'设置已交给原生确认');
+    else view.paintStatus();
   },
   paintQueue(view) {
     const holder=view.pane.querySelector('.sdk-queue');
