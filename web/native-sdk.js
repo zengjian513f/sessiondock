@@ -26,7 +26,7 @@ const NativeSdkView = {
   uid: '', agent: null, pane: null, generation: 0, connected: false,
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
-    return !(agent && source === 'claude') && SessionDockCapabilities.config.native_sdks?.[source] === true
+    return !(agent && ['claude', 'kiro'].includes(source)) && SessionDockCapabilities.config.native_sdks?.[source] === true
       && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.native_sdks?.[source] === true);
   },
   layoutToolbar() { NativeSdkControls.layout(this); },

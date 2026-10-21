@@ -609,13 +609,8 @@ impl Index {
                 continue;
             };
             let uid = if candidate.source == "kiro" {
-                let Some((uid, old_uids)) = candidate
-                    .path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(|key| {
-                        crate::sessions::kiro::identity_for_projection(&candidate.root, key)
-                    })
+                let Some((uid, old_uids)) =
+                    crate::sessions::kiro::identity_for_projection(&candidate.path)
                 else {
                     continue;
                 };
@@ -1169,20 +1164,50 @@ impl Walk<'_> {
                     .ok()
                     .filter(|meta| meta.is_file())
                     .map(|meta| Stamp::of(&meta));
-                self.found.push(Discovered {
-                    source,
-                    root: self.root.to_path_buf(),
-                    summary_path: Some(path.join(super::opencode::SUMMARY_FILE)),
-                    data,
-                    path,
-                    stamp,
-                    summary_stamp: Some(Stamp::of(&summary)),
-                    events_stamp: None,
-                    agent_id: None,
-                });
+                self.mirror_entry(path.clone(), source, stamp, Stamp::of(&summary));
+                if source == "kiro" {
+                    let agents_path = path.join("agents");
+                    if let Ok(agents) = Dir::open_ambient_dir(&agents_path, ambient_authority()) {
+                        for agent in subdirectories(&agents, &agents_path) {
+                            let path = agents_path.join(agent);
+                            let Ok(summary) =
+                                file_metadata(&path.join(super::opencode::SUMMARY_FILE))
+                            else {
+                                continue;
+                            };
+                            if !summary.is_file() {
+                                continue;
+                            }
+                            let stamp = file_metadata(&path.join(super::opencode::MESSAGES_FILE))
+                                .ok()
+                                .filter(|meta| meta.is_file())
+                                .map(|meta| Stamp::of(&meta));
+                            self.mirror_entry(path, source, stamp, Stamp::of(&summary));
+                        }
+                    }
+                }
             }
         }
         Ok(())
+    }
+    fn mirror_entry(
+        &mut self,
+        path: PathBuf,
+        source: &'static str,
+        stamp: Option<Stamp>,
+        summary_stamp: Stamp,
+    ) {
+        self.found.push(Discovered {
+            source,
+            root: self.root.to_path_buf(),
+            summary_path: Some(path.join(super::opencode::SUMMARY_FILE)),
+            data: path.join(super::opencode::MESSAGES_FILE),
+            path,
+            stamp,
+            summary_stamp: Some(summary_stamp),
+            events_stamp: None,
+            agent_id: None,
+        });
     }
 }
 

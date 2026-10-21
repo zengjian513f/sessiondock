@@ -447,6 +447,31 @@ impl Catalog {
         if snapshot["model"].is_string() {
             value["session"]["model"] = snapshot["model"].clone();
         }
+        // Subtasks are private projections owned by this session, not native
+        // sessions. Keeping them below the owner also makes deletion atomic
+        // with the existing owner-cache cleanup.
+        for task in snapshot["subtasks"].as_array().into_iter().flatten() {
+            let Some(id) = task["id"].as_str() else {
+                continue;
+            };
+            let key = digest(&format!("{}\0{}", uid, id));
+            let path = entry.path.join("agents").join(&key);
+            let mut bytes = Vec::new();
+            for item in task["items"].as_array().into_iter().flatten() {
+                serde_json::to_writer(&mut bytes, &json!({"format":FORMAT,"item":item}))
+                    .map_err(|e| e.to_string())?;
+                bytes.push(b'\n');
+            }
+            publish(&path.join("messages.jsonl"), &bytes)?;
+            let mut child = value.clone();
+            child["uid"] = json!(format!("kiro:{}", &key[..16]));
+            child["aliases"] = json!([]);
+            child["session"]["id"] = json!(id);
+            child["session"]["title"] = task["title"].clone();
+            child["agent"] = json!({"id":id,"parent_sid":entry.sid,
+                "title":task["title"],"type":task["type"],"status":task["status"]});
+            save(&path.join("summary.json"), &child)?;
+        }
         save(&summary, &value)
     }
     pub async fn refresh(&self) -> Result<(), String> {
@@ -568,11 +593,9 @@ impl Catalog {
 }
 
 /// Canonical UID is persisted independently of the projection's physical path.
-pub(crate) fn identity_for_projection(root: &Path, key: &str) -> Option<(String, Vec<String>)> {
-    let info: Value = serde_json::from_slice(
-        &std::fs::read(root.join("sessions").join(key).join("summary.json")).ok()?,
-    )
-    .ok()?;
+pub(crate) fn identity_for_projection(path: &Path) -> Option<(String, Vec<String>)> {
+    let info: Value =
+        serde_json::from_slice(&std::fs::read(path.join("summary.json")).ok()?).ok()?;
     if info["format"] != FORMAT {
         return None;
     }
