@@ -27,7 +27,7 @@ const SdkUI = {
         </div>
       </div></div>`;
     view.box = pane.querySelector('.sdk-msgs');
-    observeMessageLayout(view.box);
+    watchBottom(view.box);
     view.history = pane.querySelector('.sdk-history');
     if (historyReady) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
     view.live = pane.querySelector('.sdk-live');
@@ -110,6 +110,7 @@ const SdkUI = {
         folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
     }
     refreshMessageTimeDividers(view.history);
+    stickBottom(view.box);
   },
 
   methods: {
@@ -253,11 +254,11 @@ const SdkUI = {
 
     nearBottom() {
       const box = this.box;
-      return !box || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      return !box || messageScrollState(box).stick;
     },
 
     scrollBottom() {
-      if (this.box) this.box.scrollTop = this.box.scrollHeight;
+      if (this.box) stickBottom(this.box, true);
     },
 
   },

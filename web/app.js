@@ -6028,26 +6028,30 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
 // 只要用户没有主动往上翻, 消息区就一直停在最新一条: 新消息追加、消息展开/折叠、
 // 图片或表格撑高、窗口缩放, 都要跟着走。
 const BOTTOM_SLACK = 48;
-let _stick = true, _lastTop = 0, _lockUntil = 0, _selfScroll = false;
+// Each conversation surface owns its follow state; SDK and CLI use the same policy.
+function messageScrollState(box) {
+  return box._messageScroll ||= {stick: true, lastTop: 0, lockUntil: 0, selfScroll: false, settleTick: 0};
+}
 
 /** 窗口缩放会让浏览器自己调整滚动位置, 那一小段时间内的滚动不算用户意图。
  *  只在 window resize 时用 —— 别在内容变化时也锁, 否则锁会被不断续期,
  *  用户主动往上翻都会被忽略。 */
-function lockStick(ms = 300) { _lockUntil = performance.now() + ms; }
+function lockStick(box, ms = 300) { messageScrollState(box).lockUntil = performance.now() + ms; }
 
 function atBottom(box) {
   return box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK;
 }
 
 function stickBottom(box, force) {
-  if (force) _stick = true;
-  if (!_stick) return;
-  _selfScroll = true;
+  const scroll = messageScrollState(box);
+  if (force) scroll.stick = true;
+  if (!scroll.stick) return;
+  scroll.selfScroll = true;
   box.scrollTop = box.scrollHeight;
   // 必须读回来: 浏览器会把它夹到 maxScroll, 直接记 scrollHeight 的话
   // 下一次 scroll 事件会把这当成"用户往上翻了一大截", 跟随就断了
-  _lastTop = box.scrollTop;
-  requestAnimationFrame(() => { _selfScroll = false; });
+  scroll.lastTop = box.scrollTop;
+  requestAnimationFrame(() => { scroll.selfScroll = false; });
 }
 
 /** 展开/收起大块内容时把触发控件钉在原来的视口坐标。用户点开过程是在看
@@ -6056,17 +6060,18 @@ function stickBottom(box, force) {
 function mutateKeepingMessageAnchor(anchor, mutate) {
   const box = anchor?.closest('.msgs');
   if (!box || !box.contains(anchor)) return mutate();
+  const scroll = messageScrollState(box);
   const top = anchor.getBoundingClientRect().top;
-  _stick = false;
-  _lastTop = box.scrollTop;
+  scroll.stick = false;
+  scroll.lastTop = box.scrollTop;
   const restore = () => {
     if (!anchor.isConnected || box !== anchor.closest('.msgs')) return;
     const delta = anchor.getBoundingClientRect().top - top;
     if (Math.abs(delta) < .5) return;
-    _selfScroll = true;
+    scroll.selfScroll = true;
     box.scrollTop += delta;
-    _lastTop = box.scrollTop;
-    requestAnimationFrame(() => { _selfScroll = false; });
+    scroll.lastTop = box.scrollTop;
+    requestAnimationFrame(() => { scroll.selfScroll = false; });
   };
   const result = mutate();
   restore();
@@ -6080,8 +6085,9 @@ function mutateKeepingMessageAnchor(anchor, mutate) {
 function jumpWithinConversation(target, block = 'center') {
   const box = target?.closest('.msgs');
   if (!target || !box?.contains(target)) return;
-  _stick = false;
-  _lastTop = box.scrollTop;
+  const scroll = messageScrollState(box);
+  scroll.stick = false;
+  scroll.lastTop = box.scrollTop;
   target.scrollIntoView({block, behavior: 'smooth'});
 }
 
@@ -6091,28 +6097,31 @@ function disposeMessageObservers(box) {
 }
 
 function watchBottom(box) {
-  _stick = true;
-  _lastTop = box.scrollTop;
+  const scroll = messageScrollState(box);
+  scroll.stick = true;
+  scroll.lastTop = box.scrollTop;
+  box._scrollBindings?.abort();
+  const {signal} = box._scrollBindings = new AbortController();
   // 按滚动"方向"判断意图, 而不是按当前是否贴底 —— 窗口缩小、内容展开都会让
   // "是否贴底"瞬间变假, 那不是用户想离开底部。
   // 直接听用户的动作来判断"想离开底部"。不能只靠 scroll 事件推方向:
   // 布局重排、程序自身的滚动都会产生 scroll, 混在一起分不清谁是谁。
-  const leave = () => { _stick = false; };
-  box.addEventListener('wheel', e => { if (e.deltaY < 0) leave(); }, { passive: true });
-  box.addEventListener('touchmove', leave, { passive: true });
+  const leave = () => { scroll.stick = false; };
+  box.addEventListener('wheel', e => { if (e.deltaY < 0) leave(); }, { passive: true, signal });
+  box.addEventListener('touchmove', leave, { passive: true, signal });
   box.addEventListener('keydown', e => {
     if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) leave();
-  });
+  }, {signal});
   box.addEventListener('scroll', () => {
     const top = box.scrollTop;
     // 拖滚动条没有 wheel 事件, 靠方向补一手 (排除程序自己滚的那些)
-    if (!_selfScroll && performance.now() >= _lockUntil && top < _lastTop - 2) _stick = false;
+    if (!scroll.selfScroll && performance.now() >= scroll.lockUntil && top < scroll.lastTop - 2) scroll.stick = false;
     else if (atBottom(box)) {
-      _stick = true;                               // 回到底部就恢复跟随
+      scroll.stick = true;                               // 回到底部就恢复跟随
       if (box._turnSealPending) queueMicrotask(() => flushPendingTurnSeal(box));
     }
-    _lastTop = top;
-  });
+    scroll.lastTop = top;
+  }, {signal});
   observeMessageLayout(box, () => settle(box));
 }
 
@@ -6158,32 +6167,33 @@ function observeMessageLayout(box, onLayout = () => {}) {
 
 /** 布局要好几帧才稳: 窗口变窄会让消息重新折行, scrollHeight 一路涨,
  *  只修一次会差一截。补几帧, 直到不再变化。 */
-let _settleTick = 0;
 
 function settle(box) {
-  if (!_stick) return;
+  const scroll = messageScrollState(box);
+  if (!scroll.stick) return;
   stickBottom(box);
-  if (_settleTick) return;                   // 已经有补偿在跑, 别叠加
+  if (scroll.settleTick) return;                   // 已经有补偿在跑, 别叠加
   let n = 0, last = -1;
   const tick = () => {
-    _settleTick = 0;
-    // 布局稳定(高度不再变)就收手 —— 一直空转的话 _selfScroll 长期为真,
+    scroll.settleTick = 0;
+    // 布局稳定(高度不再变)就收手 —— 一直空转的话 scroll.selfScroll 长期为真,
     // 用户主动往上翻会被当成程序自己滚的而忽略掉
-    if (!_stick || n++ > 10 || box !== $('#msgs') || box.scrollHeight === last) return;
+    if (!scroll.stick || n++ > 10 || !box.isConnected || box.scrollHeight === last) return;
     last = box.scrollHeight;
     stickBottom(box);
-    _settleTick = requestAnimationFrame(tick);
+    scroll.settleTick = requestAnimationFrame(tick);
   };
-  _settleTick = requestAnimationFrame(tick);
+  scroll.settleTick = requestAnimationFrame(tick);
 }
 
 addEventListener('resize', () => {
-  const box = $('#msgs');
-  if (!box) return;
-  lockStick();
-  settle(box);
-  setTimeout(() => settle(box), 160);      // 兜住 resize 之后的异步重排
-  setTimeout(() => settle(box), 400);
+  for (const box of document.querySelectorAll('.msgs')) {
+    if (!box._messageScroll) continue;
+    lockStick(box);
+    settle(box);
+    setTimeout(() => { if (box.isConnected) settle(box); }, 160);
+    setTimeout(() => { if (box.isConnected) settle(box); }, 400);
+  }
 });
 
 /** 整份渲染。消息可能上万条, 分批交还主线程, 否则页面会卡住不动。 */
@@ -6319,15 +6329,14 @@ function historyPageFailure(request, button, error) {
 function restoreHistoryPageScroll(top, scrollTop, entry, request) {
   const box = historyPageBox(request);
   if (!box) return;
+  const scroll = messageScrollState(box);
   const restore = () => {
     if (!currentHistoryPageEntry(request) || box !== historyPageBox(request)) return;
-    if (request.sdkGeneration == null) { _stick = false; _selfScroll = true; }
+    scroll.stick = false; scroll.selfScroll = true;
     const gap = box.querySelector('.history-gap');
     box.scrollTop = gap ? box.scrollTop + gap.getBoundingClientRect().top - top : scrollTop;
-    if (request.sdkGeneration == null) {
-      _lastTop = box.scrollTop;
-      requestAnimationFrame(() => { _selfScroll = false; });
-    }
+    scroll.lastTop = box.scrollTop;
+    requestAnimationFrame(() => { scroll.selfScroll = false; });
   };
   restore();
   requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
@@ -8160,7 +8169,7 @@ function sealTurnTail(box, entry, {defer = true} = {}) {
   }
   const start = lastRenderedTurnStart(box);
   if (!start || start._turnSealed) return false;
-  if (defer && !_stick) {
+  if (defer && !messageScrollState(box).stick) {
     box._turnSealPending = true;
     return false;
   }
