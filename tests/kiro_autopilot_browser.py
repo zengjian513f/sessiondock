@@ -189,10 +189,19 @@ def exercise(browser, fixture, restart, hub_mode, screenshots):
         settle_header()
         button = page.locator('#a-session-toggle[aria-label="停止会话"]')
         expect(button).to_be_enabled()
-        if not button.is_visible():
-            page.locator("#a-more").click()
         with page.expect_response(lambda response: response.url.endswith(("/api/session/stop", "/api/native-sdk/stop")) and response.request.method == "POST") as result:
-            button.click()
+            # A pushed header update can close the mobile action menu between
+            # opening it and clicking. Reopen it as a user would, until clicked.
+            from playwright.sync_api import TimeoutError as PlaywrightTimeout
+            for attempt in range(10):
+                if not button.is_visible():
+                    page.locator("#a-more").click()
+                try:
+                    button.click(timeout=1000)
+                    break
+                except PlaywrightTimeout:
+                    if attempt == 9:
+                        raise
             popup = page.locator("dialog.app-popup")
             if popup.is_visible():
                 popup.get_by_role("button", name="确定", exact=True).click()
