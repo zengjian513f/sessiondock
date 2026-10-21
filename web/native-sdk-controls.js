@@ -102,8 +102,13 @@ const NativeSdkControls = {
   },
   paint(view) {
     if (!view.pane) return;
-    for (const button of view.pane.querySelectorAll('[data-sdk-action]')) button.hidden=view.capabilities[button.dataset.sdkAction] !== true && !(button.dataset.sdkAction==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings);
+    for (const button of view.pane.querySelectorAll('[data-sdk-action]')) button.hidden=!this.supportsAction(view,button.dataset.sdkAction);
     this.paintSettings(view);this.paintUsage(view);this.paintQueue(view);this.layout(view);
+  },
+  supportsAction(view,method) {
+    // Permission requests do not imply OpenCode's permission-rule settings API.
+    if(method==='permissions')return view.uid.startsWith('opencode:') && (view.capabilities.permissions===true || view.capabilities.settings===true);
+    return view.capabilities[method]===true;
   },
   rememberUsage(view) {
     const data={...view.usageData};
@@ -306,7 +311,7 @@ const NativeSdkControls = {
   async action(view,method,body={}) {
     const generation=view.generation;
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
-    if(view.capabilities[method]!==true && !kiroAllowed && !(method==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings)){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
+    if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
     try{
       if(method==='steer'){
         const modal=CodexSdkActions.form('引导当前任务','原生会在可插入时处理；临近任务结束时可能另开一轮。普通发送仍进入队列。','发送引导');
