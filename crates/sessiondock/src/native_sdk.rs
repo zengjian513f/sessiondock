@@ -379,6 +379,12 @@ impl NativeSdks {
             .cloned()
     }
 
+    /// Kiro identity belongs to the official account catalog, not its mutable
+    /// history projection or a creation receipt that may predate deletion.
+    pub(crate) fn kiro_identity(&self, uid: &str) -> Option<crate::sessions::kiro::Entry> {
+        self.kiro_catalog.as_ref()?.resolve_uid(uid).ok()
+    }
+
     /// Native inventory takes over once a creation appears. Keep its request
     /// receipt for idempotency, but never resurrect it after native deletion.
     pub fn observe_inventory(&self, inventory: &[Value]) -> Result<(), String> {

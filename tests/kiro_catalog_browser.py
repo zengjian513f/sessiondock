@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import threading
 from urllib.parse import quote
 
 from playwright.sync_api import expect, sync_playwright
@@ -141,6 +142,45 @@ def main():
                     assert alias_open['uid'] == legacy_uid, alias_open
                     assert len(a.received('session/load')) == loads, 'Alias created a second SDK actor'
                     api(page, 'stop', {'uid':legacy_uid})
+                    page.reload(wait_until='domcontentloaded')
+                    page.wait_for_function('T.listLoaded')
+                    # A busy native stream replaces the app-owned projection
+                    # while the browser opens SDK and reads/saves its draft.
+                    # Identity must come from the official catalog, not this cache.
+                    messages = Path(row['path']) / 'messages.jsonl'
+                    original = messages.read_bytes() if messages.exists() else b''
+                    record = b''.join(json.dumps({'format':'sessiondock-kiro-projection-v1',
+                        'item':{'id':f'busy-history-{i}','role':'assistant','text':'x' * 1000}}).encode() + b'\n'
+                        for i in range(5000))
+                    done = threading.Event()
+                    def stream_projection():
+                        while not done.is_set():
+                            temporary = messages.with_suffix('.streaming')
+                            temporary.write_bytes(record)
+                            temporary.replace(messages)
+                            done.wait(.002)
+                    writer = threading.Thread(target=stream_projection)
+                    writer.start()
+                    try:
+                        select_sdk(page, legacy_uid)
+                        page.locator('#sdk-input').fill('DRAFT_DURING_HISTORY_STREAM')
+                        statuses = page.evaluate("""async uid => {
+                          const statuses=[];
+                          for(let i=0;i<12;i++) {
+                            const r=await fetch('/api/session/conversation?uid='+encodeURIComponent(uid));
+                            statuses.push(r.status); await r.text();
+                          }
+                          return statuses;
+                        }""", legacy_uid)
+                        assert statuses == [200] * 12, statuses
+                        page.wait_for_function("""async uid => {
+                          const r=await fetch('/api/session/conversation?uid='+encodeURIComponent(uid));
+                          return r.ok && JSON.stringify(await r.json()).includes('DRAFT_DURING_HISTORY_STREAM');
+                        }""", arg=alias)
+                    finally:
+                        done.set()
+                        writer.join()
+                        messages.write_bytes(original)
                     page.goto(page.url.split('?')[0] + '?sid=' + quote(alias), wait_until='domcontentloaded')
                     expect(page.locator(f'.dhead[data-uid="{legacy_uid}"]')).to_be_visible()
                     expect(page.locator('#msgs')).to_contain_text('ACCOUNT_A_CACHED_MARKER')
