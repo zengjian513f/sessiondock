@@ -50,7 +50,6 @@
 .sd-session-card a.t:hover { color: var(--text); text-decoration: underline; }
 .sd-session-card .card-meta { white-space: normal; overflow-wrap: anywhere; }
 .sd-session-card .card-path { display: block; overflow-wrap: anywhere; min-width: 0; }
-.sd-session-card .card-extra { margin-top: 5px; font-size: 11.5px; line-height: 1.4; }
 .sd-session-card:not(.item):focus-within { background: var(--hover); }
 .sd-session-card :is(a,button,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sd-session-card .ico { color: var(--muted); }

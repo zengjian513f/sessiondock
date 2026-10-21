@@ -663,7 +663,6 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .sd-session-card [data-source="kiro"],
 .source-icon[data-source="kiro"] { color: var(--kiro, #9333ea); }
 .b-kiro { --source-color: var(--kiro); }
-.src-dot.kiro { background: var(--kiro); }
 .new-cwd-combobox { min-width: 0; }
 /* 启动目录独占一行。 */
 .new-where { display: flex; gap: 7px; min-width: 0; }

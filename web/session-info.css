@@ -28,7 +28,6 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 .si-relation details { margin-top: 6px; font-size: 12px; }
 .si-relation summary { cursor: pointer; color: var(--muted); }
 .si-relation pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
-.si-badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 10px; font-weight: 400; }
 .si-candidate { color: var(--tool); }
 .si-empty { padding: 18px 0; color: var(--muted); font-size: 12px; text-align: center; }
 #relation-form label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); margin-bottom: 10px; min-width: 0; }

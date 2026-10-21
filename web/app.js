@@ -746,7 +746,7 @@ const el = (tag, cls, html) => {
   if (html != null) n.innerHTML = html;
   return n;
 };
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端或 SDK）
 const liveStatusTitle = (tmux, uid = S.sel) => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
@@ -808,7 +808,8 @@ async function checkServerBuild() {
     if (data.build && BUILD_ID && data.build !== BUILD_ID) markStaleBuild(data.build);
   } catch { /* 网络恢复后再检查 */ }
 }
-setInterval(checkServerBuild, 30000);
+// 隐藏页不轮询；visibilitychange 回到可见时立即检查。
+setInterval(() => { if (!document.hidden) checkServerBuild(); }, 30000);
 queueMicrotask(checkServerBuild);
 
 // 登录环境：后端经 zshrc 之类的包装启动，新开的 CLI 继承后端的环境。启动文件改动后，
@@ -927,7 +928,8 @@ async function restartShellEnv(items, button) {
     await checkShellEnv();
   }
 }
-setInterval(checkShellEnv, 60000);
+// 只在定时触发时跳过隐藏页；重启后的轮询等显式调用不受影响。
+setInterval(() => { if (!document.hidden) checkShellEnv(); }, 60000);
 setTimeout(checkShellEnv, 3000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) checkShellEnv();
@@ -5596,11 +5598,22 @@ function regexCached(text) {
   return regexResults.get(String(text ?? '')) || [];
 }
 
+// 本地过滤对每个会话和 agent 行都调用；按查询与影响编译结果的选项缓存（无 g 标志，test 无状态）。
+let literalSearchCache = {term: null, cased: null, word: null, res: []};
+function literalSearchRegexes() {
+  const c = literalSearchCache, cased = !!S.opts.case, word = !!S.opts.word;
+  if (c.term !== S.term || c.cased !== cased || c.word !== word) {
+    const res = searchTerms(S.term).map(term => new RegExp(literalSource(term), cased ? 'u' : 'iu'));
+    literalSearchCache = {term: S.term, cased, word, res};
+  }
+  return literalSearchCache.res;
+}
+
 function matchesSearch(text) {
   if (S.opts.regex) return hasTerm(text);
-  const terms = searchTerms(S.term);
-  const test = term => new RegExp(literalSource(term), S.opts.case ? 'u' : 'iu').test(text);
-  return S.opts.mode === 'any' ? terms.some(test) : terms.every(test);
+  const res = literalSearchRegexes();
+  const test = re => re.test(text);
+  return S.opts.mode === 'any' ? res.some(test) : res.every(test);
 }
 
 function hasTerm(t) {

@@ -138,6 +138,12 @@
     label.textContent = probeStates[state] || '未探测';
   }
   async function reconcileProbe() {
+    // Closed with no lease or request in flight: nothing to send, and the
+    // hidden label only needs one repaint to 'off' (wantsProbe() needs open).
+    if (!lease && !probePending && !dialog?.open) {
+      if (dialog && dialog.querySelector('.sr-probe').dataset.state !== 'off') paintProbeStatus();
+      return;
+    }
     paintProbeStatus();
     if (probePending) return;
     const selected = selection();
