@@ -139,6 +139,58 @@ fn finish(mut response: Value, volatile: Volatile) -> Value {
 /// stopped. With the scan (Linux, explicit switch) the answer is:
 /// `uids` = sessions with a live CLI process (list order), `tmux_uids` those
 /// running under tmux or a managed host, `started_at[uid]` the earliest CLI
+#[derive(serde::Deserialize)]
+pub struct RuntimeQuery {
+    uid: String,
+}
+
+/// `GET /api/session/runtime?uid=`: the run-status of ONE session without a
+/// full-fleet scan. Switching to a session only needs to know how to open it
+/// (SDK vs terminal vs external), which does not justify re-scanning every
+/// process and probing every host. SDK status is read fresh from the in-memory
+/// session map; external/tmux membership comes from the most recent cached
+/// `/api/live` body. A background full `/api/live` refresh (fired by the client
+/// off the critical path) corrects any staleness. `known` reflects whether a
+/// live baseline exists yet.
+pub async fn session_runtime(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<RuntimeQuery>,
+) -> Result<Response, ApiError> {
+    let uid = query.uid;
+    // Fresh, in-memory SDK status (no scan, no host probe).
+    let mut sdk = state.native_sdks.loaded_uids().iter().any(|u| u == &uid);
+    if !sdk && let Some(codex) = &state.codex_sdk {
+        let loaded = codex.live_threads().await;
+        sdk = codex.live_session_uids(&loaded).iter().any(|u| u == &uid);
+    }
+    // External/tmux/working from the last assembled live body, if any.
+    let cached = state.polls.latest_live();
+    let contains = |field: &str| -> bool {
+        cached
+            .as_ref()
+            .and_then(|live| live[field].as_array())
+            .is_some_and(|arr| arr.iter().any(|item| item.as_str() == Some(&uid)))
+    };
+    let known = cached
+        .as_ref()
+        .and_then(|live| live["known"].as_bool())
+        .unwrap_or(false);
+    let in_uids = contains("uids");
+    let body = json!({
+        "uid": uid,
+        "known": known,
+        "sdk": sdk,
+        "tmux": contains("tmux_uids"),
+        "working": contains("working_uids"),
+        // "running" mirrors /api/live's `uids` membership (any observed run),
+        // unioned with fresh SDK status so a just-opened SDK session counts.
+        "running": in_uids || sdk,
+        // A non-SDK owner (external CLI/terminal) currently holds the session.
+        "external": in_uids && !sdk,
+    });
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
+}
+
 /// main-process start. `?force=1` bypasses
 /// every cache. The assembled body is kept while the scan, the
 /// managed observation, the lifecycle generation and the list topology are

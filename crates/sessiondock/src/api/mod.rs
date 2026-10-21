@@ -306,6 +306,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/codex-sdk/controls/shell", post(codex_sdk_controls::shell))
         .route("/live", get(runtime::live))
+        .route("/session/runtime", get(runtime::session_runtime))
         .route("/shell-env", get(shell_env::status))
         .route("/shell-env/restart", post(shell_env::restart))
         // Reads its own bounded body; 501 with the same code as before when unconfigured.

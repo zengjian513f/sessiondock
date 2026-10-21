@@ -521,17 +521,16 @@ const SdkView = new Proxy({
     const controller = this.selectController = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      // Choosing the view mode needs current run-status, not a fresh fleet
-      // scan. `sdk_uids` comes from the in-memory SDK session map (always
-      // current regardless of force); external ownership and terminal presence
-      // from the cached `live`/`term/list` are accurate enough to pick the
-      // mode. A forced full /proc + per-host probe on every selection cost ~1.5s
-      // on a large fleet for no decision benefit. Read cached here and let a
-      // background force refresh self-heal any staleness without blocking 就绪.
-      const query = new URLSearchParams();
+      // Choosing the view mode needs the run-status of THIS one session, not a
+      // whole-fleet scan. Ask the per-session endpoint (O(1): in-memory SDK
+      // status + the last cached live membership) instead of forcing a full
+      // /api/live + /api/term/list, which cost ~1.5s on a large fleet for no
+      // decision benefit. Terminal presence comes from the cached term list.
+      // A background full refresh self-heals any staleness off the hot path.
+      const query = new URLSearchParams({uid});
       if (HUB_MODE) query.set('nodes', nodeOf(uid));
-      const [live] = await Promise.allSettled([
-        fetch(appUrl('api/live' + (query.size ? '?' + query : '')), {signal: controller.signal}).then(async response => {
+      const [runtime] = await Promise.allSettled([
+        fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal}).then(async response => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return response.json();
         }),
@@ -563,13 +562,18 @@ const SdkView = new Proxy({
         this.selection = null;
         return;
       }
-      const state = live.status === 'fulfilled' ? live.value : null;
+      const state = runtime.status === 'fulfilled' ? runtime.value : null;
       const name = typeof T === 'undefined' ? null : takenOver(uid);
       const console = (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
         || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
-      const unknown = !Array.isArray(state?.uids) || state.errors?.some(error => error.node_id === nodeOf(uid));
-      const sdk = !unknown && state.sdk_uids?.includes(uid) === true;
-      const external = state?.uids?.includes(uid) && !sdk;
+      // A failed per-session call means run-status is unknown; the mode falls
+      // back to the saved/default view like before. SDK status is computed
+      // fresh by the endpoint and trusted on success even before a live
+      // baseline exists; external/tmux ownership is only meaningful once a
+      // live baseline is known (`state.known`).
+      const unknown = !state;
+      const sdk = !unknown && state.sdk === true;
+      const external = !unknown && state.known === true && state.external === true;
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {
         selection.mode = sdk ? 'sdk'
