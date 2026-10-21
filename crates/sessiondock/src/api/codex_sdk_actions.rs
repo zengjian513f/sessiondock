@@ -15,6 +15,49 @@ pub struct Target {
     agent: String,
 }
 
+pub async fn get_goal(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let id = thread_id(&state, &body.uid, &body.agent).await?;
+    let raw = sdk.goal(&id, "get", Value::Null).await.map_err(rpc)?;
+    Ok(Json(json!({"ok":true,"raw":raw})))
+}
+
+pub async fn clear_goal(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let id = thread_id(&state, &body.uid, &body.agent).await?;
+    let raw = sdk.goal(&id, "clear", Value::Null).await.map_err(rpc)?;
+    Ok(Json(json!({"ok":true,"raw":raw})))
+}
+
+#[derive(Deserialize)]
+pub struct GoalUpdate {
+    uid: String,
+    #[serde(default)]
+    agent: String,
+    // Preserve omitted versus explicit null budget; native Codex owns validation.
+    #[serde(flatten)]
+    values: serde_json::Map<String, Value>,
+}
+
+pub async fn set_goal(
+    State(state): State<AppState>,
+    Json(body): Json<GoalUpdate>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let id = thread_id(&state, &body.uid, &body.agent).await?;
+    let raw = sdk
+        .goal(&id, "set", Value::Object(body.values))
+        .await
+        .map_err(rpc)?;
+    Ok(Json(json!({"ok":true,"raw":raw})))
+}
+
 #[derive(Deserialize)]
 pub struct Rename {
     uid: String,

@@ -38,7 +38,7 @@ const SdkUI = {
     pane.querySelector('#sdk-send').disabled = true;
     view.input.onclick = () => startComposerSession(view.uid, view.agent, 'sdk');
     view.input.oninput = () => { view.fitInput(); CodexSdkCompose.input(view); };
-    view.input.onblur = () => PathCompletion.close(view.input);
+    view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
       if (PathCompletion.key(view.input, event, () => view.uid)) return;
       ConversationUI.submitOnEnter(event, () => view.send());
@@ -315,7 +315,7 @@ const SdkUI = {
     const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
     for (const control of controls.filter(Boolean)) overflow(control).append(control);
     const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
-    const anchor = trigger;
+    const anchor = pickers.querySelector('.sdk-fixed-action') || trigger;
     for (const control of controls.filter(Boolean)) {
       pickers.insertBefore(control, anchor);
       if (!fits()) { overflow(control).append(control); break; }

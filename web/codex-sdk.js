@@ -49,6 +49,7 @@ const CodexSdkView = {
     CodexSdkCompose.mount(this);
     CodexSdkActions.mount(this);
     CodexSdkControls.mount(this);
+    CodexSdkGoal.mount(this);
     const tokenDetail=el('section','sdk-inline-usage');tokenDetail.id='sdk-token-detail';tokenDetail.setAttribute('aria-label','用量');
     pane.querySelector('#sdk-more-menu').append(tokenDetail);
     this.mountToolbar(generation);
@@ -83,6 +84,7 @@ const CodexSdkView = {
     CodexSdkCompose.close(this);
     CodexSdkActions.close(this);
     CodexSdkControls.close(this);
+    CodexSdkGoal.close(this);
     this.generation++;
     this.es?.close();
     this.es = null;
@@ -112,7 +114,7 @@ const CodexSdkView = {
     const usage = this.pane.querySelector('#sdk-usage-toggle');
     row.insertBefore(gauges, usage);
     usage.hidden = true;
-    const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
+    const buttons = ['fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
     SdkUI.layoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
       .map(selector => this.pane.querySelector(selector))
@@ -542,6 +544,8 @@ const CodexSdkView = {
         break;
       }
       case 'thread/status/changed': if (this.summary) this.summary.status = raw.status; break;
+      case 'thread/goal/updated': CodexSdkGoal.updated(this, raw.goal); break;
+      case 'thread/goal/cleared': CodexSdkGoal.updated(this, null); break;
       case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintPickers(); break;
       case 'thread/name/updated':
         if (this.summary?.resume?.thread) this.summary.resume.thread.name = raw.threadName;
@@ -773,7 +777,7 @@ const CodexSdkView = {
     if (!match) return false;
     const [, command, value] = match;
     switch (command) {
-      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/shell 命令（或 !命令）、/rename [名称]、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
+      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/shell 命令（或 !命令）、/rename [名称]、/goal（目标设置）、/goal resume、/goal pause、/goal clear、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
       case 'model': case 'effort': {
         const select = this.pane.querySelector(`#sdk-${command}`);
         if (value) {

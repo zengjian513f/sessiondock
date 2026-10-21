@@ -2702,3 +2702,22 @@ header .btn[data-session-docked] { display: none; }
   #conversation-status { padding-inline: 8px; }
   #conversation-status .sdk-gauges { gap: 4px 8px; }
 }
+
+/* The Codex wrapper is not a scroll surface. Focus moving between the
+   composer and Goal must not pan the entire pane on narrow screens. */
+#right:has(> #session-content-view.sdk-pane:not(.native-sdk-pane)) { overflow: clip; }
+/* Goal uses the existing upward toolbar popover and compact form controls. */
+.sdk-goal-menu { padding: 12px; }
+.sdk-goal-form { display: grid; gap: 10px; min-width: 0; }
+.sdk-goal-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sdk-goal-heading h3 { margin: 0; font-size: 13px; }
+#sdk-goal-state { color: var(--muted); font-size: 12px; }
+.sdk-goal-form label { display: grid; gap: 5px; font-size: 12px; }
+.sdk-goal-form textarea, .sdk-goal-form input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit;
+}
+.sdk-goal-form textarea { resize: vertical; min-height: 90px; max-height: 240px; }
+.sdk-goal-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.sdk-goal-buttons .btn { min-height: 28px; padding: 4px 10px; }
+.sdk-goal-result:empty { display: none; }

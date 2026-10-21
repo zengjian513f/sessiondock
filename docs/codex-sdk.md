@@ -397,7 +397,7 @@ behavior; they do not require other sources to expose unsupported controls.
   including another client's changes; failures retain actual values and show
   the error. No Apply button is needed. Modes are 执行模式 / 计划模式; unloaded
   selectors use hidden placeholders. Tier IDs and native names are retained,
-  with 档位 as its unloaded label. Goal controls and `/goal` are removed.
+  with 档位 as its unloaded label. The Goal icon follows compact and opens an upward settings popover.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
   persist in private `codex-sdk-queue.json`; without it they are memory-only.
@@ -528,7 +528,7 @@ and completion turns green. SDK live/history areas do not add duplicate
 compaction bubbles. Native compaction supplies no percentage, so the UI does
 not invent one. The mode
 selector changes 执行模式 /
-计划模式; approval/sandbox choices apply directly from checked ⋯ submenus. Goal controls and `/goal` are removed. Direct shell
+计划模式; approval/sandbox choices apply directly from checked ⋯ submenus. The Goal icon follows compact and opens an upward settings popover. Direct shell
 commands are entered in the composer only. Actual settings notifications from
 another client update the controls and checked selections.
 Direct shell commands follow CLI `!` behavior and run with full permissions,
@@ -548,8 +548,23 @@ steering or interrupting a model turn. `thread/name/updated.threadName`
 updates retained live snapshots and attached views. Covered by
 [codex_sdk_rename_browser.py](../tests/codex_sdk_rename_browser.py).
 
+DELTA (BUG-20261021-050110-ff6a79): the Goal icon stays immediately to the
+right of compact. Its upward popover reads the native objective, lifecycle,
+token budget and usage, and offers create/edit, resume, pause and clear.
+Empty budget means no limit. External Goal updates refresh state and usage
+without overwriting unsaved form edits; reopening reads current native state.
+`/goal` and `/goal status` open this panel; `/goal resume`, `/goal pause` and
+`/goal clear` use the same actions. Other Goal command forms remain unsupported.
+The POST `/api/codex-sdk/goal/{get,set,clear}` routes resolve the selected UID/agent
+and call native `thread/goal/{get,set,clear}`. Mutations include `origin: "user"`;
+lifecycle-only changes omit objective and budget to preserve both. Native success
+clears only the submitted composer draft; failures retain input and display the
+native error. No model input is queued, steered or interrupted; native Goal
+scheduling owns subsequent execution. Coverage:
+[codex_sdk_goal_browser.py](../tests/codex_sdk_goal_browser.py).
+
 The composer recognizes `/rename`, `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
-`/default`, `/permissions`, `/approval`, `/sandbox`, `/shell` and
+`/default`, `/permissions`, `/approval`, `/sandbox`, `/goal`, `/shell` and
 `!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
 corresponding SDK controls. Unrecognized slash commands stay in the draft and
 show an explanation rather than becoming a model prompt. These are explicit
