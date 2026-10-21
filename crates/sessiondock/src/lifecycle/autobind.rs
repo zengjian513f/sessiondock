@@ -45,10 +45,14 @@ use crate::{
 
 /// Poll cadence while unbound pending receipts exist.
 /// Each pass forces a fresh scan (≈ 60–70 ms on
-/// this machine) so a rollout the CLI just opened is seen at once.
+/// this machine) so a rollout the CLI just opened is seen at once; a
+/// concurrent forced scan that started after the request is shared.
+/// Failed passes back off from here to [`IDLE`].
 pub const TICK: Duration = Duration::from_millis(1500);
 /// Idle cadence when nothing is pending.
 pub const IDLE: Duration = Duration::from_secs(6);
+/// At most one warning per interval while passes keep failing.
+const WARN_INTERVAL: Duration = Duration::from_secs(300);
 /// One candidate pairing computed off the reactor.
 struct Match {
     record: Record,
@@ -85,6 +89,8 @@ pub fn spawn(state: AppState) {
 
 async fn run(state: AppState) {
     let mut wait = IDLE;
+    let mut failures: u32 = 0;
+    let mut warned: Option<std::time::Instant> = None;
     loop {
         tokio::select! {
             biased;
@@ -92,9 +98,22 @@ async fn run(state: AppState) {
             _ = tokio::time::sleep(wait) => {}
         }
         wait = match tick(&state).await {
-            Ok(Some(_)) => TICK,
-            Ok(None) => IDLE,
-            Err(_) => TICK,
+            Ok(found) => {
+                failures = 0;
+                if found.is_some() { TICK } else { IDLE }
+            }
+            Err(error) => {
+                // Consecutive failures back off TICK, 2×, 4× … up to IDLE.
+                failures = failures.saturating_add(1);
+                if warned.is_none_or(|at| at.elapsed() >= WARN_INTERVAL) {
+                    warned = Some(std::time::Instant::now());
+                    crate::log::warn(
+                        "lifecycle.autobind_tick_failed",
+                        json!({"error": format!("{error:?}"), "consecutive": failures}),
+                    );
+                }
+                TICK.saturating_mul(1 << (failures - 1).min(8)).min(IDLE)
+            }
         };
     }
 }

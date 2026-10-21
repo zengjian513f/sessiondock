@@ -75,7 +75,10 @@ missing identity templates no longer disable a source:
 - Grok new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - OpenCode new: `--session <assigned ses_… id>`, after creating that session
   through `opencode api session.create` ([OpenCode](opencode.md)); resume:
-  `--session <sid>`.
+  `--session <sid>`. Each `opencode api` call drains its pipes while it runs,
+  logs only exit code and byte counts, and on its 20 s timeout kills only the
+  direct child, never a process group: the call may start OpenCode's shared
+  background service, which outlives it.
 
 When a configured template contains an exact `{session_id}` or `{sid}` argument,
 the launcher substitutes it. Otherwise it appends the command above.

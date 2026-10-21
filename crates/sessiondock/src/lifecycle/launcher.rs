@@ -102,27 +102,6 @@ pub struct CliProfile {
     pub env_remove: Vec<String>,
 }
 
-impl CliProfile {
-    /// Default Kiro CLI profile template (`kiro-cli chat --agent-engine=v3`).
-    pub fn default_kiro(executable: PathBuf) -> Self {
-        Self {
-            id: "kiro".into(),
-            source: Source::Kiro,
-            executable,
-            args: Vec::new(),
-            new_args: vec!["chat".into(), "--agent-engine=v3".into()],
-            resume_args: vec![
-                "chat".into(),
-                "--agent-engine=v3".into(),
-                "--resume-id".into(),
-                SESSION_ID_PLACEHOLDER.into(),
-            ],
-            env: BTreeMap::new(),
-            env_remove: Vec::new(),
-        }
-    }
-}
-
 /// Public catalog row for HTTP selection: which configured IDs exist, their
 /// source, whether they are real CLI profiles and whether they can resume.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,13 +138,19 @@ fn opencode_api(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // No process group of its own: `api` may start OpenCode's shared
+    // background service, which must outlive this call even on timeout.
     let mut child = command
         .spawn()
         .map_err(|error| Error::SpawnFailed(error.kind()))?;
+    // Drain both pipes while waiting so a large answer cannot block the CLI
+    // on a full pipe until the deadline.
+    let stdout = PipeCount::start(child.stdout.take());
+    let stderr = PipeCount::start(child.stderr.take());
     let deadline = std::time::Instant::now() + OPENCODE_PREPARE_TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(50))
             }
@@ -175,21 +160,60 @@ fn opencode_api(
                 return Ok((false, "timed out".into()));
             }
         }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| Error::SpawnFailed(error.kind()))?;
+    };
+    // A service the CLI started may inherit the pipes and keep them open:
+    // count what arrived instead of waiting for end of file.
+    let drained = std::time::Instant::now() + OPENCODE_PIPE_GRACE;
     // CLI output can include conversation text, paths or credentials. Keep
     // only process outcome metadata, even on preparation failure.
     Ok((
-        output.status.success(),
+        status.success(),
         format!(
             "exit_code={:?} stdout_bytes={} stderr_bytes={}",
-            output.status.code(),
-            output.stdout.len(),
-            output.stderr.len()
+            status.code(),
+            stdout.finish(drained),
+            stderr.finish(drained)
         ),
     ))
+}
+
+/// How long a finished `opencode api` call's pipes may take to reach end of file.
+const OPENCODE_PIPE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// One pipe read to end of file on its own thread. Only the byte count is
+/// kept: the content is never logged or stored.
+struct PipeCount {
+    bytes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl PipeCount {
+    fn start(stream: Option<impl std::io::Read + Send + 'static>) -> Self {
+        let bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (sender, done) = std::sync::mpsc::channel();
+        if let Some(mut stream) = stream {
+            let counted = bytes.clone();
+            std::thread::spawn(move || {
+                let mut buffer = [0u8; 8192];
+                while let Ok(read) = stream.read(&mut buffer) {
+                    if read == 0 {
+                        break;
+                    }
+                    counted.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
+                }
+                let _ = sender.send(());
+            });
+        }
+        Self { bytes, done }
+    }
+
+    /// Bytes read once the pipe closed, or by `deadline` if it stays open.
+    fn finish(&self, deadline: std::time::Instant) -> usize {
+        let _ = self
+            .done
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
+        self.bytes.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// The picker's model and effort in each CLI's own option spelling, for a

@@ -1726,10 +1726,16 @@ enum ChildState {
     Exited,
     Unknown,
 }
+/// `try_wait` cadence while an owned child may still be running.
+const REAP_POLL: Duration = Duration::from_millis(50);
+/// Retry cadence of a child whose wait failed (state already `Unknown`).
+const REAP_UNKNOWN_RETRY: Duration = Duration::from_secs(5);
 struct ReapJob {
     identity: ReapIdentity,
     child: Child,
     state: watch::Sender<ChildState>,
+    /// Set once `try_wait` failed: `Unknown` was sent, next retry time.
+    retry: Option<std::time::Instant>,
 }
 struct ReapIdentity {
     host_dir: PathBuf,
@@ -1737,6 +1743,8 @@ struct ReapIdentity {
 }
 struct Reaper {
     jobs: Mutex<Vec<ReapJob>>,
+    /// Wakes the worker when `adopt` adds a job.
+    adopted: std::sync::Condvar,
 }
 static REAPER: OnceLock<Result<Arc<Reaper>, ()>> = OnceLock::new();
 impl Reaper {
@@ -1745,33 +1753,66 @@ impl Reaper {
             .get_or_init(|| {
                 let reaper = Arc::new(Self {
                     jobs: Mutex::new(Vec::new()),
+                    adopted: std::sync::Condvar::new(),
                 });
                 let worker = reaper.clone();
                 std::thread::Builder::new()
                     .name("lifecycle-child-reaper".into())
                     .spawn(move || {
                         loop {
-                            {
-                                let mut jobs = worker
-                                    .jobs
-                                    .lock()
+                            let mut jobs = worker
+                                .jobs
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            // Nothing owned: sleep until `adopt` wakes us.
+                            while jobs.is_empty() {
+                                jobs = worker
+                                    .adopted
+                                    .wait(jobs)
                                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                let mut index = 0;
-                                while index < jobs.len() {
-                                    match jobs[index].child.try_wait() {
-                                        Ok(Some(_)) => {
-                                            let job = jobs.swap_remove(index);
-                                            let _ = job.state.send(ChildState::Exited);
+                            }
+                            let now = std::time::Instant::now();
+                            let mut wait = REAP_UNKNOWN_RETRY;
+                            let mut index = 0;
+                            while index < jobs.len() {
+                                if let Some(retry) = jobs[index].retry
+                                    && retry > now
+                                {
+                                    wait = wait.min(retry - now);
+                                    index += 1;
+                                    continue;
+                                }
+                                match jobs[index].child.try_wait() {
+                                    Ok(Some(_)) => {
+                                        let job = jobs.swap_remove(index);
+                                        let _ = job.state.send(ChildState::Exited);
+                                    }
+                                    Ok(None) => {
+                                        if jobs[index].retry.is_some() {
+                                            jobs[index].retry = Some(now + REAP_UNKNOWN_RETRY);
+                                        } else {
+                                            wait = REAP_POLL;
                                         }
-                                        Ok(None) => index += 1,
-                                        Err(_) => {
-                                            let _ = jobs[index].state.send(ChildState::Unknown);
-                                            index += 1;
+                                        index += 1;
+                                    }
+                                    Err(_) => {
+                                        // Retained (observe keeps matching it) and
+                                        // retried slowly; Unknown is sent once.
+                                        let job = &mut jobs[index];
+                                        if job.retry.is_none() {
+                                            let _ = job.state.send(ChildState::Unknown);
                                         }
+                                        job.retry = Some(now + REAP_UNKNOWN_RETRY);
+                                        index += 1;
                                     }
                                 }
                             }
-                            std::thread::sleep(Duration::from_millis(50));
+                            // Releases the lock while waiting; `adopt` may wake
+                            // it early so a new child is polled at once.
+                            let _ = worker
+                                .adopted
+                                .wait_timeout(jobs, wait)
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
                         }
                     })
                     .map_err(|_| ())?;
@@ -1790,7 +1831,9 @@ impl Reaper {
                 identity,
                 child,
                 state,
+                retry: None,
             });
+        self.adopted.notify_one();
         receiver
     }
     fn observe(
