@@ -55,6 +55,14 @@ pub(super) struct LiveState {
     pub(super) loading: bool,
     pub(super) interrupted_turn: bool,
     pub(super) items: Vec<Value>,
+    /// `item["id"]` -> its index in `items`, so replay/live reducers locate the
+    /// row to mutate in O(1) instead of a linear scan (the scan made cold-start
+    /// `session/load` replay O(n^2)). `items` is append-only between bulk
+    /// replacements, so indices stay valid; the map is rebuilt lazily whenever
+    /// it falls out of sync with `items` (after checkpoint load, a wholesale
+    /// `items` replacement, or a new-turn user push). Not persisted.
+    #[serde(skip)]
+    pub(super) item_index: HashMap<String, usize>,
     pub(super) requests: HashMap<String, PendingRequest>,
     pub(super) last_turn: Option<Value>,
     pub(super) runtime_error: Option<String>,
@@ -125,6 +133,7 @@ impl LiveState {
             loading: false,
             interrupted_turn: false,
             items: Vec::new(),
+            item_index: HashMap::new(),
             requests: HashMap::new(),
             last_turn: None,
             runtime_error: None,
@@ -603,7 +612,7 @@ impl LiveState {
         if let Some(rid) = request_id.filter(|s| !s.is_empty()) {
             user_item["request_id"] = json!(rid);
         }
-        self.items.push(user_item);
+        self.push_item(user_item);
         self.current_assistant_id = None;
         self.current_thinking_id = None;
         self.tool_item_ids.clear();
@@ -1261,15 +1270,49 @@ impl LiveState {
         }
     }
 
+    /// Append an item and record its id index. All pushes to `self.items` in
+    /// the reducers go through here so `item_index` stays in sync, keeping
+    /// later lookups O(1).
+    fn push_item(&mut self, item: Value) {
+        if let Some(id) = item["id"].as_str() {
+            self.item_index.insert(id.to_owned(), self.items.len());
+        }
+        self.items.push(item);
+    }
+
+    /// O(1) mutable access to the item with `id`. Rebuilds `item_index` once if
+    /// it is stale (after checkpoint load, a wholesale `items` replacement, or a
+    /// new-turn user push that did not go through `push_item`), then looks up.
+    fn item_mut(&mut self, id: &str) -> Option<&mut Value> {
+        if self.item_index.len() != self.items.len() {
+            self.item_index = self
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(i, item)| item["id"].as_str().map(|id| (id.to_owned(), i)))
+                .collect();
+        }
+        let idx = *self.item_index.get(id)?;
+        // Defend against any index drift: verify the row still matches.
+        match self.items.get(idx) {
+            Some(item) if item["id"].as_str() == Some(id) => self.items.get_mut(idx),
+            _ => {
+                let found = self
+                    .items
+                    .iter()
+                    .position(|item| item["id"].as_str() == Some(id))?;
+                self.item_index.insert(id.to_owned(), found);
+                self.items.get_mut(found)
+            }
+        }
+    }
+
     pub(super) fn append_chunk(&mut self, role: &str, chunk: &str, message_id: Option<&str>) {
         if let Some(mid) = message_id
             && let Some(existing_id) = self.message_item_ids.get(mid).cloned()
-            && let Some(item) = self.items.iter_mut().find(|i| i["id"] == existing_id)
+            && let Some(item) = self.item_mut(&existing_id)
         {
-            let prev = item["text"].as_str().unwrap_or("");
-            let next_text = format!("{prev}{chunk}");
-            item["text"] = json!(next_text);
-            item["content"] = json!(next_text);
+            append_text(item, chunk);
             return;
         }
 
@@ -1284,9 +1327,7 @@ impl LiveState {
                 None
             };
             if let Some(item) = existing {
-                let text = format!("{}{chunk}", item["text"].as_str().unwrap_or(""));
-                item["text"] = json!(text);
-                item["content"] = json!(text);
+                append_text(item, chunk);
             } else {
                 let id = self.alloc_item_id("user");
                 let mut item = json!({"id":id,"role":"user","text":chunk,"content":chunk});
@@ -1294,7 +1335,7 @@ impl LiveState {
                     item["message_id"] = json!(mid);
                     self.message_item_ids.insert(mid.into(), id);
                 }
-                self.items.push(item);
+                self.push_item(item);
             }
             return;
         }
@@ -1321,7 +1362,7 @@ impl LiveState {
                     item["message_id"] = json!(mid);
                     self.message_item_ids.insert(mid.to_string(), id.clone());
                 }
-                self.items.push(item);
+                self.push_item(item);
                 self.current_thinking_id = Some(id.clone());
                 self.current_assistant_id = None;
                 id
@@ -1340,16 +1381,13 @@ impl LiveState {
                 item["message_id"] = json!(mid);
                 self.message_item_ids.insert(mid.to_string(), id.clone());
             }
-            self.items.push(item);
+            self.push_item(item);
             self.current_assistant_id = Some(id.clone());
             id
         };
 
-        if let Some(item) = self.items.iter_mut().find(|i| i["id"] == target_id) {
-            let prev = item["text"].as_str().unwrap_or("");
-            let next_text = format!("{prev}{chunk}");
-            item["text"] = json!(next_text);
-            item["content"] = json!(next_text);
+        if let Some(item) = self.item_mut(&target_id) {
+            append_text(item, chunk);
         }
     }
 
@@ -1386,7 +1424,7 @@ impl LiveState {
             self.current_thinking_id = None;
         }
 
-        if let Some(entry) = self.items.iter_mut().find(|i| i["id"] == item_id) {
+        if let Some(entry) = self.item_mut(&item_id) {
             if let Some(name) = incoming_name {
                 entry["name"] = json!(name);
                 entry["tool_name"] = json!(name);
@@ -1440,7 +1478,7 @@ impl LiveState {
             if let Some(kind) = u["kind"].as_str() {
                 entry["kind"] = json!(kind);
             }
-            self.items.push(entry);
+            self.push_item(entry);
         }
     }
 
@@ -1463,11 +1501,11 @@ impl LiveState {
         if text.is_empty() {
             return;
         }
-        if let Some(existing) = self.items.iter_mut().find(|i| i["id"] == "plan-1") {
+        if let Some(existing) = self.item_mut("plan-1") {
             existing["text"] = json!(text);
             existing["content"] = json!(text);
         } else {
-            self.items.push(json!({
+            self.push_item(json!({
                 "id": "plan-1",
                 "role": "thinking",
                 "text": text,
@@ -1654,6 +1692,23 @@ fn extract_question_options(obj: &Value) -> Vec<Value> {
             }
         })
         .collect()
+}
+
+/// Append streamed `chunk` to an item's `text`/`content` in place. The previous
+/// code rebuilt the whole accumulated string with `format!` on every chunk,
+/// which is O(text^2) across a streamed message; growing a `String` in place is
+/// amortized O(1) per chunk.
+fn append_text(item: &mut Value, chunk: &str) {
+    if chunk.is_empty() {
+        return;
+    }
+    let mut text = match item["text"].take() {
+        Value::String(s) => s,
+        _ => String::new(),
+    };
+    text.push_str(chunk);
+    item["text"] = json!(text);
+    item["content"] = item["text"].clone();
 }
 
 fn extract_tool_output(u: &Value) -> Option<Value> {

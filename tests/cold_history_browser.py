@@ -62,6 +62,8 @@ def exercise(browser, base, source, output, label, baseline):
         page.route('**/api/messages/**', history)
         page.route('**/api/live?*force=1*', lambda route: held.append(route))
         page.route('**/api/term/list?*force=1*', lambda route: held.append(route))
+        # View-mode discovery reads the per-session runtime; hold it too.
+        page.route('**/api/session/runtime*', lambda route: held.append(route))
         profiler = context.new_cdp_session(page)
         profiler.send('Profiler.enable')
         profiler.send('Profiler.start')

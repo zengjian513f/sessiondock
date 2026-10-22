@@ -531,8 +531,14 @@ const SdkView = new Proxy({
       // wait for it before treating absent capabilities as a disabled SDK, but
       // do NOT fetch any list here — the per-session GET carries everything the
       // mode decision needs (sdk + terminal presence).
-      if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
-        await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+      // DOMContentLoaded may already have fired while readyState is still
+      // 'interactive', so also poll for term.js instead of waiting forever.
+      if (HUB_MODE && !Nodes.capabilities[nodeOf(uid)] && typeof T === 'undefined' && document.readyState !== 'complete')
+        await new Promise(resolve => {
+          const done = () => { clearInterval(poll); resolve(); };
+          const poll = setInterval(() => { if (typeof T !== 'undefined' || document.readyState === 'complete') done(); }, 20);
+          document.addEventListener('DOMContentLoaded', done, {once: true});
+        });
       const query = new URLSearchParams({uid});
       if (HUB_MODE) query.set('nodes', nodeOf(uid));
       let state = null;
@@ -540,10 +546,11 @@ const SdkView = new Proxy({
         const response = await fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal});
         if (response.ok) state = await response.json();
       } catch { /* unknown run-status falls back to the saved/default view */ }
-      // A freshly forked Kiro deep link may beat Hub capability discovery.
-      // Observe only its node before deciding that the SDK is unavailable.
-      if (!hasChat && HUB_MODE && !Nodes.capabilities[nodeOf(uid)] && typeof fetchTermList === 'function')
-        await fetchTermList(nodeOf(uid)).catch(() => {});
+      // A reload or deep link may beat the first terminal list (and, on a Hub,
+      // capability discovery). Wait for that one load before deciding; warm
+      // switches skip it and read only the in-memory list.
+      if (typeof T !== 'undefined' && (!T.listLoaded || (HUB_MODE && !Nodes.capabilities[nodeOf(uid)])))
+        await loadTermList(false).catch(() => {});
       // Self-heal staleness off the critical path: a background full-fleet
       // refresh converges a just-changed terminal/external owner shortly, and
       // updates the per-session cache the next GET reads, without delaying the
@@ -569,7 +576,12 @@ const SdkView = new Proxy({
       // A failed GET means run-status is unknown -> saved/default view.
       const unknown = !state;
       const sdk = !unknown && state.sdk === true;
-      const console = !unknown && state.known === true && state.tmux === true;
+      // The cached live body can predate a just-started managed terminal; the
+      // in-memory terminal list (no fetch) covers that until it refreshes.
+      const termName = typeof T === 'undefined' ? null : takenOver(uid);
+      const termRow = (termName && (T.list || []).find(row => row.name === termName && row.running !== false && !row.stale))
+        || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
+      const console = !!termRow || (!unknown && state.known === true && state.tmux === true);
       const external = !unknown && state.known === true && state.external === true;
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {

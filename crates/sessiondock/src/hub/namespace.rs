@@ -146,12 +146,6 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
         }
         result.insert("started_at".to_string(), Value::Object(started));
     }
-    if path == "/api/session/runtime"
-        && let Some(uid) = result.get("uid").and_then(Value::as_str)
-    {
-        let scoped = lenient(qualify(nid, uid, true), uid, strict)?;
-        result.insert("uid".to_string(), Value::String(scoped));
-    }
     if path == "/api/term/list" {
         for key in ["sessions", "pending"] {
             if let Some(rows) = result.get_mut(key).and_then(Value::as_array_mut) {

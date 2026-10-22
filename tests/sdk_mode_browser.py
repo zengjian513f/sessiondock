@@ -57,6 +57,19 @@ def exercise(browser, base, source, peer, screenshots, label):
             route.fulfill(response=response, json=data)
 
         page.route('**/api/live*', live)
+
+        def runtime(route):
+            # Session switches read ownership from the per-session runtime GET.
+            response = route.fetch()
+            data = response.json()
+            if state.get('uid') and data.get('uid') == state['uid']:
+                if state['mode'] == 'error':
+                    route.fulfill(status=503, json={'error': 'synthetic ownership unavailable'})
+                    return
+                data.update(sdk=state['mode'] == 'sdk', external=state['mode'] == 'cli', running=True, known=True)
+            route.fulfill(response=response, json=data)
+
+        page.route('**/api/session/runtime*', runtime)
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
         row = page.locator(f'#side .item[data-uid^="{source}:"]').first
@@ -90,6 +103,7 @@ def exercise(browser, base, source, peer, screenshots, label):
         def hold_live(route):
             held.append(route)
         page.route('**/api/live?*force=1*', hold_live)
+        page.route('**/api/session/runtime*', hold_live)
         count = page.evaluate('window.sdkOpenCount')
         choose()
         expect(page.locator('.sdk-history .msg').first).to_be_visible(timeout=1000)
@@ -98,9 +112,10 @@ def exercise(browser, base, source, peer, screenshots, label):
         assert page.evaluate('window.sdkOpenCount') == count
         capture('cached-pending')
         page.unroute('**/api/live?*force=1*', hold_live)
-        assert held, 'forced discovery request was not intercepted'
+        page.unroute('**/api/session/runtime*', hold_live)
+        assert held, 'ownership discovery request was not intercepted'
         for route in held:
-            live(route)
+            (runtime if '/api/session/runtime' in route.request.url else live)(route)
         try:
             expect(page.locator('#sdk-send')).to_be_enabled()
         except Exception:
