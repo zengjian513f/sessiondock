@@ -527,13 +527,10 @@ const SdkView = new Proxy({
       // /api/live + /api/term/list, which cost ~1.5s on a large fleet for no
       // decision benefit. Terminal presence comes from the cached term list.
       // A background full refresh self-heals any staleness off the hot path.
-      // Hub-restore timing: term.js may define T only after this script runs;
-      // wait for it before treating absent capabilities as a disabled SDK, but
-      // do NOT fetch any list here — the per-session GET carries everything the
-      // mode decision needs (sdk + terminal presence).
-      // DOMContentLoaded may already have fired while readyState is still
-      // 'interactive', so also poll for term.js instead of waiting forever.
-      if (HUB_MODE && !Nodes.capabilities[nodeOf(uid)] && typeof T === 'undefined' && document.readyState !== 'complete')
+      // A reload can restore a selection before the deferred term.js defines
+      // T. Wait for it (poll too: DOMContentLoaded may already have fired)
+      // before reading terminal state; warm switches never wait here.
+      if (typeof T === 'undefined' && document.readyState !== 'complete')
         await new Promise(resolve => {
           const done = () => { clearInterval(poll); resolve(); };
           const poll = setInterval(() => { if (typeof T !== 'undefined' || document.readyState === 'complete') done(); }, 20);
@@ -549,8 +546,13 @@ const SdkView = new Proxy({
       // A reload or deep link may beat the first terminal list (and, on a Hub,
       // capability discovery). Wait for that one load before deciding; warm
       // switches skip it and read only the in-memory list.
-      if (typeof T !== 'undefined' && (!T.listLoaded || (HUB_MODE && !Nodes.capabilities[nodeOf(uid)])))
+      // A superseded list request resolves without loading; follow the newer
+      // in-flight one (bounded) instead of deciding on an unloaded list.
+      for (let tries = 0; tries < 4 && typeof T !== 'undefined'
+          && (!T.listLoaded || (HUB_MODE && !Nodes.capabilities[nodeOf(uid)])); tries++) {
         await loadTermList(false).catch(() => {});
+        if (controller.signal.aborted) break;
+      }
       // Self-heal staleness off the critical path: a background full-fleet
       // refresh converges a just-changed terminal/external owner shortly, and
       // updates the per-session cache the next GET reads, without delaying the
@@ -560,7 +562,17 @@ const SdkView = new Proxy({
       void fetch(appUrl('api/live?' + bgQuery)).then(r => r.ok && r.json()).then(() => {
         if (typeof paintLive === 'function') paintLive();
       }).catch(() => {});
-      if (typeof T !== 'undefined') void loadTermList(true).catch(() => {});
+      // The background refresh may reveal a managed console that the cached
+      // reads did not know yet; reopen once so ownership picks it up.
+      if (typeof T !== 'undefined') void loadTermList(true).then(() => {
+        // Opening the chosen view rebuilds the selection object; compare its
+        // key and mode so a later explicit view change is left alone.
+        if (S.sel !== uid || S.agent !== agent || this.selection?.key !== key
+            || this.selection.mode !== selection.mode || !selection.withConsole) return;
+        if (selection.withConsole !== selection.mode && typeof findTermForSession === 'function'
+            && findTermForSession(uid) && typeof openSession === 'function')
+          void openSession(uid, agent, {exact: true, historyMode: 'none'});
+      }).catch(() => {});
       if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
       if (!this.available(uid, agent)) {
         if (!hasChat && !agent) {
@@ -592,8 +604,13 @@ const SdkView = new Proxy({
         // A previous view is only a candidate. Current server ownership decides
         // whether it can still accept input, including across clients/reloads.
         selection.mode = console ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
-          : sdk ? 'sdk' : external || unknown || terminalListUncertain(uid) ? 'chat' : candidate || defaultSessionView(uid);
+          : sdk ? 'sdk' : external || unknown || (typeof terminalListUncertain !== 'function' || terminalListUncertain(uid)) ? 'chat' : candidate || defaultSessionView(uid);
       }
+      // The mode a console discovered later would select; self-heal above
+      // reopens only when it differs from the decision just made.
+      if (!console) selection.withConsole = hasChat
+        ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
+        : (sdk ? 'sdk' : 'terminal');
       return selection.mode;
     } finally {
       clearTimeout(timer);
@@ -637,7 +654,9 @@ const SdkView = new Proxy({
     closeWatch();
   },
   async startSession(uid, agent = null) {
-    if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent)
+    // An explicit start during ownership discovery replaces the read-only
+    // preview with the real view; otherwise discovery completion closes it.
+    if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent || this.discovering)
       SessionContentView.open('sdk', uid, agent);
     if (this.active.readOnly) {
       this.active.readOnly = false;

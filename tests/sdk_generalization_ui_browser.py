@@ -115,6 +115,10 @@ def exercise(browser,base,source,events,screenshots):
             def action(route):
                 actions.append(route.request.post_data_json)
                 route.fulfill(json={'ok':True,'uid':uid})
+            # The fake bridge is browser-side only; once forked, report it as the
+            # server's SDK owner so reopening the returned session reattaches.
+            context.route('**/api/session/runtime*',lambda r:r.fulfill(json={'uid':uid,'known':True,'sdk':True,
+                'tmux':False,'working':False,'running':True,'external':False}))
             context.route('**/api/native-sdk/fork',action)
             context.route('**/api/native-sdk/rewind',action)
             context.route('**/api/native-sdk/revert',action)

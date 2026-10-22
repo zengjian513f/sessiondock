@@ -347,8 +347,9 @@ def exercise(browser, base, fixture, screenshots):
     api(page, "turn", {"uid": uid, "request_id": "native-error", "text": "native-error"})
     page.wait_for_function("window.__grokSnapshot?.error?.includes('grok_sdk_native_error')")
     assert not snapshot(page, uid)["running"]
-    failed_card=page.locator('[data-queue-origin="bridge"]').filter(has_text="native-error")
-    failed_card.get_by_role("button",name="撤销",exact=True).click()
+    # A native execution error after admission completes the send
+    # (docs/native-sdk.md); no queue record remains to cancel.
+    expect(page.locator('[data-queue-origin="bridge"]').filter(has_text="native-error")).to_have_count(0)
 
     # Native create identity, retry cache and model/effort without a PTY.
     create = {"source": "grok", "cwd": str(fixture.work), "request_id": "grok-create-retry",
@@ -367,15 +368,15 @@ def exercise(browser, base, fixture, screenshots):
     assert models["models"] and models["configOptions"]
     receipt = api(page, "turn", {"uid": created["uid"], "text": "new native session", "request_id": "new-first"})
     assert receipt["accepted"]
-    wait_for_async(page,"""async uid => {
-      const r=await fetch('/api/native-sdk/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})});
-      const raw=(await r.json()).raw;
-      return !raw.running && raw.items.some(item=>item.role==='assistant' && item.content?.includes('Grok final answer'));
-    }""", arg=created["uid"])
+    # The open response no longer carries the transcript; read the SSE snapshot.
+    watch(page, created["uid"])
+    page.wait_for_function("""() => { const raw=window.__grokSnapshot;
+      return raw && !raw.running && (raw.items||[]).some(item=>item.role==='assistant' && item.content?.includes('Grok final answer')); }""")
     assert (native / "chat_history.jsonl").is_file(), {"snapshot":snapshot(page,created["uid"]),"native":str(native),"records":fixture.received()[-15:]}
     assert any(row["params"].get("sessionId") == new_sid for row in fixture.received("session/prompt"))
     api(page, "discard", {"uid": created["uid"]})
     assert native.is_dir(), "discard deleted native files"
+    watch(page, uid)
 
     # The new native process models installed builds that advertise image:false.
     fixture.capability_marker.write_text(json.dumps({"image":False}))
@@ -396,10 +397,9 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function("T.listLoaded")
     select(page,uid)
     watch(page,uid)
-    unknown_card=page.locator('[data-queue-origin="bridge"]').filter(has_text="disconnect")
-    unknown_card.get_by_role("button",name="移除记录",exact=True).click()
-    page.get_by_role("dialog").get_by_role("button",name="移除记录",exact=True).click()
-    expect(unknown_card).to_have_count(0)
+    # The accepted send completed before the disconnect; recovery is a runtime
+    # outcome, so no queue record blocks later input (docs/native-sdk.md).
+    expect(page.locator('[data-queue-origin="bridge"]').filter(has_text="disconnect")).to_have_count(0)
     expect(page.locator("#native-media-note")).to_have_count(0)
     page.locator("#sdk-add").click()
     with page.expect_file_chooser() as chooser:

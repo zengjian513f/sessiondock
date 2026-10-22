@@ -46,8 +46,10 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     def resize(width):
         page.set_viewport_size({'width': width, 'height': 948 if width > 720 else 844})
         page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        # Narrowing shows the mobile list; return to the same open view. A row
+        # click would reopen the session and rediscover its owner.
         if not page.locator('#sdk-input').is_visible():
-            page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+            page.evaluate('showMobileDetail()')
         expect(page.locator('#sdk-input')).to_be_visible()
 
     # All controls fit inline; empty groups and unavailable reset cards leave no ⋯.
