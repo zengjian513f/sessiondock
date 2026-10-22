@@ -104,12 +104,18 @@ const ConversationUI = {
     }
   },
 
+  toolComplete(message) {
+    if (['pending', 'in_progress', 'inProgress', 'running'].includes(message.status)) return false;
+    return message.role === 'tool_result' || !!message.result
+      || ['completed', 'failed', 'declined', 'cancelled', 'canceled'].includes(message.status);
+  },
+
   refreshTools(box) {
     const entries = [...box.querySelectorAll('.tool-disclosable')]
       .filter(entry => !entry.closest('.user-shell-command'));
     const last = entries.at(-1);
     for (const entry of entries) {
-      const open = entry.dataset.toolChoice ? entry.dataset.toolChoice === 'open' : entry === last;
+      const open = entry.dataset.toolChoice ? entry.dataset.toolChoice === 'open' : entry === last && !entry._toolComplete;
       if (entry.classList.contains('tool-collapsed') === open) entry._setToolOpen(open);
     }
   },

@@ -426,11 +426,13 @@ const CodexSdkView = {
     }
     SdkUI.paintHistory(this, messages, {tailComplete,
       decorate: (node, message) => CodexSdkActions.decorate(this, node, message)});
+    SdkUI.ungroupTools(this);
     CodexSdkQuestions.paint(this);
     // 已经落盘的回合从实时区移除，避免同一回合出现两次。
     for (const [id, node] of this.nodes) {
       if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
     }
+    SdkUI.groupTools(this);
     if (this.summary) this.paintStatus();
   },
 
@@ -445,6 +447,7 @@ const CodexSdkView = {
   // ---------------------------------------------------------------- 事件
 
   applySnapshot(raw) {
+    SdkUI.ungroupTools(this);
     this.setConnected(true);
     // The SDK may attach between two identical global live snapshots.
     // Reconcile ownership on this connection's snapshot as well.
@@ -453,11 +456,16 @@ const CodexSdkView = {
     this.seedGauges();
     this.turn = raw.turn || null;
     this.items = new Map((raw.items || []).map(item => [item.id, item]));
+    const toolStates = new Map([...this.nodes].map(([id, node]) => [id, ConversationUI.toolState(node)]));
     this.live.replaceChildren();
     this.nodes.clear();
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
-    for (const item of this.items.values()) this.paintItem(item);
+    for (const item of this.items.values()) {
+      this.paintItem(item);
+      if (this.nodes.has(item.id)) ConversationUI.restoreToolState(this.nodes.get(item.id), toolStates.get(item.id));
+    }
     for (const request of this.requests.values()) this.paintRequest(request);
+    SdkUI.groupTools(this);
     CodexSdkQuestions.paint(this);
     this.paintHistory();
     this.paintPickers();
@@ -469,6 +477,7 @@ const CodexSdkView = {
   },
 
   applyEvent(method, raw) {
+    SdkUI.ungroupTools(this);
     // Do not move a disclosure away from the pointer between press and release.
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
     const item = raw.item;
@@ -575,6 +584,7 @@ const CodexSdkView = {
           this.paintRequest(request);
         }
     }
+    SdkUI.groupTools(this);
     CodexSdkQuestions.paint(this);
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
@@ -599,15 +609,16 @@ const CodexSdkView = {
       old._updateMessage(message);
       return;
     }
+    message.status = item.status;
     const toolState = TOOL_ROLES.has(message.role) ? ConversationUI.toolState(old) : null;
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
+    node._sdkToolMessage = message;
     CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
     if (item.status === 'inProgress' && TOOL_ROLES.has(message.role)) {
-      const status = document.createElement('div');
-      status.className = 'tool-status';
+      const status = node.querySelector('.tool-status') || el('div', 'tool-status');
       status.textContent = '运行中…';
-      node.querySelector('.tool-entry')?.append(status);
+      if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
     }
     if (old) old.replaceWith(node);
     else {

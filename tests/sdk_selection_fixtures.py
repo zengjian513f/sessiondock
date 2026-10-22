@@ -8,7 +8,7 @@ import queue
 import threading
 
 @contextmanager
-def snapshots():
+def snapshots(event="sdk", replay=True):
     clients, lock = [], threading.Lock()
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -19,12 +19,12 @@ def snapshots():
             messages = queue.Queue()
             with lock:
                 clients.append(messages)
-                messages.put(copy.deepcopy(self.server.packet))
+                if replay: messages.put(copy.deepcopy(self.server.packet))
             try:
                 while True:
                     packet = messages.get()
                     if packet is None: break
-                    self.wfile.write(('event: sdk\ndata: ' + json.dumps(packet) + '\n\n').encode())
+                    self.wfile.write(('event: ' + event + '\ndata: ' + json.dumps(packet) + '\n\n').encode())
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass

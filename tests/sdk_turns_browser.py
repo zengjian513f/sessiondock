@@ -5,6 +5,7 @@ import copy
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
@@ -65,7 +66,10 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         def messages(route):
             response = route.fetch()
             data = response.json()
-            data.update(messages=history, reset=True, start=0, end=len(history),
+            start = parse_qs(urlsplit(route.request.url).query).get('start', [''])[0]
+            current = start == str(len(history))
+            data.update(messages=[] if current else history, reset=not current,
+                        start=len(history) if current else 0, end=len(history),
                         message_total=len(history), partial=None, activity={'state': 'working'})
             route.fulfill(response=response, json=data)
         context.route('**/api/messages/**', messages)
@@ -97,7 +101,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         capture('initial')
         if not baseline:
             tools = page.locator('.sdk-pane .tool-disclosable')
-            expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'true')
+            expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
             expect(tools.last.locator('.tool-out')).to_contain_text('检查结果 17')
             if source != 'codex':
                 expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
@@ -136,7 +140,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             page.evaluate("window.turnProbe = document.querySelector('[data-sdk-item=\"think-3-7\"]')")
             native[-1]['result']['text'] += '\n后台工具更新'
             native.append({'id': 'new-tool', 'role': 'tool', 'turn_id': 'turn-3',
-                           'name': 'new-tool', 'text': 'new arguments',
+                           'name': 'new-tool', 'text': 'new arguments', 'status': 'in_progress',
                            'result': {'role': 'tool_result', 'text': '最新工具完整结果'}})
             native[-3]['text'] += '\n当前回合持续生成'
         else:
@@ -180,6 +184,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         expect(groups).to_have_count(4)
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(0)
         assert not errors, errors
+        context.unroute_all(behavior='wait')
         context.close()
         print(f'PASS {name}: header/per-turn folding, replay, streaming, completion, reload', flush=True)
 
