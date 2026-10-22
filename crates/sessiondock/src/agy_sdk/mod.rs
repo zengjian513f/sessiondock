@@ -914,6 +914,7 @@ async fn execute(
         live.observe_model(slot.as_ref().unwrap().model.clone());
     }
     let native = slot.as_mut().unwrap();
+    let mut process_finished = false;
     let outcome=async {
     tokio::select! {
         _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
@@ -936,11 +937,17 @@ async fn execute(
             _=shutdown.cancelled()=>{ return Err("agy_sdk_shutdown".into()); }
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             _=async { match interrupt_deadline { Some(deadline)=>tokio::time::sleep_until(deadline).await, None=>std::future::pending().await } }=>{
-                native.terminate().await;return Err("agy_sdk_interrupted: 原生 SIGINT 未及时退出，已结束本桥接进程。".into());
+                return Err("agy_sdk_interrupted: 原生 SIGINT 未及时退出，已结束本桥接进程。".into());
             }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
                 Some(Command::Interrupt(reply))=>{
+                    // Repeated clicks must not send a second signal during cleanup
+                    // or extend the original exit deadline.
+                    if interrupted {
+                        let _=reply.send(Ok(json!({"interrupted":true,"session_id":live.sid})));
+                        continue;
+                    }
                     let answer=native.interrupt().await;
                     log_turn("info","agy.sdk.interrupt",live,turn,json!({
                         "native_pid":native.pid(),"signal":"SIGINT","sent":answer.is_ok(),
@@ -1000,8 +1007,9 @@ async fn execute(
                             return Err("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
                         }
                         result=Some(if status=="SUCCESS" || historical_error {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
-                        if turn.persistent {
-                            if interrupted { return Err("agy_sdk_interrupted: 已中断当前 Agy 回合。".into()); }
+                        // A result ends a turn, not the process's signal cleanup.
+                        // Keep draining until EOF within the original grace period.
+                        if turn.persistent && !interrupted {
                             return result.take().unwrap();
                         }
                     }
@@ -1014,7 +1022,13 @@ async fn execute(
             }
         }
     }
-    let status = native.finish(shutdown.clone()).await?;
+    let status = if let Some(deadline) = interrupt_deadline {
+        tokio::time::timeout_at(deadline, native.finish(shutdown.clone()))
+            .await.map_err(|_| "agy_sdk_interrupted: 原生 SIGINT 未及时退出，已结束本桥接进程。".to_owned())??
+    } else {
+        native.finish(shutdown.clone()).await?
+    };
+    process_finished = true;
     if interrupted {
         return Err(
             "agy_sdk_interrupted: 已向本桥接启动的 Agy 发送 SIGINT；下一轮恢复同一 SID。".into(),
@@ -1041,7 +1055,7 @@ async fn execute(
         }
         return outcome;
     }
-    if outcome.is_err() && !shutdown.is_cancelled() {
+    if outcome.is_err() && !process_finished && !shutdown.is_cancelled() {
         log_turn(
             "warn",
             "agy.sdk.terminate",

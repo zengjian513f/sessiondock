@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -361,11 +362,32 @@ def exercise(browser, base, fixture, screenshots=None):
         send(page, 'hold:interrupt')
         expect(page.locator('.sdk-live')).to_contain_text('Agy running interrupt')
         page.locator('#sdk-stop').click()
+        page.locator('#sdk-stop').click()
         idle(page)
         assert any(event['kind'] == 'signal' and event['signal'] == 'SIGINT' for event in fixture.events())
+        interrupted_pid = fixture.inputs('hold:interrupt')[0]['pid']
+        assert len([event for event in fixture.events()
+                    if event['kind'] == 'signal' and event['pid'] == interrupted_pid]) == 1
+        assert any(event['kind'] == 'interrupt_cleanup_done' and event['pid'] == interrupted_pid
+                   for event in fixture.events()), 'result must not bypass native signal cleanup'
         send(page, 'after native interrupt')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after native interrupt')
         idle(page)
+
+        # Both an open stream and EOF without process exit must keep the same
+        # bounded grace period. Exercise the actual stop button for each.
+        for mode in ('stuck', 'closed-output'):
+            (fixture.root / 'interrupt-mode').write_text(mode)
+            send(page, 'hold:interrupt-' + mode)
+            expect(page.locator('.sdk-live')).to_contain_text('Agy running interrupt-' + mode)
+            started = time.monotonic()
+            page.locator('#sdk-stop').click()
+            idle(page)
+            assert 4.5 <= time.monotonic() - started < 12, 'interrupt exit grace was bypassed or unbounded'
+            (fixture.root / 'interrupt-mode').unlink()
+            send(page, 'after interrupt-' + mode)
+            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after interrupt-' + mode)
+            idle(page)
 
         print('Agy: unsupported responses, stderr redaction, independent writer rejection', flush=True)
         post(page, base, 'respond', {'uid': uid, 'key': 'not-a-native-request', 'result': 'approve'}, ok=False)
@@ -573,6 +595,14 @@ def check_diagnostic_logs(fixture):
     assert any(row['evidence']['reason'] == 'missing_native_error' and row['effective_status'] == 'ERROR' for row in results)
     assert any(row['evidence']['reason'] == 'different_current_error' and row['effective_status'] == 'ERROR' for row in results)
     assert any(row['event'] == 'agy.sdk.interrupt' and row['sent'] for row in events), 'SIGINT tracing missing'
+    cleaned_pid = next(event['pid'] for event in fixture.events()
+                       if event['kind'] == 'interrupt_cleanup_done')
+    assert not any(row['event'] in ('agy.sdk.kill_requested', 'agy.sdk.kill_signal')
+                   and row.get('native_pid') == cleaned_pid for row in events), 'clean exit was force-killed'
+    for mode in ('stuck', 'closed-output'):
+        pid = fixture.inputs('hold:interrupt-' + mode)[0]['pid']
+        assert any(row['event'] == 'agy.sdk.kill_signal' and row.get('native_pid') == pid
+                   and row['sent'] for row in events), 'unresponsive interrupt was not cleaned up'
     print('Agy: persisted request/delivery/runtime/step/result/queue trace and metadata-only logging verified', flush=True)
 
 

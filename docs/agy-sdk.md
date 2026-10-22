@@ -49,7 +49,7 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 | open | 使用 inventory 已解析的 SID/cwd；原生数据库缺失时不从镜像伪造恢复载体 |
 | create | 无提示词启动，读取原生 init 的 SID/cwd，关闭空输入；不调用模型来换取身份 |
 | turn | 服务端逐会话 FIFO；重复 request_id 返回原回执，不重复发送 |
-| interrupt | SIGINT 只发送给本桥接持有的 Child；5 秒未退出才结束该桥接进程 |
+| interrupt | SIGINT 只发送给本桥接持有的 Child；从首次信号起等待最多 5 秒正常退出，收到 result 或输出 EOF 不缩短宽限期，超时才强制结束该桥接进程；重复点击不追加信号或延长等待 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
 | models | profile 环境中执行原生 `agy models`，解析 TSV；失败不填猜测模型 |
 | discard | 仅确认可丢弃网页创建回执；保留原生文件及已经接受的任务 |
@@ -59,6 +59,12 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 批准而无法取得的工具会被软拒绝。桥接不增加 `--dangerously-skip-permissions`，
 不改权限配置，不将工具目录里的 ask_permission/ask_question 冒充可回答的请求卡。
 `requests` 因此为空。已有 profile 的固定参数和原生权限配置仍由管理员负责。
+
+停止不是保留运行时的单回合暂停：SIGINT 会退出 headless CLI，恢复相同 SID
+只恢复会话记录，不能保留原进程的子代理／后台任务。当前公开 stream-json 协议
+没有可用的软中断控制消息；不能用终端 Esc 字节代替协议。需要保留这些任务时，
+让当前轮自然结束再发送后续输入；离开页面不会停止任务。正常中断退出不再补发
+SIGKILL（BUG-20261022-124950-cf8e22），这保证清理宽限期，不保证后台任务继续运行。
 
 独立 TUI 不共享这个 headless 运行时。打开及每轮发送前检查原生数据库的 fd/inode
 占用，排除本桥接持有的子进程；发现外部持有者即报 `agy_sdk_session_busy`，

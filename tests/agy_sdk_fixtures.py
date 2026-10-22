@@ -84,8 +84,17 @@ def result(status,response='',error=None):
     if error:payload['error']=error
     emit({'event':'result','result':payload})
 def interrupted(*_):
-    record({'kind':'signal','sid':sid,'signal':'SIGINT'})
-    result('INTERRUPTED',error='synthetic native interrupt')
+    record({'kind':'signal','sid':sid,'signal':'SIGINT','pid':os.getpid()})
+    result('ERROR',error='synthetic native interrupt')
+    mode=(root/'interrupt-mode').read_text() if (root/'interrupt-mode').exists() else ''
+    if mode == 'closed-output':
+        os.close(sys.stdout.fileno())
+        time.sleep(20)
+    elif mode == 'stuck':
+        time.sleep(20)
+    else:
+        time.sleep(0.75)
+    record({'kind':'interrupt_cleanup_done','sid':sid,'pid':os.getpid()})
     sys.exit(0)
 signal.signal(signal.SIGINT,interrupted)
 init_sid='a7600000-0000-4000-8000-999999999999' if (root/'wrong-sid').exists() else sid
