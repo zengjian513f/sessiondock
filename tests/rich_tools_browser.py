@@ -146,7 +146,7 @@ def verify(corpus, base, opener):
         print(f"PASS {source}: {len(messages)} messages, {len(files)} rich file changes")
 
 
-def browser_check(corpus, base):
+def browser_check(corpus, base, screenshots=None):
     from playwright.sync_api import expect, sync_playwright
 
     with sync_playwright() as playwright:
@@ -179,9 +179,18 @@ def browser_check(corpus, base):
                 expect(page.locator("#msgs")).to_contain_text("Synthetic tools complete")
                 expand_tool_process()
                 expect(page.locator("#msgs")).to_contain_text("z=first a=False r=4 b=last")
+                tools = page.locator('#msgs .tool-disclosable')
+                expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
+                expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'true')
+                tools.first.locator('.tool-toggle').click()
+                expect(tools.first.locator('.tool-args')).to_be_visible()
+                tools.first.locator('.tool-toggle').press('Enter')
+                expect(tools.first.locator('.tool-args')).not_to_be_visible()
+                page.locator('#msgs .file-change-msg').first.locator('.tool-toggle').click()
                 expect(page.locator("#msgs .file-change-card").first).to_be_visible()
                 expect(page.locator("#msgs")).to_contain_text("old.rs → moved.rs")
                 card = page.locator("#msgs .file-change-card").filter(has_text="edited.rs").first
+                card.locator('xpath=ancestor::div[contains(@class,"tool-entry")]').locator('.tool-toggle').click()
                 expect(card).to_contain_text("片段")
                 expect(card).to_contain_text("new value")
                 card.locator('[data-diff-view="split"]').click()
@@ -189,13 +198,20 @@ def browser_check(corpus, base):
                 expect(page.locator("#a-term")).to_be_visible()
                 expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                 expect(page.locator("#migration-read-error")).to_have_count(0)
+                if screenshots:
+                    card.scroll_into_view_if_needed()
+                    page.screenshot(path=str(screenshots / f"{source}-1280-light.png"), full_page=True)
                 print(f"PASS Chromium {source}: existing legacy diff cards and split view")
             page.set_viewport_size({"width": 390, "height": 844})
             # Crossing the breakpoint intentionally opens the mobile list;
             # enter detail using its normal visible session navigation.
             page.locator(f'#side .item[data-uid="{uid(corpus, "grok")}"]').click()
             expand_tool_process()
+            page.locator("#msgs .file-change-msg").first.locator(".tool-toggle").click()
             expect(page.locator("#msgs .file-change-card").first).to_be_visible()
+            if screenshots:
+                page.locator("#msgs .file-change-card").first.scroll_into_view_if_needed()
+                page.screenshot(path=str(screenshots / "grok-390-light.png"), full_page=True)
             expect(page.locator("#a-term")).to_be_visible()
             assert not errors, errors
             context.close()
@@ -245,7 +261,7 @@ def oversize_browser(root, binary):
             expect(page.locator("#msgs .tool-change-warning")).to_be_visible()
             expect(page.locator("#msgs .tool-change-warning")).to_contain_text("512 KiB")
             entry = page.locator("#msgs .tool-entry").filter(has=page.locator(".tool-change-warning"))
-            entry.locator(".tool-toggle").click()
+            expect(entry.locator(".tool-toggle")).to_have_attribute("aria-expanded", "true")
             expect(entry.locator(".tool-args")).to_be_visible()
             assert json.loads(entry.locator(".tool-args").text_content())["content"] == content
             page.set_viewport_size({"width":390, "height":844})
@@ -265,12 +281,14 @@ def oversize_browser(root, binary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sessiondock-tool-parity-") as temporary:
         corpus = build_corpus(Path(temporary))
         with isolated_server(corpus, args.binary) as (base, opener):
             verify(corpus, base, opener)
-            browser_check(corpus, base)
+            browser_check(corpus, base, args.screenshots)
         oversize_browser(Path(temporary) / "oversize-fixture", args.binary)
 
 

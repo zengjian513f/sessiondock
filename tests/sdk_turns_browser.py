@@ -32,7 +32,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
                     {'id': f'think-{turn}-{index}', 'role': 'thinking', 'turn_id': identity,
                      'text': f'第 {turn + 1} 轮分析 {index + 1}：逐项核对输入、执行过程和结果。\n' * 4},
                     {'id': f'tool-{turn}-{index}', 'role': 'tool', 'turn_id': identity,
-                     'name': 'exec_command', 'input': {'command': f'check-step-{index}'},
+                     'name': 'exec_command', 'text': '{"command": "check fixture"}', 'input': {'command': f'check-step-{index}'},
                      'summary': f'$ check-step-{index}',
                      'result': {'role': 'tool_result',
                                 'text': '\n'.join(f'检查结果 {line}' for line in range(18))}}])
@@ -50,7 +50,9 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         raw = {'items': native, 'requests': [], 'running': True, 'input_queue': [],
                'model': 'synthetic-model', 'capabilities': {'interrupt': True}}
         if source == 'codex':
-            raw = {'items': [{'id': 'live-answer', 'type': 'agentMessage', 'text': '当前回合持续生成'}],
+            raw = {'items': [{'id': 'live-answer', 'type': 'agentMessage', 'text': '当前回合持续生成'},
+                             {'id': 'live-tool', 'type': 'commandExecution', 'command': 'check fixture',
+                              'status': 'completed', 'aggregatedOutput': '\n'.join(f'检查结果 {line}' for line in range(18))}],
                    'turn': {'id': 'turn-3', 'status': 'inProgress'}, 'requests': [],
                    'summary': {'settings': {}, 'queue': [], 'status': {'type': 'active'}}}
         events.packet = {'type': 'snapshot', 'seq': 0, 'raw': raw}
@@ -93,6 +95,12 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             page.keyboard.press('Escape')
 
         capture('initial')
+        if not baseline:
+            tools = page.locator('.sdk-pane .tool-disclosable')
+            expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'true')
+            expect(tools.last.locator('.tool-out')).to_contain_text('检查结果 17')
+            if source != 'codex':
+                expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
         groups = page.locator('.sdk-pane .turn-process')
         if baseline:
             toggle()
@@ -122,11 +130,15 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         expect(tail).to_be_visible()
         if source != 'codex':
             tool = page.locator('[data-sdk-item="tool-1-0"]')
-            tool.get_by_text('展开全文', exact=False).click()
-            tool.get_by_role('button', name='展开原始参数', exact=True).click()
+            expect(tool.locator('.tool-out')).not_to_be_visible()
+            tool.get_by_role('button', name='展开工具调用', exact=True).click()
+            expect(tool.locator('.tool-out')).to_contain_text('检查结果 17')
             page.evaluate("window.turnProbe = document.querySelector('[data-sdk-item=\"think-3-7\"]')")
             native[-1]['result']['text'] += '\n后台工具更新'
-            native[-2]['text'] += '\n当前回合持续生成'
+            native.append({'id': 'new-tool', 'role': 'tool', 'turn_id': 'turn-3',
+                           'name': 'new-tool', 'text': 'new arguments',
+                           'result': {'role': 'tool_result', 'text': '最新工具完整结果'}})
+            native[-3]['text'] += '\n当前回合持续生成'
         else:
             raw['items'][0]['text'] += '\n当前回合持续生成'
         events.publish()
@@ -134,6 +146,9 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         expect(replay.locator('.turn-process-body')).to_be_visible()
         if source != 'codex':
             expect(tool.locator('.tool-args')).to_be_visible()
+            expect(page.locator('[data-sdk-item="tool-3-7"] .tool-toggle')).to_have_attribute('aria-expanded', 'false')
+            expect(page.locator('[data-sdk-item="new-tool"] .tool-out')).to_be_visible()
+            capture('tool-expanded')
             assert page.evaluate("window.turnProbe === document.querySelector('[data-sdk-item=\"think-3-7\"]')")
         history.append({'id': 'final-3', 'role': 'assistant', 'turn_id': 'turn-3',
                         'text': '第 4 轮最终结论：当前回合已经完成。', 'phase': 'final'})
