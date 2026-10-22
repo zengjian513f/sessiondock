@@ -131,7 +131,7 @@ const CodexSdkActions = {
     SdkView.selectMode(response.uid, null, 'sdk');
     // Native forks are normally persisted immediately, so hydrate their
     // inventory before opening instead of treating them as empty starts.
-    if (!response.session?.sdk_pending) await loadSessions(true, true);
+    if (!response.session?.sdk_pending || sourceUid.startsWith('kiro:')) await loadSessions(true, true);
     // An explicit fork keeps both branches available. Reuse the durable
     // parent visibility preference; child views must not reveal their owner.
     if (!sourceAgent && S.sessions.some(row => row.uid === sourceUid && row.fork_parent))

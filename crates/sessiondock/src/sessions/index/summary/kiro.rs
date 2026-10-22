@@ -23,6 +23,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let (native_id, declared_ids) = native_identity(session.get("id").into_iter());
     let committed = input.data.as_ref().and_then(committed_end);
     RowSummary {
+        forked_from_id: info["native"]["forked_from_id"].as_str().map(str::to_owned),
         sid,
         title: session["title"]
             .as_str()

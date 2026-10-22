@@ -11,6 +11,7 @@ pub(super) fn metadata(
 ) -> Value {
     let session = &summary["session"];
     json!({"sid":session["id"],"title":session["title"],"cwd":session["cwd"],
+        "forked_from_id":summary["native"]["forked_from_id"],
         "model":session["model"],"created":session["created"].as_str().unwrap_or(fallback),
         "updated":session["updated"].as_str().unwrap_or(fallback),
         "history_coverage":if summary["history_synced"] == true { "cached" } else { "not_synced" }})

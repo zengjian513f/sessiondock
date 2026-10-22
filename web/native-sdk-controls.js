@@ -332,7 +332,8 @@ const NativeSdkControls = {
         view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
         view.paintStatus();
       }
-      const {restore_text,...nativeBody}=body;
+      const {restore_text,hide_source,...nativeBody}=body;
+      const sourceUid=view.uid;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
       if(!view.current(generation))return true;
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
@@ -343,6 +344,8 @@ const NativeSdkControls = {
           if(SdkView.uid===response.uid && !SdkView.openFailed)
             await SdkView.refreshHistory(SdkView.generation,true);
         }
+        if(hide_source && SdkView.uid===response.uid && !SdkView.openFailed)
+          await setForkParentVisibility([sourceUid],false);
         if (body.restore_text && SdkView.uid === response.uid) await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
         return true;
       }
@@ -423,7 +426,10 @@ const NativeSdkControls = {
     if(!identity)return;
     if(view.uid.startsWith('kiro:')){
       if(item.message_id && view.capabilities.fork && view.capabilities.fork_at_message)
-        SdkUI.decorateUserBubble(view,node,[['回退至此轮（新分支）',()=>this.action(view,'fork',{messageId:item.message_id})]]);
+        SdkUI.decorateUserBubble(view,node,[
+          ['回退',()=>this.action(view,'fork',{messageId:item.message_id,hide_source:true})],
+          ['分支',()=>this.action(view,'fork',{messageId:item.message_id})],
+        ]);
       return;
     }
     const items=[];

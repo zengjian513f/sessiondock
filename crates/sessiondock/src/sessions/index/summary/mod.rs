@@ -130,6 +130,8 @@ pub struct RowSummary {
     pub size: u64,
     pub model: Value,
     pub branch: Value,
+    /// Logical fork lineage for providers with self-contained histories.
+    pub forked_from_id: Option<String>,
     pub codex: Option<CodexMeta>,
     pub agent: Option<AgentMeta>,
     pub grok: Option<GrokMeta>,
@@ -173,6 +175,7 @@ impl RowSummary {
             size: 0,
             model: Value::Null,
             branch: Value::Null,
+            forked_from_id: None,
             codex: None,
             agent: None,
             grok: None,
