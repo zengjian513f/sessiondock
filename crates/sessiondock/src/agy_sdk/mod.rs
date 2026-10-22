@@ -1,5 +1,6 @@
 //! Native Agy headless NDJSON bridge. No PTY, mirror writes or approval emulation.
 //! See docs/agy-sdk.md for the verified protocol and coexistence boundary.
+mod control;
 mod transcript;
 mod transport;
 
@@ -792,7 +793,7 @@ async fn actor(
                 }
                 data.last_turn = json!({"id":turn.id,"status":match &outcome {
                     Ok(()) => "completed",
-                    Err(error) if error.starts_with("agy_sdk_interrupted") || error.starts_with("agy_sdk_native_INTERRUPTED") => "interrupted",
+                    Err(error) if error.starts_with("agy_sdk_interrupted") || error.starts_with("agy_sdk_native_INTERRUPTED") || error.starts_with("agy_sdk_native_CANCELED") => "interrupted",
                     Err(_) if conflict => "unknown",
                     Err(_) => "failed",
                 }});
@@ -801,6 +802,7 @@ async fn actor(
                         "uncertain"
                     } else if error.starts_with("agy_sdk_interrupted")
                         || error.starts_with("agy_sdk_native_INTERRUPTED")
+                        || error.starts_with("agy_sdk_native_CANCELED")
                     {
                         "interrupted"
                     } else if error.starts_with("agy_sdk_native_") {
@@ -838,13 +840,16 @@ async fn actor(
 
 // A valid ERROR receipt ends a turn, not the persistent CLI. Keep its binding
 // as well as its process so the next explicit input uses the same runtime.
-// Explicit interrupts, protocol failures and unknown result statuses still
-// take the cleanup path.
+// Native turn cancellation also retains its runtime. Protocol failures and
+// unknown result statuses still take the cleanup path.
 fn reusable_result(outcome: &Result<(), String>) -> bool {
     outcome.is_ok()
         || outcome.as_ref().is_err_and(|error| {
             error.starts_with("agy_sdk_result_conflict:")
                 || error.starts_with("agy_sdk_native_ERROR:")
+                || error.starts_with("agy_sdk_interrupted:")
+                || error.starts_with("agy_sdk_native_CANCELED:")
+                || error.starts_with("agy_sdk_native_INTERRUPTED:")
         })
 }
 
@@ -914,6 +919,7 @@ async fn execute(
         live.observe_model(slot.as_ref().unwrap().model.clone());
     }
     let native = slot.as_mut().unwrap();
+    let mut process_finished = false;
     let outcome=async {
     tokio::select! {
         _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
@@ -925,8 +931,7 @@ async fn execute(
     // Preserve EOF completion only for bindings created before persistent runtimes.
     if !turn.persistent { native.close_input().await?; }
     let mut result = None;
-    let mut interrupted = false;
-    let mut interrupt_deadline = None;
+    let mut interrupted = native.cancelled(&turn.id);
     let mut saw_assistant = false;
     loop {
         tokio::select! {
@@ -935,17 +940,22 @@ async fn execute(
             }
             _=shutdown.cancelled()=>{ return Err("agy_sdk_shutdown".into()); }
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
-            _=async { match interrupt_deadline { Some(deadline)=>tokio::time::sleep_until(deadline).await, None=>std::future::pending().await } }=>{
-                native.terminate().await;return Err("agy_sdk_interrupted: 原生 SIGINT 未及时退出，已结束本桥接进程。".into());
-            }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
                 Some(Command::Interrupt(reply))=>{
-                    let answer=native.interrupt().await;
+                    // An accepted cancellation is not a request to stop the runtime.
+                    if interrupted {
+                        let _=reply.send(Ok(json!({"interrupted":true,"session_id":live.sid})));
+                        continue;
+                    }
+                    let answer=native.interrupt(&turn.id).await;
                     log_turn("info","agy.sdk.interrupt",live,turn,json!({
-                        "native_pid":native.pid(),"signal":"SIGINT","sent":answer.is_ok(),
+                        "native_pid":native.pid(),"method":"CancelCascadeInvocation","kill_background_tasks":false,"sent":answer.is_ok(),
                         "stdout_offset":native.stdout_offset}));
-                    if answer.is_ok() { interrupted=true;interrupt_deadline=Some(tokio::time::Instant::now()+std::time::Duration::from_secs(5)); }
+                    if answer.is_ok() {
+                        interrupted=true;
+                        live.diagnostic("\n原生已接受当前回合取消；子代理和后台任务继续运行。Agy headless 的最终回执可能等待这些任务结束；等待期间不会发送终止信号。\n".into());
+                    }
                     let _=reply.send(answer.map(|()|json!({"interrupted":true,"session_id":live.sid})));
                 }
                 None=>{ native.terminate().await;return Err("agy_sdk_shutdown".into()); }
@@ -985,7 +995,7 @@ async fn execute(
                         let historical_error=!interrupted && evidence["historical_error"]==true;
                         log_turn(if status=="SUCCESS" {"info"} else {"warn"},"agy.sdk.result",live,turn,json!({
                             "native_pid":native.pid(),"stdout_offset":native.stdout_offset,
-                            "status":match status {"SUCCESS"|"ERROR"|"INTERRUPTED"=>status,_=>"INVALID"},
+                            "status":match status {"SUCCESS"|"ERROR"|"INTERRUPTED"|"CANCELED"=>status,_=>"INVALID"},
                             "error_present":value["error"].is_string(),
                             "response_bytes":value["response"].as_str().map(str::len).unwrap_or(0),
                             "interrupted":interrupted,"saw_assistant":saw_assistant,
@@ -1001,7 +1011,7 @@ async fn execute(
                         }
                         result=Some(if status=="SUCCESS" || historical_error {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
                         if turn.persistent {
-                            if interrupted { return Err("agy_sdk_interrupted: 已中断当前 Agy 回合。".into()); }
+                            if interrupted { return Err("agy_sdk_interrupted: 已取消当前 Agy 回合；子代理、后台任务及运行时保留。".into()); }
                             return result.take().unwrap();
                         }
                     }
@@ -1015,9 +1025,10 @@ async fn execute(
         }
     }
     let status = native.finish(shutdown.clone()).await?;
+    process_finished = true;
     if interrupted {
         return Err(
-            "agy_sdk_interrupted: 已向本桥接启动的 Agy 发送 SIGINT；下一轮恢复同一 SID。".into(),
+            "agy_sdk_interrupted: 已通过原生接口取消当前 Agy 回合。".into(),
         );
     }
     match result {
@@ -1033,7 +1044,7 @@ async fn execute(
         )),
     }
     }.await;
-    if turn.persistent && reusable_result(&outcome) {
+    if turn.persistent && !process_finished && reusable_result(&outcome) {
         // Hosted stderr is readable without closing the pipe. A direct child's
         // collector stays attached until exit; awaiting it here would abort it.
         if outcome.is_err() && process.host_dir.is_some() {
@@ -1041,7 +1052,7 @@ async fn execute(
         }
         return outcome;
     }
-    if outcome.is_err() && !shutdown.is_cancelled() {
+    if outcome.is_err() && !process_finished && !shutdown.is_cancelled() {
         log_turn(
             "warn",
             "agy.sdk.terminate",

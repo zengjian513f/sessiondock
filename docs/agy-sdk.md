@@ -49,7 +49,7 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 | open | 使用 inventory 已解析的 SID/cwd；原生数据库缺失时不从镜像伪造恢复载体 |
 | create | 无提示词启动，读取原生 init 的 SID/cwd，关闭空输入；不调用模型来换取身份 |
 | turn | 服务端逐会话 FIFO；重复 request_id 返回原回执，不重复发送 |
-| interrupt | SIGINT 只发送给本桥接持有的 Child；5 秒未退出才结束该桥接进程 |
+| interrupt | 调用本实例的原生 `CancelCascadeInvocation`，`killBackgroundTasks=false`、`notifyParent=false`；不发送 SIGINT/SIGKILL，不因取消超时终结进程；重复请求幂等 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
 | models | profile 环境中执行原生 `agy models`，解析 TSV；失败不填猜测模型 |
 | discard | 仅确认可丢弃网页创建回执；保留原生文件及已经接受的任务 |
@@ -60,6 +60,21 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 不改权限配置，不将工具目录里的 ask_permission/ask_question 冒充可回答的请求卡。
 `requests` 因此为空。已有 profile 的固定参数和原生权限配置仍由管理员负责。
 
+DELTA（BUG-20261022-124950-cf8e22）：停止按钮只取消当前原生 invocation，
+保留同一进程、子代理与后台任务。此前 SIGINT 退出 CLI、随后 SIGKILL 清理的
+实现违反这个语义；仅延长退出宽限期不能修复它。Agy 1.4.5 已用隔离真实 CLI
+验证本机 Connect `CancelCascadeInvocation`，这不是公开 NDJSON 控制消息。
+启动时给此实例传入独立随机 `--csrf_token` 和私有 `--log-file`；凭据保存在
+桥接 state 的私有 control 目录，日志端口必须匹配所持有的 PID，凭据不进入诊断。
+取消请求失败、超时或旧运行实例缺少凭据时显示明确错误，保留任务，不退回信号或重启。
+节点服务重启复用原有凭据及取消回执；取消不是自动重放输入的理由。
+
+**headless 限制**：原生接受取消后，最终 NDJSON `result` 仍可能等待后台任务
+完成。此时诊断明确显示“当前回合取消已接受、后台任务继续”，桥接继续等待原生
+回执，FIFO 后续输入也等待；不会伪造完成回执或通过结束任务解除等待。
+因此当前尚不等同于 TUI Esc 后立即开始下一轮。此差距记录在 [TODO](../TODO.md)。
+取消终态保留运行时，待原生回执到达后新输入复用同 PID/SID。离开页面不停止任务。
+
 独立 TUI 不共享这个 headless 运行时。打开及每轮发送前检查原生数据库的 fd/inode
 占用，排除本桥接持有的子进程；发现外部持有者即报 `agy_sdk_session_busy`，
 不杀进程、不接管。该检查没有跨独立 CLI 的原子租约，无法防止外部 TUI 在检查后
@@ -68,10 +83,9 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 
 接收后的进程不依赖 SSE 连接或网页存活。配置持久 state dir 时，通过
 [独立 SDK 宿主](sdkhost.md)持有进程和管道，节点服务重启后重新附着并回放输出。读写失败、native ERROR、进程异常退出和
-中断保留可见错误，不自动重发已交给 CLI 的正文。节点 shutdown 只断开宿主连接；显式停止才终结任务。
+中断保留可见错误，不自动重发已交给 CLI 的正文。节点 shutdown 只断开宿主连接；回合取消不终结运行时。
 stderr 保存在实时快照的 `diagnostics`；已知敏感环境值及常见凭据字段先做遮盖，
-不把原始 stderr 打到服务日志。启动、模型目录、关闭空输入和中断清理有生命周期
-超时；正文、NDJSON 行长、队列条数与消息总量没有新增拒绝上限。
+不把原始 stderr 打到服务日志。启动、模型目录、关闭空输入及取消 RPC 有超时；取消超时不清理进程；正文、NDJSON 行长、队列条数与消息总量没有新增拒绝上限。
 
 DELTA（BUG-20261020-085320-73b6ac）：原生可能在流中断后自行恢复、写出完整回复，
 却仍在最终 `result.status=ERROR` 携带先前的中断错误。桥接只在当前输入的原生
@@ -93,7 +107,7 @@ DONE 回复且与回执正文尾部一致时，按本轮原生完成处理，保
 同一缺陷的生命周期修复：合法的 `result.status=ERROR` 只结束当前回合，
 不再触发对持久 CLI 的 SIGKILL。保留错误、消费证据和待核对队列，也保留运行时绑定；
 节点重启可重新附着，用户确认移除记录后，后续输入复用同一进程。不能因此将真实
-错误改为成功或自动重试。显式中断／停止、读写或协议失败仍按原有路径清理；
+错误改为成功或自动重试。读写或协议失败仍按原有路径清理；回合取消保留运行时；
 原生自行退出时仍报告实际退出原因。宿主 stderr 在回合错误时读取脱敏快照，
 没有宿主时保留直接子进程的 stderr 收集器，待退出后读取。
 
@@ -155,7 +169,10 @@ user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能
 待核对阻塞后续输入、确认移除后同 PID 继续且不重发旧输入。
 [历史错误回执浏览器](../tests/agy_historical_error_browser.py)覆盖旧空函数调用错误、
 本轮新错误、历史证据缺失／不匹配、回复不匹配与重启回放后同 PID 继续且不重发。
-审批和问题按本来源声明的能力验收。
+[原生取消浏览器](../tests/agy_cancel_real_browser.py)在隔离 HOME 和 loopback 合成网关
+启动真实子代理及有心跳的后台进程，通过网页取消后等待超过原有 5 秒期限，核对
+它们继续存活；放行这些任务后验证子代理完成、同 PID/SID 下一轮成功。该用例
+不宣称后台任务仍活跃时 headless 已能立即接收下一轮。审批和问题按本来源声明的能力验收。
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
