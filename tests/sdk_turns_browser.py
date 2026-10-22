@@ -134,6 +134,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         expect(tail).to_be_visible()
         if source != 'codex':
             tool = page.locator('[data-sdk-item="tool-1-0"]')
+            tool.locator('xpath=ancestor::div[contains(@class,"sdk-tool-group")]').locator(':scope > .group-preview .fold-toggle').click()
             expect(tool.locator('.tool-out')).to_be_visible()
             tool.get_by_text('展开全文', exact=False).click()
             tool.get_by_role('button', name='展开原始参数', exact=True).click()

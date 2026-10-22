@@ -108,7 +108,20 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         unchanged_summary()
         capture('completed')
         # Mouse and keyboard inspection remain available after automatic folding.
-        group.locator(':scope > .group-preview .fold-toggle').click()
+        toggle = group.locator(':scope > .group-preview .fold-toggle')
+        toggle.scroll_into_view_if_needed()
+        before = toggle.bounding_box()
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(toggle).to_be_visible()
+        expect(group.locator(':scope > .disclosure')).to_have_count(0)
+        after = toggle.bounding_box()
+        assert abs(before['x'] - after['x']) < 2 and abs(before['y'] - after['y']) < 2, (before, after)
+        page.mouse.click(before['x'] + before['width'] / 2, before['y'] + before['height'] / 2)
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        toggle.press('Enter')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        capture('anchored-expanded')
         first = group.locator('.tool-entry').first
         expect(group.locator('.tool-out:visible')).to_have_count(6)
         expect(first.locator('.tool-out')).to_be_visible()
@@ -127,7 +140,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(first.locator('.tool-args')).not_to_be_visible()
         expect(first.locator('.tool-out')).to_be_visible()
         capture('manual')
-        group.locator(':scope > .disclosure').click()
+        group.locator(':scope > .group-preview .fold-toggle').click()
         expect(group.locator('.tool-out:visible')).to_have_count(1)
         # A new running call appears below the existing six-item summary.
         new = {'id': 'tool-6', 'call_id': 'call-6', 'role': 'tool', 'turn_id': 'turn',
@@ -170,6 +183,43 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
             group.locator(':scope > .group-preview .fold-toggle').click()
             expect(group.locator('.tool-out:visible')).to_have_count(7)
             capture('following-expanded')
+        # A standalone command uses the same group disclosure after any later message.
+        single = {'id': 'single-tool', 'call_id': 'single-call', 'role': 'tool', 'turn_id': 'single-turn',
+                  'name': 'exec_command', 'summary': '$ python status.py', 'text': 'python status.py',
+                  'status': 'completed', 'result': {'role': 'tool_result', 'text': output}}
+        after_single = {'id': 'after-single', 'role': 'assistant', 'turn_id': 'single-turn',
+                        'text': '单次检查完成，继续核对结果。', 'phase': 'commentary'}
+        def publish_single(followed):
+            if mode == 'chat': page.wait_for_function('_es && _es.readyState === EventSource.OPEN')
+            added = [single, after_single] if followed else [single]
+            if mode == 'chat':
+                history[:] = [item for item in history if item['id'] not in ('single-tool', 'after-single')] + added
+                watch.packet.update(messages=copy.deepcopy(history), end=len(history) + 10)
+                watch.publish()
+            else:
+                if source == 'codex':
+                    added = [{'id': 'single-tool', 'type': 'commandExecution', 'command': 'python status.py',
+                              'status': 'completed', 'aggregatedOutput': output}]
+                    if followed: added.append({'id': 'after-single', 'type': 'agentMessage', 'text': after_single['text']})
+                raw['items'][:] = [item for item in raw['items'] if item['id'] not in ('single-tool', 'after-single')] + added
+                events.publish()
+        publish_single(False)
+        single_group = page.locator(scope + ' .grp').last
+        expect(single_group.locator('.tool-active-tail .tool-out')).to_be_visible()
+        expect(single_group.locator(':scope > .group-preview')).to_be_hidden()
+        publish_single(True)
+        expect(page.locator(scope)).to_contain_text(after_single['text'])
+        expect(single_group.locator('.group-count')).to_have_text('🔧 ×1')
+        expect(single_group.locator('.tool-out:visible')).to_have_count(0)
+        expect(single_group.locator(':scope > .group-preview')).to_be_visible()
+        capture('single-collapsed')
+        single_group.locator(':scope > .group-preview .fold-toggle').click()
+        expect(single_group.locator('.tool-out')).to_be_visible()
+        single_group.get_by_text('展开全文', exact=False).click()
+        expect(single_group.locator('.tool-out')).to_contain_text('输出第 17 行')
+        capture('single-expanded')
+        single_group.locator(':scope > .group-preview .fold-toggle').click()
+        expect(single_group.locator('.tool-out:visible')).to_have_count(0)
         assert not errors, errors
         for handle in stable: handle.dispose()
         context.unroute_all(behavior='wait')

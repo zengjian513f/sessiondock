@@ -1263,12 +1263,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   font: inherit; font-size: 12px; line-height: 1.45;
   text-align: left; cursor: text; -webkit-user-select: text; user-select: text;
 }
-.msg.grp.folded > .fold-preview { display: flex; border-radius: inherit; background: transparent; }
-.msg.grp.folded:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--bubble) 96%, var(--text));
-}
-.msg.grp.folded > .fold-preview:hover { filter: none; background: transparent; }
 .msg .fold-preview .peek {
   flex: 0 1 auto; max-width: clamp(120px, 32vw, 420px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1500,16 +1494,22 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .native-settings summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; list-style-position: inside; }
 
 /* 连续工具调用合并成的组 */
-.msg.grp:not(.folded) {
-  width: 100%; border: 0; border-radius: 0; background: transparent;
+.msg.grp {
+  width: 100%; max-width: 100%; border: 0; border-radius: 0; background: transparent;
   box-shadow: none; overflow: visible;
 }
-.msg.grp.folded > .tool-entry { display: none; }
-.msg.grp.folded {
-  max-width: min(78%, 720px); border-radius: var(--bubble-radius);
-  box-shadow: none; opacity: .9;
+.msg.grp > .group-preview {
+  display: flex; align-items: flex-start; padding-block: 7px;
+  width: fit-content; max-width: min(78%, 720px);
+  border: 1px solid var(--border); border-radius: var(--bubble-radius);
+  background: var(--bubble-tool);
 }
-.msg.grp.folded > .group-preview { align-items: flex-start; padding-block: 7px; }
+.msg.grp > .group-preview:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.msg.grp:not(.folded) > .group-preview, .msg.grp.has-active-tool > .group-preview { margin-bottom: 8px; }
+.msg.grp > .group-preview[hidden] { display: none; }
+.msg.grp.folded > .tool-entry { display: none; }
 .msg .fold-preview .group-peek {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px;
   max-width: min(68vw, 660px); white-space: normal; opacity: 1;
@@ -1595,7 +1595,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .tool-entry[data-role="tool"] > .tool-out.err {
   border-top-color: color-mix(in srgb, #e5534b 45%, var(--border));
 }
-.msg.grp:not(.folded) > .disclosure { margin-top: 2px; }
 
 /* 文件修改不埋进工具组：完整 diff 直接显示在时间线里，每张卡独立切换视图。 */
 .msg.file-change-msg {
@@ -2733,11 +2732,3 @@ header .btn[data-session-docked] { display: none; }
 /* 连续工具保留组摘要，仅消息流末尾的工具独立露出，与执行状态无关。 */
 .msg.grp.folded > [data-sdk-item] { display: none; }
 .msg.grp.folded > .tool-active-tail { display: block; }
-.msg.grp.folded.has-active-tool {
-  width: 100%; max-width: 100%; border: 0; background: transparent; opacity: 1; overflow: visible;
-}
-.msg.grp.folded.has-active-tool > .group-preview {
-  margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--bubble-radius);
-  background: var(--bubble-tool); width: fit-content; max-width: 100%;
-}
-.msg.grp.folded > .group-preview[hidden] { display: none; }
