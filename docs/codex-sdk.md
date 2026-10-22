@@ -509,7 +509,10 @@ and status display below. When automatic compaction finishes inside an active
 turn, the status returns to “处理中” as the turn continues. Native Codex owns
 the persisted compacted context; SessionDock continues reading its history.
 An accepted input has completed delivery even while waiting for native consumption during compaction,
-so it no longer has a pending-send bubble. Refreshing must not submit it again. See the synthetic
+so it no longer has a pending-send bubble or retry/cancel controls. A read-only accepted
+receipt retains its text until the native `userMessage` arrives, including across page reload
+and service restart. Native consumption replaces that receipt; interruption does not turn
+it back into a failed send. Refreshing must not submit it again. See the synthetic
 [automatic-compaction browser regression](../tests/codex_sdk_compaction_browser.py)
 for progress/reconnect, completion/continued processing, interruption without send regression and
 service-restart recovery; it validates the bridge, not a real model's threshold.

@@ -32,6 +32,7 @@ struct State {
     seq: u64,
     turn_revision: u64,
     queue: Value,
+    accepted: Value,
     starting: bool,
     generation: Option<u64>,
     resume: Value,
@@ -316,7 +317,7 @@ fn summary(state: &State) -> Value {
         "resume": state.resume, "settings": state.settings, "status": state.status,
         "usage": state.usage, "last_error": state.last_error, "retry_error": state.retry_error,
         "last_turn": state.last_turn, "capacity_retry": state.capacity.summary(),
-        "queue":state.queue,
+        "queue":state.queue, "accepted":state.accepted,
         "recorded_limits": state.recorded_limits,
     })
 }
@@ -353,7 +354,10 @@ impl State {
             self.retry_error = Value::Null;
         }
         match method {
-            "bridge/queue" => self.queue = params["queue"].clone(),
+            "bridge/queue" => {
+                self.queue = params["queue"].clone();
+                self.accepted = params["accepted"].clone();
+            }
             "turn/started" => {
                 if !self.capacity.starting {
                     self.capacity.cancel();

@@ -21,6 +21,10 @@ pub(super) struct Input {
     pub effort: Option<String>,
     pub state: String,
     pub error: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub native_item_id: Option<String>,
 }
 
 type Document = HashMap<String, Vec<Input>>;
@@ -82,6 +86,64 @@ impl Queue {
             .collect::<Vec<_>>())
     }
 
+    pub fn accepted(&self, thread: &str) -> Value {
+        json!(
+            self.rows
+                .lock()
+                .expect("queue")
+                .get(thread)
+                .into_iter()
+                .flatten()
+                .filter(|item| item.state == "sent" && !item.text.is_empty())
+                .map(|item| json!({"id":item.id,"text":item.text,"turn_id":item.turn_id}))
+                .collect::<Vec<_>>()
+        )
+    }
+
+    pub(super) fn consumed(&self, thread: &str, turn: &str, item: &Value) -> Result<(), RpcError> {
+        if item["type"] != "userMessage" {
+            return Ok(());
+        }
+        let Some(id) = item["id"].as_str() else {
+            return Ok(());
+        };
+        let text = item["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|part| part["type"] == "text")
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let input = {
+            let rows = self.rows.lock().expect("queue");
+            let Some(entries) = rows.get(thread) else {
+                return Ok(());
+            };
+            if entries
+                .iter()
+                .any(|row| row.native_item_id.as_deref() == Some(id))
+            {
+                return Ok(());
+            }
+            entries
+                .iter()
+                .find(|row| {
+                    matches!(row.state.as_str(), "sending" | "sent")
+                        && row.native_item_id.is_none()
+                        && row.turn_id.as_deref().is_none_or(|value| value == turn)
+                        && row.text.trim() == text.trim()
+                })
+                .cloned()
+        };
+        if let Some(mut input) = input {
+            input.turn_id = Some(turn.into());
+            input.native_item_id = Some(id.into());
+            self.update(thread, input)?;
+        }
+        Ok(())
+    }
+
     fn get(&self, thread: &str, id: &str) -> Option<Input> {
         self.rows
             .lock()
@@ -117,13 +179,31 @@ impl Queue {
     }
 
     fn update(&self, thread: &str, mut item: Input) -> Result<(), RpcError> {
+        let mut rows = self.rows.lock().expect("queue");
+        // Native consumption can arrive before the RPC reply. Preserve that
+        // evidence when the dispatch task later publishes its captured input.
+        if let Some(old) = rows
+            .get(thread)
+            .into_iter()
+            .flatten()
+            .find(|old| old.id == item.id)
+        {
+            if old.state == "sent" && item.state == "sending" && item.native_item_id.is_some() {
+                item.state = old.state.clone();
+            }
+            if old.native_item_id.is_some() {
+                item.native_item_id = old.native_item_id.clone();
+                item.turn_id = old.turn_id.clone();
+            }
+        }
+        if item.state == "cancelled" || (item.state == "sent" && item.native_item_id.is_some()) {
+            item.text.clear();
+        }
         if matches!(item.state.as_str(), "sent" | "cancelled") {
             item.input.clear();
-            item.text.clear();
             item.model = None;
             item.effort = None;
         }
-        let mut rows = self.rows.lock().expect("queue");
         let mut next = rows.clone();
         let entries = next.entry(thread.into()).or_default();
         if let Some(old) = entries.iter_mut().find(|old| old.id == item.id) {
@@ -178,6 +258,8 @@ impl CodexSdk {
                     effort,
                     state: "queued".into(),
                     error: None,
+                    turn_id: None,
+                    native_item_id: None,
                 },
             )?;
             live.cancel_capacity_retry();
@@ -235,10 +317,10 @@ impl CodexSdk {
 }
 
 impl Inner {
-    fn queue_event(&self, live: &super::LiveThread) {
+    pub(super) fn queue_event(&self, live: &super::LiveThread) {
         live.apply(
             "bridge/queue",
-            json!({"queue":self.queue.visible(live.id())}),
+            json!({"queue":self.queue.visible(live.id()), "accepted":self.queue.accepted(live.id())}),
         );
     }
 
@@ -274,7 +356,7 @@ impl Inner {
         self.queue.update(live.id(), item.clone())?;
         self.queue_event(live);
         let mut params = json!({"threadId":live.id(),"input":item.input});
-        let method = if let Some(turn) = steer {
+        let method = if let Some(turn) = &steer {
             params["expectedTurnId"] = json!(turn);
             "turn/steer"
         } else {
@@ -291,7 +373,12 @@ impl Inner {
         // execution outcomes belong to the live turn, never to send retries.
         let result = connection.request(method, params).await;
         match result {
-            Ok(_) => {
+            Ok(result) => {
+                item.turn_id = result["turn"]["id"]
+                    .as_str()
+                    .or(result["turnId"].as_str())
+                    .map(str::to_owned)
+                    .or(steer);
                 item.state = "sent".into();
             }
             Err(error) => {
