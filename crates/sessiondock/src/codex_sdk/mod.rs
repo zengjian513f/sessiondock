@@ -585,10 +585,8 @@ impl Inner {
                 }
                 thread.loaded(connection.generation(), result);
                 self.recover_active_turn(&connection, &thread).await?;
-                thread.apply(
-                    "bridge/queue",
-                    json!({"queue":self.queue.visible(thread_id)}),
-                );
+                self.recover_receipts(&connection, &thread).await?;
+                self.queue_event(&thread);
                 Ok(thread)
             }
             Err(error) => {
@@ -603,6 +601,47 @@ impl Inner {
                 Err(error)
             }
         }
+    }
+
+    async fn recover_receipts(
+        &self,
+        connection: &Connection,
+        thread: &LiveThread,
+    ) -> Result<(), RpcError> {
+        // The native process can consume an input while this service is down,
+        // including in a turn that has already finished by the time we resume.
+        let accepted = self.queue.accepted(thread.id());
+        let mut turns: std::collections::HashSet<String> = accepted
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["turn_id"].as_str().map(str::to_owned))
+            .collect();
+        let mut cursor = Value::Null;
+        while !turns.is_empty() {
+            let page = connection
+                .request(
+                    "thread/turns/list",
+                    json!({
+                        "threadId":thread.id(), "sortDirection":"desc", "limit":1,
+                        "itemsView":"full", "cursor":cursor,
+                    }),
+                )
+                .await?;
+            for turn in page["data"].as_array().into_iter().flatten() {
+                let id = turn["id"].as_str().unwrap_or_default();
+                if turns.remove(id) {
+                    for item in turn["items"].as_array().into_iter().flatten() {
+                        self.queue.consumed(thread.id(), id, item)?;
+                    }
+                }
+            }
+            cursor = page["nextCursor"].clone();
+            if cursor.is_null() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     async fn recover_active_turn(
@@ -626,6 +665,14 @@ impl Inner {
                 .await?;
             if let Some(turn) = turns["data"].as_array().and_then(|turns| turns.first()) {
                 thread.recover_active_turn(revision, turn);
+                for item in turn["items"].as_array().into_iter().flatten() {
+                    self.queue.consumed(
+                        thread.id(),
+                        turn["id"].as_str().unwrap_or_default(),
+                        item,
+                    )?;
+                }
+                self.queue_event(thread);
             }
         }
         Ok(())
@@ -657,7 +704,22 @@ impl Inner {
             .get(&thread_id)
             .cloned();
         if let Some(thread) = thread {
-            thread.apply(method, params);
+            thread.apply(method, params.clone());
+            if matches!(method, "item/started" | "item/completed")
+                && params["item"]["type"] == "userMessage"
+            {
+                if self
+                    .queue
+                    .consumed(
+                        &thread_id,
+                        params["turnId"].as_str().unwrap_or_default(),
+                        &params["item"],
+                    )
+                    .is_ok()
+                {
+                    self.queue_event(&thread);
+                }
+            }
         }
     }
 

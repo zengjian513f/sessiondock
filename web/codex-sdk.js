@@ -481,7 +481,7 @@ const CodexSdkView = {
         this.paintStatus();
         break;
       case 'bridge/queue':
-        if (this.summary) this.summary.queue = raw.queue;
+        if (this.summary) { this.summary.queue = raw.queue; this.summary.accepted = raw.accepted; }
         this.paintQueue();
         break;
       case 'bridge/reset':
@@ -691,10 +691,16 @@ const CodexSdkView = {
     const holder = this.pane?.querySelector('.sdk-queue');
     if (!holder) return;
     // Status/usage deltas must not replace the button between pointerdown/up.
-    const contents = JSON.stringify([!!this.turn, this.summary?.queue || []]);
+    const contents = JSON.stringify([!!this.turn, this.summary?.queue || [], this.summary?.accepted || []]);
     if (holder._sdkQueueBusy || holder._sdkQueueContents === contents) return;
     holder._sdkQueueContents = contents;
     holder.replaceChildren();
+    for (const item of this.summary?.accepted || []) {
+      const {card} = ConversationUI.queuedMessage(item.text, '已发送，等待原生记录',
+        {uid: this.uid, agent: this.agent, className: 'sdk-accepted'});
+      card.dataset.receiptId = item.id;
+      holder.append(card);
+    }
     for (const item of this.summary?.queue || []) {
       const state = item.state === 'failed' ? (item.error || '发送失败') : item.state === 'sending' ? '正在发送…' : '已排队，当前回合结束后发送';
       const {card, foot, actions: controls} = ConversationUI.queuedMessage(item.text, state,
