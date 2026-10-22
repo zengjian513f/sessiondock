@@ -2730,13 +2730,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-goal-buttons .btn { min-height: 28px; padding: 4px 10px; }
 .sdk-goal-result:empty { display: none; }
 
-/* 工具整条折叠，摘要与右侧按钮保持一行。 */
-.tool-disclosable.tool-collapsed > :not(.tool-head) { display: none; }
-.tool-disclosable .tool-head > .tool-meta { max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tool-disclosable > .file-change-list { padding: 0 10px 10px; }
-.tool-disclosable .file-change-body { max-height: none; }
-
-/* 已完成工具保留组摘要，末尾执行中的调用独立露出。 */
+/* 连续工具保留组摘要，最后一条无论状态均独立露出。 */
 .msg.grp.folded > [data-sdk-item] { display: none; }
 .msg.grp.folded > .tool-active-tail { display: block; }
 .msg.grp.folded.has-active-tool {

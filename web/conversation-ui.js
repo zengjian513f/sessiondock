@@ -110,21 +110,10 @@ const ConversationUI = {
       || ['completed', 'failed', 'declined', 'cancelled', 'canceled'].includes(message.status);
   },
 
-  refreshTools(box) {
-    const entries = [...box.querySelectorAll('.tool-disclosable')]
-      .filter(entry => !entry.closest('.user-shell-command'));
-    const last = entries.at(-1);
-    for (const entry of entries) {
-      const open = entry.dataset.toolChoice ? entry.dataset.toolChoice === 'open' : entry === last && !entry._toolComplete;
-      if (entry.classList.contains('tool-collapsed') === open) entry._setToolOpen(open);
-    }
-  },
-
   toolState(node) {
     return node ? ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'].map(selector =>
       [...node.querySelectorAll(selector)].map(control =>
-        selector === '.tool-toggle' && !control.closest('.tool-entry')?.dataset.toolChoice ? null
-          : control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
+        control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
   },
 
   restoreToolState(node, state) {
@@ -133,10 +122,7 @@ const ConversationUI = {
       node.querySelectorAll(selector).forEach((control, index) => {
         const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded';
         const previous = state[group][index];
-        if (previous != null) {
-          if (control.getAttribute(attribute) !== previous) control.click();
-          if (selector === '.tool-toggle') control.closest('.tool-entry').dataset.toolChoice = previous === 'true' ? 'open' : 'closed';
-        }
+        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
       });
     });
   },

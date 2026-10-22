@@ -100,9 +100,9 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
 
         capture('initial')
         if not baseline:
-            tools = page.locator('.sdk-pane .tool-disclosable')
+            tools = page.locator('.sdk-pane .tool-entry')
             expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
-            expect(tools.last.locator('.tool-out')).to_contain_text('检查结果 17')
+            expect(tools.last.locator('.tool-out')).to_contain_text('检查结果 7')
             if source != 'codex':
                 expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
         groups = page.locator('.sdk-pane .turn-process')
@@ -134,9 +134,10 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         expect(tail).to_be_visible()
         if source != 'codex':
             tool = page.locator('[data-sdk-item="tool-1-0"]')
-            expect(tool.locator('.tool-out')).not_to_be_visible()
-            tool.get_by_role('button', name='展开工具调用', exact=True).click()
-            expect(tool.locator('.tool-out')).to_contain_text('检查结果 17')
+            expect(tool.locator('.tool-out')).to_be_visible()
+            tool.get_by_text('展开全文', exact=False).click()
+            tool.get_by_role('button', name='展开原始参数', exact=True).click()
+            expect(tool.locator('.tool-out')).to_contain_text('检查结果 7')
             page.evaluate("window.turnProbe = document.querySelector('[data-sdk-item=\"think-3-7\"]')")
             native[-1]['result']['text'] += '\n后台工具更新'
             native.append({'id': 'new-tool', 'role': 'tool', 'turn_id': 'turn-3',
