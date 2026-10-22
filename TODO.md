@@ -30,6 +30,11 @@
 
 ## Native interaction semantics
 
+- [ ] BUG-20261022-124950-cf8e22：Agy 原生取消已去掉信号终止路径，但 1.4.5
+  headless 的最终回执仍等待后台任务，后续 FIFO 输入也等待。需取得原生支持的
+  即时回合结束／续发通道，达到 TUI Esc 的完整交互；不能伪造 result 或杀任务。
+  见 [Agy SDK](docs/agy-sdk.md)。
+
 - [ ] 排查 `sdk_mode_browser.py` 的 OpenCode 暖缓存重开间歇超时：运行归属已确认，
   但 SDK 仍显示“连接中”，5 秒内 SEND 未启用；节点和 Hub 均出现，具体等待环节待查。
   BUG-20261021-125735-d03f36 冷读取修复前的 `7a474ae3` 前端对照也复现，

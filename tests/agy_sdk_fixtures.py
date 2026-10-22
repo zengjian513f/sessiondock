@@ -85,18 +85,27 @@ def result(status,response='',error=None):
     emit({'event':'result','result':payload})
 def interrupted(*_):
     record({'kind':'signal','sid':sid,'signal':'SIGINT','pid':os.getpid()})
-    result('ERROR',error='synthetic native interrupt')
-    mode=(root/'interrupt-mode').read_text() if (root/'interrupt-mode').exists() else ''
-    if mode == 'closed-output':
-        os.close(sys.stdout.fileno())
-        time.sleep(20)
-    elif mode == 'stuck':
-        time.sleep(20)
-    else:
-        time.sleep(0.75)
-    record({'kind':'interrupt_cleanup_done','sid':sid,'pid':os.getpid()})
-    sys.exit(0)
+    sys.exit(1)
 signal.signal(signal.SIGINT,interrupted)
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+cancelled=threading.Event()
+class ControlHandler(BaseHTTPRequestHandler):
+    def log_message(self,*_): pass
+    def do_POST(self):
+        payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        assert self.path=='/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation'
+        assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
+        assert payload=={'cascadeId':sid,'killBackgroundTasks':False,'notifyParent':False}
+        mode=(root/'interrupt-mode').read_text() if (root/'interrupt-mode').exists() else ''
+        record({'kind':'cancel','sid':sid,'pid':os.getpid(),'mode':mode})
+        if mode == 'reject':
+            self.send_response(503);self.end_headers();self.wfile.write(b'{}');return
+        if mode != 'pending': cancelled.set()
+        self.send_response(200);self.end_headers();self.wfile.write(b'{}')
+control=ThreadingHTTPServer(('127.0.0.1',0),ControlHandler)
+threading.Thread(target=control.serve_forever,daemon=True).start()
+if option('--log-file'):
+    Path(option('--log-file')).write_text(f'Starting language server process with pid {os.getpid()}\nLanguage server listening on random port at {control.server_port} for HTTP\n')
 init_sid='a7600000-0000-4000-8000-999999999999' if (root/'wrong-sid').exists() else sid
 init=dict(cwd=os.getcwd(),permission_mode='request-review',tools=['view_file','run_command'])
 model=option('--model') or ((root/'init-model').read_text() if (root/'init-model').exists() else None)
@@ -210,14 +219,19 @@ for line in sys.stdin:
             threading.Event().wait(0.02)
         result('SUCCESS',answer)
         continue
+    cancelled.clear()
     if text.startswith('hold:'):
         token=text.split(':',1)[1]
         assert Path(token).name==token
         step('agent_response',state='ACTIVE',text_delta='Agy running '+token+' ')
         deadline=time.monotonic()+25
-        while not (root/'release'/token).exists():
+        while not (root/'release'/token).exists() and not cancelled.is_set():
             if time.monotonic()>deadline:result('ERROR',error='fixture hold timeout');sys.exit(1)
             threading.Event().wait(0.02)
+        if cancelled.is_set():
+            record({'kind':'turn_cancelled','sid':sid,'pid':os.getpid()})
+            result('CANCELED',error='synthetic native cancellation')
+            continue
         step('agent_response',state='DONE',text_delta='finished '+token);advance()
         answer='Agy running '+token+' finished '+token
     else:

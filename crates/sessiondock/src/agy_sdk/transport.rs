@@ -31,7 +31,7 @@ pub(super) struct ProcessConfig {
     home: PathBuf,
     model_cwd: PathBuf,
     proc_root: PathBuf,
-    secrets: Vec<String>,
+    secrets: std::sync::Mutex<Vec<String>>,
     owned: std::sync::Mutex<std::collections::HashSet<u32>>,
     pub host_dir: Option<PathBuf>,
     pub adapter_dir: Option<PathBuf>,
@@ -94,7 +94,7 @@ impl ProcessConfig {
                 io::Error::new(io::ErrorKind::InvalidInput, "agy_sdk_home_missing")
             })?,
             proc_root,
-            secrets,
+            secrets: std::sync::Mutex::new(secrets),
             owned: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
@@ -132,7 +132,7 @@ impl ProcessConfig {
 
     pub fn redact(&self, text: &str) -> String {
         let mut text = text.to_owned();
-        for secret in &self.secrets {
+        for secret in self.secrets.lock().unwrap().iter() {
             text = text.replace(secret, "[redacted]");
         }
         // Retain useful diagnostics while removing recognizable credentials not present in profile.env.
@@ -256,6 +256,7 @@ pub(super) struct Native {
     pub model: Option<String>,
     process: Arc<ProcessConfig>,
     pid: u32,
+    control: Option<super::control::Control>,
 }
 
 impl Drop for Native {
@@ -299,7 +300,16 @@ impl Native {
         if shutdown.is_cancelled() {
             return Err("agy_sdk_shutdown".into());
         }
+        let control = super::control::Control::prepare(process.adapter_dir.as_deref(), binding)?;
         let mut command = process.command(cwd);
+        if let Some(control) = &control {
+            process.secrets.lock().unwrap().push(control.token.clone());
+            command
+                .arg("--csrf_token")
+                .arg(&control.token)
+                .arg("--log-file")
+                .arg(&control.log);
+        }
         command.args([
             "--input-format",
             "stream-json",
@@ -431,6 +441,7 @@ impl Native {
             model: None,
             process: process.clone(),
             pid,
+            control,
         };
         let init = tokio::select! {
             _=shutdown.cancelled()=>Err("agy_sdk_shutdown".to_owned()),
@@ -586,30 +597,17 @@ impl Native {
         Ok(())
     }
 
-    pub async fn interrupt(&mut self) -> Result<(), String> {
-        if let Some(host) = &self.host {
-            return host
-                .signal(libc::SIGINT)
-                .await
-                .map_err(|e| format!("agy_sdk_interrupt: {e}"));
-        }
-        #[cfg(unix)]
-        {
-            let pid = self
-                .child
-                .as_ref()
-                .and_then(|child| child.id())
-                .ok_or("agy_sdk_idle")?;
-            // SAFETY: this retained Child owns the PID until wait/reap; never signal discovered processes.
-            if unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) } != 0 {
-                return Err(format!("agy_sdk_interrupt: {}", io::Error::last_os_error()));
-            }
-            Ok(())
-        }
-        #[cfg(not(unix))]
-        {
-            Err("agy_sdk_interrupt_unsupported".into())
-        }
+    pub fn cancelled(&self, turn: &str) -> bool {
+        self.control
+            .as_ref()
+            .is_some_and(|control| control.cancelled(turn))
+    }
+
+    pub async fn interrupt(&mut self, turn: &str) -> Result<(), String> {
+        let control = self.control.as_ref().ok_or(
+            "agy_sdk_interrupt_unavailable: 此旧运行实例没有原生取消接口的授权；已保留运行中的任务，不会用信号或重启代替停止。"
+        )?;
+        control.cancel(self.pid, &self.sid, turn).await
     }
 
     pub async fn terminate(&mut self) {
