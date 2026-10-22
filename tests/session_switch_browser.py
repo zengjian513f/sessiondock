@@ -44,12 +44,28 @@ def exercise(browser, base, source, screenshots, label):
                 data['sdk_uids'].append(selected)
             route.fulfill(response=response, json=data)
 
+        def runtime(route):
+            # The switch decides ownership from the per-session runtime read;
+            # advertise the selected fixture as SDK-owned there as well.
+            response = route.fetch()
+            data = response.json()
+            if state.get('uid') and data.get('uid') == state['uid']:
+                data.update(sdk=True, running=True, external=False)
+            route.fulfill(response=response, json=data)
+
         def delayed_live(route):
             if state.get('hold') and 'force=1' in route.request.url:
                 held.append(route)
             else:
                 live(route)
+
+        def delayed_runtime(route):
+            if state.get('hold'):
+                held.append(route)
+            else:
+                runtime(route)
         page.route('**/api/live*', delayed_live)
+        page.route('**/api/session/runtime*', delayed_runtime)
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
         rows = page.locator(f'#side .item[data-uid^="{source}:"]').filter(
@@ -89,14 +105,16 @@ def exercise(browser, base, source, screenshots, label):
             assert held, 'selection must actually be waiting for the ownership response'
             capture('cached-selection-wait' if cached else 'cold-selection-wait')
             expect(page.locator('#detail')).not_to_contain_text('NAVIGATION OLD SESSION')
-            expect(page.locator('#detail .spin')).to_have_text('正在读取会话…')
+            # Cold history reads do not wait for runtime ownership (docs/sdk-ui.md).
             assert page.evaluate('S.sel') == uid
-            assert page.evaluate('uid => cache.has(viewKey(uid, null))', uid) == cached
+            # A cold select may already have cached its concurrent history read.
+            if cached:
+                assert page.evaluate('uid => cache.has(viewKey(uid, null))', uid)
             expect(page.locator('#detail .dhead h2')).to_have_text(title)
             assert len(opens) == opening_count, 'ownership lookup must not open the SDK'
             state['hold'] = False
             for route in held:
-                live(route)
+                (runtime if '/api/session/runtime' in route.request.url else live)(route)
             held.clear()
             expect(page.locator('#sdk-input')).to_be_visible()
             expect(page.locator('#sdk-send')).to_be_enabled()
@@ -116,7 +134,7 @@ def exercise(browser, base, source, screenshots, label):
         old.click()
         expect(page.locator('#msgs')).to_contain_text('NAVIGATION OLD SESSION')
         for route in held:
-            live(route)
+            (runtime if '/api/session/runtime' in route.request.url else live)(route)
         held.clear()
         expect(page.locator('#detail .dhead h2')).to_have_text('NAVIGATION OLD SESSION')
         assert page.evaluate('S.sel') == old_uid

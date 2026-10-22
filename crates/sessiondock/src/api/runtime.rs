@@ -162,6 +162,26 @@ pub async fn session_runtime(
     if !sdk && let Some(codex) = &state.codex_sdk {
         let loaded = codex.live_threads().await;
         sdk = codex.live_session_uids(&loaded).iter().any(|u| u == &uid);
+        // Like /api/live: an indexed Codex row whose thread the app-server has
+        // loaded is SDK-owned. Resolve this one row's sid from the published
+        // list (cached within OPEN_TTL), not a process scan.
+        if !sdk && uid.starts_with("codex:") && !loaded.is_empty() {
+            let wanted = uid.clone();
+            let sid = state
+                .reader
+                .run(move |store| {
+                    let document = store.recent_document()?;
+                    Ok(document["sessions"].as_array().and_then(|rows| {
+                        rows.iter()
+                            .find(|row| row["uid"].as_str() == Some(&wanted))
+                            .and_then(|row| row["sid"].as_str().map(str::to_owned))
+                    }))
+                })
+                .await
+                .ok()
+                .flatten();
+            sdk = sid.is_some_and(|sid| loaded.contains(&sid));
+        }
     }
     // External/tmux/working from the last assembled live body, if any.
     let cached = state.polls.latest_live();
