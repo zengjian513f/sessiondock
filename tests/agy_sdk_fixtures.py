@@ -93,6 +93,7 @@ init=dict(cwd=os.getcwd(),permission_mode='request-review',tools=['view_file','r
 model=option('--model') or ((root/'init-model').read_text() if (root/'init-model').exists() else None)
 if model:init['model']=model
 emit({'event':'init','conversation_id':init_sid,'init':init})
+malformed_error='Your previous response contained an improperly formatted function call: Malformed function call: Failed to parse function call: Function call is empty - no input to parse.\nPlease retry with a properly formatted function call\nRetries remaining: 3'
 first_input=True
 for line in sys.stdin:
     message=json.loads(line)
@@ -117,6 +118,20 @@ for line in sys.stdin:
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)
         result('ERROR',error='synthetic native error');continue
+    if text.startswith('__MALFORMED_'):
+        if text=='__MALFORMED_SEED__':
+            native_record('ERROR_MESSAGE','Error: '+malformed_error,error=malformed_error)
+            step('error_message',state='DONE');advance()
+            result('ERROR',error=malformed_error);continue
+        if text in ('__MALFORMED_CURRENT__','__MALFORMED_DIFFERENT__'):
+            current_error=malformed_error if text=='__MALFORMED_CURRENT__' else 'different current failure'
+            native_record('ERROR_MESSAGE','Error: '+current_error,error=current_error)
+            step('error_message',state='DONE');advance()
+        answer='本轮完整回复：历史函数调用错误未污染本轮。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        result('ERROR', 'mismatched response' if text=='__MALFORMED_MISMATCH__' else answer, malformed_error)
+        continue
     if text in ('__HISTORICAL_ERROR__', '__HISTORICAL_WITH_CURRENT_ERROR__'):
         if text=='__HISTORICAL_WITH_CURRENT_ERROR__':
             native_record('ERROR_MESSAGE','Current turn failed',error='synthetic current turn failure')
