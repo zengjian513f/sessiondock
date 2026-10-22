@@ -2598,7 +2598,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-gauge.low .sdk-bar > u { background: #e5484d; }
 .sdk-gauge.low b { color: #e5484d; }
 .sdk-credits { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
-.sdk-pickers { display: flex; align-items: center; gap: 6px; }
+.sdk-pickers { display: flex; align-items: center; gap: 4px; }
 .sdk-pickers > .new-effort { position: relative; flex: none; min-width: 0; }
 .sdk-pickers > .sdk-model { width: var(--sdk-model-width, 160px); }
 .sdk-pickers > .sdk-model-fit { width: auto; }

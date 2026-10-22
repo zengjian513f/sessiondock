@@ -375,12 +375,9 @@ def exercise(browser, base, fixture, screenshots=None):
         diagnostic = page.evaluate('window.__agySnapshot.raw.diagnostics')
         assert 'synthetic transport diagnostic' in diagnostic
         assert fixture.env['AGY_SDK_FAKE_KEY'] not in diagnostic and '[redacted]' in diagnostic
-        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='__ERROR__' && row.state==='unknown')")
-        failed = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='__ERROR__')")
-        assert failed['observed_consumed']
-        page.locator(f'[data-queue-id="{failed["id"]}"]').get_by_role('button', name='移除记录', exact=True).click()
-        page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
-        expect(page.locator(f'[data-queue-id="{failed["id"]}"]')).to_have_count(0)
+        # A native execution error after admission completes the send
+        # (docs/native-sdk.md): no visible queue record, nothing to remove.
+        page.wait_for_function("!(NativeSdkView.raw.input_queue||[]).some(row=>row.text==='__ERROR__')")
         send(page, 'continue after native error')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after native error')
         idle(page)
@@ -391,12 +388,9 @@ def exercise(browser, base, fixture, screenshots=None):
         for marker, conflict in [('__HISTORICAL_ERROR__', False), ('好，请在独立工作区修复审计发现的问题，完成复审与验证；不要重复执行已经完成的任务，并保留当前会话。', True), ('__UNRECOVERED_STREAM__', False), ('__HISTORICAL_WITH_CURRENT_ERROR__', False)]:
             send(page, marker)
             idle(page)
-            page.wait_for_function("text=>NativeSdkView.raw.input_queue?.some(row=>row.text===text && row.state==='unknown')", arg=marker)
-            row = page.evaluate("text=>NativeSdkView.raw.input_queue.find(row=>row.text===text)", marker)
-            card = page.locator(f'[data-queue-id="{row["id"]}"]')
-            expect(card).to_contain_text('原生已读取这条输入')
-            expect(card).not_to_contain_text('发送失败')
-            expect(card.get_by_role('button', name='重试', exact=True)).to_have_count(0)
+            # Native admission completes the send; the execution outcome stays
+            # in runtime state, never as a failed/unknown queue record.
+            page.wait_for_function("text=>!(NativeSdkView.raw.input_queue||[]).some(row=>row.text===text)", arg=marker)
             raw = page.evaluate('NativeSdkView.raw')
             assert raw['error_kind'] == ('uncertain' if conflict else 'turn'), raw['error']
             if conflict:
@@ -412,22 +406,14 @@ def exercise(browser, base, fixture, screenshots=None):
                         page.screenshot(path=str(screenshots/f'agy-result-conflict-{width}-{theme}.png'),full_page=True)
                     page.set_viewport_size({'width':1440,'height':900})
                     page.emulate_media(color_scheme='dark')
-            before = len(fixture.inputs(marker))
-            card.get_by_role('button', name='重新发送', exact=True).click()
-            dialog = page.get_by_role('dialog')
-            expect(dialog).to_contain_text('可能重复执行')
-            dialog.get_by_role('button', name='取消', exact=True).click()
-            assert len(fixture.inputs(marker)) == before
-            card.get_by_role('button', name='移除记录', exact=True).click()
-            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
-            expect(card).to_have_count(0)
+            assert len(fixture.inputs(marker)) == 1
             if not conflict:
                 followup = 'continue after ' + marker
                 send(page, followup)
                 expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + followup)
                 idle(page)
                 assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs(followup)[-1]['pid']
-                assert len(fixture.inputs(marker)) == before
+                assert len(fixture.inputs(marker)) == 1
             if conflict:
                 send(page, 'after conflicting result')
                 expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after conflicting result')
@@ -565,8 +551,10 @@ def check_diagnostic_logs(fixture):
         assert any(row['event'] == 'agy.sdk.step' and row['kind'] == 'user_input' for row in trace)
         finished = next(row for row in trace if row['event'] == 'agy.sdk.turn_finished')
         assert finished['runtime_retained'], finished
-        transition = next(row for row in trace if row['event'] == 'native_sdk.input_transition' and row['to'] == 'unknown')
-        assert transition['consumption'] == 'observed' and transition['attempts'] == 0
+        # The send completes on native admission; the ERROR is a runtime outcome.
+        transition = next(row for row in trace if row['event'] == 'native_sdk.input_transition' and row['to'] == 'completed')
+        assert transition['attempts'] == 0
+        assert not any(row['event'] == 'native_sdk.input_transition' and row['to'] in ('unknown', 'failed') for row in trace), trace
         assert transition['request_id'] and transition['uid'] and transition['source'] == 'agy'
         assert all(row['runtime_id'] == result['runtime_id'] for row in trace if 'runtime_id' in row)
         if conflict:

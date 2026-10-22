@@ -11,6 +11,7 @@ from agy_model_browser import pictures, selected
 from history_fixtures import BINARY, REPO
 from native_sdk_queue_browser import open_page, send
 from native_sdk_queue_fixtures import NativeQueueFixture
+from sdk_ui_fixtures import start_sdk
 
 
 def open_other(browser, base, sid):
@@ -23,8 +24,9 @@ def open_other(browser, base, sid):
     uid = page.evaluate('sid => S.sessions.find(row => row.sid === sid).uid', sid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.locator('#a-sdk').click()
-    if not page.locator('#sdk-input').is_visible():
-        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
+    # An idle SDK view is read-only with a click-to-start input; start it
+    # explicitly like the other SDK suites.
+    start_sdk(page)
     expect(page.locator('#sdk-input')).to_be_enabled()
     return context, page, uid
 
