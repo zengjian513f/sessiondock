@@ -1858,6 +1858,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   width: 100%;
   padding: 9px 18px; border-top: 1px solid var(--border); background: var(--panel);
 }
+#sdk-composer { gap: 4px; padding-top: 6px; }
 .composer-row {
   --composer-control-height: 36px;
   display: flex; gap: 8px; align-items: flex-end; min-width: 0;
@@ -2211,6 +2212,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     max-width: none; gap: 6px;
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
   }
+  #sdk-composer { gap: 3px; padding-top: 5px; }
   .composer-row { gap: 4px; }
   .composer-status-slot { left: 8px; right: 8px; }
   #cadd, #sdk-add { min-width: var(--composer-control-height); }
@@ -2547,7 +2549,9 @@ header .btn[data-session-docked] { display: none; }
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
-.sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; min-width: 0;
+  /* One fixed height before and after the controls arrive: no reflow on ready. */
+  height: var(--sdk-status-row-height); --sdk-status-row-height: 24px; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
 .sdk-status-row > .sdk-status { flex: none; max-width: 7em; }
 .sdk-status-row > .sdk-options { flex: none; }
@@ -2555,7 +2559,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-gauges::-webkit-scrollbar { display: none; }
 .sdk-status-row > .sdk-gauges > * { flex-shrink: 0; }
 .sdk-status-row .sdk-quota-group, .sdk-status-row .sdk-quota-windows { flex-wrap: nowrap; max-width: none; }
-.sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
+.sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
 .sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
   padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sdk-status-color); font: inherit; }
@@ -2605,15 +2609,20 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers > .sdk-mode { width: 96px; }
 .sdk-pickers > .sdk-tier { width: 84px; }
 .sdk-pickers .new-effort > select {
-  box-sizing: border-box; height: 28px; width: 100%;
-  padding: 4px 6px; font: inherit; text-overflow: ellipsis;
+  box-sizing: border-box; height: calc(var(--sdk-status-row-height) - 2px); width: 100%;
+  padding: 0 6px; font: inherit; text-overflow: ellipsis;
 }
-.sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
-#sdk-more { width: 28px; padding: 0; font-size: 18px; }
+.sdk-pickers > .btn { flex: none; height: var(--sdk-status-row-height); min-height: 0; padding: 0 8px; white-space: nowrap; }
+#sdk-more { width: var(--sdk-status-row-height); padding: 0; font-size: 16px; line-height: 1; }
 .sdk-pickers > .sdk-policy { width: 128px; }
 .sdk-pickers > .sdk-policy:last-of-type { width: 112px; }
 @container sdk-footer (max-width: 360px) {
   .sdk-pickers { gap: 4px; }
+}
+/* Narrow footer: shorter bars keep every usage number whole beside ⋯. */
+@container sdk-footer (max-width: 480px) {
+  .sdk-gauges { gap: 8px; }
+  .sdk-bar { width: 24px; }
 }
 
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
@@ -2676,7 +2685,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-queued .queued-send-dismiss { margin-left: 0; min-height: 24px; }
 .sdk-queued .queued-send-state { flex: 1 1 auto; }
 
-.sdk-pickers > .sdk-action { flex: none; width: 28px; min-width: 28px; height: 28px; padding: 4px; }
+.sdk-pickers > .sdk-action { flex: none; width: var(--sdk-status-row-height); min-width: 0; height: var(--sdk-status-row-height); padding: 3px; }
 .sdk-pickers > .sdk-action .sdk-action-label { display: none; }
 #sdk-actions > .sdk-action { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 
