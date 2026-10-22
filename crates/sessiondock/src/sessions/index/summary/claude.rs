@@ -420,6 +420,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     }
     let committed = committed_end(data);
     RowSummary {
+        forked_from_id: None,
         // A sidecar row is keyed by its agent id, like today's `_is_subagent` meta.
         sid: agent.clone().or(sid).unwrap_or(stem),
         title: match &agent_meta {

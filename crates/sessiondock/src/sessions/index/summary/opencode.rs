@@ -78,6 +78,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     };
     let committed = input.data.as_ref().and_then(committed_end);
     RowSummary {
+        forked_from_id: None,
         sid,
         title: clip(title.trim(), 110),
         cwd: text_if_truthy(&session["directory"]).unwrap_or_default(),

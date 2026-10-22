@@ -769,6 +769,9 @@ fn base_row(entry: &CandidateRef) -> Value {
         "created": summary.created, "updated": summary.updated,
         "model": summary.model, "branch": summary.branch,
     });
+    if let Some(parent) = &summary.forked_from_id {
+        row["forked_from_id"] = json!(parent);
+    }
     if let Some(codex) = &summary.codex
         && codex.has_meta
     {

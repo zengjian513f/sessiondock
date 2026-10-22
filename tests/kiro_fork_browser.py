@@ -29,6 +29,8 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(s => s.sid === sid); }", arg=fixture.sid)
     uid = page.evaluate("sid => S.sessions.find(s => s.sid === sid).uid", fixture.sid)
+    if page.evaluate('uid => !!S.sessions.find(s=>s.uid===uid)?.fork_parent', uid):
+        page.evaluate('uid => setForkParentVisibility([uid], true)', uid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.locator('#sdk-input').click()
     page.wait_for_function("SdkView.connected && !SdkView.readOnly")
@@ -52,10 +54,18 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
         print('REPRODUCED: message branch is offered but backend rejects its position', flush=True)
         context.close()
         return
-    expect(menu.get_by_role('button')).to_have_text(['回退至此轮（新分支）'])
+    expect(menu.get_by_role('button')).to_have_text(['回退', '分支'])
+    action = '回退' if width == 390 else '分支'
+    if action == '回退':
+        page.route('**/api/native-sdk/fork', lambda route: route.fulfill(status=503, json={'error': 'synthetic fork failure'}))
+        menu.get_by_role('button', name=action, exact=True).click()
+        page.wait_for_function("document.querySelector('#sdk-status-menu').textContent.includes('synthetic fork failure')")
+        assert page.evaluate('uid => S.sel===uid && !sessionHidden(S.sessions.find(s=>s.uid===uid))', uid)
+        page.unroute('**/api/native-sdk/fork')
+        bubble.locator('.sdk-bubble-toggle').click()
     native_before = (fixture.v3_dir / 'messages.jsonl').read_bytes()
     with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/fork')) as fork:
-        menu.get_by_role('button', name='回退至此轮（新分支）', exact=True).click()
+        menu.get_by_role('button', name=action, exact=True).click()
     assert fork.value.ok, fork.value.text()
     result = fork.value.json()
     new_uid = result['uid']
@@ -65,7 +75,13 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
     expect(page.locator('#sdk-input')).to_have_value('')
     expect(page.locator('.native-history-warning:visible')).to_have_count(0)
     page.wait_for_function('turn => !SdkView.items.some(i => i.text?.includes(`审查第 ${String(turn+1).padStart(2,"0")} 轮：`))', arg=turn)
+    try:
+        page.wait_for_function('([uid, visible]) => { const row=S.sessions.find(s=>s.uid===uid); return row?.fork_parent && !!row.fork_parent_visible===visible; }', arg=[uid, action == '分支'])
+    except Exception:
+        print('VISIBILITY DIAGNOSTICS', page.evaluate('S.sessions'), flush=True)
+        raise
     request = fork.value.request.post_data_json
+    assert 'hide_source' not in request
     assert request['messageId'] == f'user-{turn:02d}', request
     params = fixture.received('session/fork')[-1]['params']
     assert params['_meta']['kiro'] == {'messageId': f'user-{turn:02d}', 'createdReason': 'rewind'}, params
@@ -89,6 +105,16 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
           text:document.querySelector('#detail')?.innerText})'''), flush=True)
         raise
     expect(page.locator('.sdk-live')).to_contain_text(f'第 {turn:02d} 轮审查完成')
+    page.wait_for_function('([uid, visible]) => { const row=S.sessions.find(s=>s.uid===uid); return row?.fork_parent && !!row.fork_parent_visible===visible; }', arg=[uid, action == '分支'])
+    if action == '回退':
+        page.locator('#a-fork-chain').click()
+        toggle = page.locator(f'#fork-chain-menu .chain-row[data-uid="{uid}"] .chain-toggle')
+        expect(toggle).to_have_text('显示')
+        toggle.click()
+        expect(toggle).to_have_text('隐藏')
+        toggle.click()
+        expect(toggle).to_have_text('显示')
+        page.locator('#a-fork-chain').click()
     assert not fixture.received('session/prompt'), 'Fork/load unexpectedly sent a prompt'
     print(f'PASS {label} {width} {theme}: native ID, retained turn, source preserved, retry, reload', flush=True)
     context.close()
@@ -102,6 +128,8 @@ def capability_gating(browser, base, fixture):
     api(page, 'stop', {'uid': uid})
     marker = fixture.sessions / 'no-fork-message-id'
     marker.touch()
+    if page.evaluate('uid => !!S.sessions.find(s=>s.uid===uid)?.fork_parent', uid):
+        page.evaluate('uid => setForkParentVisibility([uid], true)', uid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.locator('#sdk-input').click()
     page.wait_for_function('SdkView.connected && SdkView.capabilities.fork_at_message === false')

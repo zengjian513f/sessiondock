@@ -949,6 +949,7 @@ impl Bridge {
         }
         let mut metadata = result.clone();
         metadata["cwd"] = json!(cwd);
+        metadata["forked_from_id"] = json!(source.sid);
         let entry = self.catalog.remember_native(sid, &metadata, None)?;
         Ok(
             json!({"uid":entry.uid,"session_id":entry.sid,"cwd":entry.cwd,
