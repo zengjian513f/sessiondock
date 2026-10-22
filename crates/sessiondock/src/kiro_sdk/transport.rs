@@ -107,8 +107,17 @@ impl Session {
         &self,
         catalog: Arc<crate::sessions::kiro::Catalog>,
     ) -> Result<(), String> {
+        // Projecting the full transcript to disk is only needed the first time a
+        // session's projection is established. Afterwards every live RPC/update
+        // calls `project(&mut st)` (see the reader loop), so the message store
+        // stays current. Re-projecting the entire transcript on every `open`
+        // (reached through `finish_open_setup`) re-serialized and rewrote the
+        // whole history for a warm session that had not changed — the dominant
+        // cost of switching back to a Kiro session. Do it once; later opens just
+        // keep the catalog reference.
+        let already = self.projection.lock().unwrap().is_some();
         let st = self.state.lock().unwrap();
-        if !st.uid.is_empty() {
+        if !already && !st.uid.is_empty() {
             catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])?;
         }
         *self.projection.lock().unwrap() = Some(catalog);
