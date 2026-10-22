@@ -527,26 +527,23 @@ const SdkView = new Proxy({
       // /api/live + /api/term/list, which cost ~1.5s on a large fleet for no
       // decision benefit. Terminal presence comes from the cached term list.
       // A background full refresh self-heals any staleness off the hot path.
+      // Hub-restore timing: term.js may define T only after this script runs;
+      // wait for it before treating absent capabilities as a disabled SDK, but
+      // do NOT fetch any list here — the per-session GET carries everything the
+      // mode decision needs (sdk + terminal presence).
+      if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
+        await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
       const query = new URLSearchParams({uid});
       if (HUB_MODE) query.set('nodes', nodeOf(uid));
-      const [runtime] = await Promise.allSettled([
-        fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal}).then(async response => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.json();
-        }),
-        (async () => {
-          // app.js can restore a Kiro Hub selection before the later deferred
-          // term.js initializes node discovery. Wait for that script before
-          // treating absent capabilities as a disabled SDK.
-          if (!hasChat && HUB_MODE && typeof T === 'undefined' && document.readyState !== 'complete')
-            await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once: true}));
-          if (typeof T === 'undefined') return;
-          await loadTermList(false);
-        })(),
-      ]);
-      // Self-heal staleness off the critical path: refresh the fleet view in the
-      // background so a just-changed terminal/external owner converges shortly,
-      // without making the user wait for it on every switch.
+      let state = null;
+      try {
+        const response = await fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal});
+        if (response.ok) state = await response.json();
+      } catch { /* unknown run-status falls back to the saved/default view */ }
+      // Self-heal staleness off the critical path: a background full-fleet
+      // refresh converges a just-changed terminal/external owner shortly, and
+      // updates the per-session cache the next GET reads, without delaying the
+      // view. Never awaited.
       const bgQuery = new URLSearchParams({force: '1'});
       if (HUB_MODE) bgQuery.set('nodes', nodeOf(uid));
       void fetch(appUrl('api/live?' + bgQuery)).then(r => r.ok && r.json()).then(() => {
@@ -562,17 +559,13 @@ const SdkView = new Proxy({
         this.selection = null;
         return;
       }
-      const state = runtime.status === 'fulfilled' ? runtime.value : null;
-      const name = typeof T === 'undefined' ? null : takenOver(uid);
-      const console = (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
-        || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
-      // A failed per-session call means run-status is unknown; the mode falls
-      // back to the saved/default view like before. SDK status is computed
-      // fresh by the endpoint and trusted on success even before a live
-      // baseline exists; external/tmux ownership is only meaningful once a
-      // live baseline is known (`state.known`).
+      // Everything the mode decision needs is in the per-session GET: `sdk`
+      // (fresh, authoritative), `tmux` (a running terminal instance owns it),
+      // `external` (a non-SDK process owns it). No list fetch, no T.list read.
+      // A failed GET means run-status is unknown -> saved/default view.
       const unknown = !state;
       const sdk = !unknown && state.sdk === true;
+      const console = !unknown && state.known === true && state.tmux === true;
       const external = !unknown && state.known === true && state.external === true;
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {

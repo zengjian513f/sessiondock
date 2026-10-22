@@ -12,6 +12,7 @@ Asserts:
 from __future__ import annotations
 import argparse
 import json
+import time
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -87,22 +88,23 @@ def run(args):
                 # requests from the click until the SDK pane is ready, and verify
                 # that any live?force=1 / term/list?force=1 is NOT awaited before
                 # session/runtime resolves (it is the background self-heal).
+                # Record which request resolves the mode decision. The ONLY
+                # request the blocking selectFor path awaits must be
+                # session/runtime; term/list and live are background self-heal
+                # (fire-and-forget), so the mode is decided before they resolve.
                 calls = []
-                page.on("request", lambda r: calls.append(r.url) if "/api/" in r.url else None)
-                # Switch away (open a fresh new-session dialog cancels selection
-                # poorly); instead re-select via the sidebar after clearing.
+                page.on("response", lambda r: calls.append((time.time(), r.request.url)) if "/api/" in r.request.url else None)
                 page.evaluate("() => { SdkView.selection = null; }")
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
-                # The per-session runtime GET must be fired on selection.
-                page.wait_for_function(
-                    "() => performance.getEntriesByType('resource').some(e => e.name.includes('/api/session/runtime'))")
-                # The blocking selectFor path uses session/runtime + cached term
-                # list; the forced refresh is fire-and-forget (not awaited). The
-                # view still reaches a terminal state.
                 page.wait_for_function("() => SdkView.selection && SdkView.selection.mode && SdkView.selection.mode !== 'loading'")
                 mode = page.evaluate("SdkView.selection.mode")
                 assert mode == "sdk", f"expected sdk mode, got {mode}"
-                assert any("/api/session/runtime" in u for u in calls), calls
+                # The mode decision is driven by the per-session GET.
+                assert any("/api/session/runtime" in u for _, u in calls), calls
+                # Any term/list during a switch must be the background force
+                # self-heal, never a plain (blocking) loadTermList(false).
+                blocking_term = [u for _, u in calls if "/api/term/list" in u and "force=1" not in u]
+                assert not blocking_term, f"blocking term/list on switch: {blocking_term}"
 
                 if args.screenshots:
                     page.screenshot(path=str(args.screenshots / "kiro-session-runtime-1280.png"), full_page=True)
