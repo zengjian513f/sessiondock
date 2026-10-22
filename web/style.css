@@ -2730,7 +2730,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-goal-buttons .btn { min-height: 28px; padding: 4px 10px; }
 .sdk-goal-result:empty { display: none; }
 
-/* 连续工具保留组摘要，最后一条无论状态均独立露出。 */
+/* 连续工具保留组摘要，仅消息流末尾的工具独立露出，与执行状态无关。 */
 .msg.grp.folded > [data-sdk-item] { display: none; }
 .msg.grp.folded > .tool-active-tail { display: block; }
 .msg.grp.folded.has-active-tool {

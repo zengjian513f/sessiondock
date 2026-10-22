@@ -113,13 +113,13 @@ def select(page, corpus, expected, sid, state):
     page.wait_for_function(WATCHING, timeout=15000)
 
 
-def group_state(page, count, *, folded):
+def group_state(page, count, *, folded, tail=True):
     group = page.locator(GROUP)
     expect(group).to_have_count(1)
-    expect(group.locator(".group-count")).to_contain_text(f"×{count - 1}")
+    expect(group.locator(".group-count")).to_contain_text(f"×{count - int(tail)}")
     if folded:
         expect(group).to_have_class(FOLDED)
-        expect(group.locator(":scope > .tool-active-tail")).to_have_count(1)
+        expect(group.locator(":scope > .tool-active-tail")).to_have_count(int(tail))
     else:
         expect(group).not_to_have_class(FOLDED)
         expect(group.locator(":scope > .tool-entry")).to_have_count(count)
@@ -147,7 +147,7 @@ def verify(page, corpus, expected, requests):
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "NON TOOL PROGRESS", "commentary"))
     wait_accepted(page, corpus, expected, sid, "working")
-    group = group_state(page, 3, folded=True)
+    group = group_state(page, 3, folded=True, tail=False)
     expect(page.locator('#msgs > [data-role="assistant"]')).to_contain_text("NON TOOL PROGRESS")
     assert group.evaluate("node => node.nextElementSibling?.dataset.role === 'assistant'"), \
         "non-tool progress did not follow/seal the streamed group"
@@ -159,11 +159,11 @@ def verify(page, corpus, expected, requests):
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "FINAL TOOL CONCLUSION", "final_answer"))
     wait_accepted(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=True)
+    group_state(page, 2, folded=True, tail=False)
     expect(page.locator('#msgs > [data-role="assistant"]')).to_contain_text("FINAL TOOL CONCLUSION")
     append_native(corpus, expected, sid, activity(sid, "complete"))
     wait_accepted(page, corpus, expected, sid, "idle")
-    group_state(page, 2, folded=True)
+    group_state(page, 2, folded=True, tail=False)
 
     sid = "codex-idle"
     select(page, corpus, expected, sid, "working")

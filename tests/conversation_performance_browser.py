@@ -80,7 +80,7 @@ def main():
                 process_node.dispose()
                 group = page.locator('#msgs .grp').first
                 expect(group).to_have_class(re.compile(r'\bfolded\b'))
-                expect(group.locator(':scope > .tool-entry')).to_have_count(1)
+                expect(group.locator(':scope > .tool-entry')).to_have_count(0)
                 group.locator(':scope > .fold-preview .fold-toggle').click()
                 expect(group.locator(':scope > .tool-entry')).to_have_count(180)
                 # Clicking real disclosure controls preserves content on reopening.

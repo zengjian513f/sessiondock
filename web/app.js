@@ -6199,6 +6199,7 @@ function observeMessageLayout(box, onLayout = () => {}) {
       for (const node of rich) if (!box.contains(node)) { rich.delete(node); ro.unobserve(node); }
     };
     syncTail();
+    ConversationUI.refreshToolTails(box);
     observeRich(box);
     box._ro = ro;
     const mo = new MutationObserver(ms => {
@@ -6206,6 +6207,7 @@ function observeMessageLayout(box, onLayout = () => {}) {
         if (n.nodeType === 1) observeRich(n);
       }
       syncTail();
+      ConversationUI.refreshToolTails(box);
       onLayout();
     });
     mo.observe(box, { childList: true, subtree: true });
@@ -8902,7 +8904,7 @@ function syncGroupNode(n, items) {
 }
 
 function groupNode(items, initiallyOpen = false, externalNodes = null) {
-  // 摘要复用历史工具组；始终为最后一条调用保留独立可见内容。
+  // 摘要复用历史工具组；仅在消息流以工具结束时保留独立可见的尾调用。
   const n = el('div', 'msg grp' + (initiallyOpen ? '' : ' folded'));
   n.dataset.role = 'toolgroup';
   n._toolItems = items;
@@ -8961,7 +8963,7 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   n._refreshToolTail = () => {
     const all = n._toolItems;
     const last = all.at(-1);
-    const active = !!last;
+    const active = !!last && n._tailAtEnd !== false;
     if (!n._toolsMaterialized) {
       if (!active || n._activeItem !== last) {
         n._activeEntry?.remove();
@@ -8978,6 +8980,11 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
     n.classList.toggle('has-active-tool', !!active);
     paintGroupPreview(peek, active ? all.slice(0, -1) : all);
     preview.hidden = active && all.length === 1;
+  };
+  n._setTailAtEnd = enabled => {
+    if (n._tailAtEnd === enabled) return;
+    n._tailAtEnd = enabled;
+    n._refreshToolTail();
   };
   n._fold = () => { fold(); n._refreshToolTail(); };
   n._open = open;

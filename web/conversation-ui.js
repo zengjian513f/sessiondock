@@ -104,6 +104,15 @@ const ConversationUI = {
     }
   },
 
+  refreshToolTails(box) {
+    // Use message order across history/live and turn wrappers, not execution state.
+    const messages = [...box.querySelectorAll('.msg, [data-sdk-item]')]
+      .filter(node => !node.closest('.silent-tool-result, .question-live-shadowed, [hidden], .hidden'));
+    const last = messages.at(-1);
+    const tailGroup = last?.closest('.grp');
+    for (const group of box.querySelectorAll('.grp')) group._setTailAtEnd?.(group === tailGroup);
+  },
+
   toolComplete(message) {
     if (['pending', 'in_progress', 'inProgress', 'running'].includes(message.status)) return false;
     return message.role === 'tool_result' || !!message.result

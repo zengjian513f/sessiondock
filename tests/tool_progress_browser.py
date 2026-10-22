@@ -135,7 +135,32 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.group-count')).to_have_text('🔧 ×6')
         expect(group.locator('.tool-active-tail .tool-out')).to_have_text('新的执行输出')
         capture('next')
+        # Any later message closes the exposed tool, even while it is running.
+        following_role = 'assistant' if width == 1280 else ('user' if mode == 'sdk' else 'thinking')
+        following = {'id': 'following', 'role': following_role, 'turn_id': 'turn',
+                     'text': '工具后面的新消息', 'phase': 'commentary'}
+        if mode == 'chat':
+            history.append(following)
+            watch.packet.update(messages=copy.deepcopy(history), end=len(history) + 3)
+            watch.publish()
+        else:
+            codex_following = {'id': 'following', 'type': 'agentMessage', 'text': following['text']}
+            if following_role == 'user':
+                codex_following = {'id': 'following', 'type': 'userMessage',
+                                   'content': [{'type': 'text', 'text': following['text']}]}
+            raw['items'].append(codex_following if source == 'codex' else following)
+            events.publish()
+        expect(page.locator(scope)).to_contain_text(following['text'])
+        expect(group.locator('.group-count')).to_have_text('🔧 ×7')
+        expect(group.locator('.tool-active-tail')).to_have_count(0)
+        expect(group.locator('.tool-out:visible')).to_have_count(0)
+        capture('following-message')
+        if following_role != 'user':
+            group.locator(':scope > .group-preview .fold-toggle').click()
+            expect(group.locator('.tool-out:visible')).to_have_count(7)
+            capture('following-expanded')
         assert not errors, errors
+        context.unroute_all(behavior='wait')
         context.close()
         print(f'PASS {name}: running tail, completion, summary, manual inspection, next call', flush=True)
 

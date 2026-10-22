@@ -323,15 +323,15 @@ DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒�
 
 `compactTurns` 默认开：已完成回合只留过程合集和最终结论。标题栏按钮在「展开所有过程」和「折叠已完成过程」之间切换，并写回存储。进行中的尾段保持展开，后面出现普通对话或任务结束后再封口（`sealTurnTail`）。
 
-连续工具并成一组（`groupNode`），至少 2 条。执行期间也默认显示调用数量、前三条摘要与其余项数；最后一条调用始终在摘要下独立显示，完成或失败后也保留；新调用到达后，前一条才并入摘要。普通对话和六种 SDK 使用同一摘要样式。用户打开过的组，后续追加仍保持打开。[`tests/tool_group_fold_browser.py`](../tests/tool_group_fold_browser.py)。大组默认折叠，只建立最后一条的 DOM，其余展开才建立；再折叠再打开内容还在。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。单组不必再包一层过程外壳。
+连续工具并成一组（`groupNode`），至少 2 条。执行期间也默认显示调用数量、前三条摘要与其余项数；只有整个消息流以工具调用结束时，该调用才在摘要下独立显示，与完成/失败状态无关；后面出现任何新消息便并入摘要。普通对话和六种 SDK 使用同一摘要样式。用户打开过的组，后续追加仍保持打开。[`tests/tool_group_fold_browser.py`](../tests/tool_group_fold_browser.py)。大组默认折叠，只为消息流末尾露出的工具建立 DOM，其余展开才建立；再折叠再打开内容还在。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。单组不必再包一层过程外壳。
 
 DELTA（BUG-20261022-070639-43d4b2）：普通会话和六种 SDK 共用工具行（`toolEntry`）。
-连续组仅折叠最后一条之前的调用；最后一条无论执行中、完成或失败都留在摘要外。
+连续组默认收起；仅整个消息流最末尾的工具留在摘要外，后续文字、思考、用户输入或其它消息都会结束该例外。
 展开组后按原有工具样式显示全部条目，不再逐条折成一行；参数按钮仅切换原始参数，
 结果默认显示 8 行/1,600 字预览并可展开全文，文件差异保留原来的高度预览和显示选项。
 本页手动展开组、参数和结果的选择在增量更新中保留，重新加载恢复默认。
 回合外层规则不变，审批/问答卡不折进工具组。
-[`tests/tool_progress_browser.py`](../tests/tool_progress_browser.py) 覆盖节点/Hub、普通对话与 SDK 的结果到达、手动查看及后续调用。
+[`tests/tool_progress_browser.py`](../tests/tool_progress_browser.py) 覆盖节点/Hub、普通对话与 SDK 的结果到达、手动查看、后续调用和后续非工具消息。
 [`tests/sdk_turns_browser.py`](../tests/sdk_turns_browser.py) 和
 [`tests/rich_tools_browser.py`](../tests/rich_tools_browser.py) 覆盖实时更新与历史操作。
 输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
