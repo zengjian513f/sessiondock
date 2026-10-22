@@ -330,7 +330,7 @@ const NativeSdkView = {
         && NativeSdkControls.messageIdentity(this, message) === identity);
       if (at >= 0) { cut = at; messages = messages.slice(0, at); }
     }
-    const actions=JSON.stringify([this.capabilities.fork,this.capabilities.revert,this.capabilities.rewind]);
+    const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
     if (this.historyRenderedData === this.historyData && this.historyCut === cut && this.historyActions===actions) return;
     this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
@@ -540,6 +540,10 @@ const SdkView = new Proxy({
         const response = await fetch(appUrl('api/session/runtime?' + query), {signal: controller.signal});
         if (response.ok) state = await response.json();
       } catch { /* unknown run-status falls back to the saved/default view */ }
+      // A freshly forked Kiro deep link may beat Hub capability discovery.
+      // Observe only its node before deciding that the SDK is unavailable.
+      if (!hasChat && HUB_MODE && !Nodes.capabilities[nodeOf(uid)] && typeof fetchTermList === 'function')
+        await fetchTermList(nodeOf(uid)).catch(() => {});
       // Self-heal staleness off the critical path: a background full-fleet
       // refresh converges a just-changed terminal/external owner shortly, and
       // updates the per-session cache the next GET reads, without delaying the

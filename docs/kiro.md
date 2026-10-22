@@ -89,6 +89,18 @@ CLI／SDK 的启动检查、受管实例绑定和停止使用同一会话锁；�
 回收站，不移动或改写原生文件；确认成功后才清私有投影和创建回执。
 通用复制／移动不模拟原生恢复能力，混合组保留具体阻碍项。
 
+DELTA：Kiro 的回退沿用原生 rewind 语义：保留所选用户消息所在整轮（包括回复），
+在新会话继续，原会话和工作区文件保持原样；不提供原地截断历史的回退。
+消息菜单的“回退至此轮（新分支）”只在消息具有原生 `message_id` 且
+`sessionCapabilities.fork._meta.kiro.messageId=true` 时显示。请求使用
+`session/fork` 的 `_meta.kiro.messageId` 与 `createdReason=rewind`，成功后加载新会话；
+不会把已保留的用户消息再填入输入框。顶部“分支会话”仍复制完整会话。
+未广告按消息分支能力时只保留完整分支；未知消息由原生报错，不降级为完整复制。
+依据：[官方 ACP 迁移](https://kiro.dev/docs/cli/v3/acp-migration/)与
+[rewind 语义](https://kiro.dev/docs/checkpoints/)，参数位置及整轮包含边界已核对
+安装版 2.24.1 的 TUI 与 ACP fork 实现；浏览器合成验收见
+[按消息分支](../tests/kiro_fork_browser.py)，不替代真实模型回合验收。
+
 原生参考：[V3 ACP 迁移](https://kiro.dev/docs/cli/v3/acp-migration/)、
 [CLI 命令](https://kiro.dev/docs/reference/cli-commands/)、
 [认证方式](https://kiro.dev/docs/cli/authentication/)。

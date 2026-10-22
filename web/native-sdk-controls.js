@@ -338,6 +338,11 @@ const NativeSdkControls = {
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
       if(method==='fork'){
         await CodexSdkActions.openFork(view,response);
+        if(response.session?.source==='kiro' && SdkView.uid===response.uid){
+          await SdkView.startSession(response.uid);
+          if(SdkView.uid===response.uid && !SdkView.openFailed)
+            await SdkView.refreshHistory(SdkView.generation,true);
+        }
         if (body.restore_text && SdkView.uid === response.uid) await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
         return true;
       }
@@ -390,7 +395,7 @@ const NativeSdkControls = {
     }else if(command==='plan'){
       await this.settings(view,{mode:arg || 'plan'});
       success=true;
-    }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?{before:arg}:{});
+    }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
     return true;
@@ -408,13 +413,19 @@ const NativeSdkControls = {
       return index == null ? null : `step:${index}`;
     }
     if(source==='opencode')return item.native_id || (/^message:(.+)$/.exec(item.turn_id || '')?.[1]) || null;
-    if(source==='claude' || source==='kiro')return item.native_id || item.turn_id || item.id || null;
+    if(source==='kiro')return item.message_id || item.id || null;
+    if(source==='claude')return item.native_id || item.turn_id || item.id || null;
     return null;
   },
   decorate(view,node,item) {
     if(item?.role!=='user' || node.querySelector('.sdk-bubble-toggle'))return;
     const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:');
     if(!identity)return;
+    if(view.uid.startsWith('kiro:')){
+      if(item.message_id && view.capabilities.fork && view.capabilities.fork_at_message)
+        SdkUI.decorateUserBubble(view,node,[['回退至此轮（新分支）',()=>this.action(view,'fork',{messageId:item.message_id})]]);
+      return;
+    }
     const items=[];
     for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
       if(!view.capabilities[method])continue;
