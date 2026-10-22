@@ -104,27 +104,25 @@ const ConversationUI = {
     }
   },
 
+  refreshToolTails(box) {
+    // Use message order across history/live and turn wrappers, not execution state.
+    const messages = [...box.querySelectorAll('.msg, [data-sdk-item]')]
+      .filter(node => !node.closest('.silent-tool-result, .question-live-shadowed, [hidden], .hidden'));
+    const last = messages.at(-1);
+    const tailGroup = last?.closest('.grp');
+    for (const group of box.querySelectorAll('.grp')) group._setTailAtEnd?.(group === tailGroup);
+  },
+
   toolComplete(message) {
     if (['pending', 'in_progress', 'inProgress', 'running'].includes(message.status)) return false;
     return message.role === 'tool_result' || !!message.result
       || ['completed', 'failed', 'declined', 'cancelled', 'canceled'].includes(message.status);
   },
 
-  refreshTools(box) {
-    const entries = [...box.querySelectorAll('.tool-disclosable')]
-      .filter(entry => !entry.closest('.user-shell-command'));
-    const last = entries.at(-1);
-    for (const entry of entries) {
-      const open = entry.dataset.toolChoice ? entry.dataset.toolChoice === 'open' : entry === last && !entry._toolComplete;
-      if (entry.classList.contains('tool-collapsed') === open) entry._setToolOpen(open);
-    }
-  },
-
   toolState(node) {
     return node ? ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'].map(selector =>
       [...node.querySelectorAll(selector)].map(control =>
-        selector === '.tool-toggle' && !control.closest('.tool-entry')?.dataset.toolChoice ? null
-          : control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
+        control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
   },
 
   restoreToolState(node, state) {
@@ -133,10 +131,7 @@ const ConversationUI = {
       node.querySelectorAll(selector).forEach((control, index) => {
         const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded';
         const previous = state[group][index];
-        if (previous != null) {
-          if (control.getAttribute(attribute) !== previous) control.click();
-          if (selector === '.tool-toggle') control.closest('.tool-entry').dataset.toolChoice = previous === 'true' ? 'open' : 'closed';
-        }
+        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
       });
     });
   },

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Continuous tool runs collapse as results arrive, over ordinary and SDK SSE."""
+"""Continuous tool runs keep the latest result visible, over ordinary and SDK SSE."""
 import argparse
 import copy
 from pathlib import Path
@@ -80,13 +80,21 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.group-count')).to_have_text('🔧 ×5')
         expect(group.locator('.group-rest')).to_have_text('… 另有 2 项')
         expect(group.locator('.tool-active-tail .tool-out')).to_be_visible()
-        expect(group.locator('.tool-active-tail .tool-out')).to_contain_text('输出第 17 行')
+        expect(group.locator('.tool-active-tail .tool-out')).to_contain_text('输出第 7 行')
         expect(group.locator('.tool-out:visible')).to_have_count(1)
         name = f'{label}-{source}-{mode}-{width}-{theme}'
         def capture(state):
             if shots: page.screenshot(path=str(shots / f'{name}-{state}.png'), full_page=True)
         capture('running')
-        # Result arrival, with the turn still working, must fold the last call.
+        stable = [group.element_handle(), group.locator('.group-preview').element_handle(),
+                  group.locator('.group-outline code').first.element_handle()] if mode == 'sdk' else []
+        def unchanged_summary():
+            for handle, selector in zip(stable, ['', ' .group-preview', ' .group-outline code']):
+                assert handle.evaluate('(node, selector) => node.isConnected && '
+                    'document.querySelector(selector) === node', scope + ' .grp' + selector), \
+                    'stream update replaced the group or an unchanged highlighted summary'
+
+        # Completion must leave the last call outside the collapsed summary.
         if mode == 'chat':
             history[-1]['status'] = 'completed'
             watch.packet.update(messages=copy.deepcopy(history), end=len(history) + 1)
@@ -94,15 +102,19 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         else:
             raw['items'][-1]['status'] = 'completed'
             events.publish()
-        expect(group.locator('.group-count')).to_have_text('🔧 ×6')
-        expect(group.locator('.tool-active-tail')).to_have_count(0)
-        expect(group.locator('.tool-out:visible')).to_have_count(0)
+        expect(group.locator('.group-count')).to_have_text('🔧 ×5')
+        expect(group.locator('.tool-active-tail')).to_have_count(1)
+        expect(group.locator('.tool-out:visible')).to_have_count(1)
+        unchanged_summary()
         capture('completed')
         # Mouse and keyboard inspection remain available after automatic folding.
         group.locator(':scope > .group-preview .fold-toggle').click()
         first = group.locator('.tool-entry').first
-        first.locator('.tool-toggle').click()
+        expect(group.locator('.tool-out:visible')).to_have_count(6)
         expect(first.locator('.tool-out')).to_be_visible()
+        first.get_by_text('展开全文', exact=False).click()
+        first.locator('.tool-toggle').click()
+        expect(first.locator('.tool-args')).to_be_visible()
         expect(first.locator('.tool-out')).to_contain_text('输出第 17 行')
         if mode == 'sdk':
             target = raw['items'][0] if source == 'codex' else raw['items'][1]
@@ -112,10 +124,11 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
             expect(first.locator('.tool-out')).to_contain_text('手动查看保持展开')
             expect(first.locator('.tool-out')).to_be_visible()
         first.locator('.tool-toggle').press('Enter')
-        expect(first.locator('.tool-out')).not_to_be_visible()
+        expect(first.locator('.tool-args')).not_to_be_visible()
+        expect(first.locator('.tool-out')).to_be_visible()
         capture('manual')
         group.locator(':scope > .disclosure').click()
-        expect(group.locator('.tool-out:visible')).to_have_count(0)
+        expect(group.locator('.tool-out:visible')).to_have_count(1)
         # A new running call appears below the existing six-item summary.
         new = {'id': 'tool-6', 'call_id': 'call-6', 'role': 'tool', 'turn_id': 'turn',
                'name': 'exec_command', 'summary': '$ next-step', 'text': 'next-step',
@@ -130,8 +143,36 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
             events.publish()
         expect(group.locator('.group-count')).to_have_text('🔧 ×6')
         expect(group.locator('.tool-active-tail .tool-out')).to_have_text('新的执行输出')
+        unchanged_summary()
         capture('next')
+        # Any later message closes the exposed tool, even while it is running.
+        following_role = 'assistant' if width == 1280 else ('user' if mode == 'sdk' else 'thinking')
+        following = {'id': 'following', 'role': following_role, 'turn_id': 'turn',
+                     'text': '工具后面的新消息', 'phase': 'commentary'}
+        if mode == 'chat':
+            history.append(following)
+            watch.packet.update(messages=copy.deepcopy(history), end=len(history) + 3)
+            watch.publish()
+        else:
+            codex_following = {'id': 'following', 'type': 'agentMessage', 'text': following['text']}
+            if following_role == 'user':
+                codex_following = {'id': 'following', 'type': 'userMessage',
+                                   'content': [{'type': 'text', 'text': following['text']}]}
+            raw['items'].append(codex_following if source == 'codex' else following)
+            events.publish()
+        expect(page.locator(scope)).to_contain_text(following['text'])
+        expect(group.locator('.group-count')).to_have_text('🔧 ×7')
+        expect(group.locator('.tool-active-tail')).to_have_count(0)
+        expect(group.locator('.tool-out:visible')).to_have_count(0)
+        unchanged_summary()
+        capture('following-message')
+        if following_role != 'user':
+            group.locator(':scope > .group-preview .fold-toggle').click()
+            expect(group.locator('.tool-out:visible')).to_have_count(7)
+            capture('following-expanded')
         assert not errors, errors
+        for handle in stable: handle.dispose()
+        context.unroute_all(behavior='wait')
         context.close()
         print(f'PASS {name}: running tail, completion, summary, manual inspection, next call', flush=True)
 

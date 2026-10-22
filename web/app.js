@@ -6199,7 +6199,7 @@ function observeMessageLayout(box, onLayout = () => {}) {
       for (const node of rich) if (!box.contains(node)) { rich.delete(node); ro.unobserve(node); }
     };
     syncTail();
-    ConversationUI.refreshTools(box);
+    ConversationUI.refreshToolTails(box);
     observeRich(box);
     box._ro = ro;
     const mo = new MutationObserver(ms => {
@@ -6207,7 +6207,7 @@ function observeMessageLayout(box, onLayout = () => {}) {
         if (n.nodeType === 1) observeRich(n);
       }
       syncTail();
-      ConversationUI.refreshTools(box);
+      ConversationUI.refreshToolTails(box);
       onLayout();
     });
     mo.observe(box, { childList: true, subtree: true });
@@ -8110,7 +8110,6 @@ function restoreGroupOpen(nodes, {userOpened = false, keepOpen = false} = {}) {
   for (const node of nodes) {
     if (!node.matches?.('.grp')) continue;
     if (userOpened) node._userOpened = true;
-    node._setTailEnabled?.(keepOpen);
     if (userOpened) node._open?.();
   }
 }
@@ -8137,7 +8136,6 @@ function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
     if (grp && planned.length === 1 && planned[0].g) {
       syncGroupNode(grp, planned[0].g);
       stampMessageTime(grp, planned[0].g);
-      grp._setTailEnabled?.(onlyTools && openTail);
       if (userOpened) grp._open?.();
       if (userOpened) grp._userOpened = true;
       built.push(grp);
@@ -8350,7 +8348,7 @@ function setToolOutput(pre, text) {
 function addClippedPre(entry, cls, text, codePath = '') {
   const pre = el('pre', cls);
   if (codePath) pre.dataset.codePath = codePath;
-  const info = entry.classList.contains('tool-disclosable') ? {text} : outPreviewInfo(text);
+  const info = outPreviewInfo(text);
   setToolOutput(pre, info.text);
   entry.appendChild(pre);
   const actions = el('div', 'tool-out-actions');
@@ -8390,12 +8388,17 @@ function addClippedPre(entry, cls, text, codePath = '') {
 function toolEntry(m) {
   const entry = el('div', 'tool-entry');
   entry.dataset.role = m.role;
-  entry._toolComplete = ConversationUI.toolComplete(m);
   if (m.counted === false) entry.dataset.counted = 'false';
-  const standalone = m.role !== 'tool' ? m : null;
-  if (standalone) m = {...m, role: 'tool', summary: m.name || '工具结果', text: '', media: null};
-  entry.classList.add('tool-disclosable');
-  // 摘要可选；只有右侧按钮切换整条工具内容。
+  if (m.role !== 'tool') {
+    // 落单的工具输出(没配到调用): 保持独立块
+    if (!appendAgyOutputPreview(entry, m)) {
+      addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
+                    m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
+    }
+    if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
+    return entry;
+  }
+  // 摘要是可选文本；只有独立按钮切换参数，拖选/双击不触发折叠。
   const head = el('div', 'tool-head');
   head.innerHTML = `<code>${esc(m.summary || m.name || 'tool')}</code>`
     + (m.name && m.summary ? `<span class="tool-meta">${esc(m.name)}</span>` : '');
@@ -8411,27 +8414,28 @@ function toolEntry(m) {
       `未生成文件差异：${m.changes_unavailable_reason}；可展开原始参数查看。`));
   }
   const args = el('pre', 'tool-args');
+  args.hidden = !!m.summary;   // 识别不了的工具直接铺参数, 不藏
+  const closeArgs = el('button', 'tool-args-close', '收起参数');
+  closeArgs.type = 'button';
+  closeArgs.hidden = args.hidden;
   let painted = false;
-  entry._setToolOpen = open => {
-    if (open && !painted) { args.textContent = m.text || ''; painted = true; }
-    args.hidden = !open || !m.text;
-    entry.classList.toggle('tool-collapsed', !open);
+  const paintArgs = () => { if (!painted) { args.textContent = m.text; painted = true; } };
+  const setArgsOpen = open => {
+    if (open) paintArgs();
+    args.hidden = !open;
+    closeArgs.hidden = !open;
+    entry.classList.toggle('args-open', open);
     toggle.setAttribute('aria-expanded', String(open));
-    toggle.title = toggle.ariaLabel = open ? '收起工具调用' : '展开工具调用';
+    toggle.title = toggle.ariaLabel = open ? '收起原始参数' : '展开原始参数';
   };
-  toggle.onclick = () => {
-    entry.dataset.toolChoice = toggle.getAttribute('aria-expanded') !== 'true' ? 'open' : 'closed';
-    entry._setToolOpen(entry.dataset.toolChoice === 'open');
-  };
+  if (!args.hidden) paintArgs();
+  toggle.onclick = () => setArgsOpen(args.hidden);
+  closeArgs.onclick = () => setArgsOpen(false);
   entry.appendChild(args);
-  entry._setToolOpen(false);
+  entry.appendChild(closeArgs);
+  setArgsOpen(!args.hidden);
   if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
-  if (standalone) {
-    if (!appendAgyOutputPreview(entry, standalone))
-      addClippedPre(entry, 'tool-out' + (standalone.error ? ' err' : ''), standalone.text || '', toolOutputPath(standalone));
-    if (standalone.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(standalone.media, standalone.media_more));
-  } else appendToolResult(entry, m.result, m);
-  if (m.result?.error || standalone?.error) head.querySelector('code').prepend('✗ ');
+  appendToolResult(entry, m.result, m);
   return entry;
 }
 
@@ -8630,9 +8634,9 @@ function fileChangeNode(m) {
   n.dataset.role = 'tool';
   if (m.result && m.result.counted !== false) n.dataset.result = '1'; // 修改确认输出并入卡片
   if (m.counted === false) n.dataset.counted = 'false';
-  // File changes share the call disclosure, including the complete native arguments.
-  const entry = toolEntry(m);
-  n.appendChild(entry);
+  // Agy keeps the complete native call beside the derived diff. Reuse the
+  // existing summary/argument toggle so all native fields remain inspectable.
+  if (m.native_type === 'PLANNER_RESPONSE') n.appendChild(toolEntry(m));
   const body = el('div', 'file-change-list');
   for (const change of m.changes) {
     const card = el('section', 'file-change-card');
@@ -8681,7 +8685,7 @@ function fileChangeNode(m) {
     paintInlineFileDiff(card, change, 'unified');
     body.appendChild(card);
   }
-  entry.appendChild(body);
+  n.appendChild(body);
   return n;
 }
 
@@ -8836,21 +8840,38 @@ function paintGroupPreview(peek, items) {
   const visible = calls.length ? calls : items;
   const heads = visible.slice(0, 3).map(m => m.summary || m.name || 'tool');
   const hasErr = items.some(m => m.result?.error || (m.role === 'tool_result' && m.error));
-  const count = el('span', 'group-count', `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`);
-  const outline = el('span', 'group-outline');
+  if (!peek._groupPreview) {
+    const count = el('span', 'group-count');
+    const outline = el('span', 'group-outline');
+    peek.replaceChildren(count, outline);
+    peek._groupPreview = {count, outline, rows: []};
+  }
+  const {count, outline, rows} = peek._groupPreview;
+  const label = `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`;
+  if (count.textContent !== label) count.textContent = label;
   heads.forEach((head, i) => {
+    if (rows[i]?.head === head) return;
     const row = el('span');
     row.appendChild(el('i', 'group-index', `${i + 1}.`));
     row.append(' ');
     const code = el('code', /^\s*(?:\$|❯)\s+/.test(head) ? 'tool-command' : '');
     code.textContent = head;
     row.appendChild(code);
-    outline.appendChild(row);
+    if (rows[i]) rows[i].node.replaceWith(row);
+    else outline.insertBefore(row, peek._groupPreview.rest || null);
+    rows[i] = {head, node: row};
+    paintSyntax(row);
   });
-  if (visible.length > heads.length) outline.appendChild(el('span', 'group-rest',
-    `… 另有 ${visible.length - heads.length} 项`));
-  peek.replaceChildren(count, outline);
-  paintSyntax(outline);
+  while (rows.length > heads.length) rows.pop().node.remove();
+  const remaining = visible.length - heads.length;
+  let rest = peek._groupPreview.rest;
+  if (remaining > 0) {
+    if (!rest) outline.appendChild(rest = peek._groupPreview.rest = el('span', 'group-rest'));
+    const text = `… 另有 ${remaining} 项`;
+    if (rest.textContent !== text) rest.textContent = text;
+  } else if (rest) {
+    rest.remove(); peek._groupPreview.rest = null;
+  }
 }
 
 /** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
@@ -8858,8 +8879,6 @@ function syncGroupNode(n, items) {
   if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
   if (!n._toolsMaterialized) {
     n._toolItems = items;
-    const peek = n.querySelector(':scope > .fold-preview .group-peek');
-    if (peek) paintGroupPreview(peek, items);
     n._refreshToolTail?.();
     return;
   }
@@ -8894,13 +8913,11 @@ function syncGroupNode(n, items) {
   }
   n._toolItems = items;
   n._renderedToolItems = items;
-  const peek = n.querySelector(':scope > .fold-preview .group-peek');
-  if (peek) paintGroupPreview(peek, items);
   n._refreshToolTail?.();
 }
 
 function groupNode(items, initiallyOpen = false, externalNodes = null) {
-  // 摘要复用历史工具组；只为未完成的尾调用保留独立可见内容。
+  // 摘要复用历史工具组；仅在消息流以工具结束时保留独立可见的尾调用。
   const n = el('div', 'msg grp' + (initiallyOpen ? '' : ' folded'));
   n.dataset.role = 'toolgroup';
   n._toolItems = items;
@@ -8909,9 +8926,7 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   const toggle = preview.querySelector('.fold-toggle');
   const peek = preview.querySelector('.peek');
   peek.classList.add('group-peek');
-  paintGroupPreview(peek, items);
   n._toolsMaterialized = !!externalNodes;
-  n._tailEnabled = initiallyOpen;
   if (externalNodes) n.append(...externalNodes);
   const setAction = addAction(n);
   const fold = () => {
@@ -8960,7 +8975,7 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   n._refreshToolTail = () => {
     const all = n._toolItems;
     const last = all.at(-1);
-    const active = n._tailEnabled && last && !ConversationUI.toolComplete(last);
+    const active = !!last && n._tailAtEnd !== false;
     if (!n._toolsMaterialized) {
       if (!active || n._activeItem !== last) {
         n._activeEntry?.remove();
@@ -8978,8 +8993,18 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
     paintGroupPreview(peek, active ? all.slice(0, -1) : all);
     preview.hidden = active && all.length === 1;
   };
-  n._setTailEnabled = enabled => { n._tailEnabled = enabled; n._refreshToolTail(); };
-  n._fold = () => { n._tailEnabled = false; fold(); n._refreshToolTail(); };
+  n._syncExternalTools = (items, nodes) => {
+    n._toolItems = items;
+    const action = n.querySelector(':scope > .disclosure');
+    for (const node of nodes) n.insertBefore(node, action);
+    n._refreshToolTail();
+  };
+  n._setTailAtEnd = enabled => {
+    if (n._tailAtEnd === enabled) return;
+    n._tailAtEnd = enabled;
+    n._refreshToolTail();
+  };
+  n._fold = () => { fold(); n._refreshToolTail(); };
   n._open = open;
   toggle.onclick = () => {
     n._userOpened = true;
@@ -9389,7 +9414,6 @@ function msgNode(m) {
       n.appendChild(toolEntry({role: 'tool', name: 'shell', summary: `$ ${shell[1]}`, text: shell[1],
         result: {role: 'tool_result', text: shell[4], exit_code: Number(shell[2]),
           duration_s: Number(shell[3]), error: Number(shell[2]) !== 0}}));
-      n.firstElementChild._setToolOpen(true);
       return n;
     }
   }

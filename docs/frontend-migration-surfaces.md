@@ -323,14 +323,16 @@ DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒�
 
 `compactTurns` 默认开：已完成回合只留过程合集和最终结论。标题栏按钮在「展开所有过程」和「折叠已完成过程」之间切换，并写回存储。进行中的尾段保持展开，后面出现普通对话或任务结束后再封口（`sealTurnTail`）。
 
-连续工具并成一组（`groupNode`），至少 2 条。执行期间也默认显示调用数量、前三条摘要与其余项数；末尾尚未完成的调用在摘要下完整显示，收到完成/失败结果后自动收进组内，不等待下一条消息或整轮结束。普通对话和六种 SDK 使用同一摘要样式。用户打开过的组，后续追加仍保持打开。[`tests/tool_group_fold_browser.py`](../tests/tool_group_fold_browser.py)。大组默认折叠，展开才建 DOM；再折叠再打开内容还在。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。单组不必再包一层过程外壳。
+连续工具并成一组（`groupNode`），至少 2 条。执行期间也默认显示调用数量、前三条摘要与其余项数；只有整个消息流以工具调用结束时，该调用才在摘要下独立显示，与完成/失败状态无关；后面出现任何新消息便并入摘要。普通对话和六种 SDK 使用同一摘要样式。用户打开过的组，后续追加仍保持打开。[`tests/tool_group_fold_browser.py`](../tests/tool_group_fold_browser.py)。大组默认折叠，只为消息流末尾露出的工具建立 DOM，其余展开才建立；再折叠再打开内容还在。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。单组不必再包一层过程外壳。
 
 DELTA（BUG-20261022-070639-43d4b2）：普通会话和六种 SDK 共用工具行（`toolEntry`）。
-已加载消息中最后一个尚未完成的工具默认完整展开，其余只留一行摘要及右侧展开按钮；
-按钮切换原始参数、结果、媒体和文件差异的整体显示，展开后不再截断工具输出或差异。
-新调用到达后，之前自动展开的调用收起；本页手动展开/收起的选择在增量更新中保留，
-重新加载页面恢复默认。工具组按上述执行状态自动收缩，回合外层规则不变，审批/问答卡不折进工具行。
-[`tests/tool_progress_browser.py`](../tests/tool_progress_browser.py) 覆盖节点/Hub、普通对话与 SDK 的结果到达、手动查看及后续调用。
+连续组默认收起；仅整个消息流最末尾的工具留在摘要外，后续文字、思考、用户输入或其它消息都会结束该例外。
+展开组后按原有工具样式显示全部条目，不再逐条折成一行；参数按钮仅切换原始参数，
+结果默认显示 8 行/1,600 字预览并可展开全文，文件差异保留原来的高度预览和显示选项。
+本页手动展开组、参数和结果的选择在增量更新中保留，重新加载恢复默认。
+实时更新复用工具组及未变化的摘要行；数量、错误标志和新增摘要按需更新，避免重复高亮造成闪烁。
+回合外层规则不变，审批/问答卡不折进工具组。
+[`tests/tool_progress_browser.py`](../tests/tool_progress_browser.py) 覆盖节点/Hub、普通对话与 SDK 的结果到达、手动查看、后续调用和后续非工具消息。
 [`tests/sdk_turns_browser.py`](../tests/sdk_turns_browser.py) 和
 [`tests/rich_tools_browser.py`](../tests/rich_tools_browser.py) 覆盖实时更新与历史操作。
 输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
@@ -338,9 +340,9 @@ DELTA（BUG-20261022-070639-43d4b2）：普通会话和六种 SDK 共用工具�
 DELTA（2026-10-18 按气泡类型收缩）：助手正文（包括过程说明、计划、最终回答）
 完整展示，不按字数或高度裁切。用户输入、思考等辅助正文除 4,000 字阈值外，
 也按实际渲染高度提供 340 px 预览；短字数、多行或窄屏折行的内容同样有“展开全文/收起”，搜索命中仍沿用
-原来的自动展开规则。文件差异在工具展开时显示路径、增删统计和显示选项，切换并排、统一和换行不收起工具。
+原来的自动展开规则。文件差异默认显示路径、增删统计和 340 px 高度预览，可展开全部差异；切换并排、统一和换行保持显示。
 Agy 设置通知默认收为旧值 → 新值的一行摘要，完整说明按需展开；已识别的命令/文件
-结果头收进“原始记录”，有效输出随工具整条展开。回归见
+结果头收进“原始记录”，有效输出使用原有的 8 行预览和全文展开。回归见
 [`tests/agy_message_presentation_browser.py`](../tests/agy_message_presentation_browser.py)。
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。

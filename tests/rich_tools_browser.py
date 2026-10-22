@@ -179,18 +179,9 @@ def browser_check(corpus, base, screenshots=None):
                 expect(page.locator("#msgs")).to_contain_text("Synthetic tools complete")
                 expand_tool_process()
                 expect(page.locator("#msgs")).to_contain_text("z=first a=False r=4 b=last")
-                tools = page.locator('#msgs .tool-disclosable')
-                expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
-                expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false' if source == 'codex' else 'true')
-                tools.first.locator('.tool-toggle').click()
-                expect(tools.first.locator('.tool-args')).to_be_visible()
-                tools.first.locator('.tool-toggle').press('Enter')
-                expect(tools.first.locator('.tool-args')).not_to_be_visible()
-                page.locator('#msgs .file-change-msg').first.locator('.tool-toggle').click()
                 expect(page.locator("#msgs .file-change-card").first).to_be_visible()
                 expect(page.locator("#msgs")).to_contain_text("old.rs → moved.rs")
                 card = page.locator("#msgs .file-change-card").filter(has_text="edited.rs").first
-                card.locator('xpath=ancestor::div[contains(@class,"tool-entry")]').locator('.tool-toggle').click()
                 expect(card).to_contain_text("片段")
                 expect(card).to_contain_text("new value")
                 card.locator('[data-diff-view="split"]').click()
@@ -207,7 +198,6 @@ def browser_check(corpus, base, screenshots=None):
             # enter detail using its normal visible session navigation.
             page.locator(f'#side .item[data-uid="{uid(corpus, "grok")}"]').click()
             expand_tool_process()
-            page.locator("#msgs .file-change-msg").first.locator(".tool-toggle").click()
             expect(page.locator("#msgs .file-change-card").first).to_be_visible()
             if screenshots:
                 page.locator("#msgs .file-change-card").first.scroll_into_view_if_needed()
@@ -261,7 +251,7 @@ def oversize_browser(root, binary):
             expect(page.locator("#msgs .tool-change-warning")).to_be_visible()
             expect(page.locator("#msgs .tool-change-warning")).to_contain_text("512 KiB")
             entry = page.locator("#msgs .tool-entry").filter(has=page.locator(".tool-change-warning"))
-            expect(entry.locator(".tool-toggle")).to_have_attribute("aria-expanded", "true")
+            entry.locator(".tool-toggle").click()
             expect(entry.locator(".tool-args")).to_be_visible()
             assert json.loads(entry.locator(".tool-args").text_content())["content"] == content
             page.set_viewport_size({"width":390, "height":844})

@@ -113,13 +113,13 @@ def select(page, corpus, expected, sid, state):
     page.wait_for_function(WATCHING, timeout=15000)
 
 
-def group_state(page, count, *, folded, active=False):
+def group_state(page, count, *, folded, tail=True):
     group = page.locator(GROUP)
     expect(group).to_have_count(1)
-    expect(group.locator(".group-count")).to_contain_text(f"×{count - int(active)}")
+    expect(group.locator(".group-count")).to_contain_text(f"×{count - int(tail)}")
     if folded:
         expect(group).to_have_class(FOLDED)
-        expect(group.locator(":scope > .tool-active-tail")).to_have_count(int(active))
+        expect(group.locator(":scope > .tool-active-tail")).to_have_count(int(tail))
     else:
         expect(group).not_to_have_class(FOLDED)
         expect(group.locator(":scope > .tool-entry")).to_have_count(count)
@@ -127,10 +127,12 @@ def group_state(page, count, *, folded, active=False):
     return group
 
 
-def same_group(node):
-    # Retaining a Playwright handle does not write any product/DOM business state.
-    assert node.evaluate("node => node.isConnected && document.querySelector('#msgs > .grp') === node"), \
-        "native append replaced the user-opened tool group"
+def same_group(nodes):
+    # Observe real nodes without modifying application state.
+    for node, suffix in zip(nodes, ['', ' .group-preview', ' .group-outline code']):
+        assert node.evaluate("(node, selector) => node.isConnected && document.querySelector(selector) === node",
+                             '#msgs > .grp' + suffix), \
+            'native append replaced the group or an unchanged highlighted summary'
 
 
 def verify(page, corpus, expected, requests):
@@ -142,32 +144,32 @@ def verify(page, corpus, expected, requests):
     for number in (2, 3):
         append_native(corpus, expected, sid, tool(sid, number))
         wait_accepted(page, corpus, expected, sid, "working")
-        group_state(page, number, folded=True, active=True)
+        group_state(page, number, folded=True)
         expect(page.locator('#msgs > .tool-msg[data-role="tool"]')).to_have_count(0)
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "NON TOOL PROGRESS", "commentary"))
     wait_accepted(page, corpus, expected, sid, "working")
-    group = group_state(page, 3, folded=True)
+    group = group_state(page, 3, folded=True, tail=False)
     expect(page.locator('#msgs > [data-role="assistant"]')).to_contain_text("NON TOOL PROGRESS")
     assert group.evaluate("node => node.nextElementSibling?.dataset.role === 'assistant'"), \
         "non-tool progress did not follow/seal the streamed group"
 
     sid = "codex-final"
     select(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=True, active=True)
+    group_state(page, 2, folded=True)
     # A native final_answer seals even before the separate idle marker arrives.
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "FINAL TOOL CONCLUSION", "final_answer"))
     wait_accepted(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=True)
+    group_state(page, 2, folded=True, tail=False)
     expect(page.locator('#msgs > [data-role="assistant"]')).to_contain_text("FINAL TOOL CONCLUSION")
     append_native(corpus, expected, sid, activity(sid, "complete"))
     wait_accepted(page, corpus, expected, sid, "idle")
-    group_state(page, 2, folded=True)
+    group_state(page, 2, folded=True, tail=False)
 
     sid = "codex-idle"
     select(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=True, active=True)
+    group_state(page, 2, folded=True)
     # Activity-only native completion exercises sealing without any new message.
     append_native(corpus, expected, sid, activity(sid, "complete"))
     wait_accepted(page, corpus, expected, sid, "idle")
@@ -177,8 +179,9 @@ def verify(page, corpus, expected, requests):
     sid = "codex-manual"
     select(page, corpus, expected, sid, "idle")
     group = group_state(page, 2, folded=True)
-    expect(group.locator(":scope > .tool-entry")).to_have_count(0)
-    node = group.element_handle()
+    expect(group.locator(":scope > .tool-entry")).to_have_count(1)
+    node = [group.element_handle(), group.locator('.group-preview').element_handle(),
+            group.locator('.group-outline code').first.element_handle()]
     try:
         group.locator(".fold-toggle").click()
         group_state(page, 2, folded=False)
@@ -222,26 +225,26 @@ def verify(page, corpus, expected, requests):
             expect(group.locator(".tool-out").filter(has_text=text)).to_have_count(1)
         expect(group.locator('[data-role="tool_result"]')).to_have_count(0)
     finally:
-        node.dispose()
+        for handle in node: handle.dispose()
 
     sid = "codex-media"
     select(page, corpus, expected, sid, "idle")
     group = group_state(page, 2, folded=True)
     before_media = len([url for url in requests if "/api/media/" in url])
-    append_native(corpus, expected, sid, result(sid, 12, "FOLDED IMAGE RESULT", images=20))
+    append_native(corpus, expected, sid, result(sid, 11, "FOLDED IMAGE RESULT", images=20))
     wait_accepted(page, corpus, expected, sid, "idle")
     group_state(page, 2, folded=True)
-    expect(group.locator(".tool-entry, .media-gallery, img, .media-more")).to_have_count(0)
+    expect(group.locator(".media-gallery, img, .media-more")).to_have_count(0)
     assert len([url for url in requests if "/api/media/" in url]) == before_media, \
         "folded tool result fetched media before a user click"
     continuation = page.evaluate("SessionDockCapabilities.config.media_continuation === true")
     group.locator(".fold-toggle").click()
     group_state(page, 2, folded=False)
     expect(group.locator(".tool-status")).to_have_count(1)
-    media_entry = group.locator(":scope > .tool-entry").nth(1)
+    media_entry = group.locator(":scope > .tool-entry").nth(0)
     expect(media_entry.locator(".tool-out")).to_contain_text("FOLDED IMAGE RESULT")
     expect(media_entry.locator(".media-gallery img")).to_have_count(16)
-    expect(group.locator(":scope > .tool-entry").nth(0).locator(".media-gallery")).to_have_count(0)
+    expect(group.locator(":scope > .tool-entry").nth(1).locator(".media-gallery")).to_have_count(0)
     more = media_entry.locator(".media-more[data-media-cursor]")
     expect(more).to_have_count(1 if continuation else 0)
     if continuation:
