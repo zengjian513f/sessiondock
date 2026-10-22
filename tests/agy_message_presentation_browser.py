@@ -176,11 +176,12 @@ def run(binary, screenshots):
                             command = page.locator('.tool-entry').filter(has=page.locator('.tool-head').filter(has_text='$ ' + COMMAND))
                             expect(command).to_have_count(1)
                             expect(command.locator('.tool-args')).to_be_hidden()
-                            command.get_by_role('button', name='展开原始参数', exact=True).click()
+                            command.get_by_role('button', name='展开工具调用', exact=True).click()
                             expect(command.locator('.tool-args')).to_be_visible()
                             assert json.loads(command.locator('.tool-args').inner_text()) == calls[0]
-                            command.get_by_role('button', name='收起参数', exact=True).click()
+                            command.get_by_role('button', name='收起工具调用', exact=True).click()
                             unknown = page.locator('.tool-entry').filter(has=page.locator('.tool-head').filter(has_text='unknown_native_tool'))
+                            unknown.get_by_role('button', name='展开工具调用', exact=True).click()
                             expect(unknown.locator('.tool-args')).to_be_visible()
                             assert json.loads(unknown.locator('.tool-args').inner_text()) == calls[5]
                             # Exact replacement uses the existing fragment diff and retains native params.
@@ -188,15 +189,14 @@ def run(binary, screenshots):
                             change = page.locator('#msgs .file-change-msg').filter(has=
                                 page.locator('.file-change-head > b').filter(has_text=TARGET))
                             expect(change).to_have_count(1)
+                            change.get_by_role('button', name='展开工具调用', exact=True).click()
                             expect(change).to_contain_text('片段')
                             expect(change.locator('.diff-line.del')).to_contain_text('quota = 0')
                             expect(change.locator('.diff-line.add')).to_contain_text('quota = current_usage')
                             change.get_by_role('button', name='并排', exact=True).click()
                             expect(change.locator('.diff-split')).to_be_visible()
                             change.get_by_role('button', name='换行', exact=True).click()
-                            change.get_by_role('button', name='展开原始参数', exact=True).click()
                             assert json.loads(change.locator('.tool-args').inner_text()) == edit
-                            change.get_by_role('button', name='收起参数', exact=True).click()
                             change.get_by_role('button', name='统一', exact=True).click()
                             # Independent results and error-only records stay visible, without invented pairing.
                             expect(page.locator('#msgs .tool-out.err').filter(has_text='agyerroronly')).to_have_count(1)
@@ -223,32 +223,26 @@ def run(binary, screenshots):
                             write = page.locator('#msgs .file-change-msg').filter(has=
                                 page.locator('.file-change-head > b').filter(has_text=WRITTEN))
                             expect(write).to_contain_text('写入 · 完整')
-                            expect(write.get_by_role('button', name='展开全部差异', exact=True)).to_be_visible()
-                            assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') <= 340
-                            write.get_by_role('button', name='展开全部差异', exact=True).click()
+                            write.get_by_role('button', name='展开工具调用', exact=True).click()
                             assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') > 1000
-                            write.get_by_role('button', name='收起差异', exact=True).click()
-                            assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') <= 340
                             write.get_by_role('button', name='并排', exact=True).click()
                             expect(write.locator('.diff-unavailable')).to_contain_text('原内容没有记录')
                             expect(write.locator('.diff-split')).to_contain_text('保留写入行 95')
-                            write.get_by_role('button', name='展开原始参数', exact=True).click()
                             written_call = json.loads(write.locator('.tool-args').inner_text())
                             assert written_call['args']['CodeContent'] == WRITE_BODY
-                            write.get_by_role('button', name='收起参数', exact=True).click()
                             write.get_by_role('button', name='统一', exact=True).click()
                             write.scroll_into_view_if_needed()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-write.png'))
                             result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='当前配额')
                             expect(result.locator('.tool-status')).to_contain_text('exit 0')
                             expect(result).not_to_contain_text('Created At:')
-                            result.get_by_role('button', name='展开全文', exact=False).click()
+                            result.get_by_role('button', name='展开工具调用', exact=True).click()
                             expect(result).to_contain_text('日志 15: 完整保留输出')
-                            result.get_by_role('button', name='收起', exact=True).click()
                             result.locator('summary').click()
                             expect(result.locator('.event-detail-body')).to_contain_text('Created At:')
                             result.locator('summary').click()
                             file_result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='agyfilepreview')
+                            file_result.get_by_role('button', name='展开工具调用', exact=True).click()
                             expect(file_result.locator('.tool-status')).to_have_text('文件内容 · report.py · 行 1–2 / 2')
                             expect(file_result.locator(':scope > .tool-out')).to_contain_text('1: print("agyfilepreview")')
                             expect(file_result).not_to_contain_text('The following code has been modified')
