@@ -108,7 +108,20 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         unchanged_summary()
         capture('completed')
         # Mouse and keyboard inspection remain available after automatic folding.
-        group.locator(':scope > .group-preview .fold-toggle').click()
+        toggle = group.locator(':scope > .group-preview .fold-toggle')
+        toggle.scroll_into_view_if_needed()
+        before = toggle.bounding_box()
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(toggle).to_be_visible()
+        expect(group.locator(':scope > .disclosure')).to_have_count(0)
+        after = toggle.bounding_box()
+        assert abs(before['x'] - after['x']) < 2 and abs(before['y'] - after['y']) < 2, (before, after)
+        page.mouse.click(before['x'] + before['width'] / 2, before['y'] + before['height'] / 2)
+        expect(toggle).to_have_attribute('aria-expanded', 'false')
+        toggle.press('Enter')
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        capture('anchored-expanded')
         first = group.locator('.tool-entry').first
         expect(group.locator('.tool-out:visible')).to_have_count(6)
         expect(first.locator('.tool-out')).to_be_visible()
@@ -127,7 +140,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(first.locator('.tool-args')).not_to_be_visible()
         expect(first.locator('.tool-out')).to_be_visible()
         capture('manual')
-        group.locator(':scope > .disclosure').click()
+        group.locator(':scope > .group-preview .fold-toggle').click()
         expect(group.locator('.tool-out:visible')).to_have_count(1)
         # A new running call appears below the existing six-item summary.
         new = {'id': 'tool-6', 'call_id': 'call-6', 'role': 'tool', 'turn_id': 'turn',
@@ -205,7 +218,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         single_group.get_by_text('展开全文', exact=False).click()
         expect(single_group.locator('.tool-out')).to_contain_text('输出第 17 行')
         capture('single-expanded')
-        single_group.locator(':scope > .disclosure').click()
+        single_group.locator(':scope > .group-preview .fold-toggle').click()
         expect(single_group.locator('.tool-out:visible')).to_have_count(0)
         assert not errors, errors
         for handle in stable: handle.dispose()

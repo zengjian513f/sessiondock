@@ -84,7 +84,7 @@ def main():
                 group.locator(':scope > .fold-preview .fold-toggle').click()
                 expect(group.locator(':scope > .tool-entry')).to_have_count(180)
                 # Clicking real disclosure controls preserves content on reopening.
-                group.locator(':scope > .disclosure').click()
+                group.locator(':scope > .group-preview .fold-toggle').click()
                 group.locator(':scope > .fold-preview .fold-toggle').click()
                 expect(group.locator(':scope > .tool-entry')).to_have_count(180)
                 with path.open('ab') as stream:

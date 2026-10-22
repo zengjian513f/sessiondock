@@ -207,7 +207,7 @@ def verify(page, corpus, expected, requests):
         wait_accepted(page, corpus, expected, sid, "idle")
         group_state(page, 3, folded=False)
         same_group(node)
-        group.locator(":scope > .disclosure").click()
+        group.locator(":scope > .group-preview .fold-toggle").click()
         group_state(page, 3, folded=True)
         same_group(node)
         # A later paired result stays folded; reopening reveals each result once.

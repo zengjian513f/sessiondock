@@ -8928,11 +8928,11 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   peek.classList.add('group-peek');
   n._toolsMaterialized = !!externalNodes;
   if (externalNodes) n.append(...externalNodes);
-  const setAction = addAction(n);
   const fold = () => {
     n.classList.add('folded');
     toggle.setAttribute('aria-expanded', 'false');
-    setAction();
+    toggle.title = '展开工具调用组';
+    toggle.setAttribute('aria-label', toggle.title);
   };
   const open = () => {
     if (!n._toolsMaterialized) {
@@ -8967,10 +8967,8 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
     }
     n.classList.remove('folded');
     toggle.setAttribute('aria-expanded', 'true');
-    setAction('收起', () => {
-      n._userOpened = false;
-      fold();
-    }, true);
+    toggle.title = '收起工具调用组';
+    toggle.setAttribute('aria-label', toggle.title);
   };
   n._refreshToolTail = () => {
     const all = n._toolItems;
@@ -9007,8 +9005,10 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   n._fold = () => { fold(); n._refreshToolTail(); };
   n._open = open;
   toggle.onclick = () => {
-    n._userOpened = true;
-    open();
+    mutateKeepingMessageAnchor(preview, () => {
+      n._userOpened = n.classList.contains('folded');
+      n._userOpened ? open() : fold();
+    });
   };
   fold();
   n._refreshToolTail();
