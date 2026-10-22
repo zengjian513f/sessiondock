@@ -54,8 +54,9 @@ pub(super) async fn conflicting_result(
 ) -> Value {
     const STREAM_ERROR: &str =
         "The stream was interrupted. Please continue the task you were working on.";
-    if result["status"] != "ERROR" || result["error"] != STREAM_ERROR {
-        return json!({"conflict":false,"reason":"not_stream_error"});
+    let error = result["error"].as_str().unwrap_or_default();
+    if result["status"] != "ERROR" || error.trim().is_empty() {
+        return json!({"conflict":false,"reason":"not_error"});
     }
     let user_index = {
         let data = live.data.lock().unwrap();
@@ -86,7 +87,7 @@ pub(super) async fn conflicting_result(
         };
         if index <= user_index {
             if record["type"] == "ERROR_MESSAGE" {
-                prior_error_step = (record["error"] == STREAM_ERROR).then_some(index);
+                prior_error_step = (record["error"] == error).then_some(index);
             }
             continue;
         }
@@ -97,7 +98,7 @@ pub(super) async fn conflicting_result(
         }
         last_step = record["step_index"].as_u64();
         final_response = None;
-        if record["type"] == "ERROR_MESSAGE" && record["error"] == STREAM_ERROR {
+        if record["type"] == "ERROR_MESSAGE" && record["error"] == error {
             error_seen = true;
             error_steps.push(record["step_index"].as_u64());
         } else if record["type"] == "ERROR_MESSAGE" {
@@ -119,7 +120,9 @@ pub(super) async fn conflicting_result(
     });
     let historical_error =
         matches && !error_seen && !other_error_seen && prior_error_step.is_some();
-    json!({"conflict":matches && error_seen && !other_error_seen,
+    // Historical receipts are resolved by native identity and completion evidence,
+    // independent of wording. Current-turn recovery remains stream-specific.
+    json!({"conflict":error == STREAM_ERROR && matches && error_seen && !other_error_seen,
         "historical_error":historical_error,
         "reason":if other_error_seen {"different_current_error"}
         else if historical_error {"historical_error_after_completed_response"}
