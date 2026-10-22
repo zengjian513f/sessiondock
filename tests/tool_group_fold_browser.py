@@ -138,9 +138,9 @@ def same_group(nodes):
 def verify(page, corpus, expected, requests):
     sid = "codex-stream"
     select(page, corpus, expected, sid, "working")
-    expect(page.locator(GROUP)).to_have_count(0)
-    expect(page.locator('#msgs > .tool-msg[data-role="tool"]')).to_have_count(1)
-    expect(page.locator('#msgs > .tool-msg .tool-head')).to_contain_text("TOOL 1")
+    group_state(page, 1, folded=True)
+    expect(page.locator(GROUP + ' > .group-preview')).to_be_hidden()
+    expect(page.locator(GROUP + ' .tool-active-tail .tool-head')).to_contain_text("TOOL 1")
     for number in (2, 3):
         append_native(corpus, expected, sid, tool(sid, number))
         wait_accepted(page, corpus, expected, sid, "working")

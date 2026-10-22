@@ -7751,7 +7751,7 @@ const TOOL_ROLES = new Set(['tool', 'tool_result']);
 const SEARCH_ROLES = new Set(['user', 'assistant', 'user·subagent', 'assistant·subagent',
                               'thinking', 'question', 'answer', 'command']);
 const TURN_START_ROLES = new Set(['user', 'user·subagent']);
-const GROUP_MIN = 2;
+const GROUP_MIN = 1;
 const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
 const MESSAGE_TIME_CADENCE_MS = 20 * 60 * 1000;
 
