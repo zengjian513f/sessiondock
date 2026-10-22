@@ -286,7 +286,7 @@ class FakeKiroAcp:
                 "agentCapabilities": {
                     "loadSession": True,
                     "promptCapabilities": {"image": True, "embeddedContext": True},
-                    "sessionCapabilities": {"fork": {}, "list": {}, "delete": {}},
+                    "sessionCapabilities": {"fork": {} if (self.sessions_root / "no-fork-message-id").exists() else {"_meta": {"kiro": {"messageId": True}}}, "list": {}, "delete": {}},
                     "_meta": {"kiro": {"extensionMethods": ["_kiro/session/compact", "_kiro/session/context", "_kiro/session/history"], "replayMarking": True, "sessionSources": ["local"], "sessionListScopes": ["workspace", "user"]}},
                 },
             })
@@ -352,9 +352,21 @@ class FakeKiroAcp:
             if not source.is_dir():
                 self.error(message, -32000, "Session not found")
                 return
+            message_id = params.get("_meta", {}).get("kiro", {}).get("messageId")
+            lines = (source / "messages.jsonl").read_text().splitlines(keepends=True)
+            if message_id is not None:
+                rows = [json.loads(line) for line in lines]
+                index = next((i for i, row in enumerate(rows) if row["id"] == message_id), None)
+                if index is None:
+                    self.error(message, -32000, "MESSAGE_NOT_FOUND")
+                    return
+                # V3 retains the selected user turn, through its assistant reply.
+                end = next((i for i in range(index + 1, len(rows)) if rows[i]["message"]["kind"] == "user"), len(rows))
+                lines = lines[:end]
             fork_sid = "sess_" + str(uuid.uuid4())
             target = self.sessions_root / "bucket_v3" / fork_sid
             shutil.copytree(source, target)
+            (target / "messages.jsonl").write_text("".join(lines))
             meta = json.loads((target / "session.json").read_text())
             meta["id"] = meta["sessionId"] = fork_sid
             (target / "session.json").write_text(json.dumps(meta))

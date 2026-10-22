@@ -463,6 +463,16 @@ impl Bridge {
             let _ = session.kill().await;
             return Err(format!("Kiro 未广告 {method} 能力"));
         }
+        if method == "session/fork"
+            && params["_meta"]["kiro"]["messageId"].is_string()
+            && init["agentCapabilities"]["sessionCapabilities"]["fork"]["_meta"]["kiro"]["messageId"]
+                != true
+        {
+            let _ = session.kill().await;
+            return Err(
+                "kiro_sdk_fork_position_unavailable: 当前 Kiro 未广告按消息分支能力".into(),
+            );
+        }
         let result = session
             .request_once("mutation:execute", method, params)
             .await?;

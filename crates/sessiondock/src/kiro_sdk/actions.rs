@@ -903,19 +903,12 @@ impl Bridge {
         _target: &Value,
         payload: &Value,
     ) -> Result<Value, String> {
-        if [
-            "before",
-            "nth_user",
-            "turn_index",
-            "prompt_index",
-            "messageId",
-        ]
-        .iter()
-        .any(|key| payload.get(*key).is_some_and(|value| !value.is_null()))
+        if ["before", "nth_user", "turn_index", "prompt_index"]
+            .iter()
+            .any(|key| payload.get(*key).is_some_and(|value| !value.is_null()))
         {
             return Err(
-                "kiro_sdk_fork_position_unavailable: 当前 Kiro 尚未确认指定消息分叉的官方参数格式"
-                    .into(),
+                "kiro_sdk_fork_position_unavailable: Kiro 按整轮分支，请使用原生 messageId".into(),
             );
         }
         let source = self.catalog.resolve_uid(uid)?;
@@ -929,14 +922,22 @@ impl Bridge {
             .as_str()
             .filter(|value| !value.is_empty())
             .ok_or("Kiro 分叉请求缺少稳定 request_id")?;
+        let mut params = json!({"sessionId":source.sid, "cwd":cwd, "mcpServers":[]});
+        if let Some(message_id) = payload.get("messageId").filter(|value| !value.is_null()) {
+            let message_id = message_id
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or("Kiro 分支需要非空原生 messageId")?;
+            // Kiro V3 rewind retains the selected turn in a new session.
+            // The extension lives under _meta, not the standard fork fields.
+            params["_meta"] = json!({"kiro":{"messageId":message_id,"createdReason":"rewind"}});
+        }
         let result = self
             .mutate_once(
                 &format!("fork:{}:{request_id}", source.uid),
                 "session/fork",
                 cwd,
-                json!({
-                    "sessionId":source.sid, "cwd":cwd, "mcpServers":[]
-                }),
+                params,
             )
             .await?;
         let sid = result["sessionId"]
