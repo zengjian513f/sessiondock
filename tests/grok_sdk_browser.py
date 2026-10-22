@@ -133,8 +133,13 @@ def exercise(browser, base, fixture, screenshots):
     assert opened["capabilities"]["send"] and opened["capabilities"]["interrupt"]
     assert opened["capabilities"]["respond"] and opened["capabilities"]["question"]
     assert not opened["capabilities"]["shared_tui"]
-    assert not any("Replay is ordinary history" in item.get("content", "") for item in opened["raw"]["items"])
+    # The open HTTP response no longer carries the transcript (items/subtasks are
+    # stripped to avoid resending the whole history on every switch); the
+    # transcript arrives via the SSE snapshot. Assert replay content there.
+    assert "items" not in opened["raw"], "open response should not carry items"
     watch(page, uid)
+    assert not any("Replay is ordinary history" in item.get("content", "")
+                   for item in page.evaluate("window.__grokSnapshot.items") or [])
     before = len(fixture.received("session/load"))
     api(page, "open", {"uid": uid})
     assert len(fixture.received("session/load")) == before, "open reloaded a live native session"
