@@ -113,12 +113,13 @@ def select(page, corpus, expected, sid, state):
     page.wait_for_function(WATCHING, timeout=15000)
 
 
-def group_state(page, count, *, folded):
+def group_state(page, count, *, folded, active=False):
     group = page.locator(GROUP)
     expect(group).to_have_count(1)
-    expect(group.locator(".group-count")).to_contain_text(f"×{count}")
+    expect(group.locator(".group-count")).to_contain_text(f"×{count - int(active)}")
     if folded:
         expect(group).to_have_class(FOLDED)
+        expect(group.locator(":scope > .tool-active-tail")).to_have_count(int(active))
     else:
         expect(group).not_to_have_class(FOLDED)
         expect(group.locator(":scope > .tool-entry")).to_have_count(count)
@@ -141,7 +142,7 @@ def verify(page, corpus, expected, requests):
     for number in (2, 3):
         append_native(corpus, expected, sid, tool(sid, number))
         wait_accepted(page, corpus, expected, sid, "working")
-        group_state(page, number, folded=False)
+        group_state(page, number, folded=True, active=True)
         expect(page.locator('#msgs > .tool-msg[data-role="tool"]')).to_have_count(0)
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "NON TOOL PROGRESS", "commentary"))
@@ -153,7 +154,7 @@ def verify(page, corpus, expected, requests):
 
     sid = "codex-final"
     select(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=False)
+    group_state(page, 2, folded=True, active=True)
     # A native final_answer seals even before the separate idle marker arrives.
     append_native(corpus, expected, sid,
                   message(sid, "assistant", "FINAL TOOL CONCLUSION", "final_answer"))
@@ -166,7 +167,7 @@ def verify(page, corpus, expected, requests):
 
     sid = "codex-idle"
     select(page, corpus, expected, sid, "working")
-    group_state(page, 2, folded=False)
+    group_state(page, 2, folded=True, active=True)
     # Activity-only native completion exercises sealing without any new message.
     append_native(corpus, expected, sid, activity(sid, "complete"))
     wait_accepted(page, corpus, expected, sid, "idle")
@@ -244,6 +245,8 @@ def verify(page, corpus, expected, requests):
     more = media_entry.locator(".media-more[data-media-cursor]")
     expect(more).to_have_count(1 if continuation else 0)
     if continuation:
+        expect(media_entry.locator(".tool-toggle")).to_have_attribute("aria-expanded", "false")
+        media_entry.locator(".tool-toggle").click()
         expect(more).to_be_visible()
         expect(more).to_have_text("还有 4 张图片，加载下一批")
 
@@ -279,7 +282,7 @@ def main():
                 browser.close()
         assert {sid: path.read_bytes() for sid, path in corpus.paths.items()} == expected, \
             "browser/server modified native fixtures beyond the explicit test appends"
-    print("PASS tool group fold browser: native single->group across batches; streamed tail open; "
+    print("PASS tool group fold browser: native single->group across batches; streamed tail visible below folded summary; "
           "non-tool/final/idle sealing; real manual open preserves group DOM and expansion across "
           "tools/results/idle; explicit refold; results pair exactly once; folded media stays "
           "unmaterialized/unrequested until click; native media_more capability", flush=True)

@@ -224,6 +224,7 @@ const NativeSdkView = {
   },
 
   applySnapshot(raw) {
+    SdkUI.ungroupTools(this);
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
@@ -253,6 +254,7 @@ const NativeSdkView = {
       if (old?._updateMessage && old.dataset.role === item.role) { old._updateMessage(item); continue; }
       const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
+      node._sdkToolMessage = item;
       if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
         // Keep partial stdout rendered, but never label a partial rawOutput as
         // completed just because it already contains a default exit_code:0.
@@ -267,6 +269,7 @@ const NativeSdkView = {
     }
     for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
     SdkUI.foldLiveTurns(this, this.items, {tailComplete: !this.running});
+    SdkUI.groupTools(this);
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));

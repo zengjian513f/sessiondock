@@ -1754,7 +1754,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   background: linear-gradient(transparent, var(--bubble));
   pointer-events: none;
 }
-.msg.grp.folded .more { display: none; }
+.msg.grp.folded > .more { display: none; }
 .more[hidden] { display: none; }
 .more {
   display: block; width: 100%; margin-top: 6px; border: 1px dashed var(--border);
@@ -2735,3 +2735,15 @@ header .btn[data-session-docked] { display: none; }
 .tool-disclosable .tool-head > .tool-meta { max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-disclosable > .file-change-list { padding: 0 10px 10px; }
 .tool-disclosable .file-change-body { max-height: none; }
+
+/* 已完成工具保留组摘要，末尾执行中的调用独立露出。 */
+.msg.grp.folded > [data-sdk-item] { display: none; }
+.msg.grp.folded > .tool-active-tail { display: block; }
+.msg.grp.folded.has-active-tool {
+  width: 100%; max-width: 100%; border: 0; background: transparent; opacity: 1; overflow: visible;
+}
+.msg.grp.folded.has-active-tool > .group-preview {
+  margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--bubble-radius);
+  background: var(--bubble-tool); width: fit-content; max-width: 100%;
+}
+.msg.grp.folded > .group-preview[hidden] { display: none; }

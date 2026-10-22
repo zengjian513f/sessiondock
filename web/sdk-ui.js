@@ -91,6 +91,42 @@ const SdkUI = {
     node.append(toggle, menu);
   },
 
+  ungroupTools(view) {
+    const identity = `${view.uid}:${view.agent || ''}`;
+    if (view.toolGroupIdentity !== identity) {
+      view.toolGroupIdentity = identity; view.toolGroupChoices = new Map();
+    }
+    for (const group of view.live?.querySelectorAll('.sdk-tool-group') || []) {
+      view.toolGroupChoices.set(group.dataset.toolGroupKey, !!group._userOpened);
+      group.replaceWith(...group.querySelectorAll(':scope > [data-sdk-item]'));
+    }
+  },
+
+  groupTools(view) {
+    for (const parent of [view.live, ...view.live.querySelectorAll('.turn-process-body')]) {
+      let run = [];
+      const flush = () => {
+        if (run.length >= GROUP_MIN) {
+          const items = run.map(node => node._sdkToolMessage);
+          const key = run[0].dataset.sdkItem;
+          const anchor = run.at(-1).nextSibling;
+          const running = view.running ?? (view.turn?.status === 'inProgress');
+          const group = groupNode(items, !!running, run);
+          group.classList.add('sdk-tool-group');
+          group.dataset.toolGroupKey = key;
+          parent.insertBefore(group, anchor);
+          if (view.toolGroupChoices?.get(key)) { group._userOpened = true; group._open(); }
+        }
+        run = [];
+      };
+      for (const node of [...parent.children]) {
+        if (node._sdkToolMessage && isGroupableTool(node._sdkToolMessage)) run.push(node);
+        else flush();
+      }
+      flush();
+    }
+  },
+
   foldLiveTurns(view, messages, {tailComplete}) {
     // Native snapshots can replay the whole session. Apply the same completed
     // turn boundaries as history, but retain the streaming message/tool nodes.

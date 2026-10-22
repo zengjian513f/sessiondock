@@ -7746,8 +7746,7 @@ async function del(m) {
   showMobileList();
 }
 
-// 连续工具调用/输出合并成一个可折叠的组；正在增长的时间线尾段保持展开，
-// 等后面出现普通对话或任务结束后再自动封口。
+// 连续工具调用/输出合并为摘要组；末尾尚未完成的调用露出全文，结果到达后收进摘要。
 const TOOL_ROLES = new Set(['tool', 'tool_result']);
 const SEARCH_ROLES = new Set(['user', 'assistant', 'user·subagent', 'assistant·subagent',
                               'thinking', 'question', 'answer', 'command']);
@@ -8090,6 +8089,7 @@ function buildPlan(box, plan, before) {
 }
 
 function trailingToolNodes(box, before = null) {
+  before ||= box.querySelector(':scope > #conversation-question.hidden');
   const nodes = [];
   let node = before ? before.previousElementSibling : box.lastElementChild;
   while (node && Array.isArray(node._toolItems)) {
@@ -8110,7 +8110,8 @@ function restoreGroupOpen(nodes, {userOpened = false, keepOpen = false} = {}) {
   for (const node of nodes) {
     if (!node.matches?.('.grp')) continue;
     if (userOpened) node._userOpened = true;
-    if (keepOpen || userOpened) node._open?.();
+    node._setTailEnabled?.(keepOpen);
+    if (userOpened) node._open?.();
   }
 }
 
@@ -8118,6 +8119,8 @@ function restoreGroupOpen(nodes, {userOpened = false, keepOpen = false} = {}) {
  *  仍是一组；一旦本批出现普通消息，这个尾段立即变成已完成的折叠组。
  *  用户亲手展开过的组不能因为后续工具结果或封口而被拆掉重建成折叠态。 */
 function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
+  // An empty question slot is UI scaffolding, not a break in consecutive tools.
+  before ||= box.querySelector(':scope > #conversation-question.hidden');
   let rest = [...msgs];
   const trailing = trailingToolNodes(box, before);
   let lead = 0;
@@ -8134,8 +8137,8 @@ function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
     if (grp && planned.length === 1 && planned[0].g) {
       syncGroupNode(grp, planned[0].g);
       stampMessageTime(grp, planned[0].g);
-      if (keepOpen || userOpened) grp._open?.();
-      else if (!onlyTools && !userOpened) grp._fold?.();
+      grp._setTailEnabled?.(onlyTools && openTail);
+      if (userOpened) grp._open?.();
       if (userOpened) grp._userOpened = true;
       built.push(grp);
     } else {
@@ -8387,6 +8390,7 @@ function addClippedPre(entry, cls, text, codePath = '') {
 function toolEntry(m) {
   const entry = el('div', 'tool-entry');
   entry.dataset.role = m.role;
+  entry._toolComplete = ConversationUI.toolComplete(m);
   if (m.counted === false) entry.dataset.counted = 'false';
   const standalone = m.role !== 'tool' ? m : null;
   if (standalone) m = {...m, role: 'tool', summary: m.name || '工具结果', text: '', media: null};
@@ -8471,8 +8475,9 @@ function appendAgyOutputPreview(entry, m) {
 
 function appendToolResult(entry, r, m) {
   if (!entry || !r || entry.dataset.result === '1') return;
+  entry._toolComplete = ConversationUI.toolComplete({...m, result: r});
   if (r.counted !== false) entry.dataset.result = '1'; // 吸收的结果单独补入计数
-  const status = [r.error ? '✗ 出错' : '✓ 完成'];
+  const status = [entry._toolComplete ? (r.error ? '✗ 出错' : '✓ 完成') : '运行中…'];
   if (Number.isInteger(r.exit_code)) status.push(`exit ${r.exit_code}`);
   if (Number.isFinite(+r.duration_s)) status.push(formatDuration(+r.duration_s * 1000));
   const stats = outputStats(r.text || '');
@@ -8855,6 +8860,7 @@ function syncGroupNode(n, items) {
     n._toolItems = items;
     const peek = n.querySelector(':scope > .fold-preview .group-peek');
     if (peek) paintGroupPreview(peek, items);
+    n._refreshToolTail?.();
     return;
   }
   const old = n._renderedToolItems || n._toolItems || [];
@@ -8890,10 +8896,11 @@ function syncGroupNode(n, items) {
   n._renderedToolItems = items;
   const peek = n.querySelector(':scope > .fold-preview .group-peek');
   if (peek) paintGroupPreview(peek, items);
+  n._refreshToolTail?.();
 }
 
-function groupNode(items, initiallyOpen = false) {
-  // 工具协议不属于对话正文搜索范围。历史段默认折叠；正在增长的尾段展开。
+function groupNode(items, initiallyOpen = false, externalNodes = null) {
+  // 摘要复用历史工具组；只为未完成的尾调用保留独立可见内容。
   const n = el('div', 'msg grp' + (initiallyOpen ? '' : ' folded'));
   n.dataset.role = 'toolgroup';
   n._toolItems = items;
@@ -8903,7 +8910,9 @@ function groupNode(items, initiallyOpen = false) {
   const peek = preview.querySelector('.peek');
   peek.classList.add('group-peek');
   paintGroupPreview(peek, items);
-  n._toolsMaterialized = false;
+  n._toolsMaterialized = !!externalNodes;
+  n._tailEnabled = initiallyOpen;
+  if (externalNodes) n.append(...externalNodes);
   const setAction = addAction(n);
   const fold = () => {
     n.classList.add('folded');
@@ -8923,13 +8932,15 @@ function groupNode(items, initiallyOpen = false) {
         const started = performance.now();
         const fragment = document.createDocumentFragment();
         while (offset < pending.length && performance.now() - started < 8) {
-          fragment.appendChild(toolEntry(pending[offset++]));
+          const item = pending[offset++];
+          fragment.appendChild(item === n._activeItem && n._activeEntry ? n._activeEntry : toolEntry(item));
         }
         n.insertBefore(fragment, action);
         if (offset < pending.length) setTimeout(paint, 0);
         else {
           n._toolsBuilding = false;
           n._renderedToolItems = pending;
+          n._refreshToolTail?.();
           if (n._pendingToolItems) {
             const latest = n._pendingToolItems;
             n._pendingToolItems = null;
@@ -8946,13 +8957,36 @@ function groupNode(items, initiallyOpen = false) {
       fold();
     }, true);
   };
-  n._fold = fold;
+  n._refreshToolTail = () => {
+    const all = n._toolItems;
+    const last = all.at(-1);
+    const active = n._tailEnabled && last && !ConversationUI.toolComplete(last);
+    if (!n._toolsMaterialized) {
+      if (!active || n._activeItem !== last) {
+        n._activeEntry?.remove();
+        n._activeEntry = null;
+      }
+      if (active && !n._activeEntry) {
+        n._activeEntry = toolEntry(last);
+        n.insertBefore(n._activeEntry, n.querySelector(':scope > .disclosure'));
+      }
+      n._activeItem = active ? last : null;
+    }
+    const children = [...n.children].filter(child => child.matches('.tool-entry, [data-sdk-item]'));
+    children.forEach((child, index) => child.classList.toggle('tool-active-tail', !!active && index === children.length - 1));
+    n.classList.toggle('has-active-tool', !!active);
+    paintGroupPreview(peek, active ? all.slice(0, -1) : all);
+    preview.hidden = active && all.length === 1;
+  };
+  n._setTailEnabled = enabled => { n._tailEnabled = enabled; n._refreshToolTail(); };
+  n._fold = () => { n._tailEnabled = false; fold(); n._refreshToolTail(); };
   n._open = open;
   toggle.onclick = () => {
     n._userOpened = true;
     open();
   };
-  initiallyOpen ? open() : fold();
+  fold();
+  n._refreshToolTail();
   return n;
 }
 

@@ -181,7 +181,7 @@ def browser_check(corpus, base, screenshots=None):
                 expect(page.locator("#msgs")).to_contain_text("z=first a=False r=4 b=last")
                 tools = page.locator('#msgs .tool-disclosable')
                 expect(tools.first.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
-                expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'true')
+                expect(tools.last.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false' if source == 'codex' else 'true')
                 tools.first.locator('.tool-toggle').click()
                 expect(tools.first.locator('.tool-args')).to_be_visible()
                 tools.first.locator('.tool-toggle').press('Enter')
