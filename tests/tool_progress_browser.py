@@ -86,6 +86,14 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         def capture(state):
             if shots: page.screenshot(path=str(shots / f'{name}-{state}.png'), full_page=True)
         capture('running')
+        stable = [group.element_handle(), group.locator('.group-preview').element_handle(),
+                  group.locator('.group-outline code').first.element_handle()] if mode == 'sdk' else []
+        def unchanged_summary():
+            for handle, selector in zip(stable, ['', ' .group-preview', ' .group-outline code']):
+                assert handle.evaluate('(node, selector) => node.isConnected && '
+                    'document.querySelector(selector) === node', scope + ' .grp' + selector), \
+                    'stream update replaced the group or an unchanged highlighted summary'
+
         # Completion must leave the last call outside the collapsed summary.
         if mode == 'chat':
             history[-1]['status'] = 'completed'
@@ -97,6 +105,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.group-count')).to_have_text('🔧 ×5')
         expect(group.locator('.tool-active-tail')).to_have_count(1)
         expect(group.locator('.tool-out:visible')).to_have_count(1)
+        unchanged_summary()
         capture('completed')
         # Mouse and keyboard inspection remain available after automatic folding.
         group.locator(':scope > .group-preview .fold-toggle').click()
@@ -134,6 +143,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
             events.publish()
         expect(group.locator('.group-count')).to_have_text('🔧 ×6')
         expect(group.locator('.tool-active-tail .tool-out')).to_have_text('新的执行输出')
+        unchanged_summary()
         capture('next')
         # Any later message closes the exposed tool, even while it is running.
         following_role = 'assistant' if width == 1280 else ('user' if mode == 'sdk' else 'thinking')
@@ -154,12 +164,14 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.group-count')).to_have_text('🔧 ×7')
         expect(group.locator('.tool-active-tail')).to_have_count(0)
         expect(group.locator('.tool-out:visible')).to_have_count(0)
+        unchanged_summary()
         capture('following-message')
         if following_role != 'user':
             group.locator(':scope > .group-preview .fold-toggle').click()
             expect(group.locator('.tool-out:visible')).to_have_count(7)
             capture('following-expanded')
         assert not errors, errors
+        for handle in stable: handle.dispose()
         context.unroute_all(behavior='wait')
         context.close()
         print(f'PASS {name}: running tail, completion, summary, manual inspection, next call', flush=True)

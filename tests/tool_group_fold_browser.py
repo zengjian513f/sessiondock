@@ -127,10 +127,12 @@ def group_state(page, count, *, folded, tail=True):
     return group
 
 
-def same_group(node):
-    # Retaining a Playwright handle does not write any product/DOM business state.
-    assert node.evaluate("node => node.isConnected && document.querySelector('#msgs > .grp') === node"), \
-        "native append replaced the user-opened tool group"
+def same_group(nodes):
+    # Observe real nodes without modifying application state.
+    for node, suffix in zip(nodes, ['', ' .group-preview', ' .group-outline code']):
+        assert node.evaluate("(node, selector) => node.isConnected && document.querySelector(selector) === node",
+                             '#msgs > .grp' + suffix), \
+            'native append replaced the group or an unchanged highlighted summary'
 
 
 def verify(page, corpus, expected, requests):
@@ -178,7 +180,8 @@ def verify(page, corpus, expected, requests):
     select(page, corpus, expected, sid, "idle")
     group = group_state(page, 2, folded=True)
     expect(group.locator(":scope > .tool-entry")).to_have_count(1)
-    node = group.element_handle()
+    node = [group.element_handle(), group.locator('.group-preview').element_handle(),
+            group.locator('.group-outline code').first.element_handle()]
     try:
         group.locator(".fold-toggle").click()
         group_state(page, 2, folded=False)
@@ -222,7 +225,7 @@ def verify(page, corpus, expected, requests):
             expect(group.locator(".tool-out").filter(has_text=text)).to_have_count(1)
         expect(group.locator('[data-role="tool_result"]')).to_have_count(0)
     finally:
-        node.dispose()
+        for handle in node: handle.dispose()
 
     sid = "codex-media"
     select(page, corpus, expected, sid, "idle")

@@ -96,7 +96,9 @@ const SdkUI = {
     if (view.toolGroupIdentity !== identity) {
       view.toolGroupIdentity = identity; view.toolGroupChoices = new Map();
     }
+    view.toolGroupNodes = new Map();
     for (const group of view.live?.querySelectorAll('.sdk-tool-group') || []) {
+      view.toolGroupNodes.set(group.dataset.toolGroupKey, group);
       view.toolGroupChoices.set(group.dataset.toolGroupKey, !!group._userOpened);
       group.replaceWith(...group.querySelectorAll(':scope > [data-sdk-item]'));
     }
@@ -111,11 +113,13 @@ const SdkUI = {
           const key = run[0].dataset.sdkItem;
           const anchor = run.at(-1).nextSibling;
           const running = view.running ?? (view.turn?.status === 'inProgress');
-          const group = groupNode(items, !!running, run);
+          const previous = view.toolGroupNodes?.get(key);
+          const group = previous || groupNode(items, !!running, run);
+          if (previous) group._syncExternalTools(items, run);
           group.classList.add('sdk-tool-group');
           group.dataset.toolGroupKey = key;
           parent.insertBefore(group, anchor);
-          if (view.toolGroupChoices?.get(key)) { group._userOpened = true; group._open(); }
+          if (!previous && view.toolGroupChoices?.get(key)) { group._userOpened = true; group._open(); }
         }
         run = [];
       };

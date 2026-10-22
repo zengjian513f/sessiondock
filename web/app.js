@@ -8840,21 +8840,38 @@ function paintGroupPreview(peek, items) {
   const visible = calls.length ? calls : items;
   const heads = visible.slice(0, 3).map(m => m.summary || m.name || 'tool');
   const hasErr = items.some(m => m.result?.error || (m.role === 'tool_result' && m.error));
-  const count = el('span', 'group-count', `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`);
-  const outline = el('span', 'group-outline');
+  if (!peek._groupPreview) {
+    const count = el('span', 'group-count');
+    const outline = el('span', 'group-outline');
+    peek.replaceChildren(count, outline);
+    peek._groupPreview = {count, outline, rows: []};
+  }
+  const {count, outline, rows} = peek._groupPreview;
+  const label = `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`;
+  if (count.textContent !== label) count.textContent = label;
   heads.forEach((head, i) => {
+    if (rows[i]?.head === head) return;
     const row = el('span');
     row.appendChild(el('i', 'group-index', `${i + 1}.`));
     row.append(' ');
     const code = el('code', /^\s*(?:\$|❯)\s+/.test(head) ? 'tool-command' : '');
     code.textContent = head;
     row.appendChild(code);
-    outline.appendChild(row);
+    if (rows[i]) rows[i].node.replaceWith(row);
+    else outline.insertBefore(row, peek._groupPreview.rest || null);
+    rows[i] = {head, node: row};
+    paintSyntax(row);
   });
-  if (visible.length > heads.length) outline.appendChild(el('span', 'group-rest',
-    `… 另有 ${visible.length - heads.length} 项`));
-  peek.replaceChildren(count, outline);
-  paintSyntax(outline);
+  while (rows.length > heads.length) rows.pop().node.remove();
+  const remaining = visible.length - heads.length;
+  let rest = peek._groupPreview.rest;
+  if (remaining > 0) {
+    if (!rest) outline.appendChild(rest = peek._groupPreview.rest = el('span', 'group-rest'));
+    const text = `… 另有 ${remaining} 项`;
+    if (rest.textContent !== text) rest.textContent = text;
+  } else if (rest) {
+    rest.remove(); peek._groupPreview.rest = null;
+  }
 }
 
 /** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
@@ -8862,8 +8879,6 @@ function syncGroupNode(n, items) {
   if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
   if (!n._toolsMaterialized) {
     n._toolItems = items;
-    const peek = n.querySelector(':scope > .fold-preview .group-peek');
-    if (peek) paintGroupPreview(peek, items);
     n._refreshToolTail?.();
     return;
   }
@@ -8898,8 +8913,6 @@ function syncGroupNode(n, items) {
   }
   n._toolItems = items;
   n._renderedToolItems = items;
-  const peek = n.querySelector(':scope > .fold-preview .group-peek');
-  if (peek) paintGroupPreview(peek, items);
   n._refreshToolTail?.();
 }
 
@@ -8913,7 +8926,6 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   const toggle = preview.querySelector('.fold-toggle');
   const peek = preview.querySelector('.peek');
   peek.classList.add('group-peek');
-  paintGroupPreview(peek, items);
   n._toolsMaterialized = !!externalNodes;
   if (externalNodes) n.append(...externalNodes);
   const setAction = addAction(n);
@@ -8980,6 +8992,12 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
     n.classList.toggle('has-active-tool', !!active);
     paintGroupPreview(peek, active ? all.slice(0, -1) : all);
     preview.hidden = active && all.length === 1;
+  };
+  n._syncExternalTools = (items, nodes) => {
+    n._toolItems = items;
+    const action = n.querySelector(':scope > .disclosure');
+    for (const node of nodes) n.insertBefore(node, action);
+    n._refreshToolTail();
   };
   n._setTailAtEnd = enabled => {
     if (n._tailAtEnd === enabled) return;
