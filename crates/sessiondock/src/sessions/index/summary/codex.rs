@@ -16,6 +16,23 @@ fn first_truthy<'a>(values: impl IntoIterator<Item = &'a Value>) -> Option<Strin
     values.into_iter().find_map(text_if_truthy)
 }
 
+/// The same first-input semantics apply inside and beyond the summary window.
+pub(in crate::sessions::index) fn user_title(value: &Value) -> Result<Option<String>, String> {
+    let payload = &value["payload"];
+    if value["type"] != "response_item" || payload["type"] != "message" || payload["role"] != "user"
+    {
+        return Ok(None);
+    }
+    let text = flatten_text(&crate::sessions::providers::envelopes::codex_title_content(
+        &payload["content"],
+    ))?;
+    let native_meta = &payload["internal_chat_message_metadata_passthrough"];
+    Ok((!py_strip(&text).is_empty()
+        && !is_injected(&text)
+        && !is_codex_protocol_injection(&text, native_meta))
+    .then(|| title_from_text(&text)))
+}
+
 pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let stem = input
         .path
@@ -55,23 +72,9 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         if kind == "session_meta" && meta.is_none() && truthy(payload) {
             meta = Some(payload);
         }
-        if first_user.is_none()
-            && kind == "response_item"
-            && payload["type"] == "message"
-            && payload["role"] == "user"
-        {
-            match flatten_text(&crate::sessions::providers::envelopes::codex_title_content(
-                &payload["content"],
-            )) {
-                Ok(text) => {
-                    let native_meta = &payload["internal_chat_message_metadata_passthrough"];
-                    if !py_strip(&text).is_empty()
-                        && !is_injected(&text)
-                        && !is_codex_protocol_injection(&text, native_meta)
-                    {
-                        first_user = Some(text);
-                    }
-                }
+        if first_user.is_none() {
+            match user_title(value) {
+                Ok(title) => first_user = title,
                 Err(reason) => {
                     hard_error.get_or_insert(reason);
                 }
@@ -132,7 +135,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     ])
     .unwrap_or_else(|| stem.clone());
     let base_title = match &first_user {
-        Some(text) => title_from_text(text),
+        Some(text) => text.clone(),
         None => format!(
             "(无标题) {}",
             stem.replace("rollout-", "")

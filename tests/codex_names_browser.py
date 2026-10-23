@@ -166,6 +166,7 @@ def browser_check(corpus, base, index, rows):
             page.goto(base, wait_until="networkidle")
             item = page.locator(f'#side .item[data-uid="{corpus.uid("standalone")}"]')
             item.click()
+            page.locator("#a-chat").click()
             expect(page.locator(".dtitle h2")).to_contain_text("Updated standalone title")
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
             page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
@@ -199,10 +200,91 @@ def browser_check(corpus, base, index, rows):
             browser.close()
 
 
+def first_input_check(binary):
+    """Large preambles, late first input, append/cold/rewrite and report priority."""
+    from playwright.sync_api import expect, sync_playwright
+    with tempfile.TemporaryDirectory(prefix="sessiondock-first-name-") as temporary:
+        corpus, index, names = build(Path(temporary))
+        prefix = [codex_row("session_meta", {"id": "late", "cwd": "/synthetic/names"}),
+                  codex_message("developer", "Synthetic tools and rules " + "x" * 135000),
+                  *[codex_row("token_usage_record", {"total_tokens": n}) for n in range(125)],
+                  codex_message("user", "# AGENTS.md instructions for /synthetic/names\n<INSTRUCTIONS>Rules</INSTRUCTIONS>"),
+                  codex_message("user", "<environment_context>synthetic environment</environment_context>")]
+        path = corpus.put("late", "codex", prefix, [])
+        initial = path.read_bytes()
+        title = "执行旧实验补足与重评，检查首条消息后的自动标题"
+        user = encoded(codex_message("user", title))
+        shots = REPO / "target/validation/codex-first-name"
+        shots.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            with server(corpus, binary, None) as (base, opener):
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.goto(base, wait_until="networkidle")
+                item = page.locator(f'#side .item[data-uid="{corpus.uid("late")}"]')
+                item.click()
+                page.locator("#a-chat").click()
+                expect(page.locator(".dtitle h2")).to_contain_text("(无标题)")
+                page.screenshot(path=str(shots / "before.png"))
+                # A torn native record is not a submitted input yet.
+                with path.open("ab") as out:
+                    out.write(user[:-1])
+                page.reload(wait_until="networkidle")
+                expect(page.locator(".dtitle h2")).to_contain_text("(无标题)")
+                with path.open("ab") as out:
+                    out.write(b"\n")
+                expect(page.locator(".dtitle h2")).to_have_text(title, timeout=10000)
+                expect(item.locator(".t")).to_have_text(title)
+                expect(page.locator("#msgs")).to_contain_text(title)
+                page.screenshot(path=str(shots / "desktop.png"))
+                with path.open("ab") as out:
+                    out.write(encoded(codex_row("token_usage_record", {"padding": "y" * 600000})))
+                    out.write(encoded(codex_message("user", "Later input must not rename")))
+                page.reload(wait_until="networkidle")
+                expect(page.locator(".dtitle h2")).to_have_text(title)
+                search = get_json(opener, base, "/api/search?" + urlencode({"q": "旧实验补足"}))
+                assert next(r for r in search["results"] if r["sid"] == "late")["title"] == title
+                # Reports and manual names always keep native explicit precedence.
+                for explicit_title in ("BUG: 保留缺陷报告专用名称", "功能需求: 保留功能报告专用名称", "Manual title"):
+                    write_index(index, names + [{"id": "late", "thread_name": explicit_title}])
+                    expect(page.locator(".dtitle h2")).to_have_text(explicit_title, timeout=10000)
+                    expect(item.locator(".t")).to_have_text(explicit_title)
+                write_index(index, names)
+                expect(page.locator(".dtitle h2")).to_have_text(title, timeout=10000)
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.emulate_media(color_scheme="dark")
+                item.click()
+                expect(page.locator(".dtitle h2")).to_have_text(title)
+                page.screenshot(path=str(shots / "mobile-dark.png"))
+                page.close()
+            # Cold scan must find input outside both the head and tail windows.
+            with server(corpus, binary, None) as (base, opener):
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.goto(base, wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{corpus.uid("late")}"]').click()
+                expect(page.locator(".dtitle h2")).to_have_text(title)
+                # Truncation and replacement discard the old first-input cache.
+                path.write_bytes(initial)
+                page.reload(wait_until="networkidle")
+                expect(page.locator(".dtitle h2")).to_contain_text("(无标题)")
+                replacement = path.with_suffix(".replacement")
+                replacement.write_bytes(initial + encoded(codex_message("user", "Replacement input")))
+                replacement.replace(path)
+                page.reload(wait_until="networkidle")
+                expect(page.locator(".dtitle h2")).to_have_text("Replacement input")
+                path.write_bytes(initial + encoded(codex_message("user", "Same-length input")))
+                page.reload(wait_until="networkidle")
+                expect(page.locator(".dtitle h2")).to_have_text("Same-length input")
+                page.close()
+            browser.close()
+    print("PASS first-input title beyond head/tail: append, partial line, cold read, rewrite, report/manual priority", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     args = parser.parse_args()
+    first_input_check(args.binary)
     for explicit in (False, True):
         with tempfile.TemporaryDirectory(prefix="sessiondock-names-") as temporary:
             corpus, index, rows = build(Path(temporary))
