@@ -274,7 +274,7 @@ const NativeSdkView = {
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
     this.requests = requests;
-    this.pane.querySelector('#sdk-stop').hidden = !this.running || this.capabilities.interrupt === false;
+    this.pane.querySelector('#sdk-stop').hidden = (!this.running && !this.raw?.retry?.delay_seconds) || this.capabilities.interrupt === false;
     this.paintStatus();
     NativeSdkControls.paint(this);
     if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
@@ -287,6 +287,8 @@ const NativeSdkView = {
     sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
+    const scheduledRetry=raw.retry?.delay_seconds;
+    const retryText=scheduledRetry ? `正在重试：${scheduledRetry} 秒后自动重试${raw.retry.retry_at ? `（${new Date(raw.retry.retry_at).toLocaleTimeString()}）` : ''}；可停止重试。${retryReason || ''}` : null;
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
     const compacting = raw.status === 'compacting' || raw.compact?.state === 'compacting';
     const uncertain = raw.error_kind === 'uncertain';
@@ -310,10 +312,10 @@ const NativeSdkView = {
     const error = raw.error || (compactFailed ? raw.compact.error || '上下文压缩失败' : null)
       || (failed ? raw.last_turn?.error || observed.activity?.error || '上一回合失败' : null);
     const warning = uncertain || raw.error_kind === 'interrupted' || incomplete;
-    const kind = error ? (warning ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+    const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
-    let text = error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+    let text = scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
       : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
