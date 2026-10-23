@@ -649,7 +649,7 @@ const CodexSdkView = {
     const send = this.pane.querySelector('#sdk-send');
     sdkSyncSettings(this);
     send.textContent = active ? '排队' : '发送';
-    send.title = active ? '当前回合结束后发送；排队消息可撤销或立即引导' : '开始新回合';
+    send.title = active ? '当前回合结束后发送；排队消息可撤销或立即引导；Ctrl+Enter 直接引导' : '开始新回合';
     this.paintQueue();
     this.paintGauges();
     // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
@@ -717,12 +717,12 @@ const CodexSdkView = {
       const {card, foot, actions: controls} = ConversationUI.queuedMessage(item.text, state,
         {uid: this.uid, agent: this.agent, className: 'sdk-queued'});
       card.dataset.queueId = item.id;
-      for (const [action, label] of [['cancel', '撤销'], [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? '重试' : '立即引导']]) {
+      for (const [action, label] of [['cancel', '撤销'], [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? (item.direct_steer ? '重试引导' : '重试') : '立即引导']]) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'queued-send-dismiss';
         button.dataset.queueAction = action; button.textContent = label;
         button.title = action === 'steer' ? '将这条消息立即引导到正在进行的回合（steer）' : label;
-        button.disabled = item.state === 'sending' || (action === 'steer' && !this.turn);
+        button.disabled = item.state === 'sending' || ((action === 'steer' || (action === 'retry' && item.direct_steer)) && !this.turn);
         button.onclick = async () => {
           const generation = this.generation;
           holder._sdkQueueBusy = true;
@@ -750,31 +750,41 @@ const CodexSdkView = {
     }
   },
 
-  async send() {
+  async send(operation = 'turn') {
     const input = this.input;
     if (!input || !this.pane) return;
+    const steer = operation === 'steer', expectedTurn = this.turn?.id;
+    if (steer && !expectedTurn) {
+      this.setNotice('当前没有运行中的任务；请用 Enter 开始新回合。', 'blocked'); return;
+    }
     const generation = this.generation;
     const button = this.pane.querySelector('#sdk-send');
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
+    let steerRequest, steerOutcome;
+    const auditUid=this.uid;
     try {
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
       const text = payload.text;
-      if (await this.command(text)) {
+      if (!steer && await this.command(text)) {
         return;
       }
-      if (text.trimStart().startsWith('/') || text.trimStart().startsWith('!')) {
+      if (!steer && (text.trimStart().startsWith('/') || text.trimStart().startsWith('!'))) {
         this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
         return;
       }
-      const request_id = await CodexSdkCompose.submission(payload, null, null, this.agent);
+      const request_id = await CodexSdkCompose.submission(payload, null, null, this.agent, steer ? 'steer' : undefined);
+      if(steer)steerRequest=request_id;
+      if(steer)browserAuditEvent('sdk.steer.requested',{source:'codex'},{uid:payload.uid,requestId:request_id});
       const response = await this.request('api/codex-sdk/turn', {
         uid: payload.uid, text, attachments: payload.attachments, quotes: payload.quotes,
-        request_id,
+        request_id, ...(steer ? {expected_turn_id:expectedTurn} : {}),
       });
+      if(steer)steerOutcome=response.raw?.accepted ? 'native_received' : 'unconfirmed';
       if (!await CodexSdkCompose.accepted(this, payload, response, request_id)) return;
+      if(steer && response.raw?.accepted !== true)throw new Error(response.raw?.error || '原生尚未确认接收引导，请核对投递记录。');
       if (this.input === input) {
         this.paintPickers();
       }
@@ -782,6 +792,7 @@ const CodexSdkView = {
     } catch (error) {
       if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
     } finally {
+      if(steerRequest)browserAuditEvent('sdk.steer.finished',{source:'codex',outcome:steerOutcome || 'unconfirmed'},{uid:auditUid,requestId:steerRequest});
       if (this.current(generation)) CodexSdkCompose.failed(this);
       button.disabled = false;
       button.removeAttribute('aria-busy');

@@ -252,6 +252,8 @@ pub struct Turn {
     model: Option<String>,
     #[serde(default)]
     effort: Option<String>,
+    #[serde(default)]
+    expected_turn_id: Option<String>,
 }
 
 pub async fn turn(
@@ -295,10 +297,19 @@ pub async fn turn(
         Some(id) => id,
         None => crate::conversation::random_id().map_err(super::conversation::error)?,
     };
-    let result = sdk
-        .send(&thread, request_id, text, input, body.model, body.effort)
+    let result = if let Some(expected_turn) = body.expected_turn_id {
+        tokio::spawn(async move {
+            sdk.send_steer(&thread, request_id, text, input, expected_turn)
+                .await
+        })
         .await
-        .map_err(rpc)?;
+        .map_err(|_| rpc(RpcError::Disconnected))?
+        .map_err(rpc)?
+    } else {
+        sdk.send(&thread, request_id, text, input, body.model, body.effort)
+            .await
+            .map_err(rpc)?
+    };
     Ok(Json(json!({"ok": true, "raw": result})))
 }
 
