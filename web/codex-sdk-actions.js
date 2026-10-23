@@ -10,16 +10,17 @@ const CodexSdkActions = {
     const actions = document.createElement('div');
     actions.id = 'sdk-actions'; actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', '会话操作');
-    for (const [action, text] of [['fork', '分支会话'], ['revert', '回退对话'], ['compact', '压缩上下文'], ['review', '代码审查']]) {
+    for (const [action, text] of [['steer', '引导当前任务'], ['fork', '分支会话'], ['revert', '回退对话'], ['compact', '压缩上下文'], ['review', '代码审查']]) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'new-model-option sdk-action';
       button.dataset.sdkAction = action; button.title = text; button.setAttribute('aria-label', text);
-      button.innerHTML = uiIcon({fork:'fork', revert:'undo', compact:'compact', review:'review'}[action]);
+      button.innerHTML = uiIcon({steer:'continue', fork:'fork', revert:'undo', compact:'compact', review:'review'}[action]);
       const label = document.createElement('span'); label.className = 'sdk-action-label'; label.textContent = text;
       button.append(label);
       button.onclick = () => {
         view.closeToolbarMenus();
-        void this.command(view, `/${action}`);
+        if(action==='steer')void view.send('steer');
+        else void this.command(view, `/${action}`);
       };
       actions.append(button);
     }

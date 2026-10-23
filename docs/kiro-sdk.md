@@ -55,6 +55,24 @@ Hub 刷新等待最新节点能力和运行状态后恢复 SDK 视图。
 调用激活式 load；用户显式启动 SDK 后同步回放。缓存投影与 live 检查点分开，历史
 分页不移动 live 游标。
 
+## 运行中引导
+
+DELTA：Enter 保留 SessionDock 持久 FIFO；Ctrl+Enter 将编辑器文字直接交给
+`_session/steer {sessionId,message,messageId}`。会话操作中的“引导当前任务”使用同一
+编辑器，移动端可点击；按住 Ctrl 时发送按钮显示“引导”，点击直接引导；手机长按发送按钮
+500 毫秒触发一次引导，短按仍发送／排队。Shift+Enter 换行，输入法组合输入不提交。空闲时引导保留草稿。
+Kiro 2.24.1 官方 TUI 使用该接口，但 initialize 未广告；不回退到不存在的 `session/steer`。
+原生普通 `queuedMessages` 属于 TUI 本地状态；SessionDock 不另建第二套普通队列。
+
+引导复用独立操作账本和持久 RPC 写入身份，不进入普通 FIFO，不在失败、断线或重启时
+自动改为普通输入。只在 `queued:true` 后确认接收并清除本次草稿；原生拒绝或
+`queued:false`（包括 `epoch_changed`）保留输入，不伪造用户消息。接收不代表已处理，
+不重置当前助手／思考流。文本引用沿用公共 prompt 准备；附件须使用普通发送。
+浏览器审计记录引导请求及接收／失败结果，服务端账本保留投递与原生响应。
+
+验收：[引导浏览器](../tests/kiro_steer_browser.py)，覆盖节点／Hub 的键盘与点击入口、
+普通排队、输入法／换行、空闲与原生失败、丢弃回执、重复提交及刷新。
+
 ## 模型不可用后的退避重试
 
 DELTA：当前 prompt 最终返回 `InvalidModelError`（或同义的原生模型不可用完整提示）时，

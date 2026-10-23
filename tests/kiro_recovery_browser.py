@@ -149,7 +149,7 @@ def run(args):
                 page.wait_for_function("window.__kiroSnapshot?.session_id")
                 assert page.evaluate("window.__kiroSnapshot.session_id") == fixture.sid
                 caps = page.evaluate("window.__kiroSnapshot.capabilities")
-                assert caps["fork"] and caps["compact"] and caps["history"] and caps["rename"] and not caps["steer"], caps
+                assert caps["fork"] and caps["compact"] and caps["history"] and caps["rename"] and caps["steer"], caps
                 # Drop the HTTP acknowledgement after native creation completes.
                 creation = {}
                 def lose_create_ack(route):

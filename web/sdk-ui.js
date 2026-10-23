@@ -41,6 +41,9 @@ const SdkUI = {
     view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
       if (PathCompletion.key(view.input, event, () => view.uid)) return;
+      if (['kiro','codex'].includes(view.uid.split(':')[0]) && event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.isComposing) {
+        event.preventDefault(); void view.send('steer'); return;
+      }
       ConversationUI.submitOnEnter(event, () => view.send());
     };
     pane.querySelector('#sdk-send').onclick = () => view.send();
@@ -48,6 +51,7 @@ const SdkUI = {
     // Match the conversation editor: clicking SEND must not leave focus on a
     // disabled button while the request is pending.
     pane.querySelector('#sdk-send').onmousedown = event => event.preventDefault();
+    this.bindSteerSend(view);
     for (const kind of ['model', 'effort']) {
       pane.querySelector(`#sdk-${kind}`).onchange = async event => {
         const generation = view.generation, value = event.target.value;
@@ -58,7 +62,63 @@ const SdkUI = {
     }
   },
 
+  paintSend(view) {
+    const button = view.pane?.querySelector('#sdk-send');
+    if (!button || !view.steerSend) return;
+    const steer = view.steerSend.ctrl || view.steerSend.held;
+    button.textContent = steer ? '引导' : (view.uid.startsWith('codex:') ? !!view.turn : view.running) ? '排队' : '发送';
+    button.title = steer ? '引导当前任务' : '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务';
+  },
+
+  bindSteerSend(view) {
+    if (!['codex', 'kiro'].includes(view.uid.split(':')[0])) return;
+    const button = view.pane.querySelector('#sdk-send'), generation = view.generation;
+    const controller = new AbortController(), {signal} = controller;
+    const state = view.steerSend = {ctrl:false, held:false, controller};
+    let timer, pointer, consumed = false;
+    const current = () => view.current(generation) && view.steerSend === state;
+    const cancel = (suppress = false) => {
+      clearTimeout(timer); timer = null;
+      if (suppress && pointer) consumed = true;
+      pointer = null; state.held = false;
+      if (current()) this.paintSend(view);
+    };
+    const reset = () => { state.ctrl = false; cancel(true); };
+    signal.addEventListener('abort', reset, {once:true});
+    button.classList.add('sdk-steer-send');
+    for (const type of ['keydown', 'keyup']) document.addEventListener(type, event => {
+      if (!current()) return;
+      if (type === 'keydown' && !pointer) consumed = false;
+      state.ctrl = event.ctrlKey; this.paintSend(view);
+    }, {signal});
+    window.addEventListener('blur', reset, {signal});
+    document.addEventListener('visibilitychange', () => { if (document.hidden) reset(); }, {signal});
+    button.addEventListener('pointerdown', event => {
+      consumed = false; cancel();
+      if (event.pointerType !== 'touch' || !event.isPrimary || button.disabled) return;
+      pointer = {id:event.pointerId, x:event.clientX, y:event.clientY};
+      timer = setTimeout(() => {
+        if (!pointer || !current() || button.disabled) return;
+        consumed = true; state.held = true; this.paintSend(view);
+        void view.send('steer');
+      }, 500);
+    }, {signal});
+    button.addEventListener('pointermove', event => {
+      if (pointer && (Math.abs(event.clientX-pointer.x)>10 || Math.abs(event.clientY-pointer.y)>10)) cancel(true);
+    }, {signal});
+    button.addEventListener('pointerleave', () => cancel(true), {signal});
+    button.addEventListener('pointercancel', () => cancel(true), {signal});
+    window.addEventListener('pointerup', event => { if (pointer?.id === event.pointerId) cancel(); }, {signal});
+    button.addEventListener('contextmenu', event => { if (pointer || consumed || event.pointerType === 'touch') event.preventDefault(); }, {signal});
+    button.onclick = event => {
+      if (consumed) { consumed = false; event.preventDefault(); return; }
+      if (current()) void view.send(event.ctrlKey || state.ctrl ? 'steer' : 'turn');
+    };
+    this.paintSend(view);
+  },
+
   closeToolbar(view) {
+    view.steerSend?.controller.abort(); view.steerSend = null;
     view.toolbarObserver?.disconnect(); view.toolbarObserver = null;
     view.toolbarBindings?.abort(); view.toolbarBindings = null;
     view.toolbarWidth = null;

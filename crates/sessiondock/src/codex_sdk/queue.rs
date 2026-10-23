@@ -25,6 +25,8 @@ pub(super) struct Input {
     pub turn_id: Option<String>,
     #[serde(default)]
     pub native_item_id: Option<String>,
+    #[serde(default)]
+    pub direct_steer: bool,
 }
 
 type Document = HashMap<String, Vec<Input>>;
@@ -82,7 +84,7 @@ impl Queue {
     pub fn visible(&self, thread: &str) -> Value {
         json!(self.rows.lock().expect("queue").get(thread).into_iter().flatten()
             .filter(|item| !matches!(item.state.as_str(), "sent" | "cancelled"))
-            .map(|item| json!({"id":item.id,"text":item.text,"state":item.state,"error":item.error}))
+            .map(|item| json!({"id":item.id,"text":item.text,"state":item.state,"error":item.error,"direct_steer":item.direct_steer}))
             .collect::<Vec<_>>())
     }
 
@@ -260,6 +262,7 @@ impl CodexSdk {
                     error: None,
                     turn_id: None,
                     native_item_id: None,
+                    direct_steer: false,
                 },
             )?;
             live.cancel_capacity_retry();
@@ -271,6 +274,49 @@ impl CodexSdk {
             .get(thread, &id)
             .ok_or(RpcError::UnknownRequest)?;
         Ok(json!({"id":id,"queued":item.state != "sent","state":item.state,"steered":false}))
+    }
+
+    /// Submit directly to a specific live turn under the same lock as FIFO.
+    /// Never create a queued entry: a closing turn must not convert this to start.
+    pub async fn send_steer(
+        &self,
+        thread: &str,
+        id: String,
+        text: String,
+        input: Vec<Value>,
+        expected_turn: String,
+    ) -> Result<Value, RpcError> {
+        let lock = self.inner.queue.lock(thread);
+        let _guard = lock.lock().await;
+        let live = self.inner.ensure(thread).await?;
+        if self.inner.queue.get(thread, &id).is_none() {
+            if live.active_turn().as_deref() != Some(expected_turn.as_str()) {
+                return Err(RpcError::NoActiveTurn);
+            }
+            let item = Input {
+                id: id.clone(),
+                text,
+                input,
+                model: None,
+                effort: None,
+                state: "failed".into(),
+                error: Some("引导尚未投递".into()),
+                turn_id: None,
+                native_item_id: None,
+                direct_steer: true,
+            };
+            self.inner.queue.update(thread, item.clone())?;
+            self.inner.deliver(&live, item, Some(expected_turn)).await?;
+        }
+        let item = self
+            .inner
+            .queue
+            .get(thread, &id)
+            .ok_or(RpcError::UnknownRequest)?;
+        Ok(
+            json!({"id":id,"state":item.state,"accepted":item.state == "sent",
+            "steered":item.state == "sent","error":item.error}),
+        )
     }
 
     pub async fn queue_action(
@@ -298,6 +344,10 @@ impl CodexSdk {
                 item.state = "cancelled".into();
                 self.inner.queue.update(thread, item)?;
                 self.inner.queue_event(&live);
+            }
+            "retry" if item.direct_steer => {
+                let turn = live.active_turn().ok_or(RpcError::NoActiveTurn)?;
+                self.inner.deliver(&live, item, Some(turn)).await?;
             }
             "retry" => {
                 item.state = "queued".into();

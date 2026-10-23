@@ -257,10 +257,10 @@ const CodexSdkCompose = {
     return false;
   },
 
-  async submission(payload, model, effort, agent) {
+  async submission(payload, model, effort, agent, operation) {
     const holder = payload.draft || payload.state;
     const key = JSON.stringify({uid: payload.uid, agent, text: payload.text,
-      attachments: payload.attachments, quotes: payload.quotes, model, effort});
+      attachments: payload.attachments, quotes: payload.quotes, model, effort, ...(operation ? {operation} : {})});
     let previousKey = holder.sdkSubmission?.key;
     // Server-originated report drafts contain the node-local identity. A Hub
     // presentation prefix must not turn a retry into a second SDK submission.

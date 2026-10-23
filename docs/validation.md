@@ -602,3 +602,7 @@ patching Playwright APIs or treating native selectors/popovers as peer overlap.
 
 Agy 原生子代理归属：`python3 tests/agy_nesting_browser.py --binary target/debug/sessiondock`，
 私有原生目录与 Chromium 验证父子链、历史增量、父关系变更、刷新重启及宽窄明暗画面。
+
+Kiro 原生引导：[kiro_steer_browser.py](../tests/kiro_steer_browser.py) 覆盖节点与 Hub 的普通排队、Ctrl+Enter／点击引导及失败草稿保留。
+
+Codex 直接引导：[codex_sdk_steer_browser.py](../tests/codex_sdk_steer_browser.py) 覆盖节点／Hub、键盘／点击入口、原生拒绝、回合结束竞争、草稿与丢回执去重。

@@ -155,7 +155,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
-| POST `/api/codex-sdk/turn` `{uid, request_id?, text?, attachments?, quotes?, model?, effort?}` | Server-owned FIFO input; starts immediately when idle, otherwise waits; repeated `request_id` returns the same submission; staged attachments are resolved once |
+| POST `/api/codex-sdk/turn` `{uid, request_id?, text?, attachments?, quotes?, model?, effort?, expected_turn_id?}` | With `expected_turn_id`, direct native steer; otherwise server-owned FIFO input; starts immediately when idle, otherwise waits; repeated `request_id` returns the same submission; staged attachments are resolved once |
 | POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); no implicit steering |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
@@ -337,6 +337,19 @@ behavior; they do not require other sources to expose unsupported controls.
   at the narrowest pane/scale it moves into the existing toolbar overflow menu.
   Coverage: [controls](../tests/codex_sdk_controls_browser.py) and
   [layout](../tests/codex_sdk_layout_browser.py).
+- DELTA: Ctrl+Enter directly steers the active turn; the “引导当前任务” toolbar
+  action submits the same editor on desktop/mobile. Holding Ctrl changes SEND to
+  引导 and clicking steers; touch-holding SEND for 500 ms steers once without a
+  second ordinary send on release. Short taps retain ordinary send/queue.
+  Idle, rejected or uncertain
+  submissions retain the draft. Shift+Enter and IME composition do not steer.
+  `POST /api/codex-sdk/turn` accepts `expected_turn_id` for this explicit operation:
+  it validates the live turn under the queue lock and calls native `turn/steer`,
+  never admits it to FIFO or falls back to `turn/start`. A durable submission ID
+  returns the original receipt on repeat requests, including lost HTTP replies.
+  Failed direct inputs offer “重试引导” only while a turn is active; cancellation
+  remains available. Confirmed native reception does not prove consumption.
+  Coverage: [direct steer browser](../tests/codex_sdk_steer_browser.py).
 - Composer: same look as the message composer. Enter sends (Shift+Enter
   newline, not on mobile); the button reads 发送 or, during a turn, 排队.
   Inputs are queued by default. Each pending bubble has 撤销 and 立即引导

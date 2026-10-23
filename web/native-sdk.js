@@ -286,6 +286,8 @@ const NativeSdkView = {
     const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
     sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
+    if(this.uid.startsWith('kiro:'))send.title+='；Ctrl+Enter 引导当前任务';
+    SdkUI.paintSend(this);
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const scheduledRetry=raw.retry?.delay_seconds;
     const retryText=scheduledRetry ? `正在重试：${scheduledRetry} 秒后自动重试${raw.retry.retry_at ? `（${new Date(raw.retry.retry_at).toLocaleTimeString()}）` : ''}；可停止重试。${retryReason || ''}` : null;
@@ -405,18 +407,27 @@ const NativeSdkView = {
     }
   },
 
-  async send() {
+  async send(operation = 'turn') {
     if (!this.input || !this.pane) return;
+    const steer = operation === 'steer';
+    if (steer && (!this.uid.startsWith('kiro:') || !this.running || !this.capabilities.steer)) {
+      this.setNotice('当前没有可引导的运行中任务；请用 Enter 开始新回合。', 'blocked'); return;
+    }
     const generation = this.generation, button = this.pane.querySelector('#sdk-send');
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy','true');
+    let steerRequest;
+    const auditUid=this.uid;
     try {
-      if (await NativeSdkControls.command(this, this.input.value)) return;
+      if (!steer && await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
-      const request_id = await CodexSdkCompose.submission(payload,null,null,this.agent);
-      const response = await this.request('api/native-sdk/turn', {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
+      if (steer && payload.attachments.length) throw new Error('Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。');
+      const request_id = await CodexSdkCompose.submission(payload,null,null,this.agent,steer ? 'steer' : undefined);
+      if(steer)steerRequest=request_id;
+      if(steer)browserAuditEvent('sdk.steer.requested',{source:'kiro'},{uid:payload.uid,requestId:request_id});
+      const response = await this.request(`api/native-sdk/${operation}`,  {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
         request_id,draft_revision:payload.draft_revision});
       if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
       if ((response.accepted ?? response.raw?.accepted) === false)
@@ -425,7 +436,12 @@ const NativeSdkView = {
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this,payload);
-    } catch (error) { if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked'); }
+      if(steer)browserAuditEvent('sdk.steer.finished',{source:'kiro',outcome:'native_queued'},{uid:auditUid,requestId:steerRequest});
+      if(steer && this.current(generation))this.setNotice('原生已接收引导；尚未确认处理。');
+    } catch (error) {
+      if(steer)browserAuditEvent('sdk.steer.finished',{source:'kiro',outcome:'failed'},{uid:auditUid,requestId:steerRequest});
+      if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
+    }
     finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy');if(this.current(generation))sdkSyncSettings(this); }
   },
   async interrupt() {

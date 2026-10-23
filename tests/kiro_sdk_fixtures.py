@@ -430,6 +430,24 @@ class FakeKiroAcp:
             self.cancel.set()
             for ev, _ in list(self.pending_rpc.values()):
                 ev.set()
+        elif method == "_session/steer":
+            text = params.get("message")
+            if not isinstance(text, str) or not text or "prompt" in params:
+                self.error(message, -32602, "Expected message string")
+            elif text == "reject steer":
+                self.error(message, -32601, "Steer unavailable")
+            elif text == "drop steer":
+                self.reply(message, {"queued": False, "messageId": params["messageId"], "dropped": "epoch_changed"})
+            else:
+                gate = self.sessions_root / "steer-delay"
+                until = time.monotonic() + 20
+                while text == "delayed steer" and gate.exists() and time.monotonic() < until:
+                    time.sleep(0.02)
+                mid = "steer-" + params["messageId"]
+                self.append_v3_message("user", text)
+                self.update("steering_queued", messageId=mid, content=text)
+                self.reply(message, {"queued": True, "messageId": mid})
+                self.update("agent_message_chunk", content={"type":"text","text":" continuing after steer"})
         elif method == "session/prompt":
             self.cancel.clear()
             self.turn_thread = threading.Thread(target=self.run_prompt, args=(message,), daemon=True)
@@ -485,7 +503,7 @@ class FakeKiroAcp:
         text = " ".join(b.get("text", "") for b in blocks if isinstance(b, dict)).strip()
         self.append_v3_message("user", text)
 
-        if text == "wait-for-cancel":
+        if text in ("wait-for-cancel", "steer-hold"):
             self.update(
                 "agent_thought_chunk",
                 content={"type": "text", "text": "Thinking before cancellation..."},
@@ -494,7 +512,7 @@ class FakeKiroAcp:
                 "agent_message_chunk",
                 content={"type": "text", "text": "Partial response before stop"},
             )
-            self.cancel.wait(timeout=15.0)
+            self.cancel.wait(timeout=120.0 if text == "steer-hold" else 15.0)
             self.reply(message, {"stopReason": "cancelled"})
             return
 

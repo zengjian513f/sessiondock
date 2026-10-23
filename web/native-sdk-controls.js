@@ -305,6 +305,7 @@ const NativeSdkControls = {
     for(const item of steers){const body=cardFor({...item,id:item.id || item.request_id},steerLabels[item.status] || '引导回执');body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note','原生接收回执不能确认输入已被处理；临近任务结束时可能另开一轮。'));if(item.error)body.append(el('p','sdk-control-note',item.error));}
   },
   async action(view,method,body={}) {
+    if(method==='steer' && view.uid.startsWith('kiro:'))return view.send('steer');
     const generation=view.generation;
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
     if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
