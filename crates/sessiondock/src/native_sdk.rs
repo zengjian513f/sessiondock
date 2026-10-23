@@ -2,6 +2,8 @@
 //! native transport; this module never writes native session records.
 #[path = "native_sdk_queue.rs"]
 mod input_queue;
+#[path = "native_sdk_resources.rs"]
+pub(crate) mod resources;
 pub(crate) use input_queue::Input as QueuedInput;
 
 use serde_json::{Value, json};
@@ -56,12 +58,39 @@ pub(crate) struct Submission;
 impl NativeSdks {
     pub(crate) async fn resource_process_owners(
         &self,
-        uids: &[String],
+        rows: &[crate::runtime::procscan::SessionRow],
     ) -> Vec<(String, process_links::Process)> {
-        match self.providers.get("kiro") {
-            Some(Provider::Kiro(bridge)) => bridge.process_owners(uids).await,
-            _ => Vec::new(),
+        let mut owners = Vec::new();
+        for (source, provider) in &self.providers {
+            let identities: Vec<_> = rows
+                .iter()
+                .filter(|r| r.source == *source)
+                .map(|r| (r.uid.clone(), r.sid.clone()))
+                .collect();
+            if identities.is_empty() {
+                continue;
+            }
+            let found = match provider {
+                Provider::Kiro(bridge) => {
+                    bridge
+                        .process_owners(
+                            &identities
+                                .iter()
+                                .map(|(uid, _)| uid.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                }
+                Provider::Claude(bridge) => bridge.resource_process_owners(&identities).await,
+                Provider::Grok(bridge) => bridge.resource_process_owners(&identities).await,
+                Provider::Agy(bridge) => bridge.resource_process_owners(&identities).await,
+                // OpenCode's service handles multiple sessions. Its own PID
+                // is not an exclusive session owner; native evidence is scanned.
+                Provider::OpenCode(_) => Vec::new(),
+            };
+            owners.extend(found);
         }
+        owners
     }
 
     pub(crate) fn new(

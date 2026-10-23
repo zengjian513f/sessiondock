@@ -85,16 +85,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         .as_ref()
         .map(|m| m.directory().join("process-links.json"));
     let scan = scanned.scan;
-    let sdk_owners = state
-        .native_sdks
-        .resource_process_owners(
-            &rows
-                .iter()
-                .filter(|r| r.source == "kiro")
-                .map(|r| r.uid.clone())
-                .collect::<Vec<_>>(),
-        )
-        .await;
+    let sdk_owners = state.native_sdks.resource_process_owners(&rows).await;
     tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(&root);
         let owned = scan.active_processes(&rows).owned;
@@ -193,12 +184,12 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             let stale =
                 linux::launcher_identities(&snapshot, pid, |e| owners.contains_key(&e.process.pid));
             while current > 1 && seen.insert(current) {
-                if let Some(owner) = owners.get(&current) {
-                    return Some(owner.clone());
-                }
                 let entry = snapshot.entries.get(&current)?;
                 if entry.shared_parent {
                     return None;
+                }
+                if let Some(owner) = owners.get(&current) {
+                    return Some(owner.clone());
                 }
                 for key in entry.identities.iter().filter(|key| !stale.contains(key)) {
                     if let Some(owner) = by_sid.get(key) {
@@ -219,6 +210,9 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         let mut incoming = Vec::new();
         let mut bindings = Vec::new();
         for entry in snapshot.entries.values() {
+            if entry.shared_parent {
+                continue;
+            }
             let mut current = entry.process.pid;
             let mut seen = HashSet::new();
             let mut remote = cache.links.get(&entry.process).cloned();
@@ -226,6 +220,9 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 let Some(ancestor) = snapshot.entries.get(&current) else {
                     break;
                 };
+                if ancestor.shared_parent {
+                    break;
+                }
                 if remote.is_none() {
                     remote = cache.links.get(&ancestor.process).cloned();
                 }
@@ -516,17 +513,7 @@ async fn agent_catalog(
         })
         .collect();
     let mut owners = Vec::new();
-    for (uid, process) in state
-        .native_sdks
-        .resource_process_owners(
-            &rows
-                .iter()
-                .filter(|r| r.source == "kiro")
-                .map(|r| r.uid.clone())
-                .collect::<Vec<_>>(),
-        )
-        .await
-    {
+    for (uid, process) in state.native_sdks.resource_process_owners(&rows).await {
         if let Some(session) = sessions.get(&uid) {
             owners.push(Owner {
                 process,

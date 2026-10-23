@@ -5,6 +5,7 @@ from contextlib import ExitStack
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 from types import SimpleNamespace
 
@@ -69,6 +70,16 @@ def main():
                         print(f'Kiro list ready; restarted={restarted}', flush=True)
                         if not restarted:
                             uid = page.evaluate('sid => S.sessions.find(s => s.sid === sid).uid', fixture.sid)
+                            START[700] = 10000
+                            proc_pid(fixture.proc, 700, 'kiro-cli', ['kiro-cli', 'chat', '--resume-id', fixture.sid], 1)
+                            proc_pid(fixture.proc, 300, 'python', ['python', 'cli-worker.py'], 700)
+                            check_bindings(page, fixture.sid, 700)
+                            page.locator(f'#side .item[data-uid="{uid}"]').click()
+                            page.locator('#a-resources').click()
+                            expect(page.locator('.session-resources')).to_be_visible()
+                            shutil.rmtree(fixture.proc / '700'); shutil.rmtree(fixture.proc / '300')
+                            check_bindings(page, fixture.sid, 700, False)
+                            print('PASS Kiro external CLI and worker', flush=True)
                             page.locator(f'#side .item[data-uid="{uid}"]').click()
                             page.locator('#a-sdk').click()
                             page.locator('#sdk-input').click()

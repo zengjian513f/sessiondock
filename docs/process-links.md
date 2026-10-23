@@ -51,12 +51,32 @@ than created. Explicit attachment or
 detachment always wins, including after restart. The sidebar parent never changes
 process ownership.
 
-Kiro SDK ownership comes from the catalog's exact native UID and existing
-sdkhost key. The adapter checks the host is still running around the Linux
-process-incarnation read, and publishes that CLI as an owner in both collector
-and polling modes. Resource reads never start or resume Kiro. This also works
-after a SessionDock restart before opening the SDK view. The shared sdkhost
-process is not charged to the session; CLI descendants follow normal ancestry.
+Dedicated Claude, Grok, Agy and Kiro SDK ownership comes from the exact native
+session and the adapter's existing sdkhost binding. The adapter checks the host
+is still running around the Linux process-incarnation read, and publishes that
+CLI as an owner in both collector and polling modes. Resource reads never start,
+resume or replay an SDK session. Existing adapter checkpoints also supply this
+identity after a SessionDock restart before opening the SDK view. Unhosted CLIs
+retain their native argv/file-descriptor scan path.
+
+| Source | Dedicated CLI / SDK evidence | Work under a shared service |
+| --- | --- | --- |
+| Claude | Native resume/file identity; exact SDK host binding | `CLAUDE_CODE_SESSION_ID` on native tool processes |
+| Codex | Native rollout identity; shared app-server excluded | `CODEX_THREAD_ID`, companion/session identity on tool processes |
+| Grok | Native resume/file identity; exact SDK host binding | `GROK_SESSION_ID` on native tool processes |
+| Agy | Native conversation DB descriptor; exact SDK runtime binding | Inherited verified process ancestry |
+| Kiro | Native CLI resume identity; catalog SDK host binding | Inherited verified process ancestry |
+| OpenCode | Exact CLI `--session`, `--session=`, or `-s` identity | Native `OPENCODE_SESSION_ID` on tool processes |
+
+DELTA: resource attribution includes dedicated SDK hosts and OpenCode's explicit
+native identities. Codex app-server, OpenCode `serve`, sdkhost and tmux
+are attribution boundaries, not exclusive session owners. Their inherited
+launcher variables cannot charge the service or unidentified children to an old
+session. Children with their own native identity remain attributable. Shared
+in-process inference/subagent overhead without separate process evidence stays
+unassigned; it is not replicated across sessions or shown as measured zero.
+An independently launched ptyhost retains verified SSH initiator attribution;
+being idle infrastructure affects activity indicators, not resource ownership.
 
 ## Current wire contract
 

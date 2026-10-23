@@ -169,12 +169,16 @@ impl Engine {
             .update(snapshot, &self.bindings, &self.catalog);
         self.incoming.clear();
         for entry in snapshot.entries.values() {
+            if entry.shared_parent {
+                continue;
+            }
             let mut current = entry.process.pid;
             let mut seen = HashSet::new();
             let mut local: Option<Session> = None;
             let mut inherited: Option<Binding> = None;
             let mut remote: Option<Link> = self.links.get(&entry.process).cloned();
             let mut connection = None;
+            let mut shared_boundary = false;
             let stale = crate::linux::launcher_identities(snapshot, entry.process.pid, |e| {
                 owners.contains_key(&e.process)
             });
@@ -183,6 +187,10 @@ impl Engine {
                     break;
                 };
                 if ancestor.shared_parent {
+                    shared_boundary = true;
+                    if local.is_none() {
+                        inherited = None;
+                    }
                     break;
                 }
                 if local.is_none() {
@@ -206,7 +214,7 @@ impl Engine {
                 current = ancestor.parent;
             }
             let origin = self.connections.origin(&entry.process);
-            if inherited.is_none() {
+            if inherited.is_none() && !shared_boundary {
                 inherited = self
                     .connections
                     .ancestor_binding(&entry.process, snapshot, &self.bindings)

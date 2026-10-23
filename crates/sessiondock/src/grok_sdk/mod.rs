@@ -143,6 +143,30 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
 }
 
 impl Bridge {
+    pub(crate) async fn resource_process_owners(
+        &self,
+        identities: &[(String, String)],
+    ) -> Vec<(String, process_links::Process)> {
+        let Some(state) = &self.state_dir else {
+            return Vec::new();
+        };
+        let mut owners = Vec::new();
+        for (uid, sid) in identities {
+            if let Some(key) =
+                crate::native_sdk::resources::checkpoint_host(state, "grok", uid, sid)
+                && let Some(process) = crate::native_sdk::resources::hosted_process(
+                    &self.proc_root,
+                    &state.join("sdkhost"),
+                    &key,
+                )
+                .await
+            {
+                owners.push((uid.clone(), process));
+            }
+        }
+        owners
+    }
+
     fn save_attempts(
         &self,
         name: &str,

@@ -30,7 +30,7 @@ pub(super) struct ProcessConfig {
     profile: CliProfile,
     home: PathBuf,
     model_cwd: PathBuf,
-    proc_root: PathBuf,
+    pub(super) proc_root: PathBuf,
     secrets: std::sync::Mutex<Vec<String>>,
     owned: std::sync::Mutex<std::collections::HashSet<u32>>,
     pub host_dir: Option<PathBuf>,

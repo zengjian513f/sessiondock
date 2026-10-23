@@ -108,24 +108,8 @@ impl Bridge {
                 continue;
             }
             if let (Some(dir), Some(key)) = (&self.host, &entry.host_key) {
-                let Ok(client) = sdkhost_client::Client::attach(dir, key).await else {
-                    continue;
-                };
-                let Ok(before) = client.status().await else {
-                    continue;
-                };
-                if before.exit.is_some() {
-                    continue;
-                }
-                let Some((process, _)) =
-                    process_links::linux::identity(&self.proc_root, before.pid)
-                else {
-                    continue;
-                };
-                // An exited host cannot lend a reused PID to its old session.
-                if let Ok(after) = client.status().await
-                    && after.exit.is_none()
-                    && after.pid == process.pid
+                if let Some(process) =
+                    crate::native_sdk::resources::hosted_process(&self.proc_root, dir, key).await
                 {
                     owners.push((uid.clone(), process));
                 }

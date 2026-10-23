@@ -659,6 +659,14 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let Some(cmd) = tree.cmdline(pid) else {
             continue;
         };
+        if cli_name(argv0_of(&cmd)) == "opencode" {
+            let args: Vec<_> = cmd.split_ascii_whitespace().skip(1).collect();
+            if let Some(sid) = process_links::linux::opencode_session(&args) {
+                sids.entry(format!("opencode:{}", sid.to_ascii_lowercase()))
+                    .or_default()
+                    .insert(i64::from(pid));
+            }
+        }
         if cli_name(argv0_of(&cmd)) == "opencode"
             && let Ok(target) = std::fs::read_link(tree.root().join(pid.to_string()).join("cwd"))
             && let Some(started) = tree.started_at(pid)
@@ -956,7 +964,7 @@ impl Scan {
 
     fn identity_key(session: &SessionRow) -> String {
         let sid = session.sid.to_ascii_lowercase();
-        if matches!(session.source.as_str(), "agy" | "kiro") && !sid.is_empty() {
+        if matches!(session.source.as_str(), "agy" | "kiro" | "opencode") && !sid.is_empty() {
             format!("{}:{sid}", session.source)
         } else {
             sid
