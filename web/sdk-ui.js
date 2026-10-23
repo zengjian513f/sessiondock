@@ -306,12 +306,20 @@ const SdkUI = {
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
       if (!force && this.historyEntry === entry && data?.end === entry.end
           && data.messages === entry.msgs && data.length === entry.msgs.length
-          && data.partial === entry.partial && data.activity === entry.activity) {
+          && data.partial === entry.partial
+          && data.activity?.state === entry.activity?.state
+          && data.activity?.turn_id === entry.activity?.turn_id
+          && data.activity?.reason === entry.activity?.reason) {
+        // A poll can deliver a fresh activity object without changing history.
+        // Keep the text nodes (and an ongoing native drag selection) intact.
+        const activityChanged = data.activity !== entry.activity;
+        data.activity = entry.activity;
         // CLI-only updates can close a native turn whose ending was never
         // written. They must refresh status even when history is unchanged.
-        if (this.connected && (data.observedActivity?.state !== observed?.state
-            || data.observedActivity?.reason !== observed?.reason)) this.paintStatus();
+        const observedChanged = data.observedActivity?.state !== observed?.state
+          || data.observedActivity?.reason !== observed?.reason;
         data.observedActivity = observed;
+        if (this.connected && (activityChanged || observedChanged)) this.paintStatus();
         return;
       }
       this.historyEntry = entry;
