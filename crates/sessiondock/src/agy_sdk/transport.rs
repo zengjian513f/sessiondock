@@ -603,6 +603,49 @@ impl Native {
             .is_some_and(|control| control.cancelled(turn))
     }
 
+    pub async fn rename(&mut self, title: &str) -> Result<(), String> {
+        let control = self.control.as_ref().ok_or(
+            "agy_sdk_rename_unavailable: 此旧运行实例没有原生管理接口授权；请待任务完成后重新启动 SDK。")?;
+        control.rename(self.pid, &self.sid, title).await?;
+        // The native RPC updates memory before its summary write completes.
+        // Await read-only persistence evidence so the next list refresh sees it.
+        let path = self.process.home.join("conversation_summaries.db");
+        let sid = self.sid.clone();
+        let title = title.to_owned();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let (path, sid, title) = (path.clone(), sid.clone(), title.clone());
+            let visible = tokio::task::spawn_blocking(move || {
+                let db = rusqlite::Connection::open_with_flags(
+                    path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                )
+                .ok()?;
+                let stored: String = db
+                    .query_row(
+                        "SELECT title FROM conversation_summaries WHERE conversation_id=?1",
+                        [sid],
+                        |r| r.get(0),
+                    )
+                    .ok()?;
+                Some(stored == title)
+            })
+            .await
+            .ok()
+            .flatten()
+                == Some(true);
+            if visible {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(
+                    "agy_sdk_rename_pending: 原生已接受改名，标题落盘尚未确认；请刷新核对。".into(),
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     pub async fn interrupt(&mut self, turn: &str) -> Result<(), String> {
         let control = self.control.as_ref().ok_or(
             "agy_sdk_interrupt_unavailable: 此旧运行实例没有原生取消接口的授权；已保留运行中的任务，不会用信号或重启代替停止。"

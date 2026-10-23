@@ -53,6 +53,9 @@ const CodexSdkActions = {
     this.pending = operation;
     this.paint(view);
     let succeeded = false;
+    const requestId = crypto.randomUUID();
+    const renameAudit = (phase,data={}) => { if(action==='rename') browserAuditEvent('sdk.rename.'+phase,{source:'codex',...data},{uid,requestId}); };
+    renameAudit('invoked',{dialog:!argument});
     try {
       if (action === 'fork') {
         const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id: argument || null});
@@ -77,8 +80,10 @@ const CodexSdkActions = {
           field.focus(); field.select();
           name = await modal.answer;
         }
-        if (!name || !current()) return true;
-        await view.request('api/codex-sdk/rename', {uid, name});
+        if (!name || !current()) { renameAudit('finished',{outcome:name?'session_changed':'cancelled'}); return true; }
+        renameAudit('requested',{title_length:name.length});
+        await view.request('api/codex-sdk/rename', {uid, name, request_id:requestId});
+        renameAudit('finished',{outcome:'succeeded'});
         succeeded = true;
         if (current()) view.setNotice('会话已重命名。');
         await loadTermList(true);
@@ -117,6 +122,7 @@ const CodexSdkActions = {
         if (typeof CodexSdkCompose !== 'undefined') CodexSdkCompose.input(view);
       }
     } catch (error) {
+      renameAudit('finished',{outcome:'failed'});
       if (current()) view.setNotice(`会话操作失败：${error.message}`, 'blocked');
     } finally {
       if (this.pending === operation) this.pending = false;

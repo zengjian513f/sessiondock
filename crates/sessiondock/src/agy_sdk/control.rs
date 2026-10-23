@@ -1,4 +1,4 @@
-//! The local Connect cancellation endpoint used by Agy's interactive UI.
+//! The local Connect session-control endpoints used by Agy's interactive UI.
 //! Credentials and the log belong to this exact bridge runtime, never another CLI.
 use crate::hub::client::{Client, Request, Target};
 use serde_json::json;
@@ -77,16 +77,37 @@ impl Control {
     }
 
     pub async fn cancel(&self, pid: u32, sid: &str, turn: &str) -> Result<(), String> {
+        self.request(
+            pid,
+            "CancelCascadeInvocation",
+            json!({"cascadeId":sid,
+            "killBackgroundTasks":false,"notifyParent":false}),
+        )
+        .await?;
+        tokio::fs::write(self.directory.join("cancelled-turn"), turn)
+            .await
+            .map_err(|_| "agy_sdk_interrupt_receipt: 原生已接受取消，但回执未持久化。")?;
+        Ok(())
+    }
+    pub async fn rename(&self, pid: u32, sid: &str, title: &str) -> Result<(), String> {
+        self.request(
+            pid,
+            "UpdateConversationAnnotations",
+            json!({"cascadeId":sid,
+            "annotations":{"title":title},"mergeAnnotations":true}),
+        )
+        .await
+    }
+
+    async fn request(&self, pid: u32, method: &str, body: serde_json::Value) -> Result<(), String> {
         let log = tokio::fs::read_to_string(&self.log).await.map_err(
-            |_| "agy_sdk_interrupt_unavailable: 无法取得此运行实例的原生取消接口；任务继续运行。",
+            |_| "agy_sdk_control_unavailable: 无法取得本实例的原生管理接口；任务继续运行。",
         )?;
-        // Use only the startup block of our owned PID, not a shared/native log
-        // or an arbitrary port supplied by a browser or another process.
         let marker = format!("Starting language server process with pid {pid}\n");
         let startup = log
             .rsplit_once(&marker)
             .map(|(_, rest)| rest)
-            .ok_or("agy_sdk_interrupt_unavailable: 原生取消接口的进程身份不匹配；任务继续运行。")?;
+            .ok_or("agy_sdk_control_unavailable: 原生接口进程身份不匹配；任务继续运行。")?;
         let port = startup
             .lines()
             .find_map(|line| {
@@ -94,38 +115,70 @@ impl Control {
                     .and_then(|(_, tail)| tail.strip_suffix(" for HTTP"))
                     .and_then(|port| port.parse::<u16>().ok())
             })
-            .ok_or("agy_sdk_interrupt_unavailable: 此 CLI 未提供本机取消接口；任务继续运行。")?;
+            .ok_or("agy_sdk_control_unavailable: 此 CLI 未提供本机管理接口。")?;
         let target = Target {
             addr: ([127, 0, 0, 1], port).into(),
             token: String::new(),
             tls: false,
         };
-        let body = serde_json::to_vec(
-            &json!({"cascadeId":sid,"killBackgroundTasks":false,"notifyParent":false}),
-        )
-        .unwrap();
+        let body = serde_json::to_vec(&body).unwrap();
+        let path = format!("/exa.language_server_pb.LanguageServerService/{method}");
         let headers = [
             ("Content-Type", "application/json"),
             ("Connect-Protocol-Version", "1"),
             ("x-codeium-csrf-token", self.token.as_str()),
         ];
-        let response = tokio::time::timeout(Duration::from_secs(5), async {
-            let response = Client::default().open(&target, Request {
-                method: "POST", target: "/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation",
-                headers: &headers, body: Some(&body), connect: Duration::from_secs(5), idle: Duration::from_secs(5),
-            }).await.map_err(|_| "agy_sdk_interrupt_failed: 原生取消请求未获确认；未结束运行时，请核对当前回合。")?;
-            let status = response.status;
-            let bytes = response.into_body().read_to_end(usize::MAX).await
-                .map_err(|_| "agy_sdk_interrupt_failed: 原生取消响应未完整到达；未结束运行时，请核对当前回合。")?;
-            if status != 200 || serde_json::from_slice::<serde_json::Value>(&bytes).is_err() {
-                return Err("agy_sdk_interrupt_failed: 原生接口拒绝取消请求；未结束运行时。".to_owned());
+        let request = || Request {
+            method: "POST",
+            target: &path,
+            headers: &headers,
+            body: Some(&body),
+            connect: Duration::from_secs(5),
+            idle: Duration::from_secs(5),
+        };
+        let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+            let client = Client::default();
+            let response = client.open(&target, request()).await?;
+            let mut status = response.status;
+            let mut bytes = response.into_body().read_to_end(usize::MAX).await?;
+            // Newer native servers use a self-signed TLS listener but retain the
+            // same startup label. Retry only an explicit HTTP-to-HTTPS rejection,
+            // which cannot have executed the mutation. Never retry unknown results.
+            if status == 400
+                && String::from_utf8_lossy(&bytes)
+                    .contains("Client sent an HTTP request to an HTTPS server")
+            {
+                let connector = native_tls::TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .danger_accept_invalid_hostnames(true)
+                    .build()
+                    .map_err(|_| crate::hub::client::ClientError::ConnectionFailed)?;
+                let socket = tokio::net::TcpStream::connect(target.addr)
+                    .await
+                    .map_err(|_| crate::hub::client::ClientError::ConnectionFailed)?;
+                // Only our PID's loopback port and instance-owned CSRF grant.
+                // The Hub's normal TLS validation is unchanged.
+                let socket = tokio_native_tls::TlsConnector::from(connector)
+                    .connect("localhost", socket)
+                    .await
+                    .map_err(|_| crate::hub::client::ClientError::ConnectionFailed)?;
+                let response = client.open_on_stream(&target, request(), socket).await?;
+                status = response.status;
+                bytes = response.into_body().read_to_end(usize::MAX).await?;
             }
-            Ok(())
-        }).await.map_err(|_| "agy_sdk_interrupt_timeout: 原生取消请求超时；未结束运行时，请核对当前回合。")?;
-        response?;
-        tokio::fs::write(self.directory.join("cancelled-turn"), turn)
-            .await
-            .map_err(|_| "agy_sdk_interrupt_receipt: 原生已接受取消，但回执未持久化。")?;
+            Ok::<_, crate::hub::client::ClientError>((status, bytes))
+        })
+        .await
+        .map_err(|_| "agy_sdk_control_timeout: 原生请求超时；未终结运行时，请核对操作结果。")?
+        .map_err(
+            |_| "agy_sdk_control_failed: 原生响应未完整到达；未终结运行时，请核对操作结果。",
+        )?;
+        if outcome.0 != 200 || serde_json::from_slice::<serde_json::Value>(&outcome.1).is_err() {
+            return Err(format!(
+                "agy_sdk_control_failed: 原生接口拒绝 {method}（HTTP {}）；任务继续运行。",
+                outcome.0
+            ));
+        }
         Ok(())
     }
 }

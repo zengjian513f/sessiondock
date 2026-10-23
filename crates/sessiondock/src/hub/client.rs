@@ -326,6 +326,27 @@ impl Client {
         pending.response().await
     }
 
+    /// Reuse HTTP framing for an already authenticated, locally owned transport.
+    /// Hub requests continue to use `open` and system-validated TLS.
+    pub(crate) async fn open_on_stream(
+        &self,
+        target: &Target,
+        request: Request<'_>,
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    ) -> Result<Response, ClientError> {
+        let head = encode_head(target, &request)?;
+        let mut pending = Pending {
+            stream: UpstreamStream::new(stream),
+            idle: request.idle,
+            head_only: request.method.eq_ignore_ascii_case("HEAD"),
+        };
+        pending.send(&head).await?;
+        if let Some(body) = request.body {
+            pending.send(body).await?;
+        }
+        pending.response().await
+    }
+
     /// Connect and send the request line and headers only. The caller streams
     /// the body with `Pending::send` (its length must be in `request.headers`)
     /// and then reads `Pending::response`.

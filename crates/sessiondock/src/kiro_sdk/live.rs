@@ -1623,7 +1623,7 @@ impl LiveState {
             "compact": self.supports_method("_kiro/session/compact"),
             "fork": self.supports_method("session/fork"),
             "fork_at_message": self.agent_capabilities["sessionCapabilities"]["fork"]["_meta"]["kiro"]["messageId"] == true,
-            "rename": self.supports_method("session/rename") || self.supports_method("_kiro/session/rename"),
+            "rename": true,
             "history": self.supports_method("_kiro/session/history"),
             "export": self.supports_method("_kiro/session/export"),
             "revert": false,

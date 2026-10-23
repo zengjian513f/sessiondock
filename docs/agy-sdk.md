@@ -50,6 +50,7 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 | create | 无提示词启动，读取原生 init 的 SID/cwd，关闭空输入；不调用模型来换取身份 |
 | turn | 服务端逐会话 FIFO；重复 request_id 返回原回执，不重复发送 |
 | interrupt | 调用本实例的原生 `CancelCascadeInvocation`，`killBackgroundTasks=false`、`notifyParent=false`；不发送 SIGINT/SIGKILL，不因取消超时终结进程；重复请求幂等 |
+| rename | 本实例的 `UpdateConversationAnnotations`，`annotations.title`、`mergeAnnotations=true`；等待读取原生摘要确认标题 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
 | models | profile 环境中执行原生 `agy models`，解析 TSV；失败不填猜测模型 |
 | discard | 仅确认可丢弃网页创建回执；保留原生文件及已经接受的任务 |
@@ -68,6 +69,16 @@ DELTA（BUG-20261022-124950-cf8e22）：停止按钮只取消当前原生 invoca
 桥接 state 的私有 control 目录，日志端口必须匹配所持有的 PID，凭据不进入诊断。
 取消请求失败、超时或旧运行实例缺少凭据时显示明确错误，保留任务，不退回信号或重启。
 节点服务重启复用原有凭据及取消回执；取消不是自动重放输入的理由。
+
+DELTA（BUG-20261023-025934-a5d53c）：`/rename` 使用本机原生管理接口，
+不把命令作为 print 模式提示词（原生明确不支持）。运行中及保留的闲置实例
+复用相同 PID/SID；没有运行实例时零回合打开同一 SID、改名、正常关闭空输入。
+只读核对原生摘要落盘后刷新目录，不直接写数据库或制造网页别名。
+已验证的 Agy 1.4.6 原生接口保留 `for HTTP` 启动标签却使用自签名 HTTPS；仅在本实例端口明确
+返回 HTTP-to-HTTPS 拒绝时改用本机 TLS，不重试结果未知的 mutation。
+此通道只接受桥接拥有的 PID、loopback 端口和独立 CSRF 授权，不改变 Hub TLS 校验。
+验收：[真实 Agy 改名浏览器](../tests/agy_rename_real_browser.py)，临时 HOME、
+合成 loopback 模型，覆盖空闲／运行中改名、原生落盘、同 PID 和刷新。
 
 **headless 限制**：原生接受取消后，最终 NDJSON `result` 仍可能等待后台任务
 完成。此时诊断明确显示“当前回合取消已接受、后台任务继续”，桥接继续等待原生

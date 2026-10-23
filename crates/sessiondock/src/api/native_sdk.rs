@@ -325,10 +325,28 @@ async fn execute(
             .input_stop_requested(&target, true)
             .map_err(failure)?;
     }
+    let rename_audit = json!({"source":source,"uid":target["uid"],"request_id":body["request_id"],
+        "title_bytes":body["title"].as_str().map(str::len)});
+    if method == "rename" {
+        crate::log::transition("info", "native_sdk.rename.requested", rename_audit.clone());
+    }
     let native_result = state
         .native_sdks
         .call(source, &method, target.clone(), body)
         .await;
+    if method == "rename" {
+        let mut audit = rename_audit;
+        audit["success"] = json!(native_result.is_ok());
+        crate::log::transition(
+            if native_result.is_ok() {
+                "info"
+            } else {
+                "warn"
+            },
+            "native_sdk.rename.finished",
+            audit,
+        );
+    }
     if method == "interrupt" && native_result.is_err() {
         state
             .native_sdks
@@ -336,6 +354,9 @@ async fn execute(
             .map_err(failure)?;
     }
     let mut result = native_result.map_err(failure)?;
+    if method == "rename" {
+        state.reader.store.invalidate_inventory();
+    }
     if matches!(method.as_str(), "create" | "fork") {
         state.reader.store.invalidate_inventory();
         result["ok"] = json!(true);

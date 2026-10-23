@@ -7,7 +7,13 @@
 ## 协议与恢复
 
 `initialize` 的标准能力及 `_meta.kiro.extensionMethods` 门控高级动作。
-配置菜单使用原生目录和确认的值；未广告的设置、改名、steer 接口不伪装支持。
+配置菜单使用原生目录和确认的值；未验证的设置接口不伪装支持。
+DELTA（BUG-20261023-025934-a5d53c）：`/rename` 调用官方客户端使用的
+`_kiro/session/rename {sessionId,title}`。Kiro 2.24.1 实现此接口但没有在
+`extensionMethods` 广告；已用隔离原生 ACP 的 new → rename → list 核对。
+必须收到 `success:true` 才更新自有目录标题；使用原生 `session_info_update`
+返回的名称，保留原生对长名称的规范化，不用输入覆盖原生标题。稳定 request_id 复用原 RPC，
+失败保留输入，不向模型发送命令，不读写原生私有存储。
 SDK 会话不调用账号额度；账号 credits 由[额度合同](quotas.md)的独立零回合查询提供。
 模型菜单使用官方 CLI 目录或已观测缓存，不通过 `session/new` 探测模型。
 新建菜单继续强制刷新账号目录；CLI 查询在阻塞线程池执行，不占用 SDK 事件循环。

@@ -329,16 +329,17 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     usage_res = api(page, "usage", {"uid": uid})
     assert usage_res["context_usage"]["percent"] is not None, usage_res
 
-    # No rename extension is advertised; neither title nor private native bytes may be changed.
-    native_before = (fixture.v3_dir / "session.json").read_bytes()
-    rename_res = api_raw(page, "rename", {"uid": uid, "title": "Unsupported rename"})
-    assert rename_res["status"] >= 400 or rename_res["body"].get("ok") is False, rename_res
-    assert (fixture.v3_dir / "session.json").read_bytes() == native_before
-    assert not fixture.received("_kiro/session/rename")
+    # Official rename works despite its omission from extensionMethods.
+    # The dedicated native_sdk_rename_browser covers the compose/dialog path.
+    rename_res = api(page, 'rename', {'uid':uid,'title':'Kiro renamed 原生标题','request_id':'kiro-rename-1'})
+    assert rename_res['renamed'] is True, rename_res
+    assert json.loads((fixture.v3_dir/'session.json').read_text())['title']=='Kiro renamed 原生标题'
+    assert fixture.received('_kiro/session/rename')
     # Completed turns and plain usage reads reuse the account snapshot.
     assert len(fixture.received("_kiro/account/getUsage")) == 2, "Turns re-queried account usage"
     assert usage_res["quota"]["buckets"][0]["remaining_percent"] == 19, usage_res["quota"]
 
+    native_before = (fixture.v3_dir / "session.json").read_bytes()
     fork_res = api(page, "fork", {"uid": uid, "cwd": str(fixture.work), "request_id": "kiro-fork-1"})
     assert fork_res["uid"] != uid and fork_res["session_id"] != fixture.sid, fork_res
     assert fixture.received("session/fork")[-1]["params"]["sessionId"] == fixture.sid

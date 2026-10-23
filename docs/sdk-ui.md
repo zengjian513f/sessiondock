@@ -191,3 +191,14 @@ DELTA（BUG-20261020-065559-70fe5d）：四种原生 SDK 的普通输入在准�
 - [Codex 布局](../tests/codex_sdk_layout_browser.py)、[恢复](../tests/codex_sdk_recovery_browser.py)。
 - [状态详情](../tests/sdk_status_disclosure_browser.py)、[溢出](../tests/sdk_overflow_browser.py)、
   [普通对话底栏](../tests/conversation_status_browser.py)。
+
+## 会话改名
+
+DELTA（BUG-20261023-025934-a5d53c）：六种 SDK 均支持 `/rename 名称` 和
+无参数 `/rename` 弹窗。复用已有表单、输入框和按钮，不创建另一套样式。
+原生确认后刷新列表与页头；失败或取消保留命令，等待期间新输入及已切换会话的
+草稿不会被清空。改名不作为模型提示词，不中断运行中的任务。
+浏览器记录 `sdk.rename.invoked/requested/finished`、来源、request_id、结果和
+名称长度；原生公共端点记录请求和结果，日志不记录标题正文或本机管理凭据。
+验收：[五种原生 SDK](../tests/native_sdk_rename_browser.py)、
+[Codex](../tests/codex_sdk_rename_browser.py)，覆盖节点／Hub、宽窄屏和明暗主题。

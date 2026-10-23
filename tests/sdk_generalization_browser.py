@@ -125,9 +125,9 @@ def exercise(browser, base, source, root, screenshots):
         assert 'disconnected' not in raw['error'],raw
         photograph(page,screenshots,source,'result-before-exit')
     if source=='agy':
-        send(page,'/rename unavailable')
-        expect(status).to_have_attribute('title',re.compile('尚未提供改名'))
-        expect(page.locator('#sdk-input')).to_have_value('/rename unavailable')
+        send(page,'/rename Agy renamed')
+        expect(page.locator('#sdk-input')).to_have_value('')
+        expect(page.locator('.dhead h2')).to_have_text('Agy renamed')
         new_catalog(page,source)
         photograph(page,screenshots,source,'commands')
     assert not errors,errors

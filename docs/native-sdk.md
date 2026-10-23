@@ -69,7 +69,7 @@ Grok 普通 ACP prompt 尚未提供与 chat_history prompt index 的可靠关联
 历史和 live 的用户消息共用按能力开放的分支菜单；Grok/OpenCode 还提供对话回退。
 操作使用该消息的原生身份，成功后追加原输入并保留已有草稿，不自动发送。
 Claude 仅分支，Agy 不显示未经原生支持的会话动作。`/new` 打开共用新建弹窗；
-`/rename 名称` 走原生改名，缺能力或失败保留输入。新建 SDK 模型目录与已打开
+`/rename 名称` 走原生改名；无参数时复用改名弹窗，取消、缺能力或失败保留输入。新建 SDK 模型目录与已打开
 会话使用同一原生来源；无 UID 查询不创建会话或模型回合。
 
 Grok `model_changed.model_id/reasoning_effort` 和 configOptions 更新有效选择；
@@ -117,7 +117,7 @@ DELTA（BUG-20261020-155723-71869d）：四种原生 SDK 的新建回执缺少�
 | POST `/api/native-sdk/interrupt` | `{uid, agent?}`；原生中断，只针对桥接所属任务 |
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
 | POST `/api/native-sdk/models` | `{uid, agent?}` 或新建前的 `{source, cwd?}`；原生模型目录，Hub 加 `_node` |
-| POST `/api/native-sdk/rename` | `{uid, title}`；Grok/Claude/OpenCode 原生改名，Agy 不声明此能力 |
+| POST `/api/native-sdk/rename` | `{uid, title, request_id}`；Grok/Claude/OpenCode/Kiro/Agy 原生改名 |
 | POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude 合并已有 quota；`refresh:true` 仅查询本来源 |
 | POST `/api/native-sdk/settings` | 来源自己的模型/effort/模式/权限/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
 | POST `/api/native-sdk/fork` | Grok/OpenCode/Claude 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |

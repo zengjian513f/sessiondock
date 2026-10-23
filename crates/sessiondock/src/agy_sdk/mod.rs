@@ -116,6 +116,7 @@ fn log_step(live: &Live, turn: &Turn, native: &Native, step: &Value, idle: bool)
 enum Command {
     Turn(Turn),
     Interrupt(oneshot::Sender<Result<Value, String>>),
+    Rename(String, oneshot::Sender<Result<Value, String>>),
 }
 
 pub fn new(
@@ -156,7 +157,7 @@ pub fn new(
 
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
-        "interrupt":cfg!(unix),"respond":false,"approvals":false,"questions":false,
+        "rename":true,"interrupt":cfg!(unix),"respond":false,"approvals":false,"questions":false,
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
@@ -348,6 +349,15 @@ impl Bridge {
                 data.error_kind = None;
                 live.publish(&mut data);
                 Ok(receipt)
+            }
+            "rename" => {
+                let title = text(&input,"title")?.trim().to_owned();
+                if title.is_empty() { return Err("会话名称不能为空".into()); }
+                let live = self.open(&target).await?;
+                self.process.check_available(live.sid.clone()).await?;
+                let (sender,receiver) = oneshot::channel();
+                live.commands.send(Command::Rename(title,sender)).map_err(|_| "agy_sdk_shutdown")?;
+                receiver.await.map_err(|_| "agy_sdk_shutdown".to_owned())?
             }
             "interrupt" => {
                 let live = self.lookup(&key(&target)?)?;
@@ -759,6 +769,36 @@ async fn actor(
             break;
         };
         match command {
+            Command::Rename(title, reply) => {
+                let result = async {
+                    if let Some(native) = runtime.native.as_mut() {
+                        native.rename(&title).await?;
+                    } else {
+                        let (model, effort, mode) = {
+                            let data = live.data.lock().unwrap();
+                            (data.model.clone(), data.effort.clone(), data.mode.clone())
+                        };
+                        let mut native = Native::start(
+                            process.clone(),
+                            Some(&live.sid),
+                            std::path::Path::new(&live.cwd),
+                            model.as_deref(),
+                            effort.as_deref(),
+                            mode.as_deref(),
+                            shutdown.clone(),
+                            None,
+                        )
+                        .await?;
+                        let result = native.rename(&title).await;
+                        let closed = native.close(shutdown.clone()).await;
+                        result?;
+                        live.diagnostic(closed?);
+                    }
+                    Ok(json!({"renamed":true,"session_id":live.sid,"title":title}))
+                }
+                .await;
+                let _ = reply.send(result);
+            }
             Command::Interrupt(reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
             }
@@ -978,6 +1018,10 @@ async fn execute(
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
+                Some(Command::Rename(title,reply))=>{
+                    let result=native.rename(&title).await.map(|()|json!({"renamed":true,"session_id":live.sid,"title":title}));
+                    let _=reply.send(result);
+                }
                 Some(Command::Interrupt(reply))=>{
                     // An accepted cancellation is not a request to stop the runtime.
                     if interrupted {
