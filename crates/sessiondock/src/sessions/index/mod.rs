@@ -1515,6 +1515,9 @@ fn read_candidate(
             Ok(scan) => {
                 summary.model = scan.model.clone();
                 if candidate.source == "codex" {
+                    if let Some(title) = &scan.first_user_title {
+                        summary.title = summary::clip(title, 110);
+                    }
                     summary.updated = scan
                         .activity_at
                         .clone()

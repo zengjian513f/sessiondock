@@ -2,7 +2,10 @@
 //! Cold reads walk backwards to the latest activity/model/turn boundary; appends
 //! inspect only new complete lines. No message projection is retained.
 
-use std::{borrow::Cow, io};
+use std::{
+    borrow::Cow,
+    io::{self, BufRead, Read, Seek},
+};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,6 +20,8 @@ pub(super) struct Scan {
     pub turn_at: Option<String>,
     pub model: Value,
     pub activity_at: Option<String>,
+    pub first_user_title: Option<String>,
+    title_committed: u64,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +101,11 @@ pub(super) fn read(
         (scan.stamp.dev, scan.stamp.ino) == (stamp.dev, stamp.ino)
             && (scan.stamp == stamp || scan.stamp.size < stamp.size)
     });
+    let (first_user_title, title_committed) = if source == "codex" {
+        read_title(data, &mut open, previous)?
+    } else {
+        (None, 0)
+    };
     let floor = previous.map_or(0, |scan| scan.committed);
     let mut position = stamp.size;
     let mut committed = floor;
@@ -236,6 +246,8 @@ pub(super) fn read(
     // The next refresh sees the changed stamp; the filter above rebuilds on
     // same-size rewrites, truncation and inode changes, or scans a new suffix.
     Ok(Scan {
+        first_user_title,
+        title_committed,
         stamp,
         committed,
         turn,
@@ -249,4 +261,40 @@ pub(super) fn read(
             .unwrap_or(Value::Null),
         activity_at: activity_at.or_else(|| previous.and_then(|scan| scan.activity_at.clone())),
     })
+}
+
+/// Scan forwards only until the first real input. Large injected preambles and
+/// record counts do not hide it; appends resume at the last complete line.
+/// Native explicit names (including report names) are still applied afterwards.
+fn read_title(
+    data: &DataFile<'_>,
+    open: &mut impl FnMut() -> io::Result<std::fs::File>,
+    previous: Option<&Scan>,
+) -> io::Result<(Option<String>, u64)> {
+    if let Some(scan) = previous.filter(|scan| scan.first_user_title.is_some()) {
+        return Ok((scan.first_user_title.clone(), scan.title_committed));
+    }
+    let mut committed = previous.map_or(0, |scan| scan.title_committed);
+    if committed == data.stamp.size {
+        return Ok((None, committed));
+    }
+    let mut file = open()?;
+    if file.stamp() != Some(data.stamp) {
+        return Err(io::Error::other("Native title scan changed during read"));
+    }
+    file.seek(io::SeekFrom::Start(committed))?;
+    let mut reader = io::BufReader::new(file.take(data.stamp.size - committed));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 || line.last() != Some(&b'\n') {
+            return Ok((None, committed));
+        }
+        committed += line.len() as u64;
+        if let Ok(value) = crate::sessions::records::decode_summary_record(line.trim_ascii())
+            && let Ok(Some(title)) = super::summary::codex::user_title(&value)
+        {
+            return Ok((Some(title), committed));
+        }
+    }
 }
