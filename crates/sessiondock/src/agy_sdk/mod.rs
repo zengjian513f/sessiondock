@@ -187,6 +187,42 @@ fn key(target: &Value) -> Result<String, String> {
 }
 
 impl Bridge {
+    pub(crate) async fn resource_process_owners(
+        &self,
+        identities: &[(String, String)],
+    ) -> Vec<(String, process_links::Process)> {
+        let Some(directory) = &self.process.host_dir else {
+            return Vec::new();
+        };
+        let mut owners = Vec::new();
+        for (uid, sid) in identities {
+            if transport::validate_sid(sid).is_err() {
+                continue;
+            }
+            let Ok(Some(binding)) = self.read_binding(sid) else {
+                continue;
+            };
+            if binding.sid != *sid {
+                continue;
+            }
+            let runtime = if binding.turn.runtime_id.is_empty() {
+                &binding.turn.id
+            } else {
+                &binding.turn.runtime_id
+            };
+            if let Some(process) = crate::native_sdk::resources::hosted_process(
+                &self.process.proc_root,
+                directory,
+                &host_key(sid, runtime),
+            )
+            .await
+            {
+                owners.push((uid.clone(), process));
+            }
+        }
+        owners
+    }
+
     pub async fn stop(&self, uid: &str) -> Result<bool, String> {
         let live = {
             let mut sessions = self.sessions.lock().unwrap();

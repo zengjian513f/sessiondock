@@ -35,6 +35,11 @@ request reuses that scan (`cache.hit: true`) instead of scanning again, so
 concurrent forced requests share one fresh scan. On this machine (256 cores, ~3000 processes,
 ~180 keyword matches) one debug-build scan takes 60–70 ms.
 
+DELTA: an OpenCode CLI with an explicit `--session SID`, `--session=SID` or
+`-s SID` supplies a source-qualified native identity. A shared `opencode serve`
+process does not. This lets resource attribution distinguish a resumed TUI and
+its descendants from the shared service; cwd alone does not establish ownership.
+
 ## Rules kept from `live.py` (commit 16cc89c)
 
 Per matching process:

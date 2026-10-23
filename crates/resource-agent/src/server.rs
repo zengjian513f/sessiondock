@@ -1045,10 +1045,6 @@ fn rate(current: Option<f64>, previous: Option<f64>, elapsed: Option<f64>, reaso
 }
 
 fn save(path: &Path, saved: &Saved) -> io::Result<()> {
-    let bytes = serde_json::to_vec(saved)?;
-    if fs::read(path).ok().as_ref() == Some(&bytes) {
-        return Ok(());
-    }
     let temp = path.with_extension("new");
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = fs::OpenOptions::new()
@@ -1057,7 +1053,10 @@ fn save(path: &Path, saved: &Saved) -> io::Result<()> {
         .truncate(true)
         .mode(0o600)
         .open(&temp)?;
-    file.write_all(&bytes)?;
+    let mut writer = BufWriter::new(&mut file);
+    serde_json::to_writer(&mut writer, saved)?;
+    writer.flush()?;
+    drop(writer);
     file.sync_all()?;
     fs::rename(temp, path)
 }
@@ -1192,9 +1191,9 @@ pub fn run() -> io::Result<()> {
     if snapshot.boot_id.is_empty() {
         return Err(io::Error::other("cannot read Linux boot identity"));
     }
-    let saved = fs::read(&config.state)
+    let saved = fs::File::open(&config.state)
         .ok()
-        .and_then(|s| serde_json::from_slice::<Saved>(&s).ok());
+        .and_then(|file| serde_json::from_reader::<_, Saved>(BufReader::new(file)).ok());
     let mut engine = Engine::new(config.node_id.clone(), snapshot.boot_id.clone(), saved);
     let status = CollectorStatus {
         service: "resource-agent".into(),

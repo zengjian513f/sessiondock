@@ -94,6 +94,40 @@ pub fn new(
 }
 
 impl Bridge {
+    /// Read the existing host only; resource discovery must never open a CLI.
+    pub(crate) async fn process_owners(
+        &self,
+        uids: &[String],
+    ) -> Vec<(String, process_links::Process)> {
+        let mut owners = Vec::new();
+        for uid in uids {
+            let Ok(entry) = self.catalog.resolve_uid(uid) else {
+                continue;
+            };
+            if entry.deleted {
+                continue;
+            }
+            if let (Some(dir), Some(key)) = (&self.host, &entry.host_key) {
+                if let Some(process) =
+                    crate::native_sdk::resources::hosted_process(&self.proc_root, dir, key).await
+                {
+                    owners.push((uid.clone(), process));
+                }
+            } else {
+                let session = self.sessions.lock().unwrap().get(uid).cloned();
+                if let Some(session) = session
+                    && !session.dead.load(Ordering::Acquire)
+                    && let Some((process, _)) =
+                        process_links::linux::identity(&self.proc_root, session.pid)
+                    && !session.dead.load(Ordering::Acquire)
+                {
+                    owners.push((uid.clone(), process));
+                }
+            }
+        }
+        owners
+    }
+
     fn spawn_idle_reaper(bridge: Arc<Self>) {
         let sd = bridge.shutdown.clone();
         tokio::spawn(async move {

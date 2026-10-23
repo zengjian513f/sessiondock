@@ -3,9 +3,11 @@
 from contextlib import contextmanager
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 
 @contextmanager
@@ -31,11 +33,39 @@ def real_collector(root, binary, node, count):
             stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 60
-            while not (root / 'collector.sock').exists():
+            while True:
                 assert child.poll() is None, 'private collector exited'
                 assert time.monotonic() < deadline, 'private collector startup timed out'
+                try:
+                    with socket.socket(socket.AF_UNIX) as client:
+                        client.settimeout(1)
+                        client.connect(str(root / 'collector.sock'))
+                        client.sendall(b'{"op":"health"}\n')
+                        if json.loads(client.makefile('rb').readline()).get('ok'):
+                            break
+                except (OSError, ValueError):
+                    pass
                 time.sleep(.1)
             yield (size, None), []
+            assert child.poll() is None, 'collector exited while serving retained history'
+            deadline = time.monotonic() + 30
+            while True:
+                persisted = json.loads(path.read_text())
+                # A completed refresh writes current native owners alongside
+                # every old connection, rather than truncating boot evidence.
+                if persisted['catalog']['owners']:
+                    assert len(persisted['connections']['records']) == count
+                    break
+                assert time.monotonic() < deadline, 'collector did not persist refreshed attribution'
+                time.sleep(.1)
+            peak = next(line for line in Path(f'/proc/{child.pid}/status').read_text().splitlines()
+                        if line.startswith('VmHWM:'))
+            print(f'Real collector retained {count} records through streaming save; {peak}', flush=True)
         finally:
             child.terminate()
-            child.wait(timeout=30)
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+                raise

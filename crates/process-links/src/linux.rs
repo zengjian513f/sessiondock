@@ -8,13 +8,30 @@ use std::{
     path::Path,
 };
 
-pub const IDENTITIES: [(&str, &str); 5] = [
+pub const IDENTITIES: [(&str, &str); 6] = [
     ("CODEX_THREAD_ID", "codex"),
     ("CODEX_COMPANION_SESSION_ID", "codex"),
     ("CLAUDE_CODE_SESSION_ID", "claude"),
     ("GROK_SESSION_ID", "grok"),
     ("CODEX_SESSION_ID", "codex"),
+    ("OPENCODE_SESSION_ID", "opencode"),
 ];
+
+pub fn opencode_session<'a>(args: &[&'a str]) -> Option<&'a str> {
+    if args.first() == Some(&"serve") {
+        return None;
+    }
+    args.iter()
+        .enumerate()
+        .find_map(|(i, arg)| {
+            if matches!(*arg, "--session" | "-s") {
+                args.get(i + 1).copied()
+            } else {
+                arg.strip_prefix("--session=")
+            }
+        })
+        .filter(|sid| !sid.is_empty())
+}
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Entry {
@@ -49,7 +66,9 @@ pub fn launcher_identities(
             break;
         };
         if entry.shared_parent {
-            break;
+            // A daemon's inherited launcher identity is not its clients'
+            // identity. Children with a different native identity still count.
+            return &entry.identities;
         }
         if owned(entry) {
             return &entry.identities;
@@ -230,7 +249,10 @@ pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
             multiplexed: args.iter().any(|a| {
                 *a == "-M" || a.contains("ControlMaster=yes") || a.contains("ControlMaster=auto")
             }),
-            shared_parent: name.starts_with("tmux"),
+            shared_parent: name.starts_with("tmux")
+                || name == "sdkhost"
+                || (name == "codex" && args.first() == Some(&"app-server"))
+                || (name == "opencode" && args.first() == Some(&"serve")),
         };
         if name == "ssh"
             && let Ok(fds) = fs::read_dir(path.join("fd"))

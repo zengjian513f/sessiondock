@@ -85,6 +85,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         .as_ref()
         .map(|m| m.directory().join("process-links.json"));
     let scan = scanned.scan;
+    let sdk_owners = state.native_sdks.resource_process_owners(&rows).await;
     tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(&root);
         let owned = scan.active_processes(&rows).owned;
@@ -111,6 +112,16 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             })
             .collect();
         let mut owners = BTreeMap::new();
+        for (uid, process) in sdk_owners {
+            if snapshot
+                .entries
+                .get(&process.pid)
+                .is_some_and(|entry| entry.process == process)
+                && let Some(session) = refs.get(&uid)
+            {
+                owners.insert(process.pid, (uid, session.clone()));
+            }
+        }
         for (uid, pids) in owned {
             for pid in pids.into_iter().filter(|p| *p > 0) {
                 if let Some(session) = refs.get(&uid) {
@@ -173,12 +184,12 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             let stale =
                 linux::launcher_identities(&snapshot, pid, |e| owners.contains_key(&e.process.pid));
             while current > 1 && seen.insert(current) {
-                if let Some(owner) = owners.get(&current) {
-                    return Some(owner.clone());
-                }
                 let entry = snapshot.entries.get(&current)?;
                 if entry.shared_parent {
                     return None;
+                }
+                if let Some(owner) = owners.get(&current) {
+                    return Some(owner.clone());
                 }
                 for key in entry.identities.iter().filter(|key| !stale.contains(key)) {
                     if let Some(owner) = by_sid.get(key) {
@@ -199,6 +210,9 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         let mut incoming = Vec::new();
         let mut bindings = Vec::new();
         for entry in snapshot.entries.values() {
+            if entry.shared_parent {
+                continue;
+            }
             let mut current = entry.process.pid;
             let mut seen = HashSet::new();
             let mut remote = cache.links.get(&entry.process).cloned();
@@ -206,6 +220,9 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 let Some(ancestor) = snapshot.entries.get(&current) else {
                     break;
                 };
+                if ancestor.shared_parent {
+                    break;
+                }
                 if remote.is_none() {
                     remote = cache.links.get(&ancestor.process).cloned();
                 }
@@ -496,6 +513,14 @@ async fn agent_catalog(
         })
         .collect();
     let mut owners = Vec::new();
+    for (uid, process) in state.native_sdks.resource_process_owners(&rows).await {
+        if let Some(session) = sessions.get(&uid) {
+            owners.push(Owner {
+                process,
+                session: session.clone(),
+            });
+        }
+    }
     for (uid, pids) in owned {
         if let Some(session) = sessions.get(&uid) {
             for pid in pids {

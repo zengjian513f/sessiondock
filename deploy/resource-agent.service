@@ -29,7 +29,9 @@ LockPersonality=yes
 CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN
 ReadWritePaths=/run/resource-agent /var/lib/resource-agent -/sys/fs/resctrl
 TasksMax=128
-MemoryMax=512M
+# Boot-scoped attribution evidence grows with workload history. A fixed memory
+# ceiling can prevent restoring valid state and cause an endless OOM restart.
+MemoryMax=infinity
 # Allow short page-table walks without throttling the snapshot API with them.
 # The PSS worker independently paces its CPU use to at most 20% of one core.
 CPUQuota=100%
