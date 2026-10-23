@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY
+from sdk_send_gesture_fixtures import exercise_send_gestures
 from native_sdk_rename_browser import native
 from sdk_generalization_browser import open_view
 from sdkhost_fixtures import stop_private_sdkhosts
@@ -25,6 +26,10 @@ def exercise(browser, base, root, shots, label):
     expect(page.locator('#sdk-status-menu')).to_contain_text('当前没有')
     box.fill('steer-hold');box.press('Enter')
     page.wait_for_function('NativeSdkView.running')
+    page.set_viewport_size({'width':390,'height':900})
+    if not box.is_visible():page.locator(f'#side .item[data-uid="{uid}"]').click()
+    exercise_send_gestures(page,'kiro',label,shots)
+    page.set_viewport_size({'width':1280,'height':900})
     box.fill('ordinary queued '+label);box.press('Enter');expect(box).to_have_value('')
     expect(page.locator('.sdk-queue')).to_contain_text('ordinary queued '+label)
     box.fill('native steering '+label);box.press('Control+Enter');expect(box).to_have_value('')
@@ -75,7 +80,10 @@ def exercise(browser, base, root, shots, label):
     if shots:
         for width,theme in ((1280,'light'),(390,'dark')):
             page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
-            if not box.is_visible():page.locator(f'#side .item[data-uid="{uid}"]').click()
+            if not box.is_visible():
+                row=page.locator(f'#side .item[data-uid="{uid}"]')
+                if row.is_visible():row.click()
+                else:page.locator('#a-sdk').click()
             box.fill('下一步请先检查日志')
             if not action.is_visible():page.locator('#sdk-more').click()
             page.screenshot(path=str(shots/f'{label}-{width}-{theme}.png'),full_page=True)

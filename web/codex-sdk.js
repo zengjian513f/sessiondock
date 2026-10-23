@@ -650,6 +650,7 @@ const CodexSdkView = {
     sdkSyncSettings(this);
     send.textContent = active ? '排队' : '发送';
     send.title = active ? '当前回合结束后发送；排队消息可撤销或立即引导；Ctrl+Enter 直接引导' : '开始新回合';
+    SdkUI.paintSend(this);
     this.paintQueue();
     this.paintGauges();
     // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。

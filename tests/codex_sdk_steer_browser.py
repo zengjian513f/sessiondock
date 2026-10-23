@@ -11,6 +11,7 @@ from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_queue_browser import open_page
 from history_fixtures import BINARY
+from sdk_send_gesture_fixtures import exercise_send_gestures
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
@@ -44,6 +45,7 @@ def exercise(browser,base,fake,width,theme,screenshots,label):
     box.fill('idle draft');box.press('Control+Enter');expect(box).to_have_value('idle draft')
     expect(page.locator('#sdk-status-menu')).to_contain_text('当前没有')
     submit('working '+label);expect(send).to_have_text('排队')
+    exercise_send_gestures(page,'codex',label,screenshots)
     starts=len(fake.methods('turn/start'))
     submit('ordinary queue '+label)
     expect(page.locator('.sdk-queued')).to_contain_text('ordinary queue '+label)

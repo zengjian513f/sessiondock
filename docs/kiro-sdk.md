@@ -59,7 +59,8 @@ Hub 刷新等待最新节点能力和运行状态后恢复 SDK 视图。
 
 DELTA：Enter 保留 SessionDock 持久 FIFO；Ctrl+Enter 将编辑器文字直接交给
 `_session/steer {sessionId,message,messageId}`。会话操作中的“引导当前任务”使用同一
-编辑器，移动端可点击；Shift+Enter 换行，输入法组合输入不提交。空闲时引导保留草稿。
+编辑器，移动端可点击；按住 Ctrl 时发送按钮显示“引导”，点击直接引导；手机长按发送按钮
+500 毫秒触发一次引导，短按仍发送／排队。Shift+Enter 换行，输入法组合输入不提交。空闲时引导保留草稿。
 Kiro 2.24.1 官方 TUI 使用该接口，但 initialize 未广告；不回退到不存在的 `session/steer`。
 原生普通 `queuedMessages` 属于 TUI 本地状态；SessionDock 不另建第二套普通队列。
 

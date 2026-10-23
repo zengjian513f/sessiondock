@@ -287,6 +287,7 @@ const NativeSdkView = {
     sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
     if(this.uid.startsWith('kiro:'))send.title+='；Ctrl+Enter 引导当前任务';
+    SdkUI.paintSend(this);
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const scheduledRetry=raw.retry?.delay_seconds;
     const retryText=scheduledRetry ? `正在重试：${scheduledRetry} 秒后自动重试${raw.retry.retry_at ? `（${new Date(raw.retry.retry_at).toLocaleTimeString()}）` : ''}；可停止重试。${retryReason || ''}` : null;

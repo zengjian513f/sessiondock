@@ -2732,3 +2732,6 @@ header .btn[data-session-docked] { display: none; }
 /* 连续工具保留组摘要，仅消息流末尾的工具独立露出，与执行状态无关。 */
 .msg.grp.folded > [data-sdk-item] { display: none; }
 .msg.grp.folded > .tool-active-tail { display: block; }
+
+/* Keep touch-hold steering on the send button out of native selection menus. */
+.sdk-steer-send { -webkit-touch-callout: none; user-select: none; touch-action: manipulation; }
