@@ -123,7 +123,7 @@ impl Session {
         *self.projection.lock().unwrap() = Some(catalog);
         Ok(())
     }
-    fn project(&self, st: &mut LiveState) {
+    pub(super) fn project(&self, st: &mut LiveState) {
         if let Some(catalog) = self.projection.lock().unwrap().as_ref() {
             if !st.uid.is_empty() {
                 if let Err(error) =

@@ -96,6 +96,8 @@ pub(super) struct LiveState {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Subtask {
+    #[serde(default)]
+    tool_call_id: Option<String>,
     pub(super) title: String,
     pub(super) kind: String,
     pub(super) status: String,
@@ -110,7 +112,7 @@ impl LiveState {
     pub(super) fn new() -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
-            transcript_version: 1,
+            transcript_version: 2,
             subtasks: Default::default(),
             journal: Vec::new(),
             next_rpc: 1,
@@ -169,7 +171,7 @@ impl LiveState {
     /// Delivery, prompts, permissions and stdout checkpoints remain authoritative.
     pub(super) fn upgrade_transcript(&mut self, stdout: &std::path::Path) -> Result<(), String> {
         use std::io::{BufRead, BufReader, Read};
-        if self.transcript_version >= 1 {
+        if self.transcript_version >= 2 {
             return Ok(());
         }
         if !self.items.iter().any(|item| {
@@ -177,7 +179,7 @@ impl LiveState {
                 .as_str()
                 .is_some_and(|id| id.starts_with("invoke_subagent_"))
         }) {
-            self.transcript_version = 1;
+            self.transcript_version = 2;
             return Ok(());
         }
         let file = std::fs::File::open(stdout).map_err(|e| e.to_string())?;
@@ -245,7 +247,7 @@ impl LiveState {
             self.message_item_ids = replay.message_item_ids;
             self.replay_ids = replay.replay_ids;
         }
-        self.transcript_version = 1;
+        self.transcript_version = 2;
         Ok(())
     }
 
@@ -698,6 +700,26 @@ impl LiveState {
         self.publish();
     }
 
+    fn interrupt_subtasks(&mut self) {
+        let mut interrupted_calls = HashSet::new();
+        for task in self.subtasks.values_mut() {
+            if matches!(task.status.as_str(), "pending" | "in_progress") {
+                task.status = "interrupted".into();
+                if let Some(id) = &task.tool_call_id {
+                    interrupted_calls.insert(id.clone());
+                }
+            }
+        }
+        for item in &mut self.items {
+            if item["toolCallId"]
+                .as_str()
+                .is_some_and(|id| interrupted_calls.contains(id))
+            {
+                item["status"] = json!("interrupted");
+            }
+        }
+    }
+
     pub(super) fn mark_interrupted(&mut self) {
         // A cancellation request is an intent; only this prompt's response ends it.
         self.interrupted_turn = true;
@@ -744,6 +766,7 @@ impl LiveState {
                 let mut state = LiveState::new();
                 state.observing = true;
                 Subtask {
+                    tool_call_id: None,
                     title: String::new(),
                     kind: "subagent".into(),
                     status: "in_progress".into(),
@@ -752,6 +775,9 @@ impl LiveState {
             });
             task.state.observing = true;
             if u["_meta"]["kiro"]["kind"] == "agent-subtask" {
+                if let Some(id) = u["toolCallId"].as_str() {
+                    task.tool_call_id = Some(id.to_owned());
+                }
                 if let Some(kind) = u["rawInput"]["name"].as_str() {
                     task.kind = kind.into();
                 }
@@ -776,6 +802,18 @@ impl LiveState {
                 self.publish();
                 return;
             }
+        }
+        // Replay completion frames can omit both subtask metadata fields.
+        // Correlate the exact invocation ID; nested tools never end their owner.
+        if u["_meta"]["kiro"]["agentSubtaskId"].is_null()
+            && let Some(id) = u["toolCallId"].as_str()
+            && let Some(status) = u["status"].as_str()
+            && let Some(task) = self
+                .subtasks
+                .values_mut()
+                .find(|task| task.tool_call_id.as_deref() == Some(id))
+        {
+            task.status = status.to_owned();
         }
         let kind = u["sessionUpdate"]
             .as_str()
@@ -871,6 +909,15 @@ impl LiveState {
             "session_info_update" => {
                 if let Some(t) = u["title"].as_str().filter(|s| !s.trim().is_empty()) {
                     self.title = Some(t.to_string());
+                }
+                // Historical turn-end evidence closes historical unfinished tasks,
+                // but cannot release or overwrite a current prompt's FIFO ownership.
+                if is_replay
+                    && !self.running
+                    && self.active_prompt.is_none()
+                    && u["_meta"]["kiro"]["kind"] == "turn_end"
+                {
+                    self.interrupt_subtasks();
                 }
                 self.apply_metadata(u);
                 self.publish();
@@ -1814,8 +1861,10 @@ pub(super) fn mark_exit(session: &Arc<Session>, reason: &str) {
         st.error_kind = Some("kiro_sdk_process_exited".into());
         st.active_prompt = None;
     }
+    st.interrupt_subtasks();
     st.requests.clear();
     st.runtime_error = Some(reason.to_string());
+    session.project(&mut st);
     st.publish();
 }
 
