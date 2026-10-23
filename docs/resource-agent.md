@@ -123,6 +123,12 @@ peer credentials. It adds no TCP listener or network token. Its capability
 bounding set permits tracing, process inspection and socket ownership; it does
 not grant privileges to SessionDock or its frontend.
 
+Boot-scoped connection evidence survives collector restarts and is not truncated.
+The supplied unit therefore has no fixed memory ceiling: a ceiling smaller than
+the retained state can cause an OOM restart loop. State loading and saving use
+buffered streaming to avoid additional whole-file buffers. CPU pacing and the
+unit's CPU quota still apply; this setting does not change monitored workloads.
+
 The supplied unit starts with I/O probes off and memory-bandwidth monitoring on.
 Memory bandwidth uses monitor-only resctrl groups where supported; it never
 changes allocation, affinity or cgroups. Use a local systemd override to turn it

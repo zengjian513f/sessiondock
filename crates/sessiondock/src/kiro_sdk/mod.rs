@@ -94,6 +94,56 @@ pub fn new(
 }
 
 impl Bridge {
+    /// Read the existing host only; resource discovery must never open a CLI.
+    pub(crate) async fn process_owners(
+        &self,
+        uids: &[String],
+    ) -> Vec<(String, process_links::Process)> {
+        let mut owners = Vec::new();
+        for uid in uids {
+            let Ok(entry) = self.catalog.resolve_uid(uid) else {
+                continue;
+            };
+            if entry.deleted {
+                continue;
+            }
+            if let (Some(dir), Some(key)) = (&self.host, &entry.host_key) {
+                let Ok(client) = sdkhost_client::Client::attach(dir, key).await else {
+                    continue;
+                };
+                let Ok(before) = client.status().await else {
+                    continue;
+                };
+                if before.exit.is_some() {
+                    continue;
+                }
+                let Some((process, _)) =
+                    process_links::linux::identity(&self.proc_root, before.pid)
+                else {
+                    continue;
+                };
+                // An exited host cannot lend a reused PID to its old session.
+                if let Ok(after) = client.status().await
+                    && after.exit.is_none()
+                    && after.pid == process.pid
+                {
+                    owners.push((uid.clone(), process));
+                }
+            } else {
+                let session = self.sessions.lock().unwrap().get(uid).cloned();
+                if let Some(session) = session
+                    && !session.dead.load(Ordering::Acquire)
+                    && let Some((process, _)) =
+                        process_links::linux::identity(&self.proc_root, session.pid)
+                    && !session.dead.load(Ordering::Acquire)
+                {
+                    owners.push((uid.clone(), process));
+                }
+            }
+        }
+        owners
+    }
+
     fn spawn_idle_reaper(bridge: Arc<Self>) {
         let sd = bridge.shutdown.clone();
         tokio::spawn(async move {

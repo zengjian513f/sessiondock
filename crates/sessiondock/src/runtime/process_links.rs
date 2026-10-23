@@ -85,6 +85,16 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         .as_ref()
         .map(|m| m.directory().join("process-links.json"));
     let scan = scanned.scan;
+    let sdk_owners = state
+        .native_sdks
+        .resource_process_owners(
+            &rows
+                .iter()
+                .filter(|r| r.source == "kiro")
+                .map(|r| r.uid.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await;
     tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(&root);
         let owned = scan.active_processes(&rows).owned;
@@ -111,6 +121,16 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             })
             .collect();
         let mut owners = BTreeMap::new();
+        for (uid, process) in sdk_owners {
+            if snapshot
+                .entries
+                .get(&process.pid)
+                .is_some_and(|entry| entry.process == process)
+                && let Some(session) = refs.get(&uid)
+            {
+                owners.insert(process.pid, (uid, session.clone()));
+            }
+        }
         for (uid, pids) in owned {
             for pid in pids.into_iter().filter(|p| *p > 0) {
                 if let Some(session) = refs.get(&uid) {
@@ -496,6 +516,24 @@ async fn agent_catalog(
         })
         .collect();
     let mut owners = Vec::new();
+    for (uid, process) in state
+        .native_sdks
+        .resource_process_owners(
+            &rows
+                .iter()
+                .filter(|r| r.source == "kiro")
+                .map(|r| r.uid.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
+    {
+        if let Some(session) = sessions.get(&uid) {
+            owners.push(Owner {
+                process,
+                session: session.clone(),
+            });
+        }
+    }
     for (uid, pids) in owned {
         if let Some(session) = sessions.get(&uid) {
             for pid in pids {

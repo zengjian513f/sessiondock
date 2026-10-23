@@ -54,6 +54,16 @@ pub struct NativeSdks {
 pub(crate) struct Submission;
 
 impl NativeSdks {
+    pub(crate) async fn resource_process_owners(
+        &self,
+        uids: &[String],
+    ) -> Vec<(String, process_links::Process)> {
+        match self.providers.get("kiro") {
+            Some(Provider::Kiro(bridge)) => bridge.process_owners(uids).await,
+            _ => Vec::new(),
+        }
+    }
+
     pub(crate) fn new(
         config: &crate::config::Config,
         lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,

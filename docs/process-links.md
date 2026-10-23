@@ -51,6 +51,13 @@ than created. Explicit attachment or
 detachment always wins, including after restart. The sidebar parent never changes
 process ownership.
 
+Kiro SDK ownership comes from the catalog's exact native UID and existing
+sdkhost key. The adapter checks the host is still running around the Linux
+process-incarnation read, and publishes that CLI as an owner in both collector
+and polling modes. Resource reads never start or resume Kiro. This also works
+after a SessionDock restart before opening the SDK view. The shared sdkhost
+process is not charged to the session; CLI descendants follow normal ancestry.
+
 ## Current wire contract
 
 `GET /api/process-links` returns version 1 with:
