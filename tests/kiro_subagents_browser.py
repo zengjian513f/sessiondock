@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -13,8 +14,34 @@ from kiro_sdk_fixtures import FakeKiroAcp, KiroFixture
 
 
 class SubagentPeer(FakeKiroAcp):
+    @staticmethod
+    def history_updates(directory):
+        updates = FakeKiroAcp.history_updates(directory)
+        if not (directory.parent.parent / 'replay-subtasks').exists():
+            return updates
+        # Real Kiro replay supplies ownership on start, but only toolCallId on end.
+        for aid in ['review-a', 'review-b', 'review-c']:
+            updates.append({'sessionUpdate': 'tool_call', 'toolCallId': 'invoke_subagent_' + aid,
+                            'title': aid, 'status': 'in_progress',
+                            '_meta': {'kiro': {'kind': 'agent-subtask', 'agentSubtaskId': aid, 'replay': True}}})
+        for aid, status in [('review-a', 'completed'), ('review-b', 'failed')]:
+            updates.append({'sessionUpdate': 'tool_call_update', 'toolCallId': 'invoke_subagent_' + aid,
+                            'status': status, 'rawOutput': 'Historical result ' + aid,
+                            '_meta': {'kiro': {'replay': True}}})
+        updates.append({'sessionUpdate': 'session_info_update', '_meta': {'kiro': {
+            'kind': 'turn_end', 'stopReason': 'cancelled', 'replay': True}}})
+        return updates
+
     def run_prompt(self, message):
         text = ' '.join(b.get('text', '') for b in message['params'].get('prompt', []))
+        if text == 'Crash with an unfinished subagent':
+            self.update('tool_call', toolCallId='invoke_subagent_crash', title='Unfinished child',
+                        status='in_progress', _meta={'kiro': {'kind': 'agent-subtask', 'agentSubtaskId': 'crash'}})
+            self.update('agent_message_chunk', content={'type': 'text', 'text': 'Child output before crash'},
+                        _meta={'kiro': {'agentSubtaskId': 'crash'}})
+            time.sleep(.5)
+            print('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory', file=sys.stderr, flush=True)
+            os._exit(1)
         if text != 'Review with two parallel subagents':
             return super().run_prompt(message)
         for aid, title in [('review-a', '历史与搜索审查'), ('review-b', 'SDK 与生命周期审查')]:
@@ -38,7 +65,7 @@ class SubagentPeer(FakeKiroAcp):
             self.update('tool_call_update', toolCallId='invoke_subagent_' + aid,
                         status='completed' if aid == 'review-a' else 'failed',
                         rawOutput='审查结果已返回' if aid == 'review-a' else '合成失败原因',
-                        _meta={'kiro': {'kind': 'agent-subtask', 'agentSubtaskId': aid}})
+                        _meta={'kiro': {'replay': False}})
         self.reply(message, {'stopReason': 'end_turn'})
 
 
@@ -169,6 +196,62 @@ def run(args):
                 page.emulate_media(color_scheme='dark')
                 if args.screenshots:
                     page.screenshot(path=str(args.screenshots / 'kiro-subagents-mobile-dark.png'), full_page=True)
+                page.set_viewport_size({'width': 1400, 'height': 950})
+                page.emulate_media(color_scheme='light')
+                page.locator('#session-view-menu button[data-agent=""]').click()
+                page.locator('#sdk-input').fill('Crash with an unfinished subagent')
+                page.locator('#sdk-send').click()
+                page.wait_for_function("""async uid => {
+                    await loadSessions(true);
+                    const row = S.sessions.find(r => r.uid === uid);
+                    return row?.agent_items?.length === 3 && row.agent_items.every(a => !a.active);
+                }""", arg=uid)
+                expect(page.locator('.native-sdk-pane')).to_contain_text('heap out of memory')
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(page.locator('#side')).not_to_contain_text('运行中')
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots / 'kiro-subagents-crash.png'), full_page=True)
+                (fixture.sessions / 'replay-subtasks').touch()
+                start_sdk(page)
+                watch(page, uid)
+                page.wait_for_function("""async uid => {
+                    await loadSessions(true);
+                    const row = S.sessions.find(r => r.uid === uid);
+                    return row?.agent_items?.filter(a => a.id.startsWith('review-')).length === 3
+                        && row.agent_items.every(a => !a.active);
+                }""", arg=uid)
+                # Exercise upgrade of an already persisted v1 replay checkpoint.
+                page.goto('about:blank')
+                stack.close(); stack = ExitStack()
+                for checkpoint in (root / 'state/sdk-adapters/kiro').glob('*.json'):
+                    state = json.loads(checkpoint.read_text())
+                    if 'review-c' not in state.get('subtasks', {}):
+                        continue
+                    state['transcript_version'] = 1
+                    for task in state['subtasks'].values():
+                        task.pop('tool_call_id', None)
+                        task['status'] = 'in_progress'
+                    checkpoint.write_text(json.dumps(state))
+                uid = boot()
+                page.wait_for_function("""async uid => {
+                    await loadSessions(true);
+                    const row = S.sessions.find(r => r.uid === uid);
+                    return row?.agent_items?.some(a => a.id === 'review-c') && row.agent_items.every(a => !a.active);
+                }""", arg=uid)
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                open_menu(page)
+                expect(page.locator('#session-view-menu')).to_contain_text('review-c')
+                expect(page.locator('#session-view-menu')).not_to_contain_text('运行中')
+                expect(page.locator('#side')).not_to_contain_text('运行中')
+                for checkpoint in (root / 'state/sdk-adapters/kiro').glob('*.json'):
+                    state = json.loads(checkpoint.read_text())
+                    if 'review-c' in state.get('subtasks', {}):
+                        assert {k: v['status'] for k, v in state['subtasks'].items()} == {
+                            'review-a': 'completed', 'review-b': 'failed', 'review-c': 'interrupted'}
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots / 'kiro-subagents-replay.png'), full_page=True)
                 browser.close()
         finally:
             stack.close()
