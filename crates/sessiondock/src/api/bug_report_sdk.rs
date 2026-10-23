@@ -97,6 +97,53 @@ pub(super) async fn launch(
         json!({"status":"starting","worker":worker,"worker_source":source,"worker_mode":"sdk"}),
     )
     .map_err(|e| e.to_string())?;
+    let title = worker["title"].clone();
+    let report_id = &report.report_id;
+    // Preserve the draft and worker identity before attempting native naming.
+    let named: Result<Value, ApiError> = async {
+        // Naming is a native operation, not a prompt or a report-only label.
+        // Keep the saved diagnostic draft and do not submit a turn on failure.
+        if source == "codex" {
+            let _ = super::codex_sdk_actions::rename(
+                State(state.clone()),
+                Json(serde_json::from_value(json!({"uid":uid,"name":title})).unwrap()),
+            )
+            .await?;
+            Ok(title.clone())
+        } else {
+            let renamed = super::native_sdk::call(
+                State(state.clone()),
+                Path("rename".into()),
+                None,
+                Json(json!({"uid":uid,"title":title,
+                        "request_id":format!("report-rename:{report_id}")})),
+            )
+            .await?
+            .0;
+            // Providers such as Kiro may return a normalized native title.
+            Ok(renamed
+                .get("title")
+                .filter(|value| value.is_string())
+                .cloned()
+                .unwrap_or_else(|| title.clone()))
+        }
+    }
+    .await;
+    worker["session"]["title"] = named.map_err(|error| error.message)?;
+    record(
+        &state,
+        "bug_report.worker_named",
+        report_id,
+        &uid,
+        json!({"source":source,"mode":"sdk"}),
+    );
+    let mut value = draft.value;
+    value["session"] = worker.clone();
+    let draft = conversations
+        .store
+        .save(&identity.key, draft.revision, value)
+        .map_err(|error| error.message)?;
+    update_manifest(&report.path, json!({"worker":worker})).map_err(|error| error.to_string())?;
     let report_id = report.report_id.clone();
     record(
         &state,

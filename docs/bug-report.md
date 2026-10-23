@@ -22,6 +22,14 @@ prompt as an editable draft on failure. Their response includes `worker.mode`,
 session. Opening the report joins that SDK view. The manifest records
 `worker_mode: "sdk"` and SDK submission status. CLI behavior below is unchanged.
 
+Before the first task, all six SDK providers rename the native session to the
+report title through their ordinary rename API (Codex `thread/name/set`, or the
+provider's native rename operation). The title is not a model prompt or a local
+display alias. Naming failure retains the diagnostic draft and marks the report
+failed without submitting a turn. Successful naming emits
+`bug_report.worker_named` before submission. Node and Hub coverage, including
+title persistence after reload, lives in `tests/feature_report_browser.py`.
+
 ## Configuration
 
 | Setting | Meaning |
@@ -145,7 +153,7 @@ launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
 Bug-report worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
-Before the first Codex report task, the server submits `/rename <title>` as a
+Before the first Codex CLI report task, the server submits `/rename <title>` as a
 separate local CLI command, queries `/status` on that guarded terminal to obtain
 its native session ID, and confirms that ID's title directly in the native name
 index before submitting the task. This works before a rollout JSONL exists:
