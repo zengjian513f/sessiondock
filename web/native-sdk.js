@@ -53,10 +53,33 @@ const NativeSdkView = {
     this.mountToolbar(generation);
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
-    void this.start(generation);
+    if (!this.observeExternal()) void this.start(generation);
+  },
+
+  observeExternal() {
+    if (!this.pane) return false;
+    const external = S.liveExternalSdk.has(this.uid);
+    if (external) {
+      this.externalObserved = true;
+      this.readOnly = true;
+      this.input.disabled = true;
+      this.input.onclick = null;
+      this.input.placeholder = '外部会话仅可查看，请在原程序中发送消息';
+      this.pane.querySelector('#sdk-send').disabled = true;
+      CodexSdkCompose.paint(this);
+      this.setNotice('外部只读：ACP 会话由原程序控制，历史自动更新。', 'neutral');
+    } else if (this.externalObserved) {
+      this.externalObserved = false;
+      this.input.placeholder = '通过 Kiro SDK 发送';
+      this.input.onclick = () => startComposerSession(this.uid, this.agent, 'sdk');
+      CodexSdkCompose.paint(this);
+      this.setNotice('未运行', 'idle');
+    }
+    return external;
   },
 
   close() {
+    this.externalObserved = false;
     this.setConnected(false);
     CodexSdkCompose.close(this);
     if (this.input) PathCompletion.close(this.input);
@@ -127,7 +150,7 @@ const NativeSdkView = {
         if (kiroBusy) {
           this.readOnly = true;
           this.syncComposer?.();
-          this.setNotice('CLI 终端会话正在运行，请先停止 CLI 终端会话后再启动 SDK 模式。', 'blocked');
+          this.setNotice(error.message || 'CLI 终端会话正在运行，请先停止 CLI 终端会话后再启动 SDK 模式。', 'blocked');
         } else {
           this.setNotice(`无法打开 SDK 模式：${error.message}`, 'blocked');
           if (reconnecting || error.code === 'native_sdk_session_busy') this.reconnect();
@@ -646,6 +669,7 @@ const SdkView = new Proxy({
   pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
     const view = this.active;
+    if (view.observeExternal?.()) return;
     if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
         || SessionContentView.kind !== 'sdk' || !S.liveSdk.has(view.uid)) return;
     // Discovery can arrive after history was opened read-only on reload.
@@ -675,6 +699,7 @@ const SdkView = new Proxy({
     closeWatch();
   },
   async startSession(uid, agent = null) {
+    if (S.liveExternalSdk.has(uid)) return;
     // An explicit start during ownership discovery replaces the read-only
     // preview with the real view; otherwise discovery completion closes it.
     if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent || this.discovering)

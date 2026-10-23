@@ -658,6 +658,9 @@ pub async fn create(
                     "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
                 ));
             }
+            if body.source == Source::Kiro {
+                check_external_kiro(&state, &scope.session_id).await?;
+            }
             Some((scope.session_id, scope.uid))
         }
         None => None,
@@ -797,6 +800,30 @@ pub struct TakeoverRequest {
 }
 /// Takeover: reuse a managed console, ask before replacing an external
 /// CLI, then resume the exact catalog identity in its recorded cwd.
+async fn check_external_kiro(state: &AppState, sid: &str) -> Result<(), ApiError> {
+    if let Some(scanner) = &state.proc_scan {
+        let snapshot = scanner.snapshot(true).await.map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "kiro_observation",
+                "无法核对 Kiro 外部会话状态",
+            )
+        })?;
+        if snapshot
+            .scan
+            .kiro_acp
+            .contains_key(&sid.to_ascii_lowercase())
+        {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "sdk_session_busy",
+                "该 Kiro 会话由外部 ACP 程序运行；当前仅可查看，请先在原程序结束会话。",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn takeover(
     State(state): State<AppState>,
     body: Result<Json<TakeoverRequest>, JsonRejection>,
@@ -824,6 +851,9 @@ pub async fn takeover(
     } else {
         None
     };
+    if source == Source::Kiro {
+        check_external_kiro(&state, &scope.session_id).await?;
+    }
     if source == Source::Kiro && state.native_sdks.loaded_uids().contains(&scope.uid) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,

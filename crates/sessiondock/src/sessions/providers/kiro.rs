@@ -1,4 +1,4 @@
-//! Render normalized items from SessionDock's ACP projection only.
+//! Render normalized items from SessionDock's ACP and native-history projections.
 use super::{Parser, string};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -23,12 +23,34 @@ impl Parser<'_> {
         }
         let item = &record["item"];
         let role = item["role"].as_str().unwrap_or("system");
-        let text = string(&item["text"]);
+        let mut text = string(&item["text"]);
         let mut extra = item.clone();
         if let Some(object) = extra.as_object_mut() {
             object.remove("role");
             object.remove("text");
             object.remove("content");
+        }
+        if role == "tool" {
+            let input = item
+                .get("input")
+                .filter(|v| !v.is_null())
+                .or_else(|| item.get("tool_input"));
+            if let Some(input) = input {
+                text = string(input);
+            }
+            let result = item
+                .get("result")
+                .filter(|v| !v.is_null())
+                .or_else(|| item.get("tool_result"))
+                .filter(|v| !v.is_null());
+            if let Some(result) = result {
+                extra["result"] = if result["role"] == "tool_result" {
+                    result.clone()
+                } else {
+                    json!({"role":"tool_result","text":string(result),
+                        "error":item["error"] == true || item["status"] == "failed"})
+                };
+            }
         }
         self.emit(end, role, text, &item["timestamp"], extra);
         Ok(())

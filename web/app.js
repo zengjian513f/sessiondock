@@ -187,6 +187,7 @@ const S = {
   agent: null,        // 当前查看的子代理 id；null = 主会话
   syncGap: 350,       // 当前会话的同步间隔, 随有无新内容自适应
   live: new Set(),    // 仍在运行的会话 uid
+  liveExternalSdk: new Set(), // observed external ACP owners, no control authority
   liveSdk: new Set(), // threads loaded on the node’s live SDK bridge
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
@@ -2270,7 +2271,7 @@ function paintItemStatus(node) {
   const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
+  const running = frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
@@ -2374,6 +2375,7 @@ async function refreshLive(force = false, onlineOnly = false) {
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
   const nextSdk = new Set((d.sdk_uids || []).filter(u => next.has(u)));
+  const nextExternalSdk = new Set((d.external_sdk_uids || []).filter(u => next.has(u)));
   const nextWorking = new Set((d.working_uids || []).filter(u => next.has(u)));
   // Work another machine runs for a session, named by native node/source/sid.
   const remoteKey = (node, source, sid) => JSON.stringify([node || '', source, String(sid)]);
@@ -2388,11 +2390,13 @@ async function refreshLive(force = false, onlineOnly = false) {
     || [...a].some(([u, t]) => b.get(u) !== t);
   const changed = setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
     || setChanged(nextSdk, S.liveSdk)
+    || setChanged(nextExternalSdk, S.liveExternalSdk)
     || setChanged(nextWorking, S.liveWorking)
     || mapChanged(nextStarted, S.liveStarted);
   S.live = next;
   S.liveTmux = nextTmux;
   S.liveSdk = nextSdk;
+  S.liveExternalSdk = nextExternalSdk;
   S.liveWorking = nextWorking;
   S.liveStarted = nextStarted;
   SdkView.syncRunning();
@@ -7452,6 +7456,7 @@ function sessionStopUnavailable(row) {
 }
 function sessionRunUnavailable(row, mode = agentStartMode(row?.source)) {
   if (!row) return '会话状态尚未读取。';
+  if (S.liveExternalSdk.has(row.uid)) return '外部 ACP 会话仅可查看，请在原程序中操作。';
   if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在切换会话运行状态，请稍候。';
   if (sessionRunActive(row)) return sessionStopUnavailable(row);
   if (row.pending) return row.source === 'shell'
@@ -7498,7 +7503,7 @@ function startComposerSession(uid, agent, mode) {
   if (row) void toggleSessionRun(agent ? {...row, agent_id: agent} : row, null, 'start', mode);
 }
 async function toggleSessionRun(row, button = null, intent = null, composerMode = null) {
-  if (!row || ConsoleUI.busy.has(row.uid)) return;
+  if (!row || S.liveExternalSdk.has(row.uid) || ConsoleUI.busy.has(row.uid)) return;
   // A live refresh can change the row after the control was painted. Keep the
   // action the user clicked; stop is idempotent if the instance already exited.
   if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {

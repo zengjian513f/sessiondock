@@ -95,6 +95,7 @@ const ConsoleUI = {errors: new Map(), busy: new Set()};
 
 function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (!uid) return '请先选择一个会话，再打开控制台。';
+  if (S.liveExternalSdk.has(uid)) return '外部 ACP 会话仅可查看，请在原程序中操作。';
   if (agent) return '子代理没有独立控制台，请切换到主会话后打开控制台。';
   if (typeof T === 'undefined' || typeof takeover !== 'function')
     return '控制台组件尚未加载完成或加载失败，请稍后重试；持续失败时请刷新页面。';

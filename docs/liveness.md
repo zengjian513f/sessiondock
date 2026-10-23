@@ -23,9 +23,17 @@ frontend expects (`capabilities.live: true`).
 The scan is read-only: it lists the table, reads `cmdline` of every process,
 and `environ`, `cwd` and `fd/*` links of the processes whose command line
 mentions `claude`, `codex`, `grok` or `agy` (plus the `cwd` of `opencode` processes);
-`stat` lines are read lazily for ancestry walks. It never signals, writes, follows a link outside the tree, or elevates
+`stat` lines are read lazily for ancestry walks. It never signals, writes, or elevates
 privileges (another user's `environ`/`fd` are unreadable and simply skipped;
 `cmdline` is world-readable).
+
+DELTA: external Kiro ACP processes expose read-only ownership through their own
+open `.kiro/logs/*/kiro.log` descriptors. Only load-completion or structured native
+turn identity records timestamped after this process started count. The scan reads
+these regular log files (including unlinked open logs), never ACP pipes. SID/cwd
+text in a command line and native metadata status alone are insufficient.
+`external_sdk_uids` is federated separately from managed `sdk_uids`; observed ACP
+PIDs never enter stop/takeover ownership. See [Kiro](kiro.md).
 
 Results are cached for 3 s counted from the moment a scan completes (a slow
 scan must not expire its own result), refreshes are single-flight (waiters

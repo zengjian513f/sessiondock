@@ -1,4 +1,4 @@
-//! SessionDock-owned Kiro identity and cached history. Native storage is opaque.
+//! SessionDock-owned Kiro identity and ACP/native read-only history projections.
 use crate::{
     config::Config,
     lifecycle::{
@@ -21,6 +21,8 @@ use tokio::{
     process::Command,
 };
 use tokio_util::sync::CancellationToken;
+
+mod native;
 
 pub const FORMAT: &str = "sessiondock-kiro-projection-v1";
 
@@ -62,6 +64,7 @@ pub(crate) struct Catalog {
     pub native_root: PathBuf,
     manifest: Mutex<Manifest>,
     rpc_gate: tokio::sync::Mutex<()>,
+    native_observed: Mutex<BTreeMap<PathBuf, native::Version>>,
 }
 
 pub(crate) fn digest(value: &str) -> String {
@@ -180,6 +183,7 @@ impl Catalog {
             native_root: native_root.clone(),
             manifest: Mutex::new(manifest),
             rpc_gate: tokio::sync::Mutex::new(()),
+            native_observed: Mutex::new(BTreeMap::new()),
         });
         // Recover the catalog-commit -> projection-removal crash window. Derive
         // the only permitted cleanup path from this scope and SID, never native metadata.
@@ -244,14 +248,32 @@ impl Catalog {
             save(&legacy_marker, &legacy).map_err(io::Error::other)?;
         }
         let worker = catalog.clone();
+        let catalog_shutdown = shutdown.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
-                    _ = shutdown.cancelled() => break,
+                    _ = catalog_shutdown.cancelled() => break,
                     _ = interval.tick() => {
                         if let Err(error) = worker.refresh().await { crate::log::warn("kiro.catalog_unavailable", json!({"error":error})); }
+                    }
+                }
+            }
+        });
+        let observer = catalog.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3));
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    _ = interval.tick() => {
+                        let observer = observer.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            if let Err(error) = observer.observe_native() {
+                                crate::log::warn("kiro.native_observation", json!({"error":error}));
+                            }
+                        }).await;
                     }
                 }
             }
@@ -330,7 +352,8 @@ impl Catalog {
             &json!({"format":FORMAT,"uid":entry.uid,"aliases":entry.aliases,"scope":entry.scope,
             "session":{"id":entry.sid,"cwd":entry.cwd,"title":title,"created":created,"updated":updated,
             "model":native["modelId"].as_str().or_else(|| meta["modelId"].as_str()).or_else(|| previous["session"]["model"].as_str())},
-            "history_synced":previous["history_synced"].as_bool().unwrap_or(false),"native":meta}),
+            "history_synced":previous["history_synced"].as_bool().unwrap_or(false),
+            "native_observed":previous["native_observed"],"native_status":previous["native_status"],"native":meta}),
         )
     }
     pub fn remember_native(
@@ -396,6 +419,7 @@ impl Catalog {
             .find(|e| e.uid == uid)
             .ok_or("Kiro identity unavailable")?;
         entry.host_key = host_key;
+        self.native_observed.lock().unwrap().clear();
         self.persist(&next)?;
         *guard = next;
         Ok(())
@@ -444,6 +468,8 @@ impl Catalog {
             serde_json::from_slice(&std::fs::read(&summary).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
         value["history_synced"] = json!(true);
+        value.as_object_mut().unwrap().remove("native_observed");
+        value.as_object_mut().unwrap().remove("native_status");
         if snapshot["model"].is_string() {
             value["session"]["model"] = snapshot["model"].clone();
         }

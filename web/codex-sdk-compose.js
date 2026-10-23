@@ -14,7 +14,7 @@ const CodexSdkCompose = {
         if (this.states.get(view) !== state) { resolve(); return; }
         if (view.agent || typeof composerDraft !== 'function' || !conversationSendEnabled()
             || (HUB_MODE && Nodes.capabilities[nodeOf(state.uid)]?.conversation_send !== true)) {
-          state.input.disabled = false;
+          state.input.disabled = !!view.externalObserved;
           resolve(); return;
         }
         state.draft = composerDraft(state.uid);
@@ -166,8 +166,8 @@ const CodexSdkCompose = {
     const focusedQuote = focused?.closest?.('.draft-quote')?.dataset.quoteId;
     const selection = focusedQuote ? [focused.selectionStart, focused.selectionEnd] : null;
     if (state.input.value !== draft.text) { PathCompletion.close(view.input); state.input.value = draft.text; view.fitInput(); }
-    state.input.disabled = !!draft.loading;
-    state.add.disabled = !!draft.loading;
+    state.input.disabled = !!draft.loading || !!view.externalObserved;
+    state.add.disabled = !!draft.loading || !!view.externalObserved;
     renderAttachmentCards(state.cards, draft.attachments, {
       uid: state.uid, render: () => this.paint(view, state),
       onInsert: number => this.insert(view, state, number),
