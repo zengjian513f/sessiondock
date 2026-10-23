@@ -4,6 +4,7 @@
 mod actions;
 mod checkpoint;
 mod live;
+mod retry;
 mod transport;
 
 use std::collections::{HashMap, HashSet};
@@ -175,7 +176,7 @@ impl Bridge {
             }
             let busy = {
                 let st = session.state.lock().unwrap();
-                st.running || st.loading || !st.requests.is_empty()
+                st.running || st.loading || st.retry.is_some() || !st.requests.is_empty()
             };
             if busy {
                 continue;
@@ -354,6 +355,7 @@ impl Bridge {
             }
             "settings" => {
                 let session = self.get_session(uid)?;
+                session.cancel_model_retry();
                 if let (Some(cid), Some(val)) =
                     (payload["configId"].as_str(), payload["value"].as_str())
                 {
@@ -393,7 +395,10 @@ impl Bridge {
                     Ok(json!({"usage":null,"billing":null,"context_usage":null}))
                 }
             }
-            "compact" => self.compact(uid, &cwd, &target).await,
+            "compact" => {
+                self.cancel_model_retry(uid);
+                self.compact(uid, &cwd, &target).await
+            }
             "rename" => self.rename_session(uid, &target, &payload).await,
             "fork" => self.fork_session(uid, &cwd, &target, &payload).await,
             "discard" => self.delete_session(uid).await,

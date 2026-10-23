@@ -274,6 +274,13 @@ impl Session {
         // Keep the actor and its ownership on an observation failure. Recovery
         // callers see unavailable evidence instead of silently replacing it.
         let _ = caught_rx.await;
+        // Reattachment must not revive a timer from historical failed output.
+        {
+            let mut st = session.state.lock().unwrap();
+            st.model_retry = Default::default();
+            st.retry = None;
+            st.publish();
+        }
         // A crash before host.write is safe to resume only with the original byte ID.
         let queued: Vec<String> = session
             .state
@@ -460,6 +467,7 @@ impl Session {
                                                 && st.active_prompt == Some(id)
                                             {
                                                 st.fail_turn(&error);
+                                                st.schedule_model_retry(&value["error"]);
                                                 st.active_prompt = None;
                                                 st.requests.clear();
                                             } else {
@@ -786,6 +794,7 @@ impl Session {
                 )?;
                 st.observing = true;
                 st.active_prompt = Some(id);
+                st.model_retry = Default::default();
                 st.begin_turn(text, delivery_id, None, None);
                 st.observing = false;
                 st.persist()?;
@@ -801,6 +810,48 @@ impl Session {
         }
         Ok(snap)
     }
+    pub(super) async fn continue_model_retry(&self) -> Result<(), String> {
+        let key;
+        {
+            let mut st = self.state.lock().unwrap();
+            if !st
+                .model_retry
+                .deadline
+                .is_some_and(|at| std::time::Instant::now() >= at)
+                || st.running
+                || st.loading
+                || !st.requests.is_empty()
+            {
+                return Ok(());
+            }
+            if self.dead.load(Ordering::Acquire) || self.unavailable.load(Ordering::Acquire) {
+                st.cancel_model_retry();
+                st.publish();
+                return Ok(());
+            }
+            let id = st.next_rpc;
+            st.next_rpc += 1;
+            key = format!("model-retry:{id}");
+            let sid = st.session_id.clone();
+            Self::enqueue(
+                &mut st,
+                &key,
+                json!({"jsonrpc":"2.0","id":id,"method":"session/prompt",
+                    "params":{"sessionId":sid,"prompt":[{"type":"text","text":super::retry::CONTINUE}]}}),
+                Some(id),
+                None,
+            )?;
+            st.model_retry.deadline = None;
+            st.observing = true;
+            st.active_prompt = Some(id);
+            st.begin_turn(super::retry::CONTINUE, None, None, None);
+            st.observing = false;
+            st.persist()?;
+            st.broadcast();
+        }
+        self.deliver(&key).await
+    }
+
     pub(super) fn recover_delivery(&self, id: &str) -> Result<Value, String> {
         let st = self.state.lock().unwrap();
         let entry = st
@@ -824,7 +875,15 @@ impl Session {
         let key;
         {
             let mut st = self.state.lock().unwrap();
+            let waiting = st.retry.is_some();
+            st.cancel_model_retry();
             let Some(turn) = st.active_prompt else {
+                if waiting {
+                    st.error = None;
+                    st.error_kind = Some("interrupted".into());
+                    st.last_turn = Some(json!({"status":"interrupted"}));
+                    st.publish();
+                }
                 return Ok(st.snapshot(&st.uid, &st.cwd, true));
             };
             key = format!("cancel:{turn}");
@@ -918,6 +977,7 @@ impl Session {
         st.snapshot(&st.uid, &st.cwd, true)
     }
     pub(super) async fn kill(self: &Arc<Self>) -> Result<(), String> {
+        self.cancel_model_retry();
         if !self.dead.load(Ordering::Acquire) {
             match &self.transport {
                 Transport::Host { client } => {

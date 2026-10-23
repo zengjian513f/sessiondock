@@ -764,7 +764,13 @@ impl NativeSdks {
         operation: &str,
         draft: Value,
     ) -> Result<QueuedInput, String> {
-        self.input_queue.begin(target, operation, draft)
+        let input = self.input_queue.begin(target, operation, draft)?;
+        if target["source"] == "kiro"
+            && let Some(Provider::Kiro(bridge)) = self.providers.get("kiro")
+        {
+            bridge.cancel_model_retry(target["uid"].as_str().unwrap_or_default());
+        }
+        Ok(input)
     }
 
     pub(crate) fn input_receipt(input: &QueuedInput) -> Value {
@@ -981,6 +987,37 @@ impl NativeSdks {
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
         loop {
             tokio::select! {_=self.shutdown.cancelled()=>return,_=tick.tick()=>{},_=self.queue_wake.notified()=>{}}
+            if let Some(Provider::Kiro(bridge)) = self.providers.get("kiro") {
+                for uid in bridge.retry_candidates() {
+                    let Ok(guard) = self.kiro_mode_lock(&uid).try_lock_owned() else {
+                        continue;
+                    };
+                    let target = json!({"source":"kiro","uid":uid});
+                    let scope = input_queue::scope(&target);
+                    if self
+                        .stopped
+                        .lock()
+                        .expect("SDK stopped scopes")
+                        .contains(&scope)
+                    {
+                        bridge.cancel_model_retry(&uid);
+                        continue;
+                    }
+                    if let Some(input) = self.input_queue.first(&scope) {
+                        // A fast failure can precede the original send receipt.
+                        // Wait for confirmation; pending new input owns the next turn.
+                        if input.state != "sending" && input.runtime_state.is_empty() {
+                            bridge.cancel_model_retry(&uid);
+                        }
+                        continue;
+                    }
+                    let bridge = bridge.clone();
+                    tokio::spawn(async move {
+                        let _guard = guard;
+                        bridge.retry_model(&uid).await;
+                    });
+                }
+            }
             for (key, target) in self.input_queue.runnable() {
                 if !self.current_scope(&target) {
                     continue;

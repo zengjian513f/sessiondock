@@ -66,7 +66,10 @@ pub(super) struct LiveState {
     pub(super) requests: HashMap<String, PendingRequest>,
     pub(super) last_turn: Option<Value>,
     pub(super) runtime_error: Option<String>,
+    #[serde(skip)]
     pub(super) retry: Option<Value>,
+    #[serde(skip)]
+    pub(super) model_retry: super::retry::Retry,
     pub(super) compact: Option<Value>,
     pub(super) status: Option<String>,
     pub(super) config_options: Vec<Value>,
@@ -140,6 +143,7 @@ impl LiveState {
             last_turn: None,
             runtime_error: None,
             retry: None,
+            model_retry: Default::default(),
             compact: None,
             status: None,
             config_options: Vec::new(),
@@ -624,6 +628,7 @@ impl LiveState {
     }
 
     pub(super) fn finish_turn(&mut self, result: &Value) {
+        self.cancel_model_retry();
         self.running = false;
         let stop = result["stopReason"].as_str().unwrap_or("unknown");
         let is_interrupted = stop == "cancelled" || stop == "interrupted";
@@ -1856,6 +1861,7 @@ fn format_reset_remaining(raw: Option<&Value>) -> Option<String> {
 
 pub(super) fn mark_exit(session: &Arc<Session>, reason: &str) {
     let mut st = session.state.lock().unwrap();
+    st.cancel_model_retry();
     if st.running {
         st.fail_turn(reason);
         st.error_kind = Some("kiro_sdk_process_exited".into());
