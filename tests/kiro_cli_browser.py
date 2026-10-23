@@ -26,7 +26,7 @@ from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
 
 
-def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None):
+def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None, expected_node_options: str):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     context.route(
         "**/*",
@@ -73,6 +73,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
             break
         time.sleep(0.05)
     assert starts and starts[-1]["sessionId"] == fixture.sid, starts
+    assert starts[-1]["node_options"] == expected_node_options, starts
     assert starts[-1]["argv"][starts[-1]["argv"].index("--resume-id") + 1] == fixture.sid
     # Send through xterm and retain the same native identity for SDK replay.
     page.locator("#termpane .xterm-helper-textarea").focus()
@@ -219,6 +220,8 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert reopened.get("session_id") == new_sid, reopened
     assert len(fixture.received("session/new")) == new_before + 1
     assert len(fixture.received("session/load")) == loads_before_retry, "Retry stopped or replaced an independently reopened SDK host"
+    sdk_starts = [r["fixture_start"] for r in fixture.received() if "fixture_start" in r]
+    assert sdk_starts and all(r["node_options"] == expected_node_options for r in sdk_starts), sdk_starts
     assert not failures, failures
     context.close()
 
@@ -227,6 +230,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
+    parser.add_argument("--node-options", default="--trace-warnings")
     args = parser.parse_args()
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)
@@ -236,6 +240,12 @@ def main():
             (root / name).mkdir()
         ptyhost_bin = args.binary.resolve(strict=True).with_name("ptyhost")
         fixture = KiroFixture(root, host_binary=ptyhost_bin)
+        config = json.loads(fixture.launcher.read_text())
+        config['profiles'][0]['env']['NODE_OPTIONS'] = args.node_options
+        fixture.launcher.write_text(json.dumps(config))
+        expected_node_options = args.node_options
+        if '--max-old-space-size' not in args.node_options.replace('_', '-'):
+            expected_node_options = (args.node_options + ' --max-old-space-size=16384').strip()
         initialize("--initialize-lifecycle", root / "ledger", args.binary.resolve(strict=True))
         (root / "state").mkdir()
         extra = {
@@ -249,7 +259,7 @@ def main():
             with private_hosts(fixture.host_dir), server(SimpleNamespace(root=root), args.binary, "off", extra) as base:
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(headless=True)
-                    exercise(browser, base, fixture, args.screenshots)
+                    exercise(browser, base, fixture, args.screenshots, expected_node_options)
                     browser.close()
         finally:
             stop_private_sdkhosts(root)

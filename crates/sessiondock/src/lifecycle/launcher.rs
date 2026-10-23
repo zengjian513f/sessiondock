@@ -320,6 +320,29 @@ pub struct LaunchFailure {
 pub fn read_config(path: &Path) -> Result<Config, Error> {
     let bytes = std::fs::read(path).map_err(|_| Error::ConfigUnavailable)?;
     let mut config: Config = serde_json::from_slice(&bytes).map_err(|_| Error::InvalidConfig)?;
+    // Kiro's bundled Node otherwise inherits a roughly 4 GiB V8 heap limit.
+    // Apply only to this source, shared by CLI, ACP and catalog subprocesses.
+    for profile in &mut config.profiles {
+        if profile.source != Source::Kiro {
+            continue;
+        }
+        let options = profile.env.get("NODE_OPTIONS").cloned().unwrap_or_else(|| {
+            if profile.env_remove.iter().any(|key| key == "NODE_OPTIONS") {
+                String::new()
+            } else {
+                std::env::var("NODE_OPTIONS").unwrap_or_default()
+            }
+        });
+        // Respect an operator's explicit heap setting, including Node's alias.
+        if !options.replace('_', "-").contains("--max-old-space-size") {
+            profile.env.insert(
+                "NODE_OPTIONS".into(),
+                format!("{options} --max-old-space-size=16384")
+                    .trim()
+                    .to_owned(),
+            );
+        }
+    }
     add_shell(&mut config);
     config_bounds(&config)?;
     Ok(config)

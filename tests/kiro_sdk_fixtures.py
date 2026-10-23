@@ -179,7 +179,7 @@ class FakeKiroAcp:
         self.pending_rpc = {}
         self.turn_thread = None
         with self.log.open("a") as f:
-            f.write(json.dumps({"fixture_start": {"pid": os.getpid(), "argv": sys.argv[1:]}}) + "\n")
+            f.write(json.dumps({"fixture_start": {"pid": os.getpid(), "argv": sys.argv[1:], "node_options": os.environ.get("NODE_OPTIONS")}}) + "\n")
 
     def send(self, message):
         with self.lock:
@@ -618,7 +618,7 @@ def run_fake_cli_chat(args: list[str]):
         raise SystemExit("Unknown native session ID")
     log = Path(os.environ["KIRO_SDK_FAKE_LOG"])
     with log.open("a") as f:
-        f.write(json.dumps({"fixture_cli_start": {"pid": os.getpid(), "argv": args, "sessionId": sid}}) + "\n")
+        f.write(json.dumps({"fixture_cli_start": {"pid": os.getpid(), "argv": args, "sessionId": sid, "node_options": os.environ.get("NODE_OPTIONS")}}) + "\n")
 
     def cleanup(*_):
         with log.open("a") as f:
