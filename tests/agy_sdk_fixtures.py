@@ -93,6 +93,17 @@ class ControlHandler(BaseHTTPRequestHandler):
     def log_message(self,*_): pass
     def do_POST(self):
         payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path.endswith('/UpdateConversationAnnotations'):
+            assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
+            assert payload['cascadeId']==sid and payload['mergeAnnotations'] is True
+            title=payload['annotations']['title']
+            record({'kind':'rename','sid':sid,'pid':os.getpid(),'title':title})
+            if title=='reject rename':
+                self.send_response(400);self.end_headers();self.wfile.write(b'{}');return
+            while (root/'rename-hold').exists():threading.Event().wait(0.02)
+            with sqlite3.connect(native/'conversation_summaries.db') as catalog:
+                catalog.execute('UPDATE conversation_summaries SET title=? WHERE conversation_id=?',(title,sid))
+            self.send_response(200);self.end_headers();self.wfile.write(b'{}');return
         assert self.path=='/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation'
         assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
         assert payload=={'cascadeId':sid,'killBackgroundTasks':False,'notifyParent':False}

@@ -28,10 +28,11 @@ from sdk_selection_fixtures import snapshots as native_events
 
 
 @contextmanager
-def provider(source, root, binary):
+def provider(source, root, binary, extra_env=None):
+    extra_env=extra_env or {}
     if source == 'claude':
         fixture = ClaudeFixture(root)
-        with fixture.server(binary) as base:
+        with fixture.server(binary,extra_env) as base:
             yield base
     elif source == 'grok':
         for name in ('claude', 'codex', 'grok', 'state'):
@@ -42,7 +43,7 @@ def provider(source, root, binary):
             **fixture.env, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
             'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
             'SESSIONDOCK_PTYHOST_DIR': str(root/'unused-host'),
-            'SESSIONDOCK_STATE_DIR': str(root/'state'),
+            'SESSIONDOCK_STATE_DIR': str(root/'state'), **extra_env,
         }) as base:
             yield base
     elif source == 'agy':
@@ -51,7 +52,7 @@ def provider(source, root, binary):
             initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
             with isolated_server(Corpus(root), binary, host_dir=root/'host',
                     lifecycle_dir=root/'ledger', state_dir=root/'state',
-                    launcher_config=fixture.launcher, extra_env=fixture.extra_env) as (base, _):
+                    launcher_config=fixture.launcher, extra_env={**fixture.extra_env,**extra_env}) as (base, _):
                 yield base
     else:
         for name in ('claude', 'codex', 'grok', 'host', 'state', 'proc'):
@@ -66,7 +67,7 @@ def provider(source, root, binary):
                 lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={
                     'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_OPENCODE_DB': str(native.db),
                     'SESSIONDOCK_OPENCODE_ROOT': str(root/'mirror'),
-                    'SESSIONDOCK_PROC_ROOT': str(root/'proc')}) as (base, _):
+                    'SESSIONDOCK_PROC_ROOT': str(root/'proc'),**extra_env}) as (base, _):
                 yield base
 
 

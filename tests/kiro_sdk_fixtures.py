@@ -290,6 +290,18 @@ class FakeKiroAcp:
                     "_meta": {"kiro": {"extensionMethods": ["_kiro/session/compact", "_kiro/session/context", "_kiro/session/history"], "replayMarking": True, "sessionSources": ["local"], "sessionListScopes": ["workspace", "user"]}},
                 },
             })
+        elif method == "_kiro/session/rename":
+            if params['title']=='reject rename':
+                self.error(message,-32602,'Synthetic rename rejected');return
+            if params['title']=='unconfirmed rename':
+                self.reply(message,{'success':False});return
+            while (self.sessions_root/'rename-hold').exists():threading.Event().wait(0.02)
+            path=self.sessions_root/'bucket_v3'/params['sessionId']/'session.json'
+            title=params['title']
+            title=title if len(title)<=80 else title[:77]+'...'
+            meta=json.loads(path.read_text());meta['title']=title;path.write_text(json.dumps(meta))
+            self.update('session_info_update',title=title)
+            self.reply(message,{'success':True})
         elif method == "session/list":
             rows = []
             for path in sorted((self.sessions_root / "bucket_v3").glob("*/session.json")):

@@ -21,6 +21,7 @@ from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from new_session_model_browser import open_dialog
+from sdk_ui_fixtures import start_sdk
 from node_auth_fixtures import TOKEN, node_env
 
 
@@ -67,6 +68,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     pane = page.locator('#session-content-view')
     box, send = pane.locator('#sdk-input'), pane.locator('#sdk-send')
     expect(box).to_be_visible()
+    start_sdk(page)
     uid = page.evaluate('S.sel')
     row = page.locator(f'#side .item[data-uid="{uid}"]')
     starts = len(fake.methods('turn/start'))

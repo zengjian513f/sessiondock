@@ -889,11 +889,45 @@ impl Bridge {
 
     pub(super) async fn rename_session(
         &self,
-        _uid: &str,
+        uid: &str,
         _target: &Value,
-        _payload: &Value,
+        payload: &Value,
     ) -> Result<Value, String> {
-        Err("kiro_sdk_rename_unavailable: 当前 Kiro 未提供已确认的官方重命名接口".into())
+        let title = payload["title"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("会话名称不能为空")?;
+        let request = payload["request_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or("Kiro 改名请求缺少稳定 request_id")?;
+        let session = self.ensure_open(uid, "", payload).await?;
+        let sid = session.session_id.lock().unwrap().clone();
+        // The official 2.24.1 TUI uses this extension even though initialize
+        // omits it from extensionMethods. Never submit /rename as a prompt.
+        let result = session
+            .request_once(
+                &format!("rename:{request}"),
+                "_kiro/session/rename",
+                json!({"sessionId":sid,"title":title}),
+            )
+            .await?;
+        if result["success"] != true {
+            return Err("kiro_sdk_rename_failed: 原生未确认改名".into());
+        }
+        let mut state = session.state.lock().unwrap();
+        // The native notification precedes the response and contains the
+        // canonical title (Kiro may shorten it). Never project the input over it.
+        let title = state
+            .title
+            .clone()
+            .ok_or("kiro_sdk_rename_pending: 原生已接受改名，但尚未返回标题，请刷新核对。")?;
+        self.catalog
+            .remember_native(&sid, &json!({"title":title}), Some(uid))?;
+        session.project(&mut state);
+        state.publish();
+        Ok(json!({"renamed":true,"session_id":sid,"title":title}))
     }
 
     pub(super) async fn fork_session(

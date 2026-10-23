@@ -381,16 +381,7 @@ const NativeSdkControls = {
       const radio=document.querySelector(`#new-session-form input[name="new-source"][value="${CSS.escape(source)}"]`);
       if(radio && !radio.disabled)radio.click();
       success=true;
-    }else if(command==='rename'){
-      if(view.capabilities.rename!==true)view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
-      else if(!arg)view.setNotice('用法：/rename 新名称','blocked');
-      else{
-        const generation=view.generation;
-        await view.request('api/native-sdk/rename',{uid:view.uid,title:arg,request_id:crypto.randomUUID()});
-        await loadSessions(true,true);
-        if(view.current(generation))view.setNotice('会话已重命名');
-        success=true;
-      }
+    }else if(command==='rename'){return this.rename(view,text,arg);
     }else if(command==='stop'){await view.interrupt();success=true;}
     else if(['model','effort','mode'].includes(command)){
       if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
@@ -401,6 +392,40 @@ const NativeSdkControls = {
     }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
+    return true;
+  },
+  async rename(view,text,argument) {
+    const uid=view.uid,generation=view.generation,input=view.input,requestId=crypto.randomUUID();
+    const current=()=>view.current(generation) && view.uid===uid;
+    const audit=(phase,data={})=>browserAuditEvent('sdk.rename.'+phase,{source:uid.split(':')[0],...data},{uid,requestId});
+    audit('invoked',{dialog:!argument});
+    if(view.capabilities.rename!==true){
+      view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
+      audit('finished',{outcome:'unsupported'});return true;
+    }
+    try{
+      let title=argument;
+      if(!title){
+        const modal=CodexSdkActions.form('重命名会话','输入此会话的新名称。','保存');
+        const field=document.createElement('input');
+        field.className='new-model-search';field.setAttribute('aria-label','会话名称');field.required=true;
+        field.value=S.sessions.find(session=>session.uid===uid)?.title || view.raw?.title || '';
+        modal.fields.append(field);
+        modal.form.onsubmit=event=>{event.preventDefault();if(field.value.trim())modal.finish(field.value.trim());};
+        field.focus();field.select();title=await modal.answer;
+      }
+      if(!title || !current()){audit('finished',{outcome:title?'session_changed':'cancelled'});return true;}
+      audit('requested',{title_length:title.length});
+      await view.request('api/native-sdk/rename',{uid,title,request_id:requestId});
+      audit('finished',{outcome:'succeeded'});
+      if(current())view.setNotice('会话已重命名');
+      await loadTermList(true);
+      await loadSessions(true,true);
+      if(current() && input?.value===text){input.value='';view.fitInput();CodexSdkCompose.input(view);}
+    }catch(error){
+      audit('finished',{outcome:'failed'});
+      if(current())view.setNotice(`改名失败：${error.message}`,'blocked');
+    }
     return true;
   },
   messageIdentity(view,item) {

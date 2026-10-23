@@ -382,7 +382,7 @@ def exercise(browser, base, fixture, screenshots=None):
             with page.expect_response(lambda response: '/api/native-sdk/interrupt' in response.url) as stopped:
                 page.locator('#sdk-stop').click()
             if mode == 'reject':
-                assert not stopped.value.ok and '原生接口拒绝取消请求' in stopped.value.text()
+                assert not stopped.value.ok and '原生接口拒绝 CancelCascadeInvocation' in stopped.value.text()
             else:
                 page.locator('#sdk-stop').click()
             # The former five-second SIGKILL deadline must no longer exist.
