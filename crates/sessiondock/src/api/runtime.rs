@@ -263,6 +263,22 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     };
     let mut sdk_uids = BTreeSet::new();
     sdk_uids.extend(state.native_sdks.loaded_uids());
+    let external_sdk_uids: Vec<_> = scanned
+        .as_ref()
+        .ok()
+        .map(|snapshot| {
+            rows.iter()
+                .filter(|row| {
+                    row.source == "kiro"
+                        && snapshot
+                            .scan
+                            .kiro_acp
+                            .contains_key(&row.sid.to_ascii_lowercase())
+                })
+                .map(|row| row.uid.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     if let Some(sdk) = &state.codex_sdk {
         let loaded = sdk.live_threads().await;
         sdk_uids.extend(
@@ -307,6 +323,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     }
     let mut response = assemble(state, shared.as_ref(), scanned, &key).await?;
     response["sdk_uids"] = json!(key.sdk_uids);
+    response["external_sdk_uids"] = json!(external_sdk_uids);
     if let Some(uids) = response["uids"].as_array_mut() {
         for uid in &key.sdk_uids {
             let uid = json!(uid);

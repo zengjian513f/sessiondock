@@ -34,6 +34,7 @@ use serde_json::Value;
 
 use super::process::ProcClock;
 mod activity;
+mod kiro;
 
 /// Cache seconds after a scan completes; the TTL starts when the
 /// scan finishes so a slow scan does not immediately expire its own result.
@@ -571,6 +572,8 @@ pub struct ScanStats {
 /// One completed scan. Positive pids are CLI main processes,
 /// negative ones related helpers.
 pub struct Scan {
+    /// External ACP observations, never stoppable/takeover process PIDs.
+    pub kiro_acp: BTreeMap<String, BTreeSet<u32>>,
     /// Lowercase session id → owning pids.
     pub sids: BTreeMap<String, BTreeSet<i64>>,
     /// Open session file → holders (`pid` main, `-pid` helper).
@@ -646,6 +649,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     let mut sids: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut paths: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut bare_claude = BTreeMap::new();
+    let mut kiro_acp: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
     let mut opencode = BTreeMap::new();
     let mut stats = ScanStats::default();
     let entries: Vec<u32> = std::fs::read_dir(tree.root())
@@ -695,6 +699,11 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             && (cli_family(argv0) == Some("kiro") || is_kiro_acp_cmd(&cmd))
             && tree.cli_ancestor(pid).is_none()
         {
+            if is_kiro_acp_cmd(&cmd) {
+                for sid in kiro::sessions(&tree, pid) {
+                    kiro_acp.entry(sid).or_default().insert(pid);
+                }
+            }
             continue;
         }
         stats.matched += 1;
@@ -791,6 +800,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     }
     stats.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Scan {
+        kiro_acp,
         sids,
         paths,
         bare_claude,
@@ -953,6 +963,13 @@ impl Scan {
 
     /// A listed Grok session id counts even without a pid.
     pub fn is_live(&self, session: &SessionRow) -> bool {
+        if session.source == "kiro"
+            && self
+                .kiro_acp
+                .contains_key(&session.sid.to_ascii_lowercase())
+        {
+            return true;
+        }
         if matches!(session.source.as_str(), "codex" | "kiro") {
             return !self.pids_of(session).is_empty();
         }

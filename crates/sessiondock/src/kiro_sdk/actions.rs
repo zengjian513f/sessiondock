@@ -305,6 +305,13 @@ impl Bridge {
         };
         let sid_lower = format!("kiro:{}", sid.to_ascii_lowercase());
         if scan
+            .kiro_acp
+            .get(&sid.to_ascii_lowercase())
+            .is_some_and(|pids| !pids.is_empty())
+        {
+            return Err("kiro_sdk_session_busy: 该 Kiro 会话由外部 ACP 程序运行；当前仅可查看，请先在原程序结束会话。".into());
+        }
+        if scan
             .sids
             .get(&sid_lower)
             .is_some_and(|pids| pids.iter().any(|pid| !is_ours(*pid)))

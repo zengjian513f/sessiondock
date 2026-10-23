@@ -61,6 +61,11 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         cursor_head: committed
             .and_then(|end| input.data.as_ref().and_then(|data| cursor_head(data, end))),
         background: 0,
-        turn: None,
+        turn: match info["native_status"].as_str() {
+            Some("in_progress") => Some("working"),
+            Some("idle" | "completed") => Some("idle"),
+            Some("failed") => Some("failed"),
+            _ => None,
+        },
     }
 }
