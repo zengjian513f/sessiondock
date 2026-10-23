@@ -33,7 +33,8 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
             data = response.json()
             start = int(parse_qs(urlsplit(route.request.url).query).get('start', ['0'])[0])
             data.update(messages=history[start:], reset=not start, start=start, end=len(history),
-                        message_total=len(history), partial=None, activity={'state': 'idle'})
+                        message_total=len(history), partial=None, activity_changed=True,
+                        activity={'state': 'working'})
             route.fulfill(response=response, json=data)
         context.route('**/api/messages/**', messages)
         def inactive(route):
@@ -66,6 +67,27 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
             def bottom():
                 page.wait_for_function('selector => {const b=document.querySelector(selector); return b.scrollHeight>b.clientHeight && b.scrollHeight-b.scrollTop-b.clientHeight<3}', arg='.sdk-msgs' if mode == 'sdk' else '#msgs')
             bottom()
+            # Keep dragging the last line while an unchanged poll arrives.
+            line = box.locator('.msg[data-role="assistant"] .mb p').last
+            points = line.evaluate("""p => {
+                const node = p.firstChild, range = document.createRange();
+                range.setStart(node, 0); range.setEnd(node, 6);
+                const r = range.getClientRects()[0];
+                return {x:r.x + 1, y:r.y + r.height/2, end:r.right - 1};
+            }""")
+            page.mouse.move(points['x'], points['y']); page.mouse.down()
+            page.mouse.move(points['end'], points['y'], steps=8)
+            selected = page.evaluate('getSelection().toString()')
+            assert selected, name
+            page.evaluate('window.dragAnchor = getSelection().anchorNode')
+            page.evaluate('async () => {await syncSession(S.sel, S.agent)}')
+            assert page.evaluate('dragAnchor.isConnected'), f'{name}: poll removed selection anchor'
+            assert page.evaluate('getSelection().toString()') == selected, name
+            page.mouse.move(points['end'] + 15, points['y'], steps=3)
+            page.mouse.up()
+            assert len(page.evaluate('getSelection().toString()')) < 40, name
+            page.screenshot(path=str(screenshots / f'{name}-selection.png'), full_page=True)
+            page.mouse.click(points['x'], points['y'])
             # Actual wheel navigation, followed by the same background sync used by watch.
             box.hover(); page.mouse.wheel(0, -650)
             page.wait_for_function('selector => {const b=document.querySelector(selector); return b.scrollHeight-b.scrollTop-b.clientHeight>300}', arg='.sdk-msgs' if mode == 'sdk' else '#msgs')
