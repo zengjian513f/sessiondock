@@ -1619,7 +1619,7 @@ impl LiveState {
             "usage": self.supports_method("_kiro/session/context") || !self.usage.is_null(),
             "billing": self.billing.is_some(),
             "interrupt": true,
-            "steer": self.supports_method("_session/steer") || self.supports_method("session/steer"),
+            "steer": true, // Official Kiro extension is not advertised by initialize.
             "compact": self.supports_method("_kiro/session/compact"),
             "fork": self.supports_method("session/fork"),
             "fork_at_message": self.agent_capabilities["sessionCapabilities"]["fork"]["_meta"]["kiro"]["messageId"] == true,

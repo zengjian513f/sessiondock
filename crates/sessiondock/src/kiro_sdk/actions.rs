@@ -780,47 +780,47 @@ impl Bridge {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        let quotes = payload["quotes"].as_array().cloned().unwrap_or_default();
-        if text.is_empty() && attachments.is_empty() && quotes.is_empty() {
-            return Err("steer text is empty".into());
+        if !attachments.is_empty() {
+            return Err("Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。".into());
         }
+        if text.is_empty() {
+            return Err("引导内容不能为空".into());
+        }
+        let request = payload["request_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("Kiro 引导缺少稳定 request_id")?;
         let sid = session.session_id.lock().unwrap().clone();
-        {
-            let st = session.state.lock().unwrap();
-            if !st.running {
-                return Err("session is not currently running a turn; use turn instead".into());
-            }
+        if !session.state.lock().unwrap().running {
+            return Err("当前没有运行中的任务；请用 Enter 开始新回合。".into());
         }
-        let (content, display_text) = build_prompt_blocks(&text, &attachments, &quotes);
-        {
-            let mut st = session.state.lock().unwrap();
-            let user_id = st.alloc_item_id("user");
-            st.items.push(json!({
-                "id": user_id,
-                "role": "user",
-                "text": display_text,
-                "content": display_text,
-                "steered": true,
-            }));
-            st.current_assistant_id = None;
-            st.current_thinking_id = None;
-            st.publish();
+        // Official Kiro 2.24.1 uses this unadvertised text-only extension.
+        // Journal the write; an uncertain delivery must never fall back or resend.
+        let result = session
+            .request_once(
+                &format!("steer:{request}"),
+                "_session/steer",
+                json!({"sessionId":sid,"message":text,"messageId":request}),
+            )
+            .await?;
+        if result["queued"] != true {
+            return Err(format!(
+                "Kiro 未接收引导：{}",
+                result["dropped"].as_str().unwrap_or("缺少 queued 确认")
+            ));
         }
-        let steer_params = json!({
-            "sessionId": sid,
-            "prompt": content,
-            "text": display_text,
-        });
-        if session
-            .request("_session/steer", steer_params.clone())
-            .await
-            .is_err()
-        {
-            let _ = session.request("session/steer", steer_params).await;
+        let mut state = session.state.lock().unwrap();
+        let id = result["messageId"]
+            .as_str()
+            .ok_or("Kiro 引导回执缺少 messageId，请核对原生历史")?;
+        if !state.items.iter().any(|item| item["id"] == id) {
+            state
+                .items
+                .push(json!({"id":id,"role":"user","text":text,"content":text,"steered":true}));
+            // Keep the active assistant/thinking stream attached to its original item.
+            state.publish();
         }
-        let mut snap = session.snapshot();
-        snap["accepted"] = json!(true);
-        Ok(snap)
+        Ok(json!({"accepted":true,"queued":true,"messageId":id,"consumption":"unverified"}))
     }
 
     pub(super) async fn handle_queue_action(

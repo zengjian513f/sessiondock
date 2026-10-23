@@ -225,6 +225,16 @@ async fn execute(
         }
         return Ok(Json(response(result)));
     }
+    if method == "steer"
+        && target["source"] == "kiro"
+        && body["attachments"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    {
+        return Err(failure(
+            "Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。".into(),
+        ));
+    }
     if matches!(method.as_str(), "turn" | "steer") {
         let id = body["request_id"]
             .as_str()

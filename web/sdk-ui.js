@@ -41,6 +41,9 @@ const SdkUI = {
     view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
       if (PathCompletion.key(view.input, event, () => view.uid)) return;
+      if (view.uid.startsWith('kiro:') && event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.isComposing) {
+        event.preventDefault(); void view.send('steer'); return;
+      }
       ConversationUI.submitOnEnter(event, () => view.send());
     };
     pane.querySelector('#sdk-send').onclick = () => view.send();
