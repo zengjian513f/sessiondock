@@ -11,6 +11,8 @@ from codex_sdk_browser import build, server
 from codex_sdk_fixtures import FakeAppServer
 from codex_sdk_actions_browser import environment
 from grok_sdk_fixtures import GrokFixture
+from kiro_sdk_fixtures import KiroFixture
+from sdkhost_fixtures import stop_private_sdkhosts
 from history_fixtures import REPO, Corpus, isolated_server
 from node_auth_fixtures import node_env
 from hub_fixtures import free_port
@@ -63,6 +65,21 @@ def provider(source, root, binary, *, cli=False, report=False):
             'SESSIONDOCK_STATE_DIR': str(root/'state'), **extra,
         }) as base:
             yield base, peer, extra
+    elif source == 'kiro':
+        for name in ('claude', 'codex', 'grok', 'state'):
+            (root/name).mkdir()
+        peer = KiroFixture(root, REPO/'target/debug/ptyhost')
+        initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
+        try:
+            with server(SimpleNamespace(root=root), binary, 'off', {
+                **peer.env, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
+                'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
+                'SESSIONDOCK_PTYHOST_DIR': str(peer.host_dir),
+                'SESSIONDOCK_STATE_DIR': str(root/'state'), **extra,
+            }) as base:
+                yield base, peer, extra
+        finally:
+            stop_private_sdkhosts(root)
     elif source == 'agy':
         peer = AgyFixture(root, REPO/'target/debug/ptyhost')
         with patch.dict('os.environ', peer.env):
@@ -90,6 +107,20 @@ def provider(source, root, binary, *, cli=False, report=False):
 
 class StartDaemon(FakeAppServer):
     async def _handle(self, writer, message):
+        if message.get('method') == 'thread/name/set':
+            params = message['params']
+            assert params['threadId'] == self.thread_id
+            if getattr(self, 'reject_report_names', False):
+                await self.send(writer, {'id': message['id'], 'error': {
+                    'code': -32602, 'message': 'Synthetic report rename rejected'}})
+                return
+            index = self.rollout_root.parents[3]/'session_index.jsonl'
+            with index.open('a') as output:
+                output.write(json.dumps({'id': self.thread_id, 'thread_name': params['name'],
+                                         'updated_at': '2026-10-23T16:00:00Z'})+'\n')
+            await self.send(writer, {'id': message['id'], 'result': {}})
+            await self.notify('thread/name/updated', {'threadName': params['name']})
+            return
         if message.get('method') == 'thread/loaded/list':
             await self.send(writer, {'id': message['id'], 'result': {'data': []}})
             return

@@ -458,6 +458,7 @@ def fake_cli():
                 state["model"] = request["model"]
             elif subtype == "rename_session":
                 assert request["session_id"]==sid and request["source"]=="host"
+                path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a") as stream:
                     stream.write(json.dumps({"type":"custom-title","sessionId":sid,"customTitle":request["title"]})+"\n")
             elif subtype == "set_permission_mode":
