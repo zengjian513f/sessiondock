@@ -55,7 +55,8 @@ class SubagentPeer(FakeKiroAcp):
                             _meta={'kiro': {'agentSubtaskId': aid, 'replayId': 'same-message-id'}})
         self.update('agent_message_chunk', content={'type': 'text', 'text': '主代理等待审查结果。'})
         for aid in ['review-a', 'review-b']:
-            self.update('tool_call', toolCallId='same-tool-id', title='Read File', status='completed',
+            self.update('tool_call', toolCallId='same-tool-id', title='Read File',
+                        status='failed' if aid == 'review-a' else 'completed',
                         rawOutput=aid + ' 独立工具结果', _meta={'kiro': {'agentSubtaskId': aid}})
         gate = self.sessions_root / 'finish-subtasks'
         deadline = time.monotonic() + 120
@@ -64,8 +65,10 @@ class SubagentPeer(FakeKiroAcp):
         for aid in ['review-a', 'review-b']:
             self.update('tool_call_update', toolCallId='invoke_subagent_' + aid,
                         status='completed' if aid == 'review-a' else 'failed',
-                        rawOutput='审查结果已返回' if aid == 'review-a' else '合成失败原因',
-                        _meta={'kiro': {'replay': False}})
+                        rawOutput='审查结果已返回' if aid == 'review-a' else
+                        'Sub-agent execution failed: Invalid model ID. Please select a different model to continue.',
+                        _meta={'kiro': {'replay': False, **({'kind': 'agent-subtask',
+                            'agentSubtaskId': aid} if aid == 'review-b' else {})}})
         self.reply(message, {'stopReason': 'end_turn'})
 
 
@@ -126,6 +129,8 @@ def run(args):
                     page.wait_for_function('async sid => { await loadSessions(true); return S.sessions.some(r => r.sid === sid); }', arg=fixture.sid)
                     uid = page.evaluate('sid => S.sessions.find(r => r.sid === sid).uid', fixture.sid)
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    page.wait_for_function('cache.has(viewKey(S.sel, S.agent))')
+                    expect(page.locator('#spin')).not_to_be_visible()
                     return uid
                 def refresh_agents(active):
                     page.wait_for_function('''async ({uid, active}) => {
@@ -150,6 +155,23 @@ def run(args):
                         page.screenshot(path=str(args.screenshots / 'kiro-subagents-desktop.png'), full_page=True)
                     page.locator('#session-view-menu button[data-agent=""]').click()
                     expect(page.locator('#msgs')).not_to_contain_text('review-a:独立审查开始。')
+                def verify_failure(reason, label):
+                    open_menu(page)
+                    page.locator('#session-view-menu button[data-agent="review-b"]').click()
+                    failure = page.locator('#msgs .subtask-outcome .tool-out.err')
+                    expect(failure).to_have_count(1)
+                    expect(failure).to_be_visible()
+                    expect(failure).to_contain_text(reason)
+                    assert failure.evaluate('(n) => n.scrollWidth <= n.clientWidth + 1')
+                    expect(page.locator('#sdk-input')).not_to_be_visible()
+                    if args.screenshots:
+                        failure.scroll_into_view_if_needed()
+                        page.screenshot(path=str(args.screenshots / f'kiro-failure-{label}.png'), full_page=True)
+                    open_menu(page)
+                    page.locator('#session-view-menu button[data-agent="review-a"]').click()
+                    expect(page.locator('#msgs .subtask-outcome .tool-out.err')).to_have_count(0)
+                    open_menu(page)
+                    page.locator('#session-view-menu button[data-agent=""]').click()
                 uid = boot()
                 page.locator('#a-sdk').click()
                 start_sdk(page)
@@ -183,13 +205,31 @@ def run(args):
                 for method in ('open', 'stop', 'discard'):
                     denied = api_raw(page, method, {'uid': uid, 'agent': 'review-a'})
                     assert denied['status'] >= 400, denied
+                open_menu(page)
+                page.locator('#session-view-menu button[data-agent="review-b"]').click()
+                expect(page.locator('#msgs .subtask-outcome .tool-out.err')).to_have_count(0)
                 (fixture.sessions / 'finish-subtasks').touch()
+                expect(page.locator('#msgs .subtask-outcome .tool-out.err')).to_contain_text('Invalid model ID')
+                open_menu(page)
+                page.locator('#session-view-menu button[data-agent=""]').click()
                 refresh_agents(False)
                 verify_views()
+                verify_failure('Invalid model ID', 'desktop')
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                verify_failure('Invalid model ID', 'reload')
+                page.goto('about:blank')
+                stack.close(); stack = ExitStack()
+                uid = boot()
+                verify_failure('Invalid model ID', 'restart')
                 assert len(fixture.received('session/prompt')) == before
                 assert len(fixture.received('session/load')) == loads
                 page.set_viewport_size({'width': 390, 'height': 844})
                 page.locator(f'#side .item[data-uid=\"{uid}\"]').click()
+                verify_failure('Invalid model ID', 'mobile')
+                page.emulate_media(color_scheme='dark')
+                verify_failure('Invalid model ID', 'mobile-dark')
+                page.emulate_media(color_scheme='light')
                 open_menu(page)
                 if args.screenshots:
                     page.screenshot(path=str(args.screenshots / 'kiro-subagents-mobile.png'), full_page=True)
@@ -239,6 +279,7 @@ def run(args):
                     const row = S.sessions.find(r => r.uid === uid);
                     return row?.agent_items?.some(a => a.id === 'review-c') && row.agent_items.every(a => !a.active);
                 }""", arg=uid)
+                verify_failure('Historical result review-b', 'replay')
                 page.reload(wait_until='domcontentloaded')
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
                 open_menu(page)

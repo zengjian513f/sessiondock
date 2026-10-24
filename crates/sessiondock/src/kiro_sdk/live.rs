@@ -1650,8 +1650,18 @@ impl LiveState {
                 if wire {
                     json!({"id": id, "title": task.title, "type": task.kind, "status": task.status})
                 } else {
+                    // The invocation result stays in the parent transcript, but
+                    // its failure must also be readable from the child view.
+                    // Derive it from the exact call ID so existing checkpoints
+                    // recover the same evidence without replaying a prompt.
+                    let failure = (task.status == "failed").then(|| {
+                        task.tool_call_id.as_deref().and_then(|call_id| {
+                            self.items.iter().find(|item| item["toolCallId"] == call_id)
+                                .and_then(extract_tool_output)
+                        })
+                    }).flatten();
                     json!({"id": id, "title": task.title, "type": task.kind,
-                        "status": task.status, "items": task.state.items})
+                        "status": task.status, "items": task.state.items, "failure": failure})
                 }
             }).collect::<Vec<_>>(),
             "requests": requests,
