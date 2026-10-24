@@ -50,6 +50,13 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
 发现只使用广告的 ACP `session/list`，完整分页后保留可信 SID/cwd/标题/时间。
 目录失败保留已知数据；普通列表、查看和搜索不调用 `session/load`。
 
+外部脚本也必须显式选择 V3：`kiro-cli acp --agent-engine=v3 --auth-method=cli`。
+Kiro CLI 2.24.1 的 `acp` 默认使用 V2；仅传 `--model`、`--trust-all-tools`
+不会选择 V3。V2 写入的 `sessions/cli/<sid>.json` 和 `.jsonl` 不属于当前 V3
+目录与历史观测范围，因此不会显示在 SessionDock 列表中。调用方须同时按
+[V3 SDK 合同](kiro-sdk.md)适配初始化、模型及权限参数；切换启动参数不会迁移
+已有 V2 会话，不可将其 SID 直接当作 V3 会话恢复。
+
 `SESSIONDOCK_KIRO_ROOT` 标识账号配置作用域及 V3 原生只读会话根。
 CLI profile 的 HOME/XDG/Kiro 环境决定原生认证作用域。私有投影默认放在
 `<state>/kiro-catalog/<scope>`；`SESSIONDOCK_KIRO_PROJECTION_ROOT` 可设置其基目录。
