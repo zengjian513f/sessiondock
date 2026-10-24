@@ -127,11 +127,6 @@ impl Connection {
                 state.error_kind = Some("turn");
             }
             if !resumed {
-                if state.idle_reclaimed {
-                    state.items.clear();
-                    state.idle_reclaimed = false;
-                }
-                state.idle_since = None;
                 state.native_tasks.clear();
                 state.incomplete_tasks = false;
                 state.generation += 1;
@@ -211,17 +206,6 @@ impl Connection {
         tokio::spawn(run(connection.clone(), client, shutdown, caught_up));
         wait.await.map_err(error)??;
         Ok(connection)
-    }
-    pub fn has_pending(&self, state: &Live) -> bool {
-        if let Some(legacy) = &self.legacy {
-            return legacy.has_pending();
-        }
-        self.journal.lock().unwrap().entries.iter().any(|e| {
-            e.frame.get("method").is_some()
-                && e.frame["id"]
-                    .as_u64()
-                    .is_some_and(|id| !state.completed_rpcs.contains(&id))
-        })
     }
     pub fn send(&self, frame: Value) -> Result<(), String> {
         if let Some(legacy) = &self.legacy {
@@ -494,10 +478,7 @@ async fn run(
                 }
             }
         }
-        if state.idle_reclaimed {
-            state.error = None;
-            state.error_kind = None;
-        } else {
+        {
             state.runtime_error = Some(reason.clone());
             if state.last_turn.is_null() && state.error.is_none() {
                 state.last_turn = json!({"status":"incomplete","error":reason});

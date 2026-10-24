@@ -18,6 +18,7 @@ mod live;
 mod observation;
 mod queue;
 mod receipts;
+mod retention;
 mod usage;
 
 use std::{
@@ -35,9 +36,6 @@ use connection::Connection;
 pub use connection::RpcError;
 use live::LiveThread;
 
-/// How long a thread with no page attached and no turn in flight stays
-/// subscribed before the bridge unsubscribes it from the daemon.
-const IDLE_UNSUBSCRIBE: Duration = Duration::from_secs(10 * 60);
 const MODEL_CACHE: Duration = Duration::from_secs(300);
 
 /// Where the app-server lives and whether this node may start it.
@@ -194,6 +192,7 @@ pub(crate) struct Inner {
     models: Mutex<Option<(Instant, Value)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
+    retention: retention::Retention,
     observation: tokio::sync::Mutex<observation::Sample>,
     shutdown: CancellationToken,
     queue: queue::Queue,
@@ -206,7 +205,7 @@ pub struct Attached {
     pub guard: SubscriberGuard,
 }
 
-/// Counts attached pages; dropping it starts the idle clock.
+/// Counts attached pages without changing native runtime ownership.
 pub struct SubscriberGuard {
     thread: Arc<LiveThread>,
 }
@@ -259,7 +258,8 @@ impl CodexSdk {
         state_dir: Option<PathBuf>,
     ) -> std::io::Result<Arc<Self>> {
         let queue = queue::Queue::open(state_dir.clone())?;
-        let receipts = receipts::Receipts::open(state_dir)?;
+        let receipts = receipts::Receipts::open(state_dir.clone())?;
+        let retention = retention::Retention::open(state_dir, &endpoint.socket)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
                 endpoint,
@@ -270,12 +270,13 @@ impl CodexSdk {
                 models: Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
+                retention,
                 observation: tokio::sync::Mutex::new(observation::Sample::default()),
                 shutdown,
             }),
         });
         let inner = sdk.inner.clone();
-        tokio::spawn(async move { inner.reap_idle().await });
+        tokio::spawn(async move { inner.restore_subscriptions().await });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.run_queue().await });
         let inner = sdk.inner.clone();
@@ -349,6 +350,9 @@ impl CodexSdk {
         let Some(id) = self.pending_thread(uid) else {
             return Ok(());
         };
+        let lock = self.inner.queue.lock(&id);
+        let _dispatch = lock.lock().await;
+        self.inner.retention.set(&id, false)?;
         let connection = self.inner.connection().await?;
         connection
             .request("thread/unsubscribe", json!({"threadId":id}))
@@ -374,6 +378,7 @@ impl CodexSdk {
     pub async fn stop_thread(&self, thread_id: &str) -> Result<(), RpcError> {
         let lock = self.inner.queue.lock(thread_id);
         let _dispatch = lock.lock().await;
+        self.inner.retention.set(thread_id, false)?;
         // Stopping must not resume or parse history. The latest rollout may
         // already be in trash while the daemon still reports the thread loaded.
         let connection = self.inner.connection_mode(false).await?;
@@ -511,6 +516,7 @@ impl Inner {
                 .or_insert_with(|| LiveThread::new(id))
                 .clone()
         };
+        self.retention.set(id, true)?;
         thread.loaded(generation, result.clone());
         if let Some(path) = result["thread"]["path"].as_str() {
             let uid = crate::sessions::uid_for("codex", std::path::Path::new(path));
@@ -554,6 +560,14 @@ impl Inner {
 
     async fn ensure(self: &Arc<Self>, thread_id: &str) -> Result<Arc<LiveThread>, RpcError> {
         let connection = self.connection().await?;
+        self.ensure_on(&connection, thread_id).await
+    }
+
+    async fn ensure_on(
+        self: &Arc<Self>,
+        connection: &Connection,
+        thread_id: &str,
+    ) -> Result<Arc<LiveThread>, RpcError> {
         let thread = {
             let mut threads = self.threads.lock().expect("threads");
             threads
@@ -564,7 +578,8 @@ impl Inner {
         let lock = thread.clone();
         let _resume = lock.resume_lock.lock().await;
         if thread.loaded_on() == Some(connection.generation()) {
-            self.recover_active_turn(&connection, &thread).await?;
+            self.retention.set(thread_id, true)?;
+            self.recover_active_turn(connection, &thread).await?;
             return Ok(thread);
         }
         match connection
@@ -583,9 +598,10 @@ impl Inner {
                         thread.seed_usage(usage);
                     }
                 }
+                self.retention.set(thread_id, true)?;
                 thread.loaded(connection.generation(), result);
-                self.recover_active_turn(&connection, &thread).await?;
-                self.recover_receipts(&connection, &thread).await?;
+                self.recover_active_turn(connection, &thread).await?;
+                self.recover_receipts(connection, &thread).await?;
                 self.queue_event(&thread);
                 Ok(thread)
             }
@@ -697,6 +713,18 @@ impl Inner {
             }
             return;
         };
+        if matches!(
+            method,
+            "thread/closed" | "thread/archived" | "thread/deleted"
+        ) {
+            if let Err(error) = self.retention.set(&thread_id, false) {
+                eprintln!("Codex subscription persistence: {error}");
+            }
+            if let Some(thread) = self.threads.lock().expect("threads").remove(&thread_id) {
+                thread.reset(method);
+            }
+            return;
+        }
         let thread = self
             .threads
             .lock()
@@ -771,36 +799,6 @@ impl Inner {
         };
         for thread in threads {
             thread.reset(reason);
-        }
-    }
-
-    async fn reap_idle(self: Arc<Self>) {
-        let mut tick = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            tokio::select! {
-                _ = self.shutdown.cancelled() => return,
-                _ = tick.tick() => {}
-            }
-            let idle: Vec<Arc<LiveThread>> = {
-                let pending: HashSet<String> =
-                    self.receipts.pending_threads().into_iter().collect();
-                let threads = self.threads.lock().expect("threads");
-                threads
-                    .values()
-                    .filter(|t| !pending.contains(t.id()) && t.idle_for(IDLE_UNSUBSCRIBE))
-                    .cloned()
-                    .collect()
-            };
-            for thread in idle {
-                self.threads.lock().expect("threads").remove(thread.id());
-                let current = self.connection.lock().await.clone();
-                if let Some(connection) = current.filter(|c| !c.is_closed()) {
-                    let _ = connection
-                        .request("thread/unsubscribe", json!({"threadId": thread.id()}))
-                        .await;
-                }
-                thread.reset("idle");
-            }
         }
     }
 }

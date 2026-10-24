@@ -26,7 +26,7 @@ from urllib.request import ProxyHandler, build_opener
 
 
 class MonotonicClock:
-    """Test-process clock shim; production retains its fixed ten-minute idle timer."""
+    """Test-process clock shim for quiet-runtime lifecycle regression checks."""
     def __init__(self, root):
         root = Path(root)
         self.offset = root / 'monotonic-offset'

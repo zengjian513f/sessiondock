@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grok explicit interject and ten-minute idle lifecycle through Chromium.
+"""Grok explicit interject and quiet runtime lifecycle through Chromium.
 
 The preload clock accelerates only this temporary HTTP service's monotonic
 clock. Production has no timeout override, and fake native peers keep real time.
@@ -153,21 +153,15 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     page.wait_for_function("window.__grokSnapshot && Array.isArray(window.__grokSnapshot.input_queue) && window.__grokSnapshot.input_queue.length===0")
     prompts=len(fixture.received("session/prompt"))
     page.close()
-    # The first tick lets the closed SSE stream observe its failed heartbeat;
-    # the next tick can start the no-receiver idle deadline.
     advance(observer,marker,20)
-    advance(observer,marker,20)
-    assert alive(pid),"idle runtime was released before ten minutes"
-    advance(observer,marker,620);wait_for_process(observer,pid,False)
-    fixture.capability_marker.write_text(json.dumps({"image":True,"omit_settings":True}))
+    advance(observer,marker,3601)
+    assert alive(pid),"quiet runtime was reclaimed after page close"
+    loads=len(fixture.received("session/load"))
     page,again=page_for(context,base,fixture)
-    assert again==uid and native_pid(fixture)!=pid
-    assert fixture.received("session/load")[-1]["params"]["sessionId"]==fixture.sid
+    assert again==uid and alive(pid), (again,uid,pid)
+    assert len(fixture.received("session/load"))==loads,"reopen reloaded a retained runtime"
     assert len(fixture.received("session/prompt"))==prompts,"reopen replayed a native prompt"
-    raw=snapshot(page,uid)
-    assert not raw["items"] and not raw["requests"],raw
-    assert raw["configOptions"] is None and raw["modes"] is None and raw["mode"] is None,"reopen retained unconfirmed old native settings"
-    assert not isinstance(raw["usage"],dict) or raw["usage"].get("last_turn") is None,raw
+    assert snapshot(page,uid)["mode"]=="plan"
     capture_state(page,screenshots,"idle-reopened")
     context.close()
 
@@ -194,6 +188,6 @@ def main():
                 finally:
                     stop_private_sdkhosts(root)
             browser.close()
-    print("PASS Grok explicit native interject, receipt boundaries, subscribed/active/approval protection, ten-minute idle release and same-SID reopen")
+    print("PASS Grok explicit native interject, receipt boundaries, subscribed/active/approval protection, quiet runtime survival and same-instance reopen")
 
 if __name__=="__main__":main()

@@ -146,16 +146,6 @@ impl Receipts {
         })
     }
 
-    pub fn pending_threads(&self) -> Vec<String> {
-        self.rows
-            .lock()
-            .expect("SDK receipts")
-            .values()
-            .filter(|receipt| receipt.pending)
-            .filter_map(|receipt| receipt.row["sid"].as_str().map(str::to_owned))
-            .collect()
-    }
-
     fn update(&self, change: impl FnOnce(&mut HashMap<String, Receipt>)) -> Result<(), RpcError> {
         let mut rows = self.rows.lock().expect("SDK receipts");
         let mut next = rows.clone();

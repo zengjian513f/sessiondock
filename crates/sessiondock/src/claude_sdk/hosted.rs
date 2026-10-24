@@ -279,16 +279,13 @@ impl Bridge {
             closed: Arc::new(AtomicBool::new(false)),
         };
         let stop = CancellationToken::new();
-        let idle_stop = CancellationToken::new();
         let (done, done_rx) = watch::channel(false);
         {
             let mut live = lock(&session.live);
             live.outbound = Some(transport::Outbound::Hosted(sender.clone()));
             live.pid = Some(status.pid);
             live.runtime_stop = Some(stop.clone());
-            live.idle_stop = Some(idle_stop.clone());
             live.runtime_done = Some(done_rx);
-            live.idle_since = None;
         }
         // Catch up before returning open/recover: an old "idle" projection is not
         // evidence that the surviving process has finished its current turn.
@@ -299,7 +296,6 @@ impl Bridge {
             sender,
             self.shutdown.clone(),
             stop,
-            idle_stop,
             done,
             caught_up,
             transport::diagnostic_secrets(&self.profile),
@@ -352,7 +348,6 @@ async fn run(
     sender: Sender,
     shutdown: CancellationToken,
     stop: CancellationToken,
-    idle_stop: CancellationToken,
     done: watch::Sender<bool>,
     caught_up: oneshot::Sender<Result<(), String>>,
     secrets: Vec<String>,
@@ -374,9 +369,7 @@ async fn run(
                 detached = true;
                 return Ok(());
             }
-            if !signal_sent
-                && (stop.is_cancelled() || idle_stop.is_cancelled() || session.stop.is_cancelled())
-            {
+            if !signal_sent && (stop.is_cancelled() || session.stop.is_cancelled()) {
                 deliberate = true;
                 client.signal(libc::SIGKILL).await.map_err(error)?;
                 signal_sent = true;
@@ -551,7 +544,6 @@ async fn run(
     live.outbound = None;
     live.pid = None;
     live.runtime_stop = None;
-    live.idle_stop = None;
     live.runtime_done = None;
     if !detached && (exited || deliberate) {
         live.host_key = None;

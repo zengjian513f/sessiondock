@@ -108,7 +108,6 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
     if let Some(offset) = offset {
         live.stdout_offset = offset;
     }
-    live.idle_since = None;
     // A process is tied to one exact SID; don't let a foreign frame's content
     // or approval cross into the selected native session.
     if frame["session_id"]

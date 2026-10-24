@@ -105,7 +105,6 @@ impl Bridge {
                 .ok_or("claude_sdk: stderr unavailable")?;
             let pid = child.id();
             let failed = CancellationToken::new();
-            let idle_stop = CancellationToken::new();
             let (done, done_rx) = watch::channel(false);
             let (tx, rx) = mpsc::unbounded_channel();
             {
@@ -116,9 +115,7 @@ impl Bridge {
                 live.state_observed = false;
                 live.native_running = false;
                 live.runtime_stop = Some(failed.clone());
-                live.idle_stop = Some(idle_stop.clone());
                 live.runtime_done = Some(done_rx);
-                live.idle_since = None;
                 live.error = None;
                 live.error_kind = None;
                 live.background_tasks.clear();
@@ -187,7 +184,6 @@ impl Bridge {
                     result=child.wait()=>result.ok(),
                     _=shutdown.cancelled()=>{deliberate=true; None},
                     _=session.stop.cancelled()=>{deliberate=true; None},
-                    _=idle_stop.cancelled()=>{deliberate=true; None},
                     _=failed.cancelled()=>None,
                 };
                 if status.is_none() && !deliberate {
@@ -237,9 +233,7 @@ impl Bridge {
                 live.ready = false;
                 live.native_running = false;
                 live.runtime_stop = None;
-                live.idle_stop = None;
                 live.runtime_done = None;
-                live.idle_since = None;
                 live.background_tasks.clear();
                 live.turns.clear();
                 live.requests.clear();

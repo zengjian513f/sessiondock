@@ -55,9 +55,6 @@ pub(super) struct Live {
     pub context: Value,
     pub extensions: HashMap<String, bool>,
     pub steers: HashMap<String, Value>,
-    #[serde(skip)]
-    pub idle_since: Option<Instant>,
-    pub idle_reclaimed: bool,
     pub native_tasks: HashSet<String>,
     pub incomplete_tasks: bool,
     pub seq: u64,
@@ -102,8 +99,6 @@ impl Live {
             context: Value::Null,
             extensions: HashMap::new(),
             steers: HashMap::new(),
-            idle_since: None,
-            idle_reclaimed: false,
             native_tasks: HashSet::new(),
             incomplete_tasks: false,
             seq: 0,
@@ -130,7 +125,7 @@ impl Live {
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
             "last_turn":self.last_turn,"runtime_error":self.runtime_error,"retry":self.retry,"compact":self.compact,
-            "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"idle_reclaimed":self.idle_reclaimed,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
+            "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
             "model":self.models["currentModelId"],"effort":self.effort,
             "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
@@ -232,7 +227,6 @@ impl Live {
             if params["_meta"]["isReplay"] == true {
                 return None;
             }
-            self.idle_since = None;
             if let Some(id) = params["interjectionId"].as_str()
                 && let Some(receipt) = self.steers.get_mut(id)
             {
@@ -319,25 +313,6 @@ impl Live {
         let update = &params["update"];
         if update["_meta"]["isReplay"] == true || params["_meta"]["isReplay"] == true {
             return None;
-        }
-        if matches!(
-            update["sessionUpdate"].as_str(),
-            Some(
-                "agent_message_chunk"
-                    | "agent_thought_chunk"
-                    | "user_message_chunk"
-                    | "tool_call"
-                    | "tool_call_update"
-                    | "turn_completed"
-                    | "task_backgrounded"
-                    | "subagent_spawned"
-                    | "subagent_finished"
-                    | "task_completed"
-                    | "scheduled_task_created"
-                    | "scheduled_task_deleted"
-            )
-        ) {
-            self.idle_since = None;
         }
         match update["sessionUpdate"].as_str().unwrap_or("") {
             "agent_message_chunk" => {

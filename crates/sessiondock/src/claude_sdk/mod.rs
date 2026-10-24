@@ -4,7 +4,6 @@
 mod actions;
 #[cfg(unix)]
 mod hosted;
-mod idle;
 mod protocol;
 mod transport;
 mod usage;
@@ -92,11 +91,7 @@ struct Live {
     #[serde(skip)]
     runtime_stop: Option<CancellationToken>,
     #[serde(skip)]
-    idle_stop: Option<CancellationToken>,
-    #[serde(skip)]
     runtime_done: Option<watch::Receiver<bool>>,
-    #[serde(skip)]
-    idle_since: Option<tokio::time::Instant>,
     pid: Option<u32>,
     model: Option<String>,
     effort: Option<String>,
@@ -167,7 +162,6 @@ pub fn new(
         shutdown,
         state: Mutex::default(),
     });
-    bridge.start_reaper();
     Ok(Some(bridge))
 }
 
@@ -285,9 +279,7 @@ impl Session {
                 native_running: false,
                 state_observed: false,
                 runtime_stop: None,
-                idle_stop: None,
                 runtime_done: None,
-                idle_since: None,
                 pid: None,
                 model: input["model"].as_str().map(str::to_owned),
                 effort: input["effort"].as_str().map(str::to_owned),
@@ -367,7 +359,6 @@ impl Session {
         let (tx, rx) = oneshot::channel();
         {
             let mut live = lock(&self.live);
-            live.idle_since = None;
             let outbound = live
                 .outbound
                 .clone()
@@ -467,13 +458,11 @@ impl Bridge {
             .get(key)
             .cloned()
             .ok_or("claude_sdk: session not open")?;
-        // A new subscriber cancels the idle interval before the reaper can
-        // observe it. Both operations use this same state lock.
-        let mut live = lock(&session.live);
+        // Snapshot and subscription share the live-state lock.
+        let live = lock(&session.live);
         if !live.ready || live.outbound.is_none() {
             return Err("claude_sdk: native runtime is not ready; reopen this session".into());
         }
-        live.idle_since = None;
         Ok((session.snapshot(&live), live.events.subscribe()))
     }
 
@@ -660,7 +649,6 @@ impl Bridge {
         }
         let session = self.select(&target)?;
         let _runtime = session.runtime.read().await;
-        lock(&session.live).idle_since = None;
         if method == "respond" {
             return self.respond(&session, &input);
         }

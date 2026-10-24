@@ -12,7 +12,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::{Value, json};
 use tokio::process::Command;
@@ -24,10 +24,7 @@ use crate::lifecycle::launcher::CliProfile;
 use crate::sessions::kiro::{Catalog, digest, random_key, save};
 
 use actions::build_prompt_blocks;
-use transport::{Session, SpawnedSession, now_secs};
-
-const IDLE_TIMEOUT_SECS: u64 = 30 * 60;
-const REAPER_INTERVAL_SECS: u64 = 60;
+use transport::{Session, SpawnedSession};
 
 pub(crate) struct CachedModels {
     pub(crate) at: Instant,
@@ -90,7 +87,6 @@ pub fn new(
         models_cache: Mutex::new(None),
         shutdown,
     });
-    Bridge::spawn_idle_reaper(bridge.clone());
     Ok(Some(bridge))
 }
 
@@ -127,66 +123,6 @@ impl Bridge {
             }
         }
         owners
-    }
-
-    fn spawn_idle_reaper(bridge: Arc<Self>) {
-        let sd = bridge.shutdown.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(REAPER_INTERVAL_SECS));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        bridge.reap_idle().await;
-                    }
-                    _ = sd.cancelled() => {
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
-    async fn reap_idle(&self) {
-        let now = now_secs();
-        let candidates: Vec<(String, Arc<Session>)> = {
-            let guard = self.sessions.lock().unwrap();
-            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        };
-
-        for (uid, session) in candidates {
-            let lock = self.lock_for(&uid);
-            let _guard = lock.lock().await;
-            // A concurrent explicit open may have installed a new generation.
-            if !self
-                .sessions
-                .lock()
-                .unwrap()
-                .get(&uid)
-                .is_some_and(|current| Arc::ptr_eq(current, &session))
-            {
-                continue;
-            }
-            let last = session.last_active.load(Ordering::Acquire);
-            if now.saturating_sub(last) < IDLE_TIMEOUT_SECS {
-                continue;
-            }
-            if session.prompt_starting.load(Ordering::Acquire) {
-                continue;
-            }
-            let busy = {
-                let st = session.state.lock().unwrap();
-                st.running || st.loading || st.retry.is_some() || !st.requests.is_empty()
-            };
-            if busy {
-                continue;
-            }
-            if session.kill().await.is_ok() {
-                if self.catalog.bind_host(&uid, None).is_ok() {
-                    self.sessions.lock().unwrap().remove(&uid);
-                }
-            }
-        }
     }
 
     pub fn loaded_uids(&self) -> Vec<String> {
@@ -240,7 +176,6 @@ impl Bridge {
             .get(key)
             .cloned()
             .ok_or_else(|| "kiro_sdk_not_open".to_string())?;
-        session.touch();
         let st = session.state.lock().unwrap();
         // First SSE frame uses the public wire shape (windowed items).
         let snap = st.snapshot(&session.uid(), &session.cwd, true);
@@ -865,7 +800,6 @@ impl Bridge {
         {
             self.finish_open_setup(&session, uid, &entry.sid, &entry.cwd, payload)
                 .await?;
-            session.touch();
             return Ok(session);
         }
         self.check_conflict(&entry.sid, None)?;
