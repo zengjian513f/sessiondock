@@ -138,7 +138,7 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
 只有后续 completed /
 failed 事件才显示完成/出错，停止或 turn 结束不会推断工具已完成。
 
-## 显式原生引导与闲置回收
+## 显式原生引导与运行时保留
 
 `steer` 独立于普通 `turn`，接 `{request_id,text}`，只在本桥接的原生 prompt
 已开始且仍运行时接收；普通发送继续串行等待，不隐式改变成引导。桥接发送
@@ -162,23 +162,14 @@ connection_closed。只有 queued ACK 才置 accepted:true；明确拒绝为 fal
 同 request_id 在桥接生命周期内返回原回执/原错误；断线后不自动重发。
 `interjectionId` 是原生回显关联键，未证明是原生幂等键，不能靠它重试不确定写入。
 
-ACP child 在无订阅（包括共享持久队列 worker 持有的 receiver）、无运行中的桥接任务、
-无待答请求、turn gate 空闲且无未完成 RPC 后，连续闲置至少十分钟才释放。
-定时检查间隔为十五秒。已观察到的原生后台任务、子代理、定时任务、截断的后台任务列表、
-隐藏 native wake，以及当前 generation 尚不能证明终结的 steer 都阻止回收；
-不能因为原始 prompt RPC 已结束就假设这些工作已经完成。
-完整 background_tasks 快照替换对应后台任务集合，截断列表不被当作完整空闲证据。
-未决引导和隐藏 wake 目前保守保留 runtime，直到连接结束，不为了回收资源制造消费确认。
+DELTA（BUG-20261024-154228-478a04）：ACP 运行时不按对话空闲时间回收。
+关闭页面、prompt 完成或后台任务列表为空不终止原实例。原生任务、子代理与 steer
+回执继续投影；用户显式停止或原生退出才结束运行时。重开页面复用同一实例，
+不重新 load 或 replay prompt；服务重启沿用持久宿主恢复。
 
-回收只结束本桥接启动的 child，保留原生文件、会话 SID、内存去重回执及失败边界。
-再次打开精确 load 原 SID/cwd，清除上个已回收 runtime 的实时 items/统计；原生 replay
-继续留在普通历史，不自动发送旧 prompt 或 interjection。新连接的 error_kind 清空；
-明确的 prompt/configure 失败用 raw.error_kind:"turn"，EOF/传输失败用 "transport"。
-
-[生命周期浏览器用例](../tests/grok_sdk_lifecycle_browser.py) 真实点击原生引导对话框并
-验证回执/去重，以及订阅、运行、审批和后台任务的回收保护与同 SID 重开。
-十分钟计时通过只注入临时 HTTP 服务进程的 LD_PRELOAD monotonic clock 夹具加速，
-fake native CLI、浏览器及生产时长不被修改；生产没有测试 timeout override。
+[生命周期浏览器用例](../tests/grok_sdk_lifecycle_browser.py) 验证引导回执、
+订阅／运行／审批／后台任务，以及无人观察的静默实例持续保留和同实例重开。
+只在临时 HTTP 服务中使用 LD_PRELOAD 加速 monotonic clock；生产没有超时 override。
 
 新增 facade 方法及边界：
 

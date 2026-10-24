@@ -28,7 +28,8 @@ class StopServer(MessageServer):
     def __init__(self, socket, source, retained, other, case="normal"):
         super().__init__(socket, source, retained)
         self.paths[OTHER] = other
-        self.loaded = set() if case == 'normal' else {THREAD, OTHER}
+        # The synthetic daemon below already holds these native rollouts.
+        self.loaded = {THREAD, OTHER}
         self.bad_history = set() if case == 'normal' else {THREAD}
         self.unloaded = {THREAD} if case == 'unloaded' else set()
         self.active = {THREAD} if case == 'unreadable' else set()
@@ -145,7 +146,7 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     assert fake.methods('thread/unsubscribe') and fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}, {
         'stop': result, 'rpc': fake.received[-12:],
         'view': page.evaluate('({uid:CodexSdkView.uid,connected:CodexSdkView.connected,stopped:CodexSdkView.stopped,sel:S.sel})')}
-    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
     assert page.evaluate('S.sel') == source
     page.wait_for_function('uid => !T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', arg=source)
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
@@ -163,7 +164,7 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
         action.click()
     result = stopped.value.json()
     assert stopped.value.status == 200 and result['stopped'], result
-    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': FORK}
     live = page.request.get(base + '/api/live?force=1').json()
     assert branch not in live['uids'] and source not in live['uids'], live
@@ -219,15 +220,16 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
         page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
         expect(page.locator('#item-menu [data-act="stop"]')).to_have_text('启动会话')
     else:
-        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
         expect(page.locator('.sdk-pane #sdk-send')).to_be_disabled()
     assert not any(m.get('method') in ('turn/interrupt','thread/unsubscribe') and
                    m.get('params',{}).get('threadId') == OTHER for m in fake.received)
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-stopped.png'))
     if 'narrow' in label: page.keyboard.press('Escape')
     # A failed explicit reopen cannot revive the daemon's stale loaded entry.
+    page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
     with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/open')) as reopened:
-        page.locator(f'#side .item[data-uid="{source}"]').click()
+        page.locator('#item-menu [data-act="stop"]').click()
     assert reopened.value.status != 200, reopened.value.text()
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and other in live['sdk_uids'], live

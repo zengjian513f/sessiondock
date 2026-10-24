@@ -5,12 +5,9 @@
 //! a snapshot and subscribes in the same critical section sees each event
 //! exactly once.
 
-use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use indexmap::IndexMap;
@@ -48,7 +45,6 @@ struct State {
     recorded_limits: Value,
     last_error: Value,
     retry_error: Value,
-    idle_since: Option<Instant>,
     capacity: super::capacity::Retry,
 }
 
@@ -65,10 +61,7 @@ impl LiveThread {
         Arc::new(Self {
             id: id.to_string(),
             tx,
-            state: Mutex::new(State {
-                idle_since: Some(Instant::now()),
-                ..State::default()
-            }),
+            state: Mutex::new(State::default()),
             subscribers: AtomicUsize::new(0),
             resume_lock: tokio::sync::Mutex::new(()),
         })
@@ -231,9 +224,8 @@ impl LiveThread {
     }
 
     pub fn attach(&self) -> (Value, broadcast::Receiver<Arc<str>>) {
-        let mut state = self.state.lock().expect("live");
+        let state = self.state.lock().expect("live");
         self.subscribers.fetch_add(1, Ordering::SeqCst);
-        state.idle_since = None;
         let snapshot = json!({
             "seq": state.seq, "type": "snapshot",
             "raw": {
@@ -249,21 +241,7 @@ impl LiveThread {
     }
 
     pub fn detach(&self) {
-        let mut state = self.state.lock().expect("live");
-        if self.subscribers.fetch_sub(1, Ordering::SeqCst) == 1 {
-            state.idle_since = Some(Instant::now());
-        }
-    }
-
-    pub fn idle_for(&self, limit: Duration) -> bool {
-        let state = self.state.lock().expect("live");
-        state.turn.is_none()
-            && state.capacity.deadline.is_none()
-            && !state.capacity.starting
-            && state.requests.is_empty()
-            && state
-                .idle_since
-                .is_some_and(|since| since.elapsed() >= limit)
+        self.subscribers.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub fn request_id(&self, key: &str, generation: u64) -> Option<Value> {

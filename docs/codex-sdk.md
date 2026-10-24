@@ -48,11 +48,23 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   before subscription. Summary items omit replies/tools and cannot replace
   the active turn's native history (BUG-20261018-091356-69d2ff). Notifications
   received during recovery keep their newer bodies in the native item order.
-  A turn completed during recovery is never resurrected. A thread with no attached page, no turn in
-  flight and no open request for 10 minutes is unsubscribed (except an
-  unpersisted new thread, whose live instance is its only copy)
-  (`thread/unsubscribe`). When the connection closes every attached page gets
-  `bridge/reset` and reconnects; the next attach opens a new connection.
+  A turn completed during recovery is never resurrected.
+  DELTA (BUG-20261024-154228-478a04): page closure and conversation inactivity
+  never unsubscribe a managed thread. The bridge retains its subscription until
+  explicit stop/discard or a native thread close/archive/delete notification.
+  Codex's last-subscriber inactivity grace period can unload the native runtime;
+  a completed turn is not evidence that background terminals or subagents ended.
+  `<state>/codex-sdk-subscriptions.json` records successfully managed thread IDs
+  scoped to the configured socket. After connection loss or service restart a
+  five-second worker reconnects without starting a daemon, checks
+  `thread/loaded/list`, and restores only recorded, still-loaded threads. It does
+  not submit input, adopt unrelated daemon threads, or restart historical sessions.
+  Explicit stop/discard removes the record before native requests; recovery is
+  serialized with those operations. A service outage beyond the native grace
+  period cannot guarantee runtime survival. Installations without this new record
+  begin retaining threads when they next successfully open/create them; old create
+  receipts are not ownership evidence and are not bulk-resumed on upgrade.
+  When the connection closes every attached page gets `bridge/reset` and reconnects.
   A permanently closed browser EventSource also schedules a reconnect; closing
   or switching the view cancels that timer. Reconnection retains the unsent draft
   and recovers the server snapshot without submitting another turn.
@@ -608,3 +620,5 @@ DELTA (subagent SDK views): SDK selection, persisted history, live events, sendi
 steering, interrupt and request replies follow the selected child thread. Switching
 views never substitutes the owner thread. Explicit chat/terminal selection is kept
 per `(uid, agent)`. Browser coverage: [codex_sdk_subagent_browser.py](../tests/codex_sdk_subagent_browser.py).
+
+Quiet runtime and restart coverage: [codex_sdk_retention_browser.py](../tests/codex_sdk_retention_browser.py).

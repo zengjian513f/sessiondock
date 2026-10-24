@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -35,7 +35,6 @@ pub(crate) struct Session {
     pub(super) dead: AtomicBool,
     pub(super) unavailable: AtomicBool,
     pub(super) prompt_starting: AtomicBool,
-    pub(super) last_active: AtomicU64,
     projection: Mutex<Option<Arc<crate::sessions::kiro::Catalog>>>,
     writer: AsyncMutex<()>,
     changed: Notify,
@@ -225,7 +224,6 @@ impl Session {
             dead: AtomicBool::new(false),
             unavailable: AtomicBool::new(false),
             prompt_starting: AtomicBool::new(false),
-            last_active: AtomicU64::new(now_secs()),
             projection: Mutex::new(None),
             writer: AsyncMutex::new(()),
             changed: Notify::new(),
@@ -420,7 +418,6 @@ impl Session {
     }
 
     fn observe_line(self: &Arc<Self>, line: &str, cursor: Option<u64>) -> Result<(), String> {
-        self.touch();
         let mut auto = Vec::new();
         let mut sid = None;
         {
@@ -599,9 +596,6 @@ impl Session {
         Ok(SpawnedSession::Fresh(session))
     }
 
-    pub(super) fn touch(&self) {
-        self.last_active.store(now_secs(), Ordering::Release);
-    }
     fn enqueue(
         st: &mut LiveState,
         key: &str,

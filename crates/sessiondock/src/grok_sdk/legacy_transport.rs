@@ -35,11 +35,6 @@ impl Connection {
     ) -> Result<Arc<Self>, String> {
         let generation = {
             let mut state = live.lock().unwrap();
-            if state.idle_reclaimed {
-                state.items.clear();
-                state.idle_reclaimed = false;
-            }
-            state.idle_since = None;
             state.native_tasks.clear();
             state.incomplete_tasks = false;
             state.generation += 1;
@@ -149,12 +144,6 @@ impl Connection {
                     receipt["consumed"] = Value::Null;
                 }
             }
-            if state.idle_reclaimed {
-                state.error = None;
-                state.error_kind = None;
-                state.publish();
-                return;
-            }
             state.runtime_error = Some(reason.into());
             if state.error.is_none() && state.last_turn.is_null() {
                 state.last_turn = json!({"status":"incomplete","error":reason});
@@ -164,10 +153,6 @@ impl Connection {
             state.publish();
         });
         Ok(connection)
-    }
-
-    pub fn has_pending(&self) -> bool {
-        !self.pending.lock().unwrap().is_empty()
     }
 
     pub fn send(&self, message: Value) -> Result<(), String> {

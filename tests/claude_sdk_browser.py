@@ -433,20 +433,14 @@ def idle_check(fixture, base, clock):
         assert len(fixture.frames('spawn')) == 1
         context.close()
 
-        # The first tick begins the subscriber-free idle period. The second
-        # jump crosses the unchanged production ten-minute deadline.
         clock.advance(31)
         wake()
-        clock.advance(601)
-        deadline = time.monotonic() + 8
-        while loaded() and time.monotonic() < deadline:
-            wake()
-        assert not loaded(), 'inactive native runtime was not reclaimed after ten minutes'
+        clock.advance(3601)
+        wake()
+        assert loaded(), 'quiet native runtime was reclaimed after page close'
         context, page = open_page()
-        assert len(fixture.frames('spawn')) == 2
-        resumed = fixture.frames('spawn')[-1]
-        assert resumed['pid'] != first_pid and resumed['sid'] == fixture.sid
-        assert '--resume=' + str(fixture.path) in resumed['args']
+        assert len(fixture.frames('spawn')) == 1
+        assert fixture.frames('spawn')[-1]['pid'] == first_pid
         send(page, 'browser resumed after idle')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser resumed after idle')
         resumed = wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])['raw']
@@ -581,7 +575,7 @@ def main():
             idle_check(fixture, base, clock)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-fork-restart-') as temporary:
         fork_restart_check(ClaudeFixture(Path(temporary)), args.binary)
-    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, ten-minute idle reclaim with active/request/task/subscriber guards and same-SID resume")
+    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, quiet/active/request/task/subscriber survival and same-instance reopen")
 
 
 if __name__ == "__main__":

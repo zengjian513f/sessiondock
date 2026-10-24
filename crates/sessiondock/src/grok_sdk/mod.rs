@@ -1,7 +1,6 @@
 //! Grok's native ACP bridge. Contract and protocol evidence: docs/grok-sdk.md.
 //! No HTTP, PTY keystrokes, native transcript writes or implicit CLI discovery.
 mod actions;
-mod idle;
 mod live;
 mod steering;
 mod transport;
@@ -138,7 +137,6 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         creates: AsyncMutex::new(saved_attempts("creates.json")?),
         mutations: AsyncMutex::new(saved_attempts("mutations.json")?),
     });
-    bridge.start_idle_reaper();
     Ok(Some(bridge))
 }
 
@@ -310,8 +308,7 @@ impl Bridge {
             .get(key)
             .cloned()
             .ok_or("grok_sdk_not_open")?;
-        let mut live = session.live.lock().unwrap();
-        live.idle_since = None;
+        let live = session.live.lock().unwrap();
         // snapshot and receiver are established under the publication lock.
         Ok((live.snapshot(), live.events.subscribe()))
     }
@@ -509,7 +506,6 @@ impl Bridge {
                 return Err("grok_sdk_identity_mismatch".into());
             }
             if session.connection.alive.load(Ordering::Acquire) {
-                session.live.lock().unwrap().idle_since = None;
                 return Ok(session);
             }
             // Keep the same live projection and receipt cache on transport
