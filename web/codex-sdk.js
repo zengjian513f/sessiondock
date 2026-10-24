@@ -482,6 +482,7 @@ const CodexSdkView = {
   // ---------------------------------------------------------------- 事件
 
   applySnapshot(raw) {
+    const stick = this.nearBottom();
     SdkUI.ungroupTools(this);
     this.setConnected(true);
     // The SDK may attach between two identical global live snapshots.
@@ -507,7 +508,7 @@ const CodexSdkView = {
     CodexSdkControls.paint(this);
     this.paintStatus();
     this.paintQueue();
-    this.scrollBottom();
+    if (stick) this.scrollBottom();
   },
 
   applyEvent(method, raw) {

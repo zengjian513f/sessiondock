@@ -168,12 +168,15 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(first.locator('.tool-args')).to_be_visible()
         expect(first.locator('.tool-out')).to_contain_text('输出第 17 行')
         if mode == 'sdk':
+            reading_top = first.locator('.tool-head').bounding_box()['y']
             target = raw['items'][0] if source == 'codex' else raw['items'][1]
             if source == 'codex': target['aggregatedOutput'] += '\n手动查看保持展开'
             else: target['result']['text'] += '\n手动查看保持展开'
             events.publish()
             expect(first.locator('.tool-out')).to_contain_text('手动查看保持展开')
             expect(first.locator('.tool-out')).to_be_visible()
+            assert abs(first.locator('.tool-head').bounding_box()['y'] - reading_top) < 2, \
+                'snapshot pulled the reader away from the expanded tool'
         first.locator('.tool-toggle').press('Enter')
         expect(first.locator('.tool-args')).not_to_be_visible()
         expect(first.locator('.tool-out')).to_be_visible()
