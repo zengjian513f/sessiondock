@@ -268,7 +268,7 @@ const NativeSdkControls = {
       card.dataset.queueId=item.id;holder.append(card);return body;
     };
     const actionsFor=body=>{let actions=body.querySelector('.sdk-request-actions');if(!actions){actions=el('div','sdk-request-actions');body.append(actions);}return actions;};
-    const operation=(body,item,method,title,extra={})=>{
+    const operation=(body,item,method,title,extra={},edit=false)=>{
       const queued=body.parentElement.classList.contains('sdk-queued');
       const button=el('button',queued?'queued-send-dismiss':'btn',title);button.type='button';
       (queued?body.parentElement.querySelector('.sdk-queue-actions'):actionsFor(body)).append(button);
@@ -278,7 +278,11 @@ const NativeSdkControls = {
         if(!view.current(generation))return;
         holder._nativeQueueBusy=true;
         holder.querySelectorAll('button').forEach(control=>control.disabled=true);
-        try{await view.request(`api/native-sdk/${method}`,{uid,id:item.id,...extra,...(item.state==='unknown'?{confirmed:true}:{}),request_id:crypto.randomUUID()});}
+        try{
+          const cancel=()=>view.request(`api/native-sdk/${method}`,{uid,id:item.id,...extra,...(item.state==='unknown'?{confirmed:true}:{}),request_id:crypto.randomUUID()});
+          if(edit)await CodexSdkCompose.recall(view,item.edit_text ?? item.text ?? item.prompt?.text ?? '',cancel);
+          else await cancel();
+        }
         catch(error){if(view.current(generation))view.setNotice(error.message,'blocked');}
         finally{holder._nativeQueueBusy=false;if(view.current(generation)){delete holder.dataset.state;this.paintQueue(view);}}
       };
@@ -296,10 +300,12 @@ const NativeSdkControls = {
       if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':`${unknownReason(item)}后续输入已暂停。核对历史后，可移除记录以继续，或重新发送这条输入。`));
       if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry',item.state==='unknown'?'重新发送':'重试');
       if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
+      if(item.state==='queued')operation(body,item,'queue_cancel','撤回编辑',{},true);
       if(item.state==='queued' && item.operation==='turn' && view.running && view.capabilities.queue_steer && !item.attachments?.length)operation(body,item,'queue_steer','立即引导');
       if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
     for(const item of nativeRows){const body=userCardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';
+      if(view.capabilities.queue_cancel)operation(body,item,'queue_cancel','撤回编辑',{},true);
       for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]])if(view.capabilities[method] && !(method==='queue_update' && item.delivery==='steer'))operation(body,item,method,title,extra);
     }
     const steerLabels={dispatching:'正在提交引导',native_queued:'原生已接收引导',native_received:'原生已登记引导',rejected:'引导被拒绝',uncertain:'引导结果待核对',connection_closed:'引导连接已关闭'};

@@ -753,7 +753,7 @@ const CodexSdkView = {
       const {card, foot, actions: controls} = ConversationUI.queuedMessage(item.text, state,
         {uid: this.uid, agent: this.agent, className: 'sdk-queued'});
       card.dataset.queueId = item.id;
-      for (const [action, label] of [['cancel', '撤销'], [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? (item.direct_steer ? '重试引导' : '重试') : '立即引导']]) {
+      for (const [action, label] of [['cancel', '撤销'], ...(item.state === 'queued' ? [['edit', '撤回编辑']] : []), [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? (item.direct_steer ? '重试引导' : '重试') : '立即引导']]) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'queued-send-dismiss';
         button.dataset.queueAction = action; button.textContent = label;
@@ -764,7 +764,9 @@ const CodexSdkView = {
           holder._sdkQueueBusy = true;
           for (const node of foot.querySelectorAll('button')) node.disabled = true;
           try {
-            await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action});
+            if (action === 'edit') await CodexSdkCompose.recall(this, item.text,
+              () => this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action: 'cancel'}));
+            else await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action});
             if (action === 'cancel' && this.current(generation)) {
               const state = CodexSdkCompose.states.get(this), holder = state?.draft || state;
               if (holder?.sdkSubmission?.id === item.id) {

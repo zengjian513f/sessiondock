@@ -233,6 +233,31 @@ const CodexSdkCompose = {
     } catch (error) { state.sending = false; throw error; }
   },
 
+  async recall(view, text, cancel) {
+    const state = this.states.get(view);
+    await state?.ready;
+    if (!state || this.states.get(view) !== state) return;
+    if (state.draft?.loading || state.draft?.loadFailed)
+      throw new Error(state.draft.storageError || '草稿尚未读取完成');
+    await cancel();
+    // The user may type or switch sessions while cancellation is in flight.
+    // Restore into the original draft, without replacing subsequent edits.
+    const draft = state.draft;
+    const current = draft ? draft.text : state.input.value;
+    const restored = current === text ? current : [current, text].filter(Boolean).join('\n\n');
+    delete (draft || state).sdkSubmission;
+    if (draft) {
+      draft.text = restored;
+      const saved = await persistComposerDraft(state.uid);
+      if (this.states.get(view) === state) this.paint(view, state);
+      if (!saved) throw new Error(draft.storageError || '撤回内容尚未保存，请保留当前页面');
+    } else state.input.value = restored;
+    if (this.states.get(view) === state) {
+      view.fitInput(); state.input.focus();
+      view.setNotice('已撤回到输入框，可编辑后重新发送');
+    }
+  },
+
   async sent(view, payload) {
     if (!payload) return;
     const state = this.states.get(view);
