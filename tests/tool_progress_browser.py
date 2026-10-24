@@ -95,6 +95,22 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
                     'stream update replaced the group or an unchanged highlighted summary'
 
         # Completion must leave the last call outside the collapsed summary.
+        if source == 'codex' and mode == 'sdk':
+            page.evaluate("""() => {
+                const box = document.querySelector('.sdk-msgs');
+                const property = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+                window.intermediateToolScrolls = 0;
+                Object.defineProperty(box, 'scrollTop', {
+                    configurable: true,
+                    get() { return property.get.call(this); },
+                    set(value) {
+                        // Observe scroll writes; do not change their behavior.
+                        if (SdkView.items.size && !document.querySelector('.sdk-live [data-sdk-item]'))
+                            window.intermediateToolScrolls++;
+                        property.set.call(this, value);
+                    },
+                });
+            }""")
         if mode == 'chat':
             history[-1]['status'] = 'completed'
             watch.packet.update(messages=copy.deepcopy(history), end=len(history) + 1)
@@ -107,6 +123,28 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.tool-out:visible')).to_have_count(1)
         unchanged_summary()
         capture('completed')
+        if source == 'codex' and mode == 'sdk':
+            # Real incremental events must preserve the same group too, not
+            # only the snapshot replay exercised above. A completion and the
+            # next call can arrive separately while the page keeps following.
+            snapshot = events.packet
+            for method, raw_event in [
+                ('item/commandExecution/outputDelta', {'itemId': 'tool-5', 'delta': '\n增量尾行'}),
+                ('item/completed', {'item': {**raw['items'][-1], 'status': 'completed'}}),
+                ('thread/tokenUsage/updated', {'tokenUsage': {'total': {'totalTokens': 1234}}}),
+            ]:
+                events.packet = {'seq': snapshot['seq'], 'method': method, 'raw': raw_event}
+                events.publish()
+                if method.startswith('thread/'):
+                    page.wait_for_function("SdkView.summary?.usage?.total?.totalTokens === 1234")
+                else:
+                    page.wait_for_function("hasDelta => SdkView.items.get('tool-5')?.aggregatedOutput.endsWith('增量尾行') === hasDelta",
+                                           arg=method.endswith('outputDelta'))
+                unchanged_summary()
+                expect(group.locator('.tool-out:visible')).to_have_count(1)
+            events.packet = {**snapshot, 'seq': events.packet['seq']}
+            assert page.evaluate('intermediateToolScrolls') == 0, 'scrolled before live tools were restored'
+            page.evaluate("delete document.querySelector('.sdk-msgs').scrollTop")
         # Mouse and keyboard inspection remain available after automatic folding.
         toggle = group.locator(':scope > .group-preview .fold-toggle')
         toggle.scroll_into_view_if_needed()

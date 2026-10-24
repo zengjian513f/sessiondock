@@ -496,7 +496,6 @@ const CodexSdkView = {
     this.nodes.clear();
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const request of this.requests.values()) this.paintRequest(request);
-    SdkUI.groupTools(this);
     CodexSdkQuestions.paint(this);
     this.replayOmitted = new Set();
     if (this.historyData) this.paintHistory();
