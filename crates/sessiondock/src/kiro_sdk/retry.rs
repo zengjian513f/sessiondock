@@ -3,7 +3,7 @@ use super::{Bridge, transport::Session};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
-pub(super) const CONTINUE: &str = "继续上次因模型不可用而中断的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。";
+pub(super) const CONTINUE: &str = "重试：继续上次因模型不可用而中断的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。";
 
 #[derive(Default)]
 pub(super) struct Retry {
