@@ -738,6 +738,9 @@ impl NativeSdks {
             result["capabilities"]["input_queue"] = json!(true);
             result["capabilities"]["queue_cancel"] = json!(true);
             result["capabilities"]["queue_retry"] = json!(true);
+            if source == "kiro" {
+                result["capabilities"]["queue_steer"] = json!(true);
+            }
         }
         Ok(result)
     }
@@ -880,6 +883,50 @@ impl NativeSdks {
             json!({"input_queue":self.input_snapshot(target),"receipt":Self::input_receipt(&row),"native_preserved":true,"duplicate":duplicate}),
             draft,
         ))
+    }
+
+    /// Claim the existing FIFO entry before handing it to native steering. The
+    /// original prepared prompt and delivery ID survive retries and reloads.
+    pub(crate) async fn steer_queued_input(
+        self: &Arc<Self>,
+        target: &Value,
+        id: &str,
+    ) -> Result<Value, String> {
+        if target["source"] != "kiro" {
+            return Err("此来源不支持将排队输入转为引导".into());
+        }
+        let _submission = self.submission(target, id).lock_owned().await;
+        let mut claimed = false;
+        let row = self
+            .input_queue
+            .change(&input_queue::scope(target), id, |row| {
+                if row.operation == "steer" {
+                    return Ok(());
+                }
+                if row.state != "queued" || row.input.is_none() {
+                    return Err("此输入已不在待发送队列，不能改为引导。".into());
+                }
+                if row.input.as_ref().is_some_and(|input| {
+                    input["attachments"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty())
+                }) {
+                    return Err("Kiro 原生引导只支持文字；附件请保留普通排队发送。".into());
+                }
+                let (snapshot, _) =
+                    self.subscribe("kiro", target["uid"].as_str().unwrap_or_default())?;
+                if snapshot["raw"]["running"] != true {
+                    return Err("当前没有可引导的运行中任务；输入仍保留在普通队列。".into());
+                }
+                row.operation = "steer".into();
+                claimed = true;
+                Ok(())
+            })?;
+        if claimed {
+            self.dispatch_input_control(target, id).await
+        } else {
+            Ok(Self::input_receipt(&row))
+        }
     }
 
     /// Controls such as steer have their own operation identity and never enter
@@ -1126,7 +1173,7 @@ impl NativeSdks {
                         && raw["requests"].as_array().is_none_or(Vec::is_empty));
                 if ready {
                     let sending = self.input_queue.change(key, &row.id, |entry| {
-                        if entry.state != "queued" {
+                        if entry.state != "queued" || entry.operation != "turn" {
                             return Err("SDK queue changed".into());
                         }
                         entry.state = "sending".into();

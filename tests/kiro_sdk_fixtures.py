@@ -441,7 +441,7 @@ class FakeKiroAcp:
             else:
                 gate = self.sessions_root / "steer-delay"
                 until = time.monotonic() + 20
-                while text == "delayed steer" and gate.exists() and time.monotonic() < until:
+                while gate.exists() and time.monotonic() < until:
                     time.sleep(0.02)
                 mid = "steer-" + params["messageId"]
                 self.append_v3_message("user", text)
