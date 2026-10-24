@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex as AsyncMutex, Notify, oneshot};
@@ -310,6 +310,7 @@ impl Session {
         };
         let mut out_buffer = Vec::new();
         let mut err_buffer = Vec::new();
+        let mut batch_started = Instant::now();
         loop {
             if shutdown.is_cancelled() {
                 return Ok(());
@@ -320,22 +321,31 @@ impl Session {
                 .map_err(|e| format!("kiro_sdk_stdout: {e}"))?;
             out_pos = out.next_offset;
             out_buffer.extend_from_slice(&out.bytes);
-            // Commit all complete frames from this host read together. The durable
+            let status = client
+                .status()
+                .await
+                .map_err(|e| format!("kiro_sdk_host_disconnected: {e}"))?;
+            // A load can replay tens of MB through small host reads. Coalesce
+            // already available bytes before rewriting the growing checkpoint.
+            // Flush at the live edge, or periodically during a sustained backlog;
+            // these are batching thresholds, never input/frame size limits.
+            let flush = out_pos >= status.stdout_len
+                || out.eof
+                || out_buffer.len() >= 4 * 1024 * 1024
+                || batch_started.elapsed() >= Duration::from_millis(100);
+            // Commit complete frames together. The durable
             // cursor never passes an incomplete frame, and no snapshot or RPC waiter
             // sees the batch before its state and cursor have reached disk.
-            if let Some(end) = out_buffer.iter().rposition(|b| *b == b'\n') {
+            if flush && let Some(end) = out_buffer.iter().rposition(|b| *b == b'\n') {
                 let bytes: Vec<u8> = out_buffer.drain(..=end).collect();
                 let committed = out_pos - out_buffer.len() as u64;
                 self.observe_line(&String::from_utf8_lossy(&bytes), Some(committed))?;
+                batch_started = Instant::now();
             }
             if out.eof && !out_buffer.is_empty() {
                 self.observe_line(&String::from_utf8_lossy(&out_buffer), Some(out_pos))?;
                 out_buffer.clear();
             }
-            let status = client
-                .status()
-                .await
-                .map_err(|e| format!("kiro_sdk_host_disconnected: {e}"))?;
             // Empty host reads long-poll for 250 ms. Do not put that wait after
             // every stdout chunk while replaying history; stderr is independent.
             let mut err_eof = false;
