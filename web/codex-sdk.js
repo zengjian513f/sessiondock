@@ -99,7 +99,7 @@ const CodexSdkView = {
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
+    this.turn = null; this.replayOmitted = new Set(); this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = [];
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
@@ -411,7 +411,34 @@ const CodexSdkView = {
     const userText = this.activeUserText();
     const nativeStart = this.turn?.id ? messages.findIndex(message =>
       message.turn_id === this.turn.id && (userText || message.role !== 'user')) : -1;
-    if (nativeStart >= 0) {
+    const partial = data.partial;
+    const tailStart = partial?.head || 0;
+    const firstTailItem = partial && this.turn
+      ? messages.slice(tailStart).find(message => message.turn_id === this.turn.id) : null;
+    const crossesGap = firstTailItem
+      && !(firstTailItem.role === 'user' && String(firstTailItem.text || '').trim() === userText);
+    this.replayOmitted = new Set();
+    if (crossesGap) {
+      // A turn can span hours and the omitted middle. Turn identity alone does
+      // not locate its replay relative to the history gap. Join at an actual
+      // native item in the loaded tail, retaining all history before that item.
+      const items = [...this.items.values()];
+      const indices = new Map(items.map((item, index) => [item.id, index]));
+      let joined = false;
+      for (let i = tailStart; i < messages.length; i++) {
+        const message = messages[i], index = indices.get(message.native_item_id);
+        if (message.turn_id !== this.turn.id || index == null || !itemMessage(items[index])) continue;
+        this.replayOmitted = new Set(items.slice(0, index).map(item => item.id));
+        messages = messages.slice(0, i);
+        joined = true;
+        break;
+      }
+      // Older records may lack item IDs. Keep their authoritative paginated
+      // history until an identifiable overlap arrives; never relocate replay
+      // before the gap into the live tail or discard loaded native messages.
+      if (!joined) this.replayOmitted = new Set(items.map(item => item.id));
+      tailComplete = false;
+    } else if (nativeStart >= 0) {
       messages = messages.slice(0, nativeStart);
       tailComplete = true;
     } else if (userText) {
@@ -430,7 +457,15 @@ const CodexSdkView = {
     CodexSdkQuestions.paint(this);
     // 已经落盘的回合从实时区移除，避免同一回合出现两次。
     for (const [id, node] of this.nodes) {
-      if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
+      if (!this.items.has(id) || this.replayOmitted.has(id)) { node.remove(); this.nodes.delete(id); }
+    }
+    let next = this.live.firstChild;
+    for (const item of this.items.values()) {
+      if (!this.nodes.has(item.id) && !this.replayOmitted.has(item.id)) this.paintItem(item);
+      const node = this.nodes.get(item.id);
+      if (!node) continue;
+      if (node !== next) this.live.insertBefore(node, next);
+      next = node.nextSibling;
     }
     SdkUI.groupTools(this);
     if (this.summary) this.paintStatus();
@@ -460,14 +495,14 @@ const CodexSdkView = {
     this.live.replaceChildren();
     this.nodes.clear();
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
-    for (const item of this.items.values()) {
-      this.paintItem(item);
-      if (this.nodes.has(item.id)) ConversationUI.restoreToolState(this.nodes.get(item.id), toolStates.get(item.id));
-    }
     for (const request of this.requests.values()) this.paintRequest(request);
     SdkUI.groupTools(this);
     CodexSdkQuestions.paint(this);
-    this.paintHistory();
+    this.replayOmitted = new Set();
+    if (this.historyData) this.paintHistory();
+    else for (const item of this.items.values()) this.paintItem(item);
+    SdkUI.groupTools(this);
+    for (const [id, node] of this.nodes) ConversationUI.restoreToolState(node, toolStates.get(id));
     this.paintPickers();
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
@@ -502,7 +537,7 @@ const CodexSdkView = {
         return;
       case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
       case 'turn/started':
-        this.turn = raw.turn; this.items.clear();
+        this.turn = raw.turn; this.items.clear(); this.replayOmitted = new Set();
         if (this.summary) { this.summary.last_error = null; this.summary.retry_error = null; this.summary.last_turn = null; }
         break;
       case 'turn/completed':
@@ -602,7 +637,7 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 渲染
   paintItem(item) {
-    const message = item.questions?.length ? null : itemMessage(item);
+    const message = this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
     if (old?._updateMessage && old.dataset.role === message.role) {
