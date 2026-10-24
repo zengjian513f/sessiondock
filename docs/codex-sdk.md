@@ -352,7 +352,7 @@ behavior; they do not require other sources to expose unsupported controls.
   Coverage: [direct steer browser](../tests/codex_sdk_steer_browser.py).
 - Composer: same look as the message composer. Enter sends (Shift+Enter
   newline, not on mobile); the button reads 发送 or, during a turn, 排队.
-  Inputs are queued by default. Each pending bubble has 撤销 and 立即引导
+  Inputs are queued by default. Each pending bubble has 撤销, 撤回编辑 and 立即引导
   (explicit steer); failed deliveries have 重试. 停止 interrupts the current turn. Model and effort selectors come from `model/list`;
   displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.

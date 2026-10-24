@@ -106,6 +106,25 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     starts, steers = len(fake.methods('turn/start')), len(fake.methods('turn/steer'))
     submit('working ' + label)
     expect(send).to_have_text('排队')
+    recall_text = '撤回后编辑 · 中文\n保留第二行 ' + label
+    submit(recall_text)
+    box.fill('已有草稿')
+    # A rejected cancellation must not restore or discard anything.
+    page.route('**/api/codex-sdk/queue', lambda route: route.fulfill(status=409,
+        content_type='application/json', body='{"error":"synthetic cancellation conflict"}'), times=1)
+    row('撤回后编辑').get_by_role('button', name='撤回编辑', exact=True).click()
+    expect(page.locator('#sdk-status-menu')).to_contain_text('synthetic cancellation conflict')
+    expect(box).to_have_value('已有草稿')
+    click_while_streaming(row('撤回后编辑').get_by_role('button', name='撤回编辑', exact=True), 'edit')
+    expect(row('撤回后编辑')).to_have_count(0)
+    expect(box).to_have_value('已有草稿\n\n' + recall_text)
+    expect(box).to_be_focused()
+    page.reload(wait_until='networkidle')
+    expect(box).to_have_value('已有草稿\n\n' + recall_text)
+    page.wait_for_function('CodexSdkView.connected')
+    submit('编辑后重新排队 ' + label)
+    row('编辑后重新排队').get_by_role('button', name='撤销', exact=True).click()
+    expect(page.locator('.sdk-queued')).to_have_count(0)
     # A lost acknowledgment followed by reload/retry must keep one submission.
     cancel_text = '撤销这条尚未发送的消息 ' + label
     def lose_reply(route):

@@ -135,7 +135,7 @@ models 只返回模型标识、名称、variants、enabled，不回传 provider 
 这是尚未投递的工作，不能把 HTTP 已准入回执等同于已被模型消费。
 `queue_cancel({id})` 使用 DELETE inbox，原生已不可用项目为 no-op；
 `queue_update({id,delivery})` 使用 PATCH，支持 queue/steer。Steer 在原生
-安全点引导，不保证立即打断当前工具。已为 steer 的项目只显示撤销，不重复显示
+安全点引导，不保证立即打断当前工具。已为 steer 的项目显示撤销、撤回编辑，不重复显示
 “立即引导”；原生 shell 产生的 synthetic 待引导项也遵守此规则。其他待处理项是否
 允许转换仍由原生服务判断，保留其冲突错误。中断保持 `resume=false`，不主动清队列。
 共享 facade 另持久保存提交 ID 和未确认准入，显示在 `raw.input_queue`，不取代原生

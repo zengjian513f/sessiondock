@@ -189,6 +189,30 @@ def basic_queue(browser, fixture, screenshots):
             observer.close()
             replay(page, base, 'queue_cancel', cancelled)
 
+            attach(page)
+            page.locator('#sdk-add').click()
+            page.locator('#sdk-attach-menu [data-attach="quote"]').click()
+            page.locator('.draft-quote textarea').fill('撤回需要保留的引用')
+            recalled = send(page, 'recall with attachment ' + fixture.source)
+            state(page, recalled['request_id'], 'queued')
+            page.locator('#sdk-input').fill('保留后续草稿')
+            if screenshots:
+                pictures(page, uid, screenshots, fixture.source + '-recall', all_sizes=True)
+            click_action(page, recalled['request_id'], 'queue_cancel', '撤回编辑')
+            gone(page, recalled['request_id'])
+            expected = '保留后续草稿\n\n' + fixture.entry(recalled['request_id'])['input']['text']
+            expect(page.locator('#sdk-input')).to_have_value(expected)
+            assert '撤回需要保留的引用' in expected and 'queue-研究记录.txt' in expected
+            page.reload(wait_until='domcontentloaded')
+            expect(page.locator('#sdk-input')).to_have_value(expected)
+            with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/turn')) as resubmitted:
+                page.locator('#sdk-send').click()
+            fresh = resubmitted.value.request.post_data_json
+            assert fresh['request_id'] != recalled['request_id']
+            state(page, fresh['request_id'], 'queued')
+            click_action(page, fresh['request_id'], 'queue_cancel', '撤销')
+            assert not fixture.inputs('recall with attachment ')
+
             # The queued payload and request ID survive reload, while later
             # editor text is independent of worker delivery and completion.
             follower = send(page, 'queued after blocker ' + fixture.source)

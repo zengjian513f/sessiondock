@@ -322,6 +322,7 @@ impl Journal {
         json!(rows.get(key).into_iter().flatten().filter(|row|!terminal(row)).map(|row|json!({
             "id":row.id,"origin":"bridge","operation":row.operation,"request_id":row.request_id,
             "state":if row.state=="recovering"{"accepted"}else{&row.state},"text":row.draft["text"],"error":row.error,"consumption":row.consumption,
+            "edit_text":row.input.as_ref().map(|input|input["text"].clone()).unwrap_or_else(||row.draft["text"].clone()),
             "observed_consumed":row.consumption=="observed","attempts":row.attempts,
             "owner":if row.target["source"]=="opencode"{"native"}else{"bridge"},
             "attachments":row.input.as_ref().map(|input|input["attachments"].clone()).unwrap_or_else(||row.draft["attachments"].clone())
