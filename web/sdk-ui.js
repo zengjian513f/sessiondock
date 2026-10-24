@@ -155,8 +155,11 @@ const SdkUI = {
     const identity = `${view.uid}:${view.agent || ''}`;
     if (view.toolGroupIdentity !== identity) {
       view.toolGroupIdentity = identity; view.toolGroupChoices = new Map();
+      view.toolGroupNodes = new Map();
     }
-    view.toolGroupNodes = new Map();
+    // A snapshot can reconcile history after already unpacking the live tools.
+    // Keep the saved groups through that nested pass until grouping commits.
+    view.toolGroupNodes ||= new Map();
     for (const group of view.live?.querySelectorAll('.sdk-tool-group') || []) {
       view.toolGroupNodes.set(group.dataset.toolGroupKey, group);
       view.toolGroupChoices.set(group.dataset.toolGroupKey, !!group._userOpened);
@@ -165,6 +168,8 @@ const SdkUI = {
   },
 
   groupTools(view) {
+    const retained = new Map([...view.live.querySelectorAll('.sdk-tool-group')]
+      .map(group => [group.dataset.toolGroupKey, group]));
     for (const parent of [view.live, ...view.live.querySelectorAll('.turn-process-body')]) {
       let run = [];
       const flush = () => {
@@ -179,6 +184,7 @@ const SdkUI = {
           group.classList.add('sdk-tool-group');
           group.dataset.toolGroupKey = key;
           parent.insertBefore(group, anchor);
+          retained.set(key, group);
           if (!previous && view.toolGroupChoices?.get(key)) { group._userOpened = true; group._open(); }
         }
         run = [];
@@ -189,6 +195,8 @@ const SdkUI = {
       }
       flush();
     }
+    view.toolGroupNodes = retained;
+    ConversationUI.refreshToolTails(view.box);
   },
 
   foldLiveTurns(view, messages, {tailComplete}) {
@@ -253,7 +261,10 @@ const SdkUI = {
         folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
     }
     refreshMessageTimeDividers(view.history);
-    stickBottom(view.box);
+    // History is only part of a snapshot: live tools may still be unpacked.
+    // Measure/scroll after the complete history + live reconciliation.
+    const box = view.box;
+    queueMicrotask(() => { if (box.isConnected) stickBottom(box); });
   },
 
   methods: {
