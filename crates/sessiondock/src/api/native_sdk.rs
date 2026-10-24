@@ -106,6 +106,7 @@ async fn execute(
             | "shell"
             | "queue_cancel"
             | "queue_retry"
+            | "queue_steer"
             | "queue_update"
             | "revert"
             | "unrevert"
@@ -196,6 +197,14 @@ async fn execute(
             .and_then(|rows| rows.iter().find(|row| row["source"] == source))
             .cloned()
             .unwrap_or(Value::Null);
+        return Ok(Json(response(result)));
+    }
+    if method == "queue_steer" {
+        let result = state
+            .native_sdks
+            .steer_queued_input(&target, body["id"].as_str().unwrap_or_default())
+            .await
+            .map_err(failure)?;
         return Ok(Json(response(result)));
     }
     if matches!(method.as_str(), "queue_cancel" | "queue_retry")

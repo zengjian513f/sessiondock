@@ -253,7 +253,7 @@ const NativeSdkControls = {
     const holder=view.pane.querySelector('.sdk-queue');
     if(holder._nativeQueueBusy)return;
     const nativeRows=view.raw?.queue || [],bridgeRows=view.raw?.input_queue || [],steers=view.raw?.steers || [];
-    const signature=JSON.stringify([nativeRows,bridgeRows,steers]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
+    const signature=JSON.stringify([nativeRows,bridgeRows,steers,view.running,view.capabilities.queue_steer]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
     const generation=view.generation,uid=view.uid;
     const labels={preparing:'准备输入',queued:'排队中',sending:'正在发送…',accepted:'原生已接收',failed:'发送失败',unknown:'处理结果待核对'};
     const unknownReason=item=>item.observed_consumed || item.consumption==='observed'
@@ -290,12 +290,13 @@ const NativeSdkControls = {
         receipt.title='仅表示原生已接收输入，不表示已处理或已完成';
         holder.append(receipt);continue;
       }
-      const ordinaryInput=item.operation!=='steer' && ['preparing','queued','sending'].includes(item.state);
+      const ordinaryInput=['preparing','queued','sending'].includes(item.state);
       const body=(ordinaryInput?userCardFor:cardFor)(item,labels[item.state] || item.state);body.parentElement.dataset.queueOrigin='bridge';
       if(item.error)body.append(el('p','sdk-control-note',item.error));
       if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':`${unknownReason(item)}后续输入已暂停。核对历史后，可移除记录以继续，或重新发送这条输入。`));
       if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry',item.state==='unknown'?'重新发送':'重试');
       if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
+      if(item.state==='queued' && item.operation==='turn' && view.running && view.capabilities.queue_steer && !item.attachments?.length)operation(body,item,'queue_steer','立即引导');
       if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
     for(const item of nativeRows){const body=userCardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';

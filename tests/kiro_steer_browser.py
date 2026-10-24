@@ -32,15 +32,53 @@ def exercise(browser, base, root, shots, label):
     page.set_viewport_size({'width':1280,'height':900})
     box.fill('ordinary queued '+label);box.press('Enter');expect(box).to_have_value('')
     expect(page.locator('.sdk-queue')).to_contain_text('ordinary queued '+label)
+    queued=page.locator('.sdk-queued').filter(has_text='ordinary queued '+label)
+    expect(queued.get_by_role('button',name='立即引导',exact=True)).to_be_visible()
+    if shots:
+        for width,theme in ((1280,'light'),(390,'dark')):
+            page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
+            page.wait_for_timeout(250)
+            if not box.is_visible():
+                row=page.locator(f'#side .item[data-uid="{uid}"]')
+                if row.is_visible():row.click()
+                else:page.locator('#a-sdk').click()
+            expect(queued).to_be_visible()
+            page.screenshot(path=str(shots/f'{label}-queue-{width}-{theme}.png'),full_page=True)
+    queue_id=queued.get_attribute('data-queue-id')
+    box.fill('preserve unrelated draft')
+    gate=root/'fake-native-store/steer-delay';gate.touch()
+    with page.expect_request(lambda r:'/api/native-sdk/queue_steer' in r.url):
+        queued.get_by_role('button',name='立即引导',exact=True).click()
+    expect(queued.get_by_role('button',name='立即引导',exact=True)).to_be_disabled()
+    gate.unlink()
+    expect(queued).to_have_count(0)
+    expect(box).to_have_value('preserve unrelated draft')
+    expect(page.locator('.sdk-live')).to_contain_text('ordinary queued '+label)
+    page.set_viewport_size({'width':1280,'height':900});page.emulate_media(color_scheme='light')
+    # A second browser/stale click reuses the persisted receipt, never another RPC.
+    response=page.request.post(base+'/api/native-sdk/queue_steer',data={'uid':uid,'id':queue_id,'request_id':'duplicate-steer'})
+    assert response.ok,response.text()
     box.fill('native steering '+label);box.press('Control+Enter');expect(box).to_have_value('')
     expect(page.locator('.sdk-live')).to_contain_text('native steering '+label)
     assert page.evaluate('NativeSdkView.running')
     rows=lambda:[json.loads(line) for line in (root/'kiro-acp-received.jsonl').read_text().splitlines()]
     def steers():return [r for r in rows() if r.get('method')=='_session/steer']
+    assert len([r for r in steers() if r['params']['message']=='ordinary queued '+label])==1
     frame=steers()[-1];assert frame['params']['message']=='native steering '+label,frame
     assert 'prompt' not in frame['params'] and 'text' not in frame['params']
     assert not [r for r in rows() if r.get('method')=='session/prompt' and 'ordinary queued '+label in json.dumps(r)]
     assert page.evaluate("NativeSdkView.items.filter(i=>i.role==='assistant' && i.text?.includes('Partial response before stop'))[0].text.includes('continuing after steer')")
+    # Rejection after conversion stays a steer failure, never a FIFO retry.
+    box.fill('reject steer');box.press('Enter');expect(box).to_have_value('')
+    rejected=page.locator('.sdk-queued').filter(has_text='reject steer')
+    rejected_id=rejected.get_attribute('data-queue-id')
+    rejected.get_by_role('button',name='立即引导',exact=True).click()
+    rejected=page.locator(f'.sdk-queue [data-queue-id="{rejected_id}"]')
+    expect(rejected).to_contain_text('Steer unavailable')
+    assert not rejected.get_by_role('button',name='重试',exact=True).count()
+    rejected.get_by_role('button',name='撤销',exact=True).click()
+    expect(rejected).to_have_count(0)
+    assert not [r for r in rows() if r.get('method')=='session/prompt' and 'reject steer' in json.dumps(r)]
     count=len(steers())
     box.fill('newline');box.press('Shift+Enter');expect(box).to_have_value('newline\n')
     box.dispatch_event('keydown',{'key':'Enter','ctrlKey':True,'isComposing':True})
@@ -62,6 +100,16 @@ def exercise(browser, base, root, shots, label):
     box.fill('attachment steer');box.press('Control+Enter')
     expect(page.locator('#sdk-status-menu')).to_contain_text('只支持文字')
     expect(box).to_have_value('attachment steer')
+    box.press('Enter');expect(box).to_have_value('')
+    attached=page.locator('.sdk-queued').filter(has_text='attachment steer')
+    expect(attached).to_be_visible()
+    assert not attached.get_by_role('button',name='立即引导',exact=True).count()
+    attached_id=attached.get_attribute('data-queue-id')
+    response=page.request.post(base+'/api/native-sdk/queue_steer',data={'uid':uid,'id':attached_id})
+    assert not response.ok
+    attached.get_by_role('button',name='撤销',exact=True).click()
+    expect(attached).to_have_count(0)
+    page.locator('#sdk-file').set_input_files(attachment)
     page.get_by_role('button',name='移除附件',exact=True).click()
     box.fill('click steering '+label)
     action=page.get_by_role('button',name='引导当前任务',exact=True)
@@ -71,6 +119,21 @@ def exercise(browser, base, root, shots, label):
     gate=root/'fake-native-store/steer-delay';gate.touch()
     box.fill('delayed steer')
     with page.expect_request(lambda r:'/api/native-sdk/steer' in r.url):box.press('Control+Enter')
+    pending=page.locator('.sdk-queue .sdk-queued').filter(has_text='delayed steer')
+    expect(pending).to_be_visible()
+    expect(pending).to_have_attribute('data-role','user')
+    assert not page.locator('.sdk-request').filter(has_text='delayed steer').count()
+    if shots:
+        for width,theme in ((1280,'light'),(390,'dark')):
+            page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
+            page.wait_for_timeout(250)  # Let responsive navigation finish before choosing its entry.
+            if not box.is_visible():
+                row=page.locator(f'#side .item[data-uid="{uid}"]')
+                if row.is_visible():row.click()
+                else:page.locator('#a-sdk').click()
+            expect(pending).to_be_visible()
+            page.screenshot(path=str(shots/f'{label}-pending-{width}-{theme}.png'),full_page=True)
+        page.set_viewport_size({'width':1280,'height':900});page.emulate_media(color_scheme='light')
     box.fill('newer draft')
     with page.expect_response(lambda r:'/api/native-sdk/steer' in r.url):gate.unlink()
     expect(page.locator('#sdk-send')).to_be_enabled();expect(box).to_have_value('newer draft')
@@ -80,6 +143,7 @@ def exercise(browser, base, root, shots, label):
     if shots:
         for width,theme in ((1280,'light'),(390,'dark')):
             page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
+            page.wait_for_timeout(250)  # Let responsive navigation finish before choosing its entry.
             if not box.is_visible():
                 row=page.locator(f'#side .item[data-uid="{uid}"]')
                 if row.is_visible():row.click()

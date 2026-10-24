@@ -123,6 +123,7 @@ DELTA（BUG-20261020-155723-71869d）：四种原生 SDK 的新建回执缺少�
 | POST `/api/native-sdk/fork` | Grok/OpenCode/Claude 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |
 | POST `/api/native-sdk/compact`、`shell` | 按 capability 走原生操作；mutation 带 request_id |
 | POST `/api/native-sdk/queue_cancel`、`queue_retry` | 本地队列撤销/重试，`id` 以 bridge: 开头；未知结果须 confirmed:true；操作带 request_id |
+| POST `/api/native-sdk/queue_steer` | Kiro `{uid,id}`；将未投递的纯文字桥接队列项原子转为引导，复用投递身份，重复操作返回原记录 |
 | POST `/api/native-sdk/queue_update` | OpenCode 未投递 inbox 显式 steer；其 queue_cancel 仍只撤销原生未投递项 |
 | POST `/api/native-sdk/steer` | Grok/Kiro 显式原生引导，独立 request_id；不进入普通 FIFO，不把接收回执当消费 |
 | POST `/api/native-sdk/revert`、`unrevert`、`revert_commit` | OpenCode 对话-only stage/撤销/永久提交，固定 files:false |
