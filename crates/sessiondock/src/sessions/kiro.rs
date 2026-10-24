@@ -488,6 +488,19 @@ impl Catalog {
                     .map_err(|e| e.to_string())?;
                 bytes.push(b'\n');
             }
+            if task["status"] == "failed" && !task["failure"].is_null() {
+                let failure = task["failure"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| task["failure"].to_string());
+                let item = json!({"id":format!("subtask-failure:{id}"),
+                    "role":"event", "event_kind":"task", "event_status":"failed",
+                    "text":format!("子代理执行失败：{failure}"), "counted":false,
+                    "subtask_outcome":true});
+                serde_json::to_writer(&mut bytes, &json!({"format":FORMAT,"item":item}))
+                    .map_err(|e| e.to_string())?;
+                bytes.push(b'\n');
+            }
             publish(&path.join("messages.jsonl"), &bytes)?;
             let mut child = value.clone();
             child["uid"] = json!(format!("kiro:{}", &key[..16]));

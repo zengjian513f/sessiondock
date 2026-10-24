@@ -7895,6 +7895,13 @@ function turnKey(messages, conclusion) {
  *  合集内部继续复用 planMessages 的工具配对/分组规则。 */
 function planTurnSegment(messages, promptEnd,
                          {complete = false, foldable = complete, openTail = false} = {}) {
+  // A child's invocation failure is its outcome, not an internal tool step.
+  // Keep the native reason visible even when its preceding work is folded.
+  const outcome = messages.at(-1);
+  if (outcome?.role === 'event' && outcome.subtask_outcome) {
+    return [...planTurnSegment(messages.slice(0, -1), promptEnd,
+      {complete: true, foldable: true}), {m: outcome}];
+  }
   const prompts = messages.slice(0, promptEnd);
   const body = messages.slice(promptEnd);
   const conclusion = turnConclusion(body, {
@@ -9584,6 +9591,17 @@ function formatDuration(ms) {
 }
 
 function eventNode(m) {
+  if (m.subtask_outcome && m.event_status === 'failed') {
+    const n = el('div', 'msg tool-msg subtask-outcome');
+    n.dataset.role = 'event';
+    n.dataset.counted = 'false';
+    const entry = toolEntry({role: 'tool_result', text: m.text, error: true});
+    const wrap = entry.querySelector('.tool-wrap');
+    if (wrap) wrap.click();
+    else entry.querySelector('.tool-out').classList.add('wrap');
+    n.appendChild(entry);
+    return n;
+  }
   const kind = m.event_kind || 'session';
   const n = el('div', `timeline-event ${kind}${m.event_status ? ` ${m.event_status}` : ''}`);
   n.dataset.role = 'event';
