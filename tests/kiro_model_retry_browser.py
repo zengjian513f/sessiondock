@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 from kiro_sdk_fixtures import FakeKiroAcp, KiroFixture
 
-CONTINUE = '继续上次因模型不可用而中断的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。'
+CONTINUE = '重试：继续上次因模型不可用而中断的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。'
 ERROR = "The model 'claude-opus-5.5' is not available. Please select a different model and try again. (Request ID: fixture-model-error)"
 
 class RetryPeer(FakeKiroAcp):
@@ -73,6 +73,8 @@ def exercise(browser, base, fixture, width, theme, shots, long=False):
     def cancel():
         page.locator('#sdk-stop').click()
         page.wait_for_function('!SdkView.raw?.retry && !SdkView.running')
+    retry_bubbles = page.locator('.sdk-pane .msg[data-role="user"]').filter(has_text=CONTINUE)
+    previous_retries = retry_bubbles.count()
     (fixture.sessions/'recover').unlink(missing_ok=True)
     before=len(attempts());send('FAIL original input with completed work');wait(15);shot('waiting')
     page.locator('#sdk-input').fill('保留未发送的草稿')
@@ -80,8 +82,16 @@ def exercise(browser, base, fixture, width, theme, shots, long=False):
     saved(page,uid,'保留未发送的草稿')
     page.reload(wait_until='domcontentloaded')
     wait(15);expect(page.locator('#sdk-input')).to_have_value('保留未发送的草稿')
+    wait(30)
+    expect(retry_bubbles).to_have_count(previous_retries + 1)
+    retry_bubbles.last.scroll_into_view_if_needed()
+    shot('retry-prefix')
+    page.reload(wait_until='domcontentloaded')
+    expect(retry_bubbles).to_have_count(previous_retries + 1)
+    expect(page.locator('#sdk-input')).to_have_value('保留未发送的草稿')
+    assert attempts()[before + 1]['text'] == CONTINUE
     if long:
-        for delay in (30,60,120):
+        for delay in (60,120):
             print('waiting for actual backoff before',delay,flush=True)
             wait(delay)
         records=attempts()[before:]
