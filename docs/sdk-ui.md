@@ -34,6 +34,12 @@ DELTA：五种 SDK 点击发送后保留编辑器焦点；排队正文与普通�
 审批与问答卡片继续可见。验收见[六来源过程折叠](../tests/sdk_turns_browser.py)：
 节点／Hub、宽窄屏与明暗主题中点击全局／单轮按钮，覆盖回放、持续生成、完成和刷新。
 
+DELTA：Codex 的进行中回合可能横跨历史分页缺口。历史投影保留原生 `native_item_id`，
+SDK 回放在已加载尾部中按该身份衔接，缺口之前的旧输入与过程仍留在缺口内；
+不能仅凭相同 `turn_id` 把整个回合搬到缺口后。缺少可识别重叠时保留已加载历史，
+等待可衔接的原生记录；补页不移动实时检查点，补齐后恢复完整回合。
+验收见 [Codex 长回合分页衔接](../tests/codex_sdk_history_gap_browser.py)。
+
 ## 查看、启动与停止
 
 DELTA（BUG-20261019-160908-75ee7f）：Codex、Claude、Grok、Agy、OpenCode

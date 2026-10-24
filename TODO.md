@@ -30,6 +30,10 @@
 
 ## Native interaction semantics
 
+- [ ] 排查 `codex_sdk_browser.py` 的 `usage_opening_check`：2026-10-24 在
+  原前端与长回合分页修复前端均因 7d 用量的 `9%` 元素缺失而失败；长回合缺陷
+  回归、历史分页与 Codex 过程折叠另已通过，不能把该用量检查记为通过。
+
 - [ ] BUG-20261022-124950-cf8e22：Agy 原生取消已去掉信号终止路径，但 1.4.5
   headless 的最终回执仍等待后台任务，后续 FIFO 输入也等待。需取得原生支持的
   即时回合结束／续发通道，达到 TUI Esc 的完整交互；不能伪造 result 或杀任务。

@@ -677,6 +677,7 @@ impl Parser<'_> {
             }
             return Ok(());
         }
+        let first_event = self.events.len();
         match payload["type"].as_str().unwrap_or("") {
             "message" => {
                 let native_role = payload["role"].as_str().unwrap_or("user");
@@ -774,6 +775,14 @@ impl Parser<'_> {
             // e.g. agent_message: skipped like the reference adapter.
             other => self.skipped.note("Codex response_item", other),
         }
+        // Preserve native item identity for joining a paginated history window
+        // to an SDK replay of the same (possibly very long) active turn.
+        if let Some(id) = payload["id"].as_str().filter(|id| !id.is_empty()) {
+            for event in &mut self.events[first_event..] {
+                event.message["native_item_id"] = json!(id);
+            }
+        }
+
         Ok(())
     }
 
