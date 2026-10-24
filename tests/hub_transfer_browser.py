@@ -332,5 +332,63 @@ def main():
             print(f'PASS {"local" if local else "cross-node mobile"} completion recovered from stalled execution/progress; late response ignored',flush=True)
 
 
+        # Cancel a copy, then invalidate the next move's preview with a late
+        # native append. Progress can report rollback before execute returns.
+        page, dialog, submitted = begin()
+        blocked.clear(); release.clear(); mode['hold'] = True
+        dialog.locator('.clone-confirm').click()
+        assert blocked.wait(10)
+        cancelled_id = submitted[-1]['operation_id']
+        dialog.locator('.transfer-abort').click()
+        expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+        mode['hold'] = False; release.set()
+        assert json.loads((ledger / f'{cancelled_id}.json').read_text())['phase'] == 'aborted'
+        dialog.locator('input[value=move]').check()
+        blocked.clear(); release.clear(); mode['hold'] = True
+        page.evaluate(r"""() => {
+            const original = window.fetch;
+            window.staleTransfer = {};
+            window.fetch = async (url, options) => {
+                const response = await original(url, options);
+                if (/\/api\/session\/transfer\/clone$/.test(String(url))) {
+                    staleTransfer.result = await response.clone().json();
+                    await new Promise(resolve => { staleTransfer.release = resolve; });
+                }
+                return response;
+            };
+        }""")
+        with page.expect_request(lambda r: r.url.endswith('/api/session/transfer/clone')) as move_request:
+            dialog.locator('.clone-confirm').click()
+        assert blocked.wait(10)
+        stale_id = move_request.value.post_data_json['operation_id']
+        assert stale_id != cancelled_id
+        with claude[2].open('a') as stream:
+            stream.write(json.dumps({'type':'progress', 'data':{'type':'late-tool-completion'}})+'\n')
+        mode['hold'] = False; release.set()
+        page.wait_for_function('staleTransfer.result?.code === "move_plan_stale"', timeout=30000)
+        expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+        evidence = Path('target/hub-transfer-evidence'); evidence.mkdir(parents=True, exist_ok=True)
+        failure = page.evaluate('staleTransfer.result.error')
+        assert '已变化' in failure, failure
+        expect(dialog.locator('.transfer-error')).to_contain_text(failure)
+        expect(dialog.locator('.transfer-error')).to_be_visible()
+        for width in (1280, 390):
+            page.set_viewport_size({'width':width, 'height':844})
+            page.screenshot(path=str(evidence / f'stale-move-{width}.png'), full_page=True)
+        page.evaluate('staleTransfer.release()')
+        expect(dialog.locator('input[value=clone]')).to_be_enabled()
+        dialog.locator('input[value=clone]').check()
+        # The same dialog can submit a fresh operation after the source settles.
+        page.evaluate('delete staleTransfer.result')
+        dialog.locator('.clone-confirm').click()
+        page.wait_for_function('staleTransfer.result?.phase === "complete"', timeout=30000)
+        page.evaluate('staleTransfer.release()')
+        expect(dialog).to_have_count(0, timeout=15000)
+        assert submitted[-1]['operation_id'] not in (cancelled_id, stale_id)
+        assert all(path.is_file() for path in claude.values())
+        page.close()
+        print('PASS cancelled copy then stale move: durable reason retained, fresh confirmation succeeds', flush=True)
+
+
 if __name__ == '__main__':
     main()
