@@ -833,7 +833,7 @@ const CodexSdkView = {
       if (!steer && await this.command(text)) {
         return;
       }
-      if (!steer && (text.trimStart().startsWith('/') || text.trimStart().startsWith('!'))) {
+      if (!steer && (text.startsWith('/') || text.startsWith('!'))) {
         this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
         return;
       }
@@ -864,7 +864,7 @@ const CodexSdkView = {
 
   async command(text) {
     if (await CodexSdkActions.command(this, text) || await CodexSdkControls.command(this, text)) return true;
-    const match = text.trim().match(/^\/(help|model|effort|status|stop|new)(?:\s+([\s\S]*))?$/);
+    const match = text.trimEnd().match(/^\/(help|model|effort|status|stop|new)(?:\s+([\s\S]*))?$/);
     if (!match) return false;
     const [, command, value] = match;
     switch (command) {

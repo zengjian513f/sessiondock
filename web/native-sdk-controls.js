@@ -374,8 +374,8 @@ const NativeSdkControls = {
     }
   },
   async command(view,text) {
-    const match=/^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());if(!match && !text.trim().startsWith('!'))return false;
-    const command=match?.[1] || 'shell',arg=(match?.[2] || (match?'':text.trim().slice(1))).trim();
+    const match=/^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trimEnd());if(!match && !text.startsWith('!'))return false;
+    const command=match?.[1] || 'shell',arg=(match?.[2] || (match?'':text.slice(1))).trim();
     let success=false;
     if(['usage','context','status','help'].includes(command)){
       if(command==='usage' || command==='context')void this.loadUsage(view,true);

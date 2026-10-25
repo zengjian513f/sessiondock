@@ -215,6 +215,9 @@ DELTA（BUG-20261020-065559-70fe5d）：四种原生 SDK 的普通输入在准�
 - [状态详情](../tests/sdk_status_disclosure_browser.py)、[溢出](../tests/sdk_overflow_browser.py)、
   [普通对话底栏](../tests/conversation_status_browser.py)。
 
+DELTA：SDK 网页命令只在输入首字符为 `/`（或 shell 简写 `!`）时识别；
+前面含空格、制表符、换行或其它文字时按普通消息原样发送。
+
 ## 会话改名
 
 DELTA（BUG-20261023-025934-a5d53c）：六种 SDK 均支持 `/rename 名称` 和

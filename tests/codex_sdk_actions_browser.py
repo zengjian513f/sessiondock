@@ -120,6 +120,7 @@ class ActionsServer(FakeAppServer):
             await reply({"turn": {"id": "plain-chat", "status": "inProgress", "items": []}})
             await self.notify("item/completed", {"turnId": "plain-chat", "item": {
                 "id": "plain-answer", "type": "agentMessage", "text": "Plain chat accepted"}})
+            await self.notify("turn/completed", {"turn": {"id": "plain-chat", "status": "completed"}})
 
 
 def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"):
@@ -258,6 +259,16 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     fake.wait_for(lambda: fake.methods("turn/start"))
     assert fake.methods("turn/start")[-1]["params"]["input"][0]["text"] == "please explain /compact as ordinary chat"
     expect(pane.locator(".sdk-live")).to_contain_text("Plain chat accepted")
+
+    # Only a slash at the very start invokes commands; preserve the exact prose.
+    for text in (' /compact', '\t/plan', '\n/status', '\u3000/rename name', ' /unknown-command'):
+        before = len(fake.methods("turn/start"))
+        box.fill(text)
+        send.click()
+        expect(box).to_have_value("")
+        fake.wait_for(lambda: len(fake.methods("turn/start")) == before + 1)
+        assert fake.methods("turn/start")[-1]["params"]["input"][0]["text"] == text
+        page.wait_for_function("!CodexSdkView.turn")
 
     # A rejected native operation preserves the user's command and session.
     box.fill("/fork reject-this-turn")

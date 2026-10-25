@@ -529,7 +529,7 @@ DELTA（BUG-20261015-153714-49d7c5）：最近目录的会话来源排除附属�
 
 ### 报告问题
 
-`#bug-report-dialog`（`openBugReportDialog`）。来源默认 Codex（`bugReportSource`），可选 Codex/Kiro/Agy/Grok/Claude/OpenCode，无 SSH。Hub 上选处理节点。模型与推理强度用同一套选择器。描述最多 50000 字。附件：图片、视频、音频、文件，无「引用文字」。草稿用临时身份 `BUG_REPORT_DRAFT_UID`，提交后绑到处理会话。可附带当前会话和终端上下文（`captureBugReportContext`）。发送按钮「提交并启动处理会话」。失败保留草稿。已退出且未绑定的处理会话可以重新启动。提交后浮动条指向该会话（`showBugReportToast`）。
+`#bug-report-dialog`（`openBugReportDialog`）。每次打开均选中「缺陷报告」，类型按「缺陷报告、功能需求」排列；重开保留描述与附件草稿。来源默认 Codex（`bugReportSource`），可选 Codex/Kiro/Agy/Grok/Claude/OpenCode，无 SSH。Hub 上选处理节点。模型与推理强度用同一套选择器。描述最多 50000 字。附件：图片、视频、音频、文件，无「引用文字」。草稿用临时身份 `BUG_REPORT_DRAFT_UID`，提交后绑到处理会话。可附带当前会话和终端上下文（`captureBugReportContext`）。发送按钮「提交并启动处理会话」。失败保留草稿。已退出且未绑定的处理会话可以重新启动。提交后浮动条指向该会话（`showBugReportToast`）。
 
 节点记忆：`bugReportNode`、`bugReportDraftNode`、`reportDraftId.<node>`。
 

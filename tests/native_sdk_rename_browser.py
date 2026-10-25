@@ -40,6 +40,18 @@ def exercise(browser,base,source,root,shots,label):
     uid=open_view(page,base,source)
     box=page.locator('#sdk-input');row=page.locator(f'#side .item[data-uid="{uid}"]')
     title=f'{source} 原生改名 · E203-S003'
+    # Browser submission reaches the turn endpoint with leading whitespace intact.
+    prompts = []
+    def accept_prompt(route):
+        prompts.append(route.request.post_data_json)
+        route.fulfill(json={'ok':True,'accepted':True,'state':'queued'})
+    page.route('**/api/native-sdk/turn', accept_prompt)
+    for text in (' /rename name', '\t/model short', '\n/status', '\u3000/unknown-command'):
+        send(page, text)
+        expect(box).to_have_value('')
+        assert prompts[-1]['text'] == text, prompts
+    page.unroute('**/api/native-sdk/turn', accept_prompt)
+    turns.clear()
     send(page,'/rename '+title)
     expect(box).to_have_value('');expect(row).to_contain_text(title)
     expect(page.locator('.dhead h2')).to_have_text(title)

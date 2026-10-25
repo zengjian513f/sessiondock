@@ -195,7 +195,7 @@ const CodexSdkControls = {
   },
 
   async execute(view, text) {
-    const value = text.trim();
+    const value = text.trimEnd();
     if (value.startsWith('!')) {
       const command = value.slice(1).trim();
       if (!command) throw new Error('用法：!命令 或 /shell 命令');
