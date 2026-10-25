@@ -612,12 +612,13 @@ impl<'a> Graph<'a> {
         // Main rows only; `title` here is the
         // root's base title, the name index overrides it afterwards.
         if entry.summary.agent.is_none() {
+            row["title"] = json!(self.base_title(entry));
             let chain = lineage(entry, &self.mains);
             if let Some(root) = chain.last() {
                 row["root_sid"] = json!(root.summary.sid);
                 row["fork_depth"] = json!(chain.len());
                 row["created"] = json!(root.summary.created);
-                row["title"] = json!(root.summary.title);
+                row["title"] = json!(self.base_title(root));
                 row["size"] = json!(entry.summary.size + inherited_size(entry, &chain));
             }
             if entry.source == "claude"
@@ -643,6 +644,32 @@ impl<'a> Graph<'a> {
             }
         }
         row
+    }
+
+    /// A new physical rollout is still the same named conversation. Retain its
+    /// first real input title across validated generations, including empty
+    /// rewinds; an initially empty rollout must not hide a later first input.
+    /// Explicit names are applied afterwards by the native name index.
+    fn base_title(&self, entry: &CandidateRef) -> String {
+        if entry.source == "codex"
+            && let Some(ids) = self.sids.get(&("codex", entry.summary.sid.as_str()))
+            && let Some(versions) = generations(
+                ids.iter()
+                    .map(|id| &self.entries[id])
+                    .filter(|version| version.summary.agent.is_none())
+                    .collect(),
+            )
+            && let Some(original) = versions.iter().find(|version| {
+                version
+                    .summary
+                    .codex
+                    .as_ref()
+                    .is_some_and(|meta| meta.has_user_title)
+            })
+        {
+            return original.summary.title.clone();
+        }
+        entry.summary.title.clone()
     }
 
     /// A rotated Codex rollout is one native thread: an older generation

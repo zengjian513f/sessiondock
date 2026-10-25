@@ -1517,6 +1517,9 @@ fn read_candidate(
                 if candidate.source == "codex" {
                     if let Some(title) = &scan.first_user_title {
                         summary.title = summary::clip(title, 110);
+                        if let Some(codex) = &mut summary.codex {
+                            codex.has_user_title = true;
+                        }
                     }
                     summary.updated = scan
                         .activity_at

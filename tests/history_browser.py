@@ -228,6 +228,7 @@ def main():
                 expect(page.locator(".dtitle h2")).to_contain_text("新建 Claude 会话")
                 expect(page.locator(".dtitle h2")).not_to_contain_text(fresh[:8])
                 select("rotation-new", "Rotation continued question")
+                expect(page.locator('.dtitle h2 span').last).to_have_text('Rotation inherited question')
                 expect(page.locator("#msgs")).to_contain_text("Rotation inherited question")
                 expect(page.locator("#msgs")).to_contain_text("Rotation inherited answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
@@ -274,6 +275,7 @@ def main():
                 expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
                 print("PASS Codex same-ID rollout rotation: one list row, inherited prefix, excluded old tail, agent ownership, live append, titles, duplicate conflict and recovery")
                 select("native-latest", "Native latest version only")
+                expect(page.locator('.dtitle h2 span').last).to_have_text('Native physical inherited question')
                 expect(page.locator("#msgs")).to_contain_text("Native physical inherited answer")
                 expect(page.locator("#msgs")).to_contain_text("Native middle answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Native discarded old tail")
@@ -313,6 +315,7 @@ def main():
                 page.locator(f'#side .item[data-uid="{corpus.uid("native-empty")}"]').click()
                 expect(page.locator('#msgs')).to_be_visible()
                 expect(page.locator('#msgs .msg')).to_have_count(0)
+                expect(page.locator('.dtitle h2 span').last).to_have_text('Native physical inherited question')
                 for key in ('native-original', 'native-middle', 'native-latest'):
                     expect(page.locator(f'#side .item[data-uid="{corpus.uid(key)}"]')).to_have_count(0)
                 # A nonzero reset is still an ordinary duplicate, not evidence
@@ -325,6 +328,7 @@ def main():
                 reset.write_bytes(encoded(reset_meta) + encoded(codex_message('user', 'After empty rewind', 1)))
                 page.reload(wait_until='networkidle')
                 select('native-empty', 'After empty rewind')
+                expect(page.locator('.dtitle h2 span').last).to_have_text('Native physical inherited question')
                 expect(page.locator('#msgs')).not_to_contain_text('Native physical inherited')
                 meta = batch35_meta(native_sid, '2026-09-11T11:00:00Z', history_base={
                     'thread_id': reset_id, 'end_byte_offset': reset.stat().st_size, 'end_ordinal_exclusive': 2})

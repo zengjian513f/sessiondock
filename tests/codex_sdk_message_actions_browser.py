@@ -103,6 +103,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     start_sdk(page)
     page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
     source = page.evaluate('S.sel')
+    source_title = page.locator('.dhead h2').inner_text()
     def bubble():
         return page.locator('.sdk-history .msg[data-role="user"]').filter(has_text='第二轮 remove this question')
     def menu():
@@ -170,6 +171,10 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT)
     reverted = page.evaluate('S.sel')
     assert reverted != source, 'text was restored to the old rollout before timeline navigation'
+    expect(page.locator('.dhead h2')).to_have_text(source_title)
+    # The explicit fork remains the visible leaf while its parent is hidden;
+    # its inherited sidebar title must agree with the selected parent's title.
+    expect(page.locator('#side .item .t').first).to_have_text(source_title)
     expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
     expect(page.locator('#sdk-input')).to_be_focused()
     editor = page.locator('#sdk-input').element_handle()
@@ -183,6 +188,12 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     saved(page, reverted, '原本尚未发送的草稿\n\n' + TEXT + ' 回退后继续编辑，不应被刷新打断')
     page.reload(wait_until='networkidle')
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT + ' 回退后继续编辑，不应被刷新打断')
+    expect(page.locator('.dhead h2')).to_have_text(source_title)
+    # An explicit native name still takes precedence over the original prompt
+    # title, including subsequent rotations with no local user messages.
+    explicit_title = '项目核查进度 · 回退后保留的原生名称'
+    fake.name_index.write_text(json.dumps({'id': THREAD, 'thread_name': explicit_title}) + '\n')
+    expect(page.locator('.dhead h2')).to_have_text(explicit_title, timeout=10000)
     # Command revert follows the rotated identity too, without migrating the
     # successfully executed command into the destination draft.
     page.locator('#sdk-input').fill('/revert ' + TURN2)
@@ -190,6 +201,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.locator('dialog[open]').get_by_role('button', name='回退', exact=True).click()
     page.wait_for_function('uid => S.sel !== uid && CodexSdkView.connected', arg=reverted)
     expect(page.locator('#sdk-input')).to_have_value('')
+    expect(page.locator('.dhead h2')).to_have_text(explicit_title)
     command_uid = page.evaluate('S.sel')
     page.locator('#sdk-input').fill('命令回退后草稿')
     saved(page, command_uid, '命令回退后草稿')
@@ -200,6 +212,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.locator('#sdk-action-dialog').get_by_role('button', name='回退', exact=True).click()
     page.wait_for_function('uid => S.sel !== uid && CodexSdkView.connected', arg=command_uid)
     expect(page.locator('#sdk-input')).to_have_value('命令回退后草稿')
+    expect(page.locator('.dhead h2')).to_have_text(explicit_title)
     # A user message started by another client uses the same menu on a live bubble.
     async def live_message():
         await fake.notify('turn/started', {'threadId': THREAD, 'turn': {'id': 'alignment-live', 'status': 'inProgress', 'items': []}})
@@ -250,7 +263,9 @@ def main():
                 stop = next(i for i, row in enumerate(rows) if row.get('type') == 'turn_context' and row['payload']['turn_id'] == TURN2)
                 retained = b''.join(encoded(row) for row in rows[:stop])
                 port = free_port(); env = {**environment(root, args.binary), **node_env(root, port, '127.0.0.0/8')}
+                env['SESSIONDOCK_CODEX_INDEX'] = str(root/'session_index.jsonl')
                 with MessageServer(root/'app.sock', path, retained) as fake, server(corpus, args.binary, root/'app.sock', env) as base:
+                    fake.name_index = root/'session_index.jsonl'
                     if mode == 'hub':
                         hub_root = root/'hub'; hub_root.mkdir()
                         hub = Hub(args.binary.with_name('sessiondock-hub').resolve(), hub_root, [SimpleNamespace(name='MessageNode', token=TOKEN, port=port)])

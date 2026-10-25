@@ -183,6 +183,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model: Value::Null,
         branch: Value::Null,
         codex: Some(CodexMeta {
+            has_user_title: first_user.is_some(),
             start_ordinal: records
                 .head
                 .records
