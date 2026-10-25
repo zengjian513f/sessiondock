@@ -163,12 +163,12 @@ class KiroCli extends SessionDockCli {
 }
 
 const SESSIONDOCK_CLIS = Object.freeze({
-  claude: new ClaudeCli(),
   codex: new CodexCli(),
-  grok: new GrokCli(),
-  agy: new AgyCli(),
-  opencode: new OpencodeCli(),
   kiro: new KiroCli(),
+  agy: new AgyCli(),
+  grok: new GrokCli(),
+  claude: new ClaudeCli(),
+  opencode: new OpencodeCli(),
 });
 
 function sessionSourceOf(sourceOrUid) {

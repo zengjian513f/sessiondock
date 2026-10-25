@@ -3,7 +3,7 @@
 设置 → 机器 → AI 客户端下方的 Agent 额度打开弹窗，关闭后保留设置页。
 独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
 未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
-Codex、Claude Code、Agy、Kiro 各一个表格，复用客户端矩阵的表格样式；
+Codex、Kiro、Agy、Claude Code 按此顺序各一个表格，复用客户端矩阵的表格样式；
 Agy 保留额度组，Claude 不显示额度组，Codex 的特殊模型额度在窗口列注明。
 窗口与 SDK、普通对话状态栏统一显示“5小时 / 7天 / 月度”，不直接显示 `weekly`、`monthly` 等原生字段。
 Codex 固定显示 Credits 和重置卡列，即使旧快照尚无这些字段也显示 N/A。
