@@ -99,11 +99,14 @@ const CodexSdkActions = {
         if (!turn || !current()) return true;
         if (argument && !await appConfirm(`回退对话到此轮之前？\n\n将移除 ${turn} 及之后的对话，仅修改会话历史，不回滚工作区文件。`, {ok:'回退'})) return true;
         if (!current()) return true;
+        operation.timelineUid = uid;
         await view.request('api/codex-sdk/revert', {uid, before_turn_id:turn});
         if (current()) {
-          view.turn = null; view.items.clear(); view.nodes.clear(); view.live.replaceChildren();
-          await view.refreshHistory(generation, true);
-          view.setNotice('对话已回退；工作区文件保持原样。');
+          if (input?.value === text) {
+            input.value = ''; view.fitInput(); CodexSdkCompose.input(view);
+          }
+          if (await this.finishRevert(view, generation, operation))
+            view.setNotice('对话已回退；工作区文件保持原样。');
         }
         succeeded = true;
       } else if (action === 'compact') {
@@ -128,6 +131,7 @@ const CodexSdkActions = {
     } finally {
       if (this.pending === operation) this.pending = false;
       if (current()) this.paint(view);
+      if (operation.timelineUid) void followSelectedTimeline(false);
     }
     return true;
   },
@@ -167,6 +171,28 @@ const CodexSdkActions = {
     if (CodexSdkCompose.states.get(view)?.draft) await persistComposerDraft(view.uid);
   },
 
+  async finishRevert(view, generation, operation) {
+    const uid = view.uid;
+    const current = () => view.current(generation) && view.uid === uid;
+    if (!view.agent) {
+      // A native revert can rotate the rollout without changing thread ID.
+      // Resolve that identity now, before restoring an editable message, rather
+      // than leaving a second navigation to the next inventory poll.
+      const loaded = await loadSessions(true, true);
+      if (!current()) return false;
+      if (!loaded) throw new Error('对话已回退，但刷新会话列表失败，请重新打开会话。');
+      const target = followContinuedSession(uid);
+      if (target !== uid) {
+        SdkView.selectMode(target, null, 'sdk');
+        await followSelectedTimeline(false, operation);
+        return view.uid === target && S.sel === target && !!view.pane;
+      }
+    }
+    view.turn = null; view.items.clear(); view.nodes.clear(); view.live.replaceChildren();
+    await view.refreshHistory(generation, true);
+    return current();
+  },
+
   async messageAction(view, message, action) {
     if (this.pending) return;
     const generation = view.generation, uid = view.uid, operation = {};
@@ -176,11 +202,11 @@ const CodexSdkActions = {
       if (action === 'revert') {
         if (!await appConfirm('回退到这条消息之前？该条及之后的对话会被移除，消息内容将放回输入框。工作区文件保持原样。', {ok:'回退'})) return;
         if (!current()) return;
+        operation.timelineUid = uid;
         await view.request('api/codex-sdk/revert', {uid, before_turn_id:message.turn_id});
         if (!current()) return;
-        view.turn = null; view.items.clear(); view.nodes.clear(); view.live.replaceChildren();
-        await view.refreshHistory(generation, true);
-        if (current()) await this.restoreInput(view, String(message.text || ''));
+        if (await this.finishRevert(view, generation, operation))
+          await this.restoreInput(view, String(message.text || ''));
       } else {
         const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id:message.turn_id, before_turn_id:message.turn_id});
         if (!current()) return;
@@ -188,7 +214,11 @@ const CodexSdkActions = {
         if (view.uid === response.uid) await this.restoreInput(view, String(message.text || ''));
       }
     } catch (error) { if (current()) view.setNotice(`消息操作失败：${error.message}`, 'blocked', true); }
-    finally { if (this.pending === operation) this.pending = false; this.paint(view); }
+    finally {
+      if (this.pending === operation) this.pending = false;
+      this.paint(view);
+      if (operation.timelineUid) void followSelectedTimeline(false);
+    }
   },
 
   reviewTarget(argument) {

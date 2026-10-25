@@ -14,6 +14,7 @@ from codex_sdk_compose_browser import saved
 from history_fixtures import BINARY, codex_row, encoded
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
+from sdk_ui_fixtures import start_sdk
 
 TURN3 = '01a1a000-0000-7000-8000-000000000003'
 LATER_QUESTION = '第三轮：这是分支点之后的对话，不能进入新分支'
@@ -71,6 +72,24 @@ class MessageServer(ActionsServer):
                 'id': FORK, 'path': str(path), 'cwd': meta['payload']['cwd'],
                 'createdAt': 1792238400, 'status': {'type': 'idle'}, 'turns': []}}})
             return
+        if method == 'thread/revert' and params.get('threadId') == THREAD:
+            assert params['beforeTurnId'] == TURN2
+            self.revert_count = getattr(self, 'revert_count', 0) + 1
+            minute = self.revert_count - 1
+            rows = [json.loads(line) for line in self.source_path.read_text().splitlines()]
+            stop = next(i for i, row in enumerate(rows) if row.get('type') == 'turn_context' and row['payload']['turn_id'] == TURN2)
+            meta = json.loads(json.dumps(rows[0]))
+            meta['ordinal'] = stop
+            meta['payload'].update(timestamp=f'2026-10-18T12:{minute:02}:00Z', history_mode='paginated',
+                history_base={'thread_id': THREAD, 'end_byte_offset': len(self.retained), 'end_ordinal_exclusive': stop})
+            path = self.source_path.with_name(f'rollout-2026-10-18T12-{minute:02}-00-{THREAD}_{ROLLOUT}.jsonl')
+            path.write_bytes(encoded(meta))
+            self.paths[THREAD] = path
+            await self.notify('thread/reverted', {'threadId': THREAD})
+            await self.send(writer, {'id': message['id'], 'result': {'thread': {
+                'id': THREAD, 'path': str(path), 'cwd': meta['payload']['cwd'],
+                'createdAt': 1792324800, 'status': {'type': 'idle'}, 'turns': []}}})
+            return
         await super()._handle(writer, message)
 
 
@@ -81,6 +100,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='networkidle')
     page.locator('#side .item').filter(has_text='第一轮 retained question').first.click()
+    start_sdk(page)
     page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
     source = page.evaluate('S.sel')
     def bubble():
@@ -148,13 +168,38 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     popup = menu(); popup.get_by_role('button', name='回退', exact=True).click()
     page.locator('dialog[open]').get_by_role('button', name='回退', exact=True).click()
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT)
+    reverted = page.evaluate('S.sel')
+    assert reverted != source, 'text was restored to the old rollout before timeline navigation'
     expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
-    assert page.evaluate('S.sel') == source
+    expect(page.locator('#sdk-input')).to_be_focused()
+    editor = page.locator('#sdk-input').element_handle()
+    page.locator('#sdk-input').press('End')
+    page.locator('#sdk-input').press_sequentially(' 回退后继续编辑，不应被刷新打断', delay=180)
+    assert editor.evaluate('(node) => node.isConnected && node === document.activeElement'), 'delayed follow replaced the focused editor'
+    expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT + ' 回退后继续编辑，不应被刷新打断')
+    assert page.evaluate('S.sel') == reverted
     assert not fake.methods('turn/start'), 'restoring a message sent it without user action'
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-restored.png'))
-    saved(page, source, '原本尚未发送的草稿\n\n' + TEXT)
+    saved(page, reverted, '原本尚未发送的草稿\n\n' + TEXT + ' 回退后继续编辑，不应被刷新打断')
     page.reload(wait_until='networkidle')
-    expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT)
+    expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT + ' 回退后继续编辑，不应被刷新打断')
+    # Command revert follows the rotated identity too, without migrating the
+    # successfully executed command into the destination draft.
+    page.locator('#sdk-input').fill('/revert ' + TURN2)
+    page.locator('#sdk-send').click()
+    page.locator('dialog[open]').get_by_role('button', name='回退', exact=True).click()
+    page.wait_for_function('uid => S.sel !== uid && CodexSdkView.connected', arg=reverted)
+    expect(page.locator('#sdk-input')).to_have_value('')
+    command_uid = page.evaluate('S.sel')
+    page.locator('#sdk-input').fill('命令回退后草稿')
+    saved(page, command_uid, '命令回退后草稿')
+    # Toolbar revert selects a native turn and preserves an unrelated draft.
+    action = page.locator('[data-sdk-action="revert"]')
+    if not action.is_visible(): page.locator('#sdk-more').click()
+    action.click()
+    page.locator('#sdk-action-dialog').get_by_role('button', name='回退', exact=True).click()
+    page.wait_for_function('uid => S.sel !== uid && CodexSdkView.connected', arg=command_uid)
+    expect(page.locator('#sdk-input')).to_have_value('命令回退后草稿')
     # A user message started by another client uses the same menu on a live bubble.
     async def live_message():
         await fake.notify('turn/started', {'threadId': THREAD, 'turn': {'id': 'alignment-live', 'status': 'inProgress', 'items': []}})
@@ -169,7 +214,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-live.png'))
     assert branch != source and not errors, errors
     context.close()
-    print('PASS ' + label + ': bubble menu, branch before selected turn, source preservation, revert/cancel, restored drafts/reload', flush=True)
+    print('PASS ' + label + ': branch/source preservation, revert/cancel, rotated bubble/command/toolbar revert, focused typing across polls, drafts/reload', flush=True)
 
 
 def main():

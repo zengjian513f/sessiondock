@@ -151,7 +151,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         expect(button.locator('svg use')).to_have_count(1)
         if button.evaluate("n => n.parentElement.classList.contains('sdk-pickers')"):
             expect(button.locator('.sdk-action-label')).to_be_hidden()
-            assert button.evaluate('n => n.getBoundingClientRect().width')==28
+            assert button.evaluate('n => n.getBoundingClientRect().width')==24
         button.click()
 
     # The menu selects actual native turn IDs, including additional pages.

@@ -5828,9 +5828,13 @@ function scheduleOpenRetry(uid, agent, ac) {
 
 // 原生续接或 Codex 回退换了叶子时，对话页和控制台一起跟随，同一个 pty 保持连接。
 // 用户主动打开的 fork 父会话（父会话链、显示父会话）不自动跟随分支。
-async function followSelectedTimeline(followFork = true) {
+async function followSelectedTimeline(followFork = true, operation = null) {
   const current = S.sessions.find(s => s.uid === S.sel);
   if (!current || S.agent) return false;
+  // Revert owns the transition until its refreshed inventory is ready. Do not
+  // let a background poll detach the editor before the action restores text.
+  const pending = typeof CodexSdkActions !== 'undefined' && CodexSdkActions.pending;
+  if (pending?.timelineUid === current.uid && pending !== operation) return false;
   // 手机停在列表页时不把人拽进详情；父会话已从列表消失，点开分支即可。
   if (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail') return false;
   const continued = followContinuedSession(current.uid);
