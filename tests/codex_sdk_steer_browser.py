@@ -11,7 +11,7 @@ from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_queue_browser import open_page
 from history_fixtures import BINARY
-from sdk_send_gesture_fixtures import exercise_send_gestures
+from sdk_send_gesture_fixtures import exercise_idle_send_gestures, exercise_send_gestures
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
@@ -42,8 +42,11 @@ def exercise(browser,base,fake,width,theme,screenshots,label):
         button=page.get_by_role('button',name='引导当前任务',exact=True)
         if not button.is_visible():page.locator('#sdk-more').click()
         return button
-    box.fill('idle draft');box.press('Control+Enter');expect(box).to_have_value('idle draft')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('当前没有')
+    def finish_idle(text):
+        page.wait_for_function('CodexSdkView.turn?.id')
+        assert len([m for m in fake.methods('turn/start') if m['params']['input'][0]['text']==text])==1
+        fake.complete();page.wait_for_function('!CodexSdkView.turn')
+    exercise_idle_send_gestures(page,'codex',label,finish_idle,screenshots)
     submit('working '+label);expect(send).to_have_text('排队')
     exercise_send_gestures(page,'codex',label,screenshots)
     starts=len(fake.methods('turn/start'))
