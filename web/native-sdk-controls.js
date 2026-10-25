@@ -253,7 +253,11 @@ const NativeSdkControls = {
     const holder=view.pane.querySelector('.sdk-queue');
     if(holder._nativeQueueBusy)return;
     const nativeRows=view.raw?.queue || [],bridgeRows=view.raw?.input_queue || [],steers=view.raw?.steers || [];
-    const signature=JSON.stringify([nativeRows,bridgeRows,steers,view.running,view.capabilities.queue_steer]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
+    // Transcript admission can precede the write receipt (notably Kiro's
+    // begin_turn). Join the two projections by this delivery's identity, never
+    // by text, and repaint even when only the transcript has changed.
+    const userDeliveries=new Set((view.items || []).filter(item=>item.role==='user' && item.request_id).map(item=>item.request_id));
+    const signature=JSON.stringify([nativeRows,bridgeRows,steers,[...userDeliveries],view.running,view.capabilities.queue_steer]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
     const generation=view.generation,uid=view.uid;
     const labels={preparing:'准备输入',queued:'排队中',sending:'正在发送…',accepted:'原生已接收',failed:'发送失败',unknown:'处理结果待核对'};
     const unknownReason=item=>item.observed_consumed || item.consumption==='observed'
@@ -288,10 +292,11 @@ const NativeSdkControls = {
       };
     };
     for(const item of bridgeRows){
-      if(item.state==='accepted'){
-        const receipt=el('div','native-message-state',labels.accepted);
+      const delivery=item.delivery_id || (!item.attempts ? item.request_id : null);
+      if(item.state==='accepted' || (item.state==='sending' && delivery && userDeliveries.has(delivery))){
+        const receipt=el('div','native-message-state',labels[item.state]);
         receipt.dataset.queueId=item.id;receipt.dataset.queueOrigin='bridge';
-        receipt.title='仅表示原生已接收输入，不表示已处理或已完成';
+        receipt.title=item.state==='accepted'?'仅表示原生已接收输入，不表示已处理或已完成':'输入正文已展示，原生投递尚未确认';
         holder.append(receipt);continue;
       }
       const ordinaryInput=['preparing','queued','sending'].includes(item.state);

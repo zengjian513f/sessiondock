@@ -6,7 +6,8 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
-from native_sdk_footer_browser import provider
+from native_sdk_rename_browser import native
+from sdkhost_fixtures import stop_private_sdkhosts
 from sdk_selection_fixtures import snapshots
 from sdk_ui_fixtures import start_sdk
 
@@ -31,7 +32,8 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         page.wait_for_function('seq=>NativeSdkView.seq===seq', arg=events.packet['seq'])
     def submit(route):
         data = route.request.post_data_json
-        raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'preparing', 'text': data['text']}]
+        raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'preparing', 'text': data['text'],
+            'request_id': data['request_id'], 'delivery_id': data['request_id']}]
         route.fulfill(json={'ok': True, 'accepted': True})
     context.route('**/api/native-sdk/turn', submit)
     page.goto(base, wait_until='domcontentloaded')
@@ -55,7 +57,36 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         expect(receipt.locator('.sdk-request-title')).to_have_count(0)
         expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(1)
         expect(receipt.get_by_role('button', name='撤销', exact=True)).to_have_count(1 if state == 'queued' else 0)
-    raw['items'] = [{'id': 'sent', 'role': 'user', 'text': TEXT}]
+    # Kiro broadcasts begin_turn before the native write/queue receipt finishes.
+    # Changing only items must invalidate the queue's render cache as well.
+    delivery = raw['input_queue'][0]['delivery_id']
+    raw['items'] = [{'id': 'sent', 'role': 'user', 'text': TEXT, 'request_id': delivery}]
+    publish()
+    if screenshots: page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-sending-live.png'), full_page=True)
+    expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(1)
+    expect(receipt).to_have_text('正在发送…')
+    # Queue-only SSE updates must use the same association, without claiming ACK.
+    events.packet['type'] = 'input_queue'
+    events.publish()
+    expect(receipt).to_have_text('正在发送…')
+    events.packet['type'] = 'snapshot'
+    # A second, identical input has its own identity and must remain visible.
+    raw['input_queue'].append({'id': 'bridge:other', 'request_id': 'other',
+        'delivery_id': 'other', 'state': 'queued', 'text': TEXT})
+    publish()
+    expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(2)
+    raw['input_queue'].pop()
+    # Explicit retries have a fresh delivery identity; old transcript entries
+    # must not consume the new attempt, and the new entry must merge on arrival.
+    raw['input_queue'][0].update(delivery_id='retry-delivery', attempts=1)
+    publish()
+    expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(2)
+    raw['items'].append({'id': 'retry', 'role': 'user', 'text': TEXT, 'request_id': 'retry-delivery'})
+    publish()
+    expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(2)
+    expect(receipt).to_have_text('正在发送…')
+    raw['items'].pop()
+    raw['input_queue'][0].update(delivery_id=delivery, attempts=0)
     raw['input_queue'][0]['state'] = 'accepted'
     publish()
     expect(receipt).to_have_text('原生已接收')
@@ -164,16 +195,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--screenshots', type=Path)
+    parser.add_argument('--sources', default='kiro,agy,grok,claude,opencode')
     args = parser.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-native-receipts-') as temporary, sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         try:
-            for source in ('agy', 'grok', 'claude', 'opencode'):
+            for source in args.sources.split(','):
                 root = Path(temporary)/source; root.mkdir()
-                with provider(source, root, args.binary) as base, snapshots() as events:
-                    for width, theme in ((1440, 'dark'), (390, 'light'), (675, 'light')):
-                        exercise(browser, base, source, events, width, theme, args.screenshots)
+                try:
+                    with native(source, root, args.binary, {}) as base, snapshots() as events:
+                        for width, theme in ((1440, 'dark'), (390, 'light'), (675, 'light')):
+                            exercise(browser, base, source, events, width, theme, args.screenshots)
+                finally:
+                    stop_private_sdkhosts(root)
         finally: browser.close()
 
 

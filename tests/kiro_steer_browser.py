@@ -41,6 +41,8 @@ def exercise(browser, base, root, shots, label):
     box.fill('ordinary queued '+label);box.press('Enter');expect(box).to_have_value('')
     expect(page.locator('.sdk-queue')).to_contain_text('ordinary queued '+label)
     queued=page.locator('.sdk-queued').filter(has_text='ordinary queued '+label)
+    delivery=page.evaluate('text=>NativeSdkView.raw.input_queue.find(row=>row.text===text)', 'ordinary queued '+label)
+    assert delivery['delivery_id'] == delivery['request_id'] and delivery['delivery_id'], delivery
     expect(queued.get_by_role('button',name='立即引导',exact=True)).to_be_visible()
     if shots:
         for width,theme in ((1280,'light'),(390,'dark')):
