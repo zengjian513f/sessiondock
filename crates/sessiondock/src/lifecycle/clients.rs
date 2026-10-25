@@ -381,6 +381,13 @@ fn latest(profile: &CliProfile) -> Option<String> {
             );
             text(&fetch(profile, &url)?, "version")
         }
+        Source::Codebuddy => text(
+            &fetch(
+                profile,
+                "https://registry.npmjs.org/@tencent-ai/codebuddy-code/latest",
+            )?,
+            "version",
+        ),
         Source::Kiro | Source::Shell => None,
     }
 }

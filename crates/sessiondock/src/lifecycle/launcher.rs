@@ -223,7 +223,7 @@ fn choice_args(spec: &LaunchSpec) -> Vec<String> {
     let mut args = Vec::new();
     let (model, effort) = (spec.model(), spec.effort());
     match spec.source() {
-        Source::Claude | Source::Agy | Source::Kiro => {
+        Source::Claude | Source::Agy | Source::Kiro | Source::Codebuddy => {
             if let Some(model) = model {
                 args.extend(["--model".into(), model.into()]);
             }
@@ -703,7 +703,9 @@ impl Launcher {
                 Launch::Resume { sid, .. } => {
                     let defaults: &[&str] = match spec.source() {
                         Source::Codex => &["resume", SID_PLACEHOLDER],
-                        Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
+                        Source::Claude | Source::Grok | Source::Codebuddy => {
+                            &["--resume", SID_PLACEHOLDER]
+                        }
                         Source::Opencode => &["--session", SID_PLACEHOLDER],
                         Source::Agy => &["--conversation", SID_PLACEHOLDER],
                         Source::Kiro => {

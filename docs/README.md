@@ -98,6 +98,8 @@
 | [architecture.md](architecture.md) | 架构边界 |
 | [bug-report.md](bug-report.md) | Bug reports and their workers (M7) |
 | [capabilities.md](capabilities.md) | Capability flags |
+| [codebuddy-sdk.md](codebuddy-sdk.md) | CodeBuddy 原生 SDK 桥接 |
+| [codebuddy.md](codebuddy.md) | CodeBuddy 会话 |
 | [diagnostics.md](diagnostics.md) | Browser diagnostics |
 | [environment.md](environment.md) | Environment variables |
 | [error-codes.md](error-codes.md) | HTTP error codes |

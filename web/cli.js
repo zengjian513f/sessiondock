@@ -162,9 +162,17 @@ class KiroCli extends SessionDockCli {
   }
 }
 
+// CodeBuddy 与 Kiro 一样只提供 SDK 与 CLI 终端两种模式，不解析 PTY 屏幕做对话视图。
+class CodebuddyCli extends SessionDockCli {
+  constructor() {
+    super('codebuddy', 'CodeBuddy', 'i-codebuddy', 'var(--codebuddy)');
+  }
+}
+
 const SESSIONDOCK_CLIS = Object.freeze({
   codex: new CodexCli(),
   kiro: new KiroCli(),
+  codebuddy: new CodebuddyCli(),
   agy: new AgyCli(),
   grok: new GrokCli(),
   claude: new ClaudeCli(),
@@ -180,13 +188,22 @@ function sessionSourceOf(sourceOrUid) {
   const value = String(sourceOrUid || '');
   let source = value.split(':', 1)[0];
   if (source === 'tmux') {
-    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy|kiro)-/)?.[1] || source;
+    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy|kiro|codebuddy)-/)?.[1] || source;
   }
   return source;
 }
 
+// 尚未落盘的新建启动（tmux:<名称>）从待定行取来源，使其与落盘后的行一致。
+function pendingLaunchSource(uid) {
+  if (typeof T === 'undefined' || !Array.isArray(T.pending)) return '';
+  const name = String(uid).slice('tmux:'.length).split('~').pop();
+  return T.pending.find(row => row.name === name)?.source || '';
+}
+
 function sessionHasChatView(sourceOrUid) {
-  return sessionSourceOf(sourceOrUid) !== 'kiro';
+  let source = sessionSourceOf(sourceOrUid);
+  if (source === 'tmux') source = pendingLaunchSource(sourceOrUid);
+  return !['kiro', 'codebuddy'].includes(source);
 }
 
 function sessiondockCli(sourceOrUid) {
@@ -196,10 +213,14 @@ function sessiondockCli(sourceOrUid) {
 
 // 供 app.js、term.js 以及 headless 回归共同使用。
 Object.assign(globalThis, {
-  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, KiroCli,
+  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, KiroCli, CodebuddyCli,
   SESSIONDOCK_CLIS, sessionSourceOf, sessionHasChatView, sessiondockCli,
 });
 if (typeof window !== 'undefined') {
   window.KiroCli = typeof NativeSdkView !== 'undefined' && typeof NativeSdkView.create === 'function'
     ? NativeSdkView.create('kiro') : SESSIONDOCK_CLIS.kiro;
+}
+if (typeof window !== 'undefined') {
+  window.CodebuddyCli = typeof NativeSdkView !== 'undefined' && typeof NativeSdkView.create === 'function'
+    ? NativeSdkView.create('codebuddy') : SESSIONDOCK_CLIS.codebuddy;
 }

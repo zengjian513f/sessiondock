@@ -305,7 +305,10 @@ impl Manifest {
         if !entry_id_is_valid(&self.entry_id) {
             return Err(invalid("回收站清单条目 ID 无效"));
         }
-        if !matches!(self.source.as_str(), "claude" | "codex" | "grok" | "kiro") {
+        if !matches!(
+            self.source.as_str(),
+            "claude" | "codex" | "grok" | "kiro" | "codebuddy"
+        ) {
             return Err(invalid("回收站清单来源无效"));
         }
         if self.uid.is_empty() || !self.uid.starts_with(&format!("{}:", self.source)) {

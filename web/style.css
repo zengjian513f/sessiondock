@@ -18,6 +18,7 @@
   --opencode: #4b5563;
   --agy: #2563eb;
   --kiro: #9333ea;
+  --codebuddy: #0d9488;
   --tool: #b7791f;
   --terminal-bg: #f4f6f8;
   --terminal-fg: #252a32;
@@ -62,6 +63,7 @@
     --opencode: #aab2bf;
     --agy: #93c5fd;
     --kiro: #a855f7;
+    --codebuddy: #2dd4bf;
     --accent: #6d95ff;
     --brand-a: #8fb2ff;
     --brand-b: #d49aff;
@@ -660,9 +662,13 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-source input[value="opencode"] + span .ico { color: var(--opencode); }
 .new-source input[value="agy"] + span .ico { color: var(--agy); }
 .new-source input[value="kiro"] + span .ico { color: var(--kiro); }
+.new-source input[value="codebuddy"] + span .ico { color: var(--codebuddy); }
 .sd-session-card [data-source="kiro"],
 .source-icon[data-source="kiro"] { color: var(--kiro, #9333ea); }
 .b-kiro { --source-color: var(--kiro); }
+.sd-session-card [data-source="codebuddy"],
+.source-icon[data-source="codebuddy"] { color: var(--codebuddy, #0d9488); }
+.b-codebuddy { --source-color: var(--codebuddy); }
 .new-cwd-combobox { min-width: 0; }
 /* 启动目录独占一行。 */
 .new-where { display: flex; gap: 7px; min-width: 0; }

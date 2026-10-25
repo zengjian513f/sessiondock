@@ -1,0 +1,414 @@
+use super::*;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+#[derive(Clone)]
+pub(super) enum Outbound {
+    Direct(mpsc::UnboundedSender<Value>),
+    #[cfg(unix)]
+    Hosted(super::hosted::Sender),
+}
+impl Outbound {
+    pub fn send(&self, frame: Value) -> Result<(), String> {
+        match self {
+            Self::Direct(sender) => sender
+                .send(frame)
+                .map_err(|_| "codebuddy_sdk_disconnected".into()),
+            #[cfg(unix)]
+            Self::Hosted(sender) => sender.send(frame),
+        }
+    }
+}
+
+impl Bridge {
+    pub(super) async fn ensure(self: &Arc<Self>, session: &Arc<Session>) -> Result<(), String> {
+        #[cfg(unix)]
+        if self.state_dir.is_some() {
+            return self.ensure_hosted(session).await;
+        }
+        if lock(&session.live).ready {
+            return Ok(());
+        }
+        self.native_home()?;
+        self.check_conflict(session).await?;
+        let needs_spawn = lock(&session.live).outbound.is_none();
+        if needs_spawn {
+            let mut command = tokio::process::Command::new(&self.profile.executable);
+            command.args(&self.profile.args).args([
+                "--input-format=stream-json",
+                "--output-format=stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--replay-user-messages",
+            ]);
+            // CodeBuddy finds a transcript by SID under the cwd's project
+            // directory; the native CLI owns every transcript write.
+            if session.path.is_file() {
+                command.arg("--resume").arg(&session.sid);
+            } else {
+                command.arg("--session-id").arg(&session.sid);
+            }
+            {
+                let live = lock(&session.live);
+                if let Some(model) = &live.model {
+                    command.arg("--model").arg(model);
+                }
+                if let Some(effort) = &live.effort {
+                    command.arg("--effort").arg(effort);
+                }
+            }
+            for name in &self.profile.env_remove {
+                command.env_remove(name);
+            }
+            command.envs(&self.profile.env);
+            for name in launcher::DENIED_ENV {
+                command.env_remove(name);
+            }
+            command
+                .current_dir(&session.cwd)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            #[cfg(unix)]
+            command.process_group(0);
+            #[cfg(windows)]
+            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let mut child = command.spawn().map_err(|e| {
+                format!(
+                    "codebuddy_sdk_unavailable: configured CodeBuddy CLI could not start ({})",
+                    e.kind()
+                )
+            })?;
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or("codebuddy_sdk: stdin unavailable")?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or("codebuddy_sdk: stdout unavailable")?;
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or("codebuddy_sdk: stderr unavailable")?;
+            let pid = child.id();
+            let failed = CancellationToken::new();
+            let (done, done_rx) = watch::channel(false);
+            let (tx, rx) = mpsc::unbounded_channel();
+            {
+                let mut live = lock(&session.live);
+                live.outbound = Some(Outbound::Direct(tx));
+                live.pid = pid;
+                live.ready = false;
+                live.state_observed = false;
+                live.native_running = false;
+                live.runtime_stop = Some(failed.clone());
+                live.runtime_done = Some(done_rx);
+                live.replaying = session.path.is_file();
+                live.error = None;
+                live.error_kind = None;
+                live.background_tasks.clear();
+                live.streaming_blocks.clear();
+                live.stderr.clear();
+            }
+            let session = session.clone();
+            let shutdown = self.shutdown.clone();
+            let secrets = diagnostic_secrets(&self.profile);
+            // This task owns the subprocess. No request future or SSE receiver
+            // is its parent; accepted work survives either one's cancellation.
+            tokio::spawn(async move {
+                let writer = tokio::spawn(write_input(stdin, rx, failed.clone()));
+                let reader_session = session.clone();
+                let reader_failed = failed.clone();
+                let reader = tokio::spawn(async move {
+                    let mut lines = BufReader::new(stdout).lines();
+                    loop {
+                        match lines.next_line().await {
+                            Ok(Some(line)) if line.trim().is_empty() => {}
+                            Ok(Some(line)) => match parse_json(&line) {
+                                Ok(frame) => {
+                                    protocol::observe(&reader_session, frame);
+                                }
+                                Err(_) => {
+                                    let mut live = lock(&reader_session.live);
+                                    live.error = Some(
+                                        "codebuddy_sdk: invalid native stream-json output".into(),
+                                    );
+                                    live.error_kind = Some("transport");
+                                    reader_session.publish(&mut live);
+                                    reader_failed.cancel();
+                                    break;
+                                }
+                            },
+                            Ok(None) | Err(_) => {
+                                reader_failed.cancel();
+                                break;
+                            }
+                        }
+                    }
+                });
+                let stderr_session = session.clone();
+                let diagnostic = tokio::spawn(async move {
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let mut live = lock(&stderr_session.live);
+                        live.stderr.push_back(redact(line, &secrets));
+                        while live.stderr.len() > 100 {
+                            live.stderr.pop_front();
+                        }
+                    }
+                });
+                let mut deliberate = false;
+                let mut status = tokio::select! {
+                    result=child.wait()=>result.ok(),
+                    _=shutdown.cancelled()=>{deliberate=true; None},
+                    _=session.stop.cancelled()=>{deliberate=true; None},
+                    _=failed.cancelled()=>None,
+                };
+                if status.is_none() && !deliberate {
+                    // stdout EOF can race a normal process exit. Collect the
+                    // real exit status before classifying it as a transport
+                    // failure, while still bounding a broken pipe owner.
+                    if let Ok(Ok(exit)) =
+                        tokio::time::timeout(Duration::from_secs(1), child.wait()).await
+                    {
+                        status = Some(exit);
+                    }
+                }
+                // Only the isolated process group that this bridge spawned.
+                // The child has not been reaped on the signal paths, so its PID
+                // cannot have been reused. No external TUI is ever signalled.
+                if status.is_none() {
+                    #[cfg(unix)]
+                    if let Some(pid) = pid {
+                        unsafe {
+                            libc::kill(-(pid as i32), libc::SIGKILL);
+                        }
+                    }
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+                writer.abort();
+                // Drain already delivered final result frames before declaring
+                // exit. A descendant retaining a pipe cannot block shutdown.
+                let mut reader = reader;
+                if tokio::time::timeout(Duration::from_secs(1), &mut reader)
+                    .await
+                    .is_err()
+                {
+                    reader.abort();
+                }
+                let mut diagnostic = diagnostic;
+                if tokio::time::timeout(Duration::from_secs(1), &mut diagnostic)
+                    .await
+                    .is_err()
+                {
+                    diagnostic.abort();
+                }
+                let mut live = lock(&session.live);
+                let unfinished = !live.turns.is_empty();
+                live.outbound = None;
+                live.pid = None;
+                live.ready = false;
+                live.native_running = false;
+                live.runtime_stop = None;
+                live.runtime_done = None;
+                live.background_tasks.clear();
+                live.turns.clear();
+                live.requests.clear();
+                if !deliberate && (unfinished || status.is_none_or(|s| !s.success())) {
+                    let diagnostic = live.stderr.back().cloned().unwrap_or_default();
+                    let error = format!(
+                        "codebuddy_sdk_disconnected: native CLI exited; accepted input is not replayed. {diagnostic}"
+                    );
+                    live.runtime_error = Some(error.clone());
+                    if live.last_turn.is_null() && live.error.is_none() {
+                        live.last_turn = json!({"status":"incomplete","error":error});
+                        live.error = Some(error);
+                        live.error_kind = Some("transport");
+                    }
+                }
+                // initialize is a control request too. Preserve the already
+                // redacted exit diagnostic when its waiter reports failure;
+                // otherwise ensure would replace it with a generic error.
+                let control_error = live.error.clone().unwrap_or_else(|| {
+                    "codebuddy_sdk_disconnected: native CLI exited; request outcome unknown".into()
+                });
+                for (_, response) in std::mem::take(&mut live.controls) {
+                    let _ = response.send(Err(control_error.clone()));
+                }
+                session.publish(&mut live);
+                let _ = done.send(true);
+            });
+        }
+        self.initialize_session(session).await
+    }
+
+    pub(super) async fn initialize_session(&self, session: &Arc<Session>) -> Result<(), String> {
+        // `account` in the response carries a login token; only `models` is read.
+        let initialized = session
+            .control(
+                json!({"subtype":"initialize","hooks":null,"systemPrompt":null,
+                "appendSystemPrompt":null,"agents":null,"sdkMcpServers":null,
+                "hasPrompt":false,"capabilities":{"askUserQuestion":true}}),
+            )
+            .await;
+        let initialized = match initialized {
+            Ok(initialized) => {
+                let settings = lock(&session.live).settings.clone();
+                async {
+                    // A relaunched runtime keeps this session's confirmed
+                    // permission mode; the CLI still applies its own policy.
+                    if let Some(mode) = settings["permission_mode"].as_str() {
+                        session
+                            .control(json!({"subtype":"set_permission_mode",
+                                "session_id":session.sid,"mode":mode}))
+                            .await?;
+                    }
+                    Ok(initialized)
+                }
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        match initialized {
+            Ok(initialized) => {
+                let mut live = lock(&session.live);
+                if live.outbound.is_none() {
+                    return Err("codebuddy_sdk: CLI exited during initialize".into());
+                }
+                live.models = initialized["models"].clone();
+                normalize_models(&mut live.models);
+                live.ready = true;
+                session.publish(&mut live);
+                Ok(())
+            }
+            Err(error) => {
+                // A startup failure must not leave a headless runtime orphaned.
+                // Cancel this runtime rather than session.stop, so a
+                // later open may retry this same selected session.
+                let mut live = lock(&session.live);
+                live.error = Some(error.clone());
+                live.error_kind = Some("transport");
+                if let Some(stop) = &live.runtime_stop {
+                    stop.cancel();
+                }
+                session.publish(&mut live);
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) async fn check_conflict(&self, session: &Arc<Session>) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            use crate::runtime::procscan::{ProcTree, SessionRoots, scan};
+            let root = self.proc_root.clone();
+            let native_root = self.root.clone();
+            let sid = session.sid.to_ascii_lowercase();
+            let path = session.path.to_string_lossy().into_owned();
+            let own_pids: std::collections::BTreeSet<_> = lock(&self.state)
+                .sessions
+                .values()
+                .filter_map(|session| lock(&session.live).pid)
+                .collect();
+            let conflict = tokio::task::spawn_blocking(move || {
+                let scan = scan(
+                    Arc::new(ProcTree::open(root)),
+                    None,
+                    &SessionRoots::new([native_root.as_path()]),
+                );
+                let own = |pid: u32| {
+                    let mut current = pid;
+                    let mut visited = std::collections::BTreeSet::new();
+                    while current > 1 && visited.insert(current) {
+                        if own_pids.contains(&current) {
+                            return true;
+                        }
+                        let Some(parent) = scan.tree.parent(current) else {
+                            break;
+                        };
+                        current = parent.ppid;
+                    }
+                    false
+                };
+                let holders = scan
+                    .sids
+                    .get(&sid)
+                    .into_iter()
+                    .flatten()
+                    .chain(scan.paths.get(&path).into_iter().flatten());
+                holders
+                    .filter_map(|pid| u32::try_from(pid.unsigned_abs()).ok())
+                    .any(|pid| !own(pid))
+            })
+            .await
+            .map_err(|_| "codebuddy_sdk: native writer observation failed")?;
+            if conflict {
+                return Err("codebuddy_sdk_session_busy: an independent CodeBuddy process owns this SID/path; stream-json cannot share that runtime (shared_tui:false). Stop it explicitly before SDK resume; no takeover was attempted.".into());
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        if session.path.is_file() && lock(&session.live).outbound.is_none() {
+            return Err("codebuddy_sdk_unsupported: independent CodeBuddy writer detection is unavailable on this platform; existing-session SDK resume cannot safely share a TUI (shared_tui:false)".into());
+        }
+        Ok(())
+    }
+}
+
+async fn write_input(
+    mut stdin: tokio::process::ChildStdin,
+    mut rx: mpsc::UnboundedReceiver<Value>,
+    failed: CancellationToken,
+) {
+    while let Some(frame) = rx.recv().await {
+        let mut line = frame.to_string();
+        line.push('\n');
+        if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+            failed.cancel();
+            return;
+        }
+    }
+    let _ = stdin.shutdown().await;
+    failed.cancel();
+}
+
+static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+    [
+        r#"(?i)\bBearer\s+[^\s"']+"#,
+        r"\bsk-[A-Za-z0-9_-]+",
+        r"(?i)(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
+    ]
+    .into_iter()
+    .map(|pattern| regex::Regex::new(pattern).expect("valid codebuddy redaction regex"))
+    .collect()
+});
+
+pub(super) fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
+    let mut secrets: Vec<String> = std::env::vars()
+        .chain(profile.env.clone())
+        .filter_map(|(name, value)| {
+            let name = name.to_ascii_uppercase();
+            (value.len() >= 4
+                && ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
+                    .iter()
+                    .any(|key| name.contains(key)))
+            .then_some(value)
+        })
+        .collect();
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    secrets.dedup();
+    secrets
+}
+
+pub(super) fn redact(mut text: String, secrets: &[String]) -> String {
+    for secret in secrets {
+        text = text.replace(secret, "[redacted]");
+    }
+    // Unknown secret-shaped values in SDK/HTTP diagnostics are redacted too.
+    for regex in &*REDACT_PATTERNS {
+        text = regex.replace_all(&text, "[redacted]").into_owned();
+    }
+    text
+}

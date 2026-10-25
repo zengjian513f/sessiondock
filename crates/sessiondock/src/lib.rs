@@ -15,6 +15,7 @@ pub mod bridge;
 pub mod bug_report;
 pub(crate) mod claude_sdk;
 mod cleanup;
+pub(crate) mod codebuddy_sdk;
 pub(crate) mod codex_sdk;
 pub mod config;
 pub(crate) mod conversation;

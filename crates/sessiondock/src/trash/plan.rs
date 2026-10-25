@@ -76,6 +76,7 @@ impl Plan {
             "claude" => roots.claude.as_ref(),
             "codex" => roots.codex.as_ref(),
             "grok" => roots.grok.as_ref(),
+            "codebuddy" => roots.codebuddy.as_ref(),
             _ => None,
         }
         .ok_or_else(|| {
@@ -96,6 +97,10 @@ impl Plan {
             Ok(())
         };
         match source.as_str() {
+            "codebuddy" => {
+                // One transcript file; CodeBuddy has no subagent or sidecar files.
+                push(origin.clone(), FileRole::Data)?;
+            }
             "claude" | "codex" => {
                 push(origin.clone(), FileRole::Data)?;
                 for item in row["agent_items"].as_array().into_iter().flatten() {

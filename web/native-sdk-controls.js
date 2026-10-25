@@ -2,7 +2,7 @@
 
 // Native capabilities share presentation, never another provider's wire semantics.
 const NativeSdkControls = {
-  labels: Object.freeze({claude:'Claude',codex:'Codex',grok:'Grok',opencode:'OpenCode',agy:'Agy',kiro:'Kiro'}),
+  labels: Object.freeze({claude:'Claude',codex:'Codex',grok:'Grok',opencode:'OpenCode',agy:'Agy',kiro:'Kiro',codebuddy:'CodeBuddy'}),
   badgeClass(source) { return `b-${source || 'unknown'}`; },
   formatReset(value) {
     if (value == null || value === '') return '';
@@ -456,6 +456,7 @@ const NativeSdkControls = {
     if(source==='opencode')return item.native_id || (/^message:(.+)$/.exec(item.turn_id || '')?.[1]) || null;
     if(source==='kiro')return item.message_id || item.id || null;
     if(source==='claude')return item.native_id || item.turn_id || item.id || null;
+    if(source==='codebuddy')return item.native_id || null;
     return null;
   },
   decorate(view,node,item) {

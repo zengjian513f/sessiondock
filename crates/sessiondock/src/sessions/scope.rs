@@ -101,7 +101,9 @@ pub(super) fn native_identity(
     records: &[(Value, u64)],
 ) -> (Result<String, SessionError>, Vec<String>) {
     match source {
-        "claude" => declared_identity(records.iter().filter_map(|(r, _)| r.get("sessionId"))),
+        "claude" | "codebuddy" => {
+            declared_identity(records.iter().filter_map(|(r, _)| r.get("sessionId")))
+        }
         "codex" => declared_identity(
             records
                 .iter()

@@ -44,8 +44,8 @@ pub const ANCESTRY_DEPTH: usize = 16;
 /// CLI-ancestor and tmux-host walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
-const KEYWORDS: [&str; 5] = ["claude", "codex", "grok", "agy", "kiro"];
-const CLI_NAMES: [&str; 7] = [
+const KEYWORDS: [&str; 6] = ["claude", "codex", "grok", "agy", "kiro", "codebuddy"];
+const CLI_NAMES: [&str; 10] = [
     "claude",
     "codex",
     "grok",
@@ -53,6 +53,9 @@ const CLI_NAMES: [&str; 7] = [
     "kiro",
     "kiro-cli",
     "kiro-cli-chat",
+    "codebuddy",
+    "codebuddy-code",
+    "cbc",
 ];
 /// Environment identity a CLI sets for its tool children.
 const ENV_FAMILY: [(&str, &str); 3] = [
@@ -77,7 +80,12 @@ pub const SPAWN_ENV_KEYS: [&str; 5] = [
     "GROK_SESSION_ID",
     "CLAUDE_PID",
 ];
-const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects/", "/.grok/"];
+const SESSION_FILE_MARKERS: [&str; 4] = [
+    "/.codex/sessions/",
+    "/.claude/projects/",
+    "/.grok/",
+    "/.codebuddy/projects/",
+];
 
 /// Where session files may live: the literal home markers plus the
 /// configured read roots. On the real machine the roots are exactly those
@@ -172,6 +180,8 @@ pub fn cli_family(argv0: &str) -> Option<&'static str> {
         Some("agy")
     } else if head == "kiro" || head.starts_with("kiro-") {
         Some("kiro")
+    } else if matches!(head.as_str(), "codebuddy" | "codebuddy-code" | "cbc") {
+        Some("codebuddy")
     } else {
         None
     }
@@ -211,8 +221,18 @@ pub fn is_cli(cmd: &str) -> bool {
     CLI_NAMES.contains(&head.as_str()) || head.starts_with("codex-") || head.starts_with("claude-")
 }
 
+/// The command a process runs. CodeBuddy's npm package is a Node script, so
+/// `node …/bin/codebuddy args` names the CLI by its script, not by `node`.
 fn argv0_of(cmd: &str) -> &str {
-    cmd.trim().split(' ').next().unwrap_or("")
+    let mut tokens = cmd.trim().split(' ');
+    let first = tokens.next().unwrap_or("");
+    if matches!(cli_name(first).as_str(), "node" | "nodejs")
+        && let Some(script) = tokens.find(|token| !token.is_empty() && !token.starts_with('-'))
+        && cli_family(script) == Some("codebuddy")
+    {
+        return script;
+    }
+    first
 }
 
 fn cli_comm(name: &str) -> bool {

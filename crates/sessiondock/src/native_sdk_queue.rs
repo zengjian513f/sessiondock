@@ -132,7 +132,7 @@ impl Journal {
                     && input.operation == "turn"
                     && matches!(
                         input.target["source"].as_str(),
-                        Some("agy" | "claude" | "grok" | "kiro")
+                        Some("agy" | "claude" | "codebuddy" | "grok" | "kiro")
                     )
                 {
                     input.runtime_state = "recovering".into();

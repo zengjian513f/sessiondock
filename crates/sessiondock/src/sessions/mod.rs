@@ -177,6 +177,8 @@ pub struct SessionRoots {
     pub agy: Option<PathBuf>,
     /// Kiro sessions root (`~/.kiro/sessions` by default, or `SESSIONDOCK_KIRO_ROOT`).
     pub kiro: Option<PathBuf>,
+    /// CodeBuddy projects root (`~/.codebuddy/projects`, or `SESSIONDOCK_CODEBUDDY_ROOT`).
+    pub codebuddy: Option<PathBuf>,
 }
 
 impl SessionRoots {

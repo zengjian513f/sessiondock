@@ -3,6 +3,7 @@
 
 mod agy;
 mod claude;
+pub(crate) mod codebuddy;
 pub(super) mod envelopes;
 mod grok;
 mod image_content;
@@ -298,11 +299,15 @@ fn parse_context<'a>(
             "opencode" => parser.opencode(record, *end),
             "agy" => parser.agy(record, *end),
             "kiro" => parser.kiro(record, *end),
+            "codebuddy" => parser.codebuddy(record, *end),
             _ => Err("未知原生数据源".to_owned()),
         };
         if let Err(reason) = result {
             return (meta, Vec::new(), Some(reason));
         }
+    }
+    if source == "codebuddy" {
+        parser.codebuddy_phases();
     }
     // Non-fatal: the session stays supported; the row reports what was skipped.
     meta["migration_warnings"] = json!(parser.skipped.warnings());
@@ -363,6 +368,9 @@ fn metadata(
     }
     if source == "kiro" {
         return kiro::metadata(path, summary.unwrap_or(&Value::Null), records, fallback);
+    }
+    if source == "codebuddy" {
+        return codebuddy::metadata(path, records, fallback);
     }
     let filename = path
         .file_stem()

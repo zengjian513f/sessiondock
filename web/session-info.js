@@ -11,8 +11,8 @@
   });
   const uid = new URLSearchParams(location.search).get('uid') || '';
   const kinds = {continues:'接续', branches:'任务分支', references:'引用'};
-  const sourceLabels = {claude:'Claude', codex:'Codex', grok:'Grok', opencode:'OpenCode', agy:'Agy', kiro:'Kiro'};
-  const badgeClasses = {claude:'b-claude', codex:'b-codex', grok:'b-grok', opencode:'b-opencode', agy:'b-agy', kiro:'b-kiro'};
+  const sourceLabels = {claude:'Claude', codex:'Codex', grok:'Grok', opencode:'OpenCode', agy:'Agy', kiro:'Kiro', codebuddy:'CodeBuddy'};
+  const badgeClasses = {claude:'b-claude', codex:'b-codex', grok:'b-grok', opencode:'b-opencode', agy:'b-agy', kiro:'b-kiro', codebuddy:'b-codebuddy'};
   const kiroIcon = `<svg class="source-icon" data-source="kiro" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.5c-4.7 0-8.5 3.6-8.5 8.2v8.1c0 .9 1 1.4 1.7.8l2.1-1.7c.5-.4 1.2-.4 1.7 0l1.9 1.5c.6.5 1.6.5 2.2 0l1.9-1.5c.5-.4 1.2-.4 1.7 0l2.1 1.7c.7.6 1.7.1 1.7-.8v-8.1c0-4.6-3.8-8.2-8.5-8.2zm-3.1 7.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm6.2 0a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z"/></svg>`;
   const sourceIcon = source => source === 'kiro' ? kiroIcon : SessionDockCard.icon(source);
   let data, candidates = [], direction = 'predecessor', sequence = 0, saving = false;

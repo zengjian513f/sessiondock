@@ -17,10 +17,11 @@ pub enum Source {
     Opencode,
     Agy,
     Kiro,
+    Codebuddy,
 }
 
 impl Source {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Claude,
         Self::Codex,
         Self::Grok,
@@ -28,6 +29,7 @@ impl Source {
         Self::Opencode,
         Self::Agy,
         Self::Kiro,
+        Self::Codebuddy,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -39,6 +41,7 @@ impl Source {
             Self::Opencode => "opencode",
             Self::Agy => "agy",
             Self::Kiro => "kiro",
+            Self::Codebuddy => "codebuddy",
         }
     }
 
@@ -51,6 +54,7 @@ impl Source {
             "opencode" => Some(Self::Opencode),
             "agy" => Some(Self::Agy),
             "kiro" => Some(Self::Kiro),
+            "codebuddy" => Some(Self::Codebuddy),
             _ => None,
         }
     }
@@ -86,6 +90,7 @@ impl BindingSpec {
             Source::Opencode => "opencode:",
             Source::Agy => "agy:",
             Source::Kiro => "kiro:",
+            Source::Codebuddy => "codebuddy:",
             Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
@@ -186,7 +191,10 @@ impl Launch {
                     Source::Codex | Source::Opencode | Source::Agy | Source::Kiro
                 )
             }
-            Self::NewAssigned => matches!(source, Source::Claude | Source::Grok | Source::Opencode),
+            Self::NewAssigned => matches!(
+                source,
+                Source::Claude | Source::Grok | Source::Opencode | Source::Codebuddy
+            ),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
         if ok { Ok(()) } else { Err(Error::InvalidSpec) }
@@ -206,6 +214,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Opencode => "opencode:",
         Source::Agy => "agy:",
         Source::Kiro => "kiro:",
+        Source::Codebuddy => "codebuddy:",
         Source::Shell => return false,
     };
     text.strip_prefix(prefix)

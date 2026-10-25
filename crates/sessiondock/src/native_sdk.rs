@@ -21,6 +21,7 @@ enum Provider {
     Agy(Arc<crate::agy_sdk::Bridge>),
     OpenCode(Arc<crate::opencode_sdk::Bridge>),
     Claude(Arc<crate::claude_sdk::Bridge>),
+    Codebuddy(Arc<crate::codebuddy_sdk::Bridge>),
     Kiro(Arc<crate::kiro_sdk::Bridge>),
 }
 macro_rules! dispatch {
@@ -30,6 +31,7 @@ macro_rules! dispatch {
             Provider::Agy($bridge) => $body,
             Provider::OpenCode($bridge) => $body,
             Provider::Claude($bridge) => $body,
+            Provider::Codebuddy($bridge) => $body,
             Provider::Kiro($bridge) => $body,
         }
     };
@@ -82,6 +84,7 @@ impl NativeSdks {
                         .await
                 }
                 Provider::Claude(bridge) => bridge.resource_process_owners(&identities).await,
+                Provider::Codebuddy(bridge) => bridge.resource_process_owners(&identities).await,
                 Provider::Grok(bridge) => bridge.resource_process_owners(&identities).await,
                 Provider::Agy(bridge) => bridge.resource_process_owners(&identities).await,
                 // OpenCode's service handles multiple sessions. Its own PID
@@ -124,6 +127,7 @@ impl NativeSdks {
         register!("agy", agy_sdk, Agy);
         register!("opencode", opencode_sdk, OpenCode);
         register!("claude", claude_sdk, Claude);
+        register!("codebuddy", codebuddy_sdk, Codebuddy);
         match crate::kiro_sdk::new(config, shutdown.clone(), kiro_catalog.clone()) {
             Ok(Some(bridge)) => {
                 providers.insert("kiro", Provider::Kiro(bridge));
@@ -187,6 +191,7 @@ impl NativeSdks {
     fn cli_missing(&self, source: &str) -> bool {
         let source = match source {
             "claude" => crate::lifecycle::model::Source::Claude,
+            "codebuddy" => crate::lifecycle::model::Source::Codebuddy,
             "grok" => crate::lifecycle::model::Source::Grok,
             "agy" => crate::lifecycle::model::Source::Agy,
             "opencode" => crate::lifecycle::model::Source::Opencode,
@@ -492,7 +497,7 @@ impl NativeSdks {
         if !cfg!(unix)
             || !matches!(
                 target["source"].as_str(),
-                Some("agy" | "claude" | "grok" | "kiro")
+                Some("agy" | "claude" | "codebuddy" | "grok" | "kiro")
             )
         {
             return Ok(());
@@ -1341,6 +1346,7 @@ fn observed_input(source: &str, row: &QueuedInput, raw: &Value) -> bool {
                             && item["native_id"] == result["message_id"]
                     })
             }
+            "codebuddy" => item["native_echo"] == true && item["request_id"] == row.delivery_id,
             "opencode" => {
                 item["delivery_state"] == "consumed"
                     && row.result.as_ref().is_some_and(|result| {

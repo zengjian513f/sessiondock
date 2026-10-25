@@ -770,7 +770,7 @@ impl<'a> Graph<'a> {
         let entry = &self.entries[uid];
         if !matches!(
             entry.source,
-            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro"
+            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "codebuddy"
         ) {
             return Err(unsupported("此数据源尚不支持原生操作范围"));
         }

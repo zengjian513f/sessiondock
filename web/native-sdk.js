@@ -8,6 +8,7 @@ const NATIVE_SDK_SOURCES = Object.freeze({
   opencode: {source: 'opencode', title: 'OpenCode', emptyTitle: '新建 OpenCode 会话', busyCode: 'native_sdk_session_busy'},
   agy: {source: 'agy', title: 'Agy', emptyTitle: '新建 Agy 会话', busyCode: 'native_sdk_session_busy'},
   kiro: {source: 'kiro', title: 'Kiro', emptyTitle: '新建 Kiro 会话', busyCode: 'kiro_sdk_session_busy'},
+  codebuddy: {source: 'codebuddy', title: 'CodeBuddy', emptyTitle: '新建 CodeBuddy 会话', busyCode: 'native_sdk_session_busy'},
 });
 
 const NativeSdkView = {
@@ -26,7 +27,7 @@ const NativeSdkView = {
   uid: '', agent: null, pane: null, generation: 0, connected: false,
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
-    return !(agent && ['claude', 'kiro'].includes(source)) && SessionDockCapabilities.config.native_sdks?.[source] === true
+    return !(agent && ['claude', 'kiro', 'codebuddy'].includes(source)) && SessionDockCapabilities.config.native_sdks?.[source] === true
       && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.native_sdks?.[source] === true);
   },
   layoutToolbar() { NativeSdkControls.layout(this); },
@@ -767,4 +768,5 @@ const _sessionViewMode = new Proxy({}, {
 Object.assign(globalThis, {
   NATIVE_SDK_SOURCES, NativeSdkView, SdkView, defaultSessionView, _sessionViewMode,
   KiroCli: NativeSdkView.create('kiro'),
+  CodebuddyCli: NativeSdkView.create('codebuddy'),
 });

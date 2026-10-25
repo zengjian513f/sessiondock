@@ -594,6 +594,7 @@ fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
         "opencode" => Some(Source::Opencode),
         "agy" => Some(Source::Agy),
         "kiro" => Some(Source::Kiro),
+        "codebuddy" => Some(Source::Codebuddy),
         _ => None,
     }
 }
@@ -861,8 +862,10 @@ pub async fn takeover(
             "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
         ));
     }
-    if matches!(source, Source::Claude | Source::Grok | Source::Agy)
-        && state.native_sdks.loaded_uids().contains(&scope.uid)
+    if matches!(
+        source,
+        Source::Claude | Source::Grok | Source::Agy | Source::Codebuddy
+    ) && state.native_sdks.loaded_uids().contains(&scope.uid)
     {
         return Err(ApiError::new(
             StatusCode::CONFLICT,

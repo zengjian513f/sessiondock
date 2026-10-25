@@ -15,6 +15,7 @@
 
 pub(crate) mod agy;
 pub(super) mod claude;
+pub(crate) mod codebuddy;
 pub(super) mod codex;
 pub(super) mod grok;
 pub mod kiro;
@@ -217,6 +218,7 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
         "opencode" => opencode::summarize(input),
         "agy" => agy::summarize(input),
         "kiro" => kiro::summarize(input),
+        "codebuddy" => codebuddy::summarize(input),
         _ => grok::summarize(input),
     }
 }
@@ -477,6 +479,17 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                 "user" | "assistant" | "synthetic" | "idle" | "model-switched"
                 | "agent-switched" | "location-switched" | "compaction" => {}
                 other => skipped.note("OpenCode 记录类型", other),
+            },
+            "codebuddy" => match kind {
+                "message"
+                | "reasoning"
+                | "function_call"
+                | "function_call_result"
+                | "file-history-snapshot"
+                | "custom-title"
+                | "ai-title"
+                | "topic" => {}
+                other => skipped.note("CodeBuddy 记录类型", other),
             },
             "kiro" => {
                 let kiro_kind = value
