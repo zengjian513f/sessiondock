@@ -50,7 +50,13 @@ def main():
                 expect(page.locator('html')).to_have_attribute('data-theme', theme)
                 open_report(page)
                 expect(page.locator('#bug-report-type input[value=bug]')).to_be_checked()
-                assert page.locator('#bug-report-type label').first.inner_text() == '功能需求'
+                assert page.locator('#bug-report-type label').all_inner_texts() == ['缺陷报告', '功能需求']
+                page.locator('#bug-report-type label:has(input[value=feature])').click()
+                page.locator('#bug-report-description').fill('重开保留报告草稿')
+                page.locator('#bug-report-dialog .modal-close').click()
+                open_report(page)
+                expect(page.locator('#bug-report-type input[value=bug]')).to_be_checked()
+                expect(page.locator('#bug-report-description')).to_have_value('重开保留报告草稿')
                 assert page.locator('#bug-report-type').bounding_box()['height'] < 50
                 report_type = 'feature' if theme == 'light' else 'bug'
                 page.locator(f'#bug-report-type label:has(input[value={report_type}])').click()

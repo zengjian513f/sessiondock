@@ -934,6 +934,7 @@ function closeBugReportAttachMenu() {
 function openBugReportDialog() {
   if (!bugReportsEnabled()) return;
   const dialog = $('#bug-report-dialog');
+  $('#bug-report-type input[value=bug]').checked = true;
   $('#bug-report-error').textContent = '';
   $('#bug-report-go').disabled = typeof staleBuildShown !== 'undefined' && staleBuildShown;
   $('#bug-report-go').textContent = '发送';

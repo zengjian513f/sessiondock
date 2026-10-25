@@ -43,7 +43,7 @@ const CodexSdkActions = {
 
   // Returns true only for these exact slash commands; quoted prose is chat.
   async command(view, text, {preserveDraft = false} = {}) {
-    const match = /^\/(fork|revert|compact|review|rename|goal)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    const match = /^\/(fork|revert|compact|review|rename|goal)(?:\s+([\s\S]*))?$/.exec(text.trimEnd());
     if (!match) return false;
     if (match[1] === 'goal') return CodexSdkGoal.command(view, text, (match[2] || '').trim());
     if (this.pending) { view.setNotice('会话操作正在进行，请稍候。'); return true; }
