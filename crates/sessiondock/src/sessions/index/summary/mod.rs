@@ -82,6 +82,8 @@ pub struct Input<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodexMeta {
+    /// The fallback title came from a real user input, rather than a filename.
+    pub has_user_title: bool,
     /// Ordinal of the first native session_meta (rollout generation boundary).
     pub start_ordinal: Option<u64>,
     /// A `session_meta` header was seen (today's rows carry
