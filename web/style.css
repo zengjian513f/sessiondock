@@ -1094,6 +1094,15 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   line-height: 1.35; text-align: left; cursor: pointer;
 }
 .session-view-switch:hover, .session-view-switch[aria-expanded="true"] { background: var(--hover); }
+.session-title-edit {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin: -2px 0; padding: 2px 0; border: 0; border-radius: 5px;
+  background: transparent; color: inherit; font: inherit; line-height: inherit;
+  text-align: left; cursor: pointer;
+}
+.session-title-edit:hover { background: var(--hover); }
+.session-title-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dtitle h2 > .session-view-switch:has(> i:only-child) { flex: none; }
 .session-view-switch > span { min-width: 0; overflow-wrap: anywhere; }
 .session-view-switch > i { flex: none; color: var(--muted); font-style: normal; font-size: 13px; }
 .session-view-menu {

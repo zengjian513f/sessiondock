@@ -2301,6 +2301,7 @@ function paintTurn(uid) {
 }
 
 function paintHeaderTurn() {
+  SdkUI.syncTitleRename();
   syncSessionFreezeOverlay();
   const h = $('#dlive');
   if (!h) return;
@@ -6778,6 +6779,7 @@ function syncSessionGlobalActions(heading, list) {
 }
 
 function layoutSessionHead(heading = $('#detail .dhead')) {
+  SdkUI.syncTitleRename(heading);
   const wrap = heading?.querySelector('.session-actions');
   const menu = heading?.querySelector('#session-actions-menu');
   const list = menu?.querySelector('[role="menu"]');
@@ -7159,8 +7161,8 @@ function head(m, total) {
   const titleView = hasAgents ? `
     <button class="session-view-switch" id="a-view-switch" type="button"
       title="切换主会话/子代理" aria-label="切换主会话/子代理" aria-expanded="false">
-      <span>${esc(displayTitle)}</span><i>⌄</i>
-    </button>` : `<span>${esc(displayTitle)}</span>`;
+      <span id="a-session-title">${esc(displayTitle)}</span><i>⌄</i>
+    </button>` : `<span id="a-session-title">${esc(displayTitle)}</span>`;
   const menuView = hasAgents ? `
     <div class="session-view-menu" id="session-view-menu" hidden role="menu">${sessionViewRows(m)}</div>` : '';
   h.innerHTML = `

@@ -8,6 +8,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright, expect
+from sdk_title_rename_fixtures import exercise_title_rename
 from history_fixtures import BINARY
 from native_sdk_footer_browser import provider
 from sdk_generalization_browser import open_view, send
@@ -60,6 +61,8 @@ def exercise(browser,base,source,root,shots,label):
     send(page,'/rename');field.fill('  '+title+' dialog  ')
     dialog.get_by_role('button',name='保存',exact=True).click()
     expect(box).to_have_value('');expect(page.locator('.dhead h2')).to_have_text(title+' dialog')
+    exercise_title_rename(page, title+' dialog', shots, label+'-'+source)
+    page.set_viewport_size({'width':1280,'height':900});page.emulate_media(color_scheme='light')
     assert not turns,'rename was submitted as a model turn'
     if source in ('kiro','agy'):
         send(page,'/rename reject rename')

@@ -3,6 +3,49 @@
 // Source-neutral SDK view contract. Providers own snapshots, status semantics,
 // settings and protocol actions; history uses the ordinary conversation cache.
 const SdkUI = {
+  titleRenameView(heading) {
+    const view = SdkView.active;
+    return heading?.dataset.uid === S.sel && SessionContentView.kind === 'sdk'
+      && view.uid === S.sel && !view.agent && view.connected && !view.readOnly
+      && (view === CodexSdkView || view.capabilities?.rename === true) ? view : null;
+  },
+  syncTitleRename(heading = document.querySelector('#detail > .dhead')) {
+    let title = heading?.querySelector('#a-session-title');
+    if (!title) return;
+    const editable = !!this.titleRenameView(heading);
+    const switcher = heading.querySelector('#a-view-switch');
+    if (editable !== (title.tagName === 'BUTTON')) {
+      const next = document.createElement(editable ? 'button' : 'span');
+      next.id = title.id;
+      next.textContent = title.textContent;
+      if (editable) {
+        next.type = 'button';
+        next.className = 'session-title-edit';
+        next.setAttribute('aria-label', '重命名会话');
+        next.title = '重命名会话';
+        next.onclick = () => this.renameTitle(heading);
+      }
+      title.replaceWith(next);
+      title = next;
+    }
+    // Keep the agent selector separate from the editable title: no nested buttons.
+    if (switcher && editable && switcher.contains(title)) switcher.before(title);
+    if (switcher && !editable && !switcher.contains(title)) switcher.prepend(title);
+    if (editable) title.disabled = !!this.titleRenamePending;
+  },
+  async renameTitle(heading) {
+    const view = this.titleRenameView(heading);
+    if (!view || this.titleRenamePending) return;
+    this.titleRenamePending = true;
+    this.syncTitleRename(heading);
+    try {
+      if (view === CodexSdkView) await CodexSdkActions.command(view, '/rename', {preserveDraft: true});
+      else await NativeSdkControls.rename(view, null, '');
+    } finally {
+      this.titleRenamePending = false;
+      this.syncTitleRename();
+    }
+  },
   mount(view, {name, readOnly, historyReady, settings}) {
     const pane = view.pane;
     pane.setAttribute('aria-label', `${name} SDK`);
