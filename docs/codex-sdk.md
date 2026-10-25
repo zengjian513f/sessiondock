@@ -458,6 +458,11 @@ behavior; they do not require other sources to expose unsupported controls.
   child before it. Both restore the selected message text into the composer,
   preserving an existing draft by appending it, and never send it automatically.
   Revert uses the existing confirmation; cancelling it preserves history and draft.
+  DELTA (BUG-20261025-054101-4f35bf): revert resolves a rotated rollout in the refreshed inventory before restoring
+  text and focusing its destination composer. Background inventory following
+  waits for this handoff, so a later poll cannot replace an editor already
+  containing the restored text. Toolbar and slash-command revert use the same
+  handoff; existing drafts follow the verified timeline without being sent.
   Fork preserves the source and opens the new branch. Missing native identities
   are never guessed from display text or context records.
 - The model picker fits the longest available model name, capped at 160px and
