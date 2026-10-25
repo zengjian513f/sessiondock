@@ -42,7 +42,7 @@ const CodexSdkActions = {
   },
 
   // Returns true only for these exact slash commands; quoted prose is chat.
-  async command(view, text) {
+  async command(view, text, {preserveDraft = false} = {}) {
     const match = /^\/(fork|revert|compact|review|rename|goal)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (!match) return false;
     if (match[1] === 'goal') return CodexSdkGoal.command(view, text, (match[2] || '').trim());
@@ -75,7 +75,7 @@ const CodexSdkActions = {
           const modal = this.form('重命名会话', '输入此 Codex 会话的新名称。', '保存');
           const field = document.createElement('input');
           field.className = 'new-model-search'; field.setAttribute('aria-label', '会话名称'); field.required = true;
-          field.value = view.summary?.resume?.thread?.name || '';
+          field.value = view.summary?.resume?.thread?.name || S.sessions.find(session => session.uid === uid)?.title || '';
           modal.fields.append(field);
           modal.form.onsubmit = event => { event.preventDefault(); if (field.value.trim()) modal.finish(field.value.trim()); };
           field.focus(); field.select();
@@ -121,7 +121,7 @@ const CodexSdkActions = {
         if (current()) view.setNotice('已启动代码审查。');
         succeeded = true;
       }
-      if (succeeded && current() && input?.value === text) {
+      if (succeeded && !preserveDraft && current() && input?.value === text) {
         input.value = ''; view.fitInput();
         if (typeof CodexSdkCompose !== 'undefined') CodexSdkCompose.input(view);
       }

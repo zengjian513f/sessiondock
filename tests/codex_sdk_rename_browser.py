@@ -18,6 +18,8 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_fixtures import FakeAppServer
+from codex_sdk_subagent_browser import add_children, CHILD
+from sdk_title_rename_fixtures import exercise_title_rename
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from new_session_model_browser import open_dialog
@@ -112,6 +114,10 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(box).to_have_value('')
     expect(row).to_contain_text('重命名后的会话 renamed conversation')
 
+    exercise_title_rename(page, '重命名后的会话 renamed conversation', screenshots, label, [(width, theme)])
+    page.set_viewport_size({'width': width, 'height': 844 if width < 500 else 900})
+    page.emulate_media(color_scheme=theme)
+
     fake.reject = True
     command('/rename rejected name')
     expect(pane.locator('#sdk-status-menu')).to_contain_text('Synthetic rename rejected')
@@ -169,6 +175,31 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     context.close()
 
 
+def exercise_selector(browser, base, screenshots, label):
+    context = browser.new_context(viewport={'width':390, 'height':900}, color_scheme='dark')
+    page = context.new_page()
+    page.goto(base, wait_until='domcontentloaded')
+    page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
+    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_have_count(0)
+    start_sdk(page)
+    page.get_by_role('button', name='重命名会话', exact=True).click()
+    dialog = page.get_by_role('dialog', name='重命名会话', exact=True)
+    expect(dialog).to_be_visible()
+    dialog.get_by_role('button', name='取消', exact=True).click()
+    page.locator('#a-view-switch').click()
+    menu = page.locator('#session-view-menu')
+    expect(menu).to_be_visible()
+    if screenshots:
+        page.screenshot(path=str(screenshots / (label+'-title-agent-menu.png')), full_page=True)
+    menu.locator(f'[data-agent="{CHILD}"]').click()
+    expect(page.locator('.sdk-history')).to_contain_text('Child history sentinel')
+    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_have_count(0)
+    page.locator('#a-view-switch').click()
+    menu.locator('[data-agent=""]').click()
+    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_be_visible()
+    context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -181,18 +212,21 @@ def main():
         browser = p.chromium.launch(headless=True)
         try:
             for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'),
-                                       ('node', 1280, 'dark'), ('node', 390, 'light'), ('hub', 1280, 'light')]:
+                                       ('node', 1280, 'dark'), ('node', 390, 'light'), ('hub', 1280, 'light'),
+                                       ('selector-node',390,'dark'), ('selector-hub',390,'dark')]:
                 root = Path(temporary) / f'{mode}-{width}-{theme}'
                 root.mkdir()
                 corpus = build(root)
+                if mode.startswith('selector'): add_children(corpus)
                 port = free_port()
                 env = environment(root, args.binary)
-                if mode == 'hub':
+                if mode.endswith('hub'):
                     env.update(node_env(root, port, '127.0.0.0/8'))
                 with RenameServer(root / 'app.sock', corpus.paths['sdk'], root / 'session_index.jsonl') as fake:
                     with server(corpus, args.binary, root / 'app.sock', env) as base:
-                        if mode == 'node':
-                            exercise(browser, base, corpus, fake, width, theme, args.screenshots)
+                        if mode.endswith('node'):
+                            if mode.startswith('selector'): exercise_selector(browser, base, args.screenshots, mode)
+                            else: exercise(browser, base, corpus, fake, width, theme, args.screenshots)
                         else:
                             hub_root = root / 'hub'
                             hub_root.mkdir()
@@ -200,7 +234,8 @@ def main():
                                       hub_root, [SimpleNamespace(name='SdkNode', token=TOKEN, port=port)])
                             hub.start()
                             try:
-                                exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, width, theme, args.screenshots)
+                                if mode.startswith('selector'): exercise_selector(browser, f'http://127.0.0.1:{hub.port}', args.screenshots, mode)
+                                else: exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, width, theme, args.screenshots)
                             finally:
                                 hub.stop()
         finally:

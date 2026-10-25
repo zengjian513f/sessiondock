@@ -260,6 +260,7 @@ async function sdkUpdateSettings(view, values, request, paint) {
 }
 
 function sdkSyncSettings(view) {
+  SdkUI.syncTitleRename();
   if (!view.pane) return;
   const pending = view.settingChoices?.size > 0;
   const unavailable = view.readOnly || !view.connected;
