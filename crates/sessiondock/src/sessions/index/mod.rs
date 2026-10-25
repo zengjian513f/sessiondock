@@ -479,6 +479,7 @@ impl Index {
             opencode: freeze(roots.opencode),
             agy: freeze(roots.agy),
             kiro: freeze(roots.kiro),
+            codebuddy: freeze(roots.codebuddy),
         };
         Self {
             roots,
@@ -821,6 +822,7 @@ impl Index {
             ("opencode", &self.roots.opencode),
             ("agy", &self.roots.agy),
             ("kiro", &self.roots.kiro),
+            ("codebuddy", &self.roots.codebuddy),
         ] {
             let Some(root) = configured else { continue };
             let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
@@ -841,6 +843,7 @@ impl Index {
             };
             match source {
                 "claude" => walk.claude(&dir)?,
+                "codebuddy" => walk.codebuddy(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
                 "opencode" | "agy" => walk.database_mirror(&dir, source)?,
                 "kiro" => walk.database_mirror(&dir, "kiro")?,
@@ -1060,6 +1063,34 @@ impl Walk<'_> {
                         agent_id: Some(id.to_owned()),
                     });
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// `<root>/<project>/<sid>.jsonl`; CodeBuddy has no subagent or sidecar files.
+    fn codebuddy(&mut self, root: &Dir) -> Result<(), SessionError> {
+        for project in subdirectories(root, self.root) {
+            let project_path = self.root.join(&project);
+            let Ok(project_dir) = Dir::open_ambient_dir(&project_path, ambient_authority()) else {
+                continue;
+            };
+            for (name, stamp) in files(&project_dir, &project_path) {
+                if !name.ends_with(".jsonl") || stamp.size == 0 {
+                    continue;
+                }
+                let path = project_path.join(&name);
+                self.found.push(Discovered {
+                    source: "codebuddy",
+                    root: self.root.to_path_buf(),
+                    data: path.clone(),
+                    path,
+                    summary_path: None,
+                    stamp: Some(stamp),
+                    summary_stamp: None,
+                    events_stamp: None,
+                    agent_id: None,
+                });
             }
         }
         Ok(())

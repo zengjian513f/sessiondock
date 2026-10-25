@@ -24,6 +24,10 @@ const KIRO_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 const AGY_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's documented `--effort` levels.
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// CodeBuddy's documented `--effort` levels (`codebuddy --help`).
+const CODEBUDDY_EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+/// `codebuddy --help` only prints text and needs no account round trip.
+const CODEBUDDY_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Claude's `--model` aliases for the latest model of each family.
 const CLAUDE_ALIASES: [(&str, &str); 4] = [
     ("fable", "Fable"),
@@ -58,7 +62,12 @@ pub struct Catalog {
 pub fn supports_effort(source: Source) -> bool {
     matches!(
         source,
-        Source::Claude | Source::Codex | Source::Grok | Source::Agy | Source::Kiro
+        Source::Claude
+            | Source::Codex
+            | Source::Grok
+            | Source::Agy
+            | Source::Kiro
+            | Source::Codebuddy
     )
 }
 
@@ -70,6 +79,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Opencode => opencode(profile),
         Source::Agy => agy(profile),
         Source::Kiro => kiro(profile),
+        Source::Codebuddy => codebuddy(profile),
         Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {
@@ -100,7 +110,7 @@ pub struct CatalogCache {
 fn slow(source: Source) -> bool {
     matches!(
         source,
-        Source::Agy | Source::Opencode | Source::Grok | Source::Kiro
+        Source::Agy | Source::Opencode | Source::Grok | Source::Kiro | Source::Codebuddy
     )
 }
 
@@ -566,6 +576,46 @@ pub(crate) fn agy_variant(id: &str) -> bool {
         .unwrap_or(id)
         .rsplit_once('-')
         .is_some_and(|(_, suffix)| EFFORT_ORDER.contains(&suffix))
+}
+
+/// CodeBuddy has no model list command. The installed CLI documents its
+/// accepted `--model` ids in `--help` ("Currently supported: (a, b, ...)"), so
+/// that text is the catalog; the SDK bridge reports the account's own list.
+fn codebuddy(profile: &CliProfile) -> Catalog {
+    let cwd = cli_home(profile, "HOME", "");
+    let output =
+        run_bounded(profile, &cwd, &["--help"], CODEBUDDY_MODELS_TIMEOUT).unwrap_or_default();
+    codebuddy_help(&output)
+}
+
+pub(crate) fn codebuddy_help(output: &str) -> Catalog {
+    let efforts: Vec<String> = CODEBUDDY_EFFORTS
+        .iter()
+        .map(|effort| (*effort).to_owned())
+        .collect();
+    let flat = output.split_whitespace().collect::<Vec<_>>().join(" ");
+    let models = flat
+        .split_once("Currently supported:")
+        .and_then(|(_, rest)| rest.trim_start().strip_prefix('('))
+        .and_then(|rest| rest.split_once(')'))
+        .map(|(list, _)| {
+            list.split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty() && !id.chars().any(char::is_whitespace))
+                .map(|id| Model {
+                    id: id.to_owned(),
+                    name: id.to_owned(),
+                    efforts: efforts.clone(),
+                    default_effort: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Catalog {
+        models,
+        efforts,
+        default_model: None,
+    }
 }
 
 /// `kiro-cli chat --list-models -f json`: JSON model catalog (`models` +

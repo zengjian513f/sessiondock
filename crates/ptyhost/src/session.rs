@@ -456,6 +456,8 @@ impl Session {
                     | "kiro"
                     | "kiro-cli"
                     | "kiro-cli-chat"
+                    | "codebuddy"
+                    | "cbc"
                     | "claude.exe"
                     | "codex.exe"
                     | "grok.exe"
@@ -464,6 +466,8 @@ impl Session {
                     | "kiro.exe"
                     | "kiro-cli.exe"
                     | "kiro-cli-chat.exe"
+                    | "codebuddy.exe"
+                    | "cbc.exe"
             ) {
                 return base;
             }

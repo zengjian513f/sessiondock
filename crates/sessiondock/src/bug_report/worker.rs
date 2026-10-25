@@ -282,9 +282,12 @@ impl Probe {
                 kind: ComposerKind::Codex,
                 pre_paste: None,
             },
-            Source::Grok | Source::Opencode | Source::Agy | Source::Kiro | Source::Shell => {
-                Self::Screen(ScreenProbe::default())
-            }
+            Source::Grok
+            | Source::Opencode
+            | Source::Agy
+            | Source::Kiro
+            | Source::Codebuddy
+            | Source::Shell => Self::Screen(ScreenProbe::default()),
         }
     }
 

@@ -2131,7 +2131,7 @@ fn native_scope(
     if source != selected.candidate.source
         || !matches!(
             source,
-            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro"
+            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "codebuddy"
         )
     {
         return Err(SessionError::new(501, "此数据源尚不支持原生操作范围"));

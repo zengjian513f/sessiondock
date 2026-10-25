@@ -127,3 +127,13 @@
 - [ ] 跟进完整浏览器验收的偶发停止/丢响应恢复失败，利用新增失败响应和
   删除进度诊断定位原因；保留成功数量、恢复结果与原生字节断言。
   评估发布门收集全部失败后统一修复，减少长菜单套件被重复执行的成本。
+
+- [ ] 补发 CodeBuddy 接入（`9210138e`）到离线节点 orion、cetus，以及启动失败中的
+  vela（部署时 launchd 未运行，旧文件已回滚，与此前记录的 Vela 启动问题相同）。
+  只有 lyra 安装了 CodeBuddy 并配置了 `codebuddy-cli-v1` profile 与
+  `SESSIONDOCK_CODEBUDDY_ROOT`；其他节点安装后按 [CodeBuddy](docs/codebuddy.md)
+  补 profile。
+- [ ] CodeBuddy 未接入项（证据见 [CodeBuddy](docs/codebuddy.md)、[SDK](docs/codebuddy-sdk.md)）：
+  真实 CLI 浏览器套件（`*_real`，需隔离登录）、输入就绪／菜单题卡、问题报告处理会话、
+  移动与克隆、SDK 用量与上下文（CLI 无对应控制请求）、`steer` 引导（CLI 有
+  `steer` 控制请求，尚未接入网页）、强度运行中变更对后续请求的实际影响尚未独立观察。

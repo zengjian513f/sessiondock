@@ -15,6 +15,7 @@ pub enum Source {
     Opencode,
     Agy,
     Kiro,
+    Codebuddy,
 }
 
 impl Source {
@@ -27,6 +28,7 @@ impl Source {
             "opencode" => Some(Self::Opencode),
             "agy" => Some(Self::Agy),
             "kiro" => Some(Self::Kiro),
+            "codebuddy" => Some(Self::Codebuddy),
             _ => None,
         }
     }
@@ -40,6 +42,7 @@ impl Source {
             Self::Opencode => "opencode",
             Self::Agy => "agy",
             Self::Kiro => "kiro",
+            Self::Codebuddy => "codebuddy",
         }
     }
 }
