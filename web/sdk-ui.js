@@ -65,8 +65,9 @@ const SdkUI = {
   paintSend(view) {
     const button = view.pane?.querySelector('#sdk-send');
     if (!button || !view.steerSend) return;
-    const steer = view.steerSend.ctrl || view.steerSend.held;
-    button.textContent = steer ? '引导' : (view.uid.startsWith('codex:') ? !!view.turn : view.running) ? '排队' : '发送';
+    const active = view.uid.startsWith('codex:') ? !!view.turn : view.running;
+    const steer = active && (view.steerSend.ctrl || view.steerSend.held);
+    button.textContent = steer ? '引导' : active ? '排队' : '发送';
     button.title = steer ? '引导当前任务' : '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务';
   },
 

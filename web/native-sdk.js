@@ -432,6 +432,7 @@ const NativeSdkView = {
 
   async send(operation = 'turn') {
     if (!this.input || !this.pane) return;
+    if (operation === 'steer' && this.uid.startsWith('kiro:') && !this.running) operation = 'turn';
     const steer = operation === 'steer';
     if (steer && (!this.uid.startsWith('kiro:') || !this.running || !this.capabilities.steer)) {
       this.setNotice('当前没有可引导的运行中任务；请用 Enter 开始新回合。', 'blocked'); return;

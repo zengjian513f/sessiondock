@@ -791,10 +791,7 @@ const CodexSdkView = {
   async send(operation = 'turn') {
     const input = this.input;
     if (!input || !this.pane) return;
-    const steer = operation === 'steer', expectedTurn = this.turn?.id;
-    if (steer && !expectedTurn) {
-      this.setNotice('当前没有运行中的任务；请用 Enter 开始新回合。', 'blocked'); return;
-    }
+    const expectedTurn = this.turn?.id, steer = operation === 'steer' && !!expectedTurn;
     const generation = this.generation;
     const button = this.pane.querySelector('#sdk-send');
     if (button.disabled) return;

@@ -350,11 +350,12 @@ behavior; they do not require other sources to expose unsupported controls.
   Coverage: [controls](../tests/codex_sdk_controls_browser.py) and
   [layout](../tests/codex_sdk_layout_browser.py).
 - DELTA: Ctrl+Enter directly steers the active turn; the “引导当前任务” toolbar
-  action submits the same editor on desktop/mobile. Holding Ctrl changes SEND to
+  action submits the same editor on desktop/mobile. During a turn, holding Ctrl changes SEND to
   引导 and clicking steers; touch-holding SEND for 500 ms steers once without a
   second ordinary send on release. Short taps retain ordinary send/queue.
-  Idle, rejected or uncertain
-  submissions retain the draft. Shift+Enter and IME composition do not steer.
+  When idle, these editor submission gestures use ordinary send to start a new
+  turn. Rejected or uncertain submissions retain the draft. Shift+Enter and IME
+  composition do not steer.
   `POST /api/codex-sdk/turn` accepts `expected_turn_id` for this explicit operation:
   it validates the live turn under the queue lock and calls native `turn/steer`,
   never admits it to FIFO or falls back to `turn/start`. A durable submission ID

@@ -3,6 +3,41 @@
 from playwright.sync_api import expect
 
 
+def exercise_idle_send_gestures(page, source, label, finish, screenshots=None):
+    box=page.locator('#sdk-input');button=page.locator('#sdk-send')
+    requests=[]
+    def record(request):
+        if request.method=='POST' and ('/api/codex-sdk/turn' in request.url or '/api/native-sdk/steer' in request.url or '/api/native-sdk/turn' in request.url):requests.append(request)
+    page.on('request',record)
+    cdp=page.context.new_cdp_session(page)
+    try:
+        for gesture in ('keyboard','ctrl-click','touch-hold','action'):
+            text=f'idle {gesture} {label}';box.fill(text);before=len(requests)
+            if screenshots:page.screenshot(path=str(screenshots/f'{source}-{label}-idle-{gesture}-before.png'),full_page=True)
+            if gesture=='keyboard':box.press('Control+Enter')
+            elif gesture=='ctrl-click':button.click(modifiers=['Control'])
+            elif gesture=='action':
+                action=page.get_by_role('button',name='引导当前任务',exact=True)
+                if not action.is_visible():page.locator('#sdk-more').click()
+                action.click()
+            else:
+                button.scroll_into_view_if_needed();r=button.bounding_box()
+                cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[{'x':r['x']+r['width']/2,'y':r['y']+r['height']/2,'id':1}]})
+                page.wait_for_timeout(650)
+                cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]})
+            try:expect(box).to_have_value('')
+            finally:
+                if screenshots:page.screenshot(path=str(screenshots/f'{source}-{label}-idle-{gesture}-after.png'),full_page=True)
+            expect(button).to_be_enabled()
+            finish(text)
+            assert len(requests)==before+1,(gesture,len(requests)-before)
+            request=requests[-1]
+            assert '/turn' in request.url and 'expected_turn_id' not in request.post_data_json,request.post_data_json
+            expect(page.locator('#sdk-status-menu')).not_to_contain_text('当前没有')
+    finally:
+        cdp.detach();page.remove_listener('request',record)
+
+
 def exercise_send_gestures(page, source, label, screenshots=None):
     box=page.locator('#sdk-input');button=page.locator('#sdk-send')
     view='CodexSdkView' if source=='codex' else 'NativeSdkView'

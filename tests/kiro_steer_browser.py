@@ -7,7 +7,7 @@ import tempfile
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY
-from sdk_send_gesture_fixtures import exercise_send_gestures
+from sdk_send_gesture_fixtures import exercise_idle_send_gestures, exercise_send_gestures
 from native_sdk_rename_browser import native
 from sdk_generalization_browser import open_view
 from sdkhost_fixtures import stop_private_sdkhosts
@@ -21,9 +21,12 @@ def exercise(browser, base, root, shots, label):
     errors=[]; page.on('pageerror',lambda e:errors.append(str(e)))
     uid=open_view(page,base,'kiro')
     box=page.locator('#sdk-input')
-    box.fill('idle steer');box.press('Control+Enter')
-    expect(box).to_have_value('idle steer')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('当前没有')
+    def finish_idle(text):
+        expect(page.locator('.sdk-live')).to_contain_text(text)
+        page.wait_for_function('!NativeSdkView.running')
+        rows=[json.loads(line) for line in (root/'kiro-acp-received.jsonl').read_text().splitlines()]
+        assert len([r for r in rows if r.get('method')=='session/prompt' and text in json.dumps(r)])==1
+    exercise_idle_send_gestures(page,'kiro',label,finish_idle,shots)
     box.fill('steer-hold');box.press('Enter')
     page.wait_for_function('NativeSdkView.running')
     page.set_viewport_size({'width':390,'height':900})
