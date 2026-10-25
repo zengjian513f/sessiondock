@@ -15,6 +15,7 @@ const CodexSdkView = {
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
   pendingAtOpen: false,
+  streamItems: new Set(), streamTimer: 0,
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true
@@ -93,6 +94,7 @@ const CodexSdkView = {
     clearTimeout(this.historyTimer);
     clearTimeout(this.openRetryTimer);
     clearTimeout(this.reconnectTimer);
+    this.cancelStreamPaint();
     this.openRead?.abort();
     this.openRead = null; this.openFailed = false; this.openRetryTimer = 0; this.openRetryDelay = 1000;
     clearTimeout(this.limitsRetryTimer);
@@ -482,6 +484,7 @@ const CodexSdkView = {
   // ---------------------------------------------------------------- 事件
 
   applySnapshot(raw) {
+    this.cancelStreamPaint();
     const stick = this.nearBottom();
     SdkUI.ungroupTools(this);
     this.setConnected(true);
@@ -512,6 +515,31 @@ const CodexSdkView = {
   },
 
   applyEvent(method, raw) {
+    // Reduce every token in order, but do not lay out the whole pane for each
+    // SSE packet. Raw reasoning is not displayed at all. Lifecycle/request
+    // events flush preceding text before changing its turn or item identity.
+    if (['item/agentMessage/delta', 'item/plan/delta', 'item/commandExecution/outputDelta',
+      'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta'].includes(method)) {
+      const retrying = !!this.summary?.retry_error;
+      if (this.summary) this.summary.retry_error = null;
+      const target = this.items.get(raw.itemId);
+      if (target && method !== 'item/reasoning/textDelta') {
+        if (method === 'item/reasoning/summaryTextDelta') {
+          const parts = Array.isArray(target.summary) ? target.summary : (target.summary = []);
+          const index = raw.summaryIndex || 0;
+          while (parts.length <= index) parts.push('');
+          parts[index] += raw.delta || '';
+        } else {
+          const field = method === 'item/commandExecution/outputDelta' ? 'aggregatedOutput' : 'text';
+          target[field] = (target[field] || '') + (raw.delta || '');
+        }
+        this.streamItems.add(target.id);
+      }
+      if ((this.streamItems.size || retrying) && !this.streamTimer)
+        this.streamTimer = setTimeout(() => this.flushStreamPaint(), 32);
+      return;
+    }
+    this.flushStreamPaint();
     SdkUI.ungroupTools(this);
     // Do not move a disclosure away from the pointer between press and release.
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
@@ -563,25 +591,6 @@ const CodexSdkView = {
           item.status = method === 'item/started' ? 'inProgress' : 'completed';
         if (item?.id) { this.items.set(item.id, item); this.paintItem(item); }
         break;
-      case 'item/agentMessage/delta': case 'item/plan/delta':
-        this.appendDelta(raw.itemId, 'text', raw.delta); break;
-      case 'item/commandExecution/outputDelta':
-        this.appendDelta(raw.itemId, 'aggregatedOutput', raw.delta); break;
-      case 'item/reasoning/textDelta':
-        if (this.summary) this.summary.retry_error = null;
-        break;
-      case 'item/reasoning/summaryTextDelta': {
-        if (this.summary) this.summary.retry_error = null;
-        const target = this.items.get(raw.itemId);
-        if (target) {
-          const parts = Array.isArray(target.summary) ? target.summary : (target.summary = []);
-          const index = raw.summaryIndex || 0;
-          while (parts.length <= index) parts.push('');
-          parts[index] += raw.delta || '';
-          this.paintItem(target);
-        }
-        break;
-      }
       case 'serverRequest/resolved': {
         const key = JSON.stringify(raw.requestId);
         this.requests.delete(key);
@@ -627,12 +636,30 @@ const CodexSdkView = {
     if (stick) this.scrollBottom();
   },
 
-  appendDelta(id, field, delta) {
-    if (this.summary) this.summary.retry_error = null;
-    const target = this.items.get(id);
-    if (!target) return;
-    target[field] = (target[field] || '') + (delta || '');
-    this.paintItem(target);
+  cancelStreamPaint() {
+    clearTimeout(this.streamTimer);
+    this.streamTimer = 0;
+    this.streamItems.clear();
+  },
+
+  flushStreamPaint() {
+    if (!this.streamTimer) return;
+    clearTimeout(this.streamTimer);
+    this.streamTimer = 0;
+    if (!this.pane) { this.streamItems.clear(); return; }
+    const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
+    SdkUI.ungroupTools(this);
+    for (const id of this.streamItems) {
+      const item = this.items.get(id);
+      if (item) this.paintItem(item);
+    }
+    this.streamItems.clear();
+    SdkUI.groupTools(this);
+    CodexSdkQuestions.paint(this);
+    CodexSdkActions.paint(this);
+    CodexSdkControls.paint(this);
+    this.paintStatus();
+    if (stick) this.scrollBottom();
   },
 
   // ---------------------------------------------------------------- 渲染
