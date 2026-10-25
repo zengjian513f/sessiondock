@@ -36,7 +36,7 @@
 | `#nest` | 子会话三档：按需展开、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认平铺。 |
 | `#view` | 项目树 `tree`（默认）、会话分组 `group`、时间轴 `date`。`renderView` |
 | `#node-chips` | 仅 Hub。见第 2 节 |
-| `#chips` | Claude / Codex / Grok / OpenCode / SSH 筛选 |
+| `#chips` | Codex / Kiro / Agy / Grok / Claude / OpenCode / SSH 筛选 |
 | `#new-session` | 新建。`terminal_create` 未开时保持隐藏 |
 | `#page-reload` | 刷新页面。独立应用模式等条件下才出现，见 `syncPageReload` |
 | `#transfer-tasks` | 未完成的移动与复制，带计数。见第 5 节 |
@@ -104,7 +104,7 @@ Hub 每一行（`machineRow` / `renderMachineSettings`）：
 - 名称输入，最长 80，回车失焦后保存。
 - 颜色：默认、蓝、紫、琥珀、青、玫红、青柠、天蓝、品红（`MACHINE_COLORS`）。
 
-AI 客户端矩阵（`renderClientMatrix` / `loadMachineClients` / `updateMachineClient`）：机器 × Claude/Codex/Grok/OpenCode。单元格显示版本、是否最新，以及「更新」。更新走该机器自己的 `api/clients/update`，页面每 2 秒轮询到结束。首次读取失败显示离线单元格，错误保留在悬停提示；更新失败显示在 `#machine-note`。
+AI 客户端矩阵（`renderClientMatrix` / `loadMachineClients` / `updateMachineClient`）：机器 × Codex/Kiro/Agy/Grok/Claude/OpenCode。单元格显示版本、是否最新，以及「更新」。更新走该机器自己的 `api/clients/update`，页面每 2 秒轮询到结束。首次读取失败显示离线单元格，错误保留在悬停提示；更新失败显示在 `#machine-note`。
 
 [`tests/client_update_browser.py`](../tests/client_update_browser.py) 覆盖版本矩阵和手动更新。[`tests/hub_browser.py`](../tests/hub_browser.py) 覆盖改名、启用/停用、拖动及方向键排序。调色板和保存失败回退另做迁移验收。
 
@@ -475,13 +475,15 @@ DELTA（BUG-20261015-135638-c5bbf6）：信息页根文档允许垂直滚动，�
 
 ### 新建会话
 
+DELTA（BUG-20261025-064641-d33d0e）：所有 agent 选择与展示列表统一按 Codex、Kiro、Agy、Grok、Claude、OpenCode 排序；SSH 仍排末尾。不支持或未安装的来源按原能力规则隐藏/禁用，剩余项保持相对顺序。新建的初始来源从 Claude 改为 Codex；报告的 Codex 默认及已保存的显式选择保留。覆盖筛选条及菜单、新建/报告弹窗、启动设置、客户端矩阵和额度页。
+
 DELTA（SDK 默认模式）：启用 SDK 的节点上，新建 Codex 直接使用 app-server
 `thread/start`，先显示未落盘创建回执，首条消息才由 Codex 写原生历史；UID 不变。
 Codex 主会话默认打开 SDK，旧对话和终端视图保留为退役过渡入口。机器能力、回执和
 模型来源见 [codex-sdk.md](codex-sdk.md)，验收见
 [`tests/codex_sdk_create_browser.py`](../tests/codex_sdk_create_browser.py)。
 
-`#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
+`#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Codex（默认）、Kiro、Agy、Grok、Claude、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
 
 DELTA（新建默认目录）：每次打开新建弹窗，默认使用当前会话所在机器和工作目录（包括尚未落盘的启动会话），当前会话机器优先于列表机器筛选及上次新建机器；没有当前会话时，沿用机器选择回退规则，目录留空。打开及切换机器共用目录存在性检查：目录在所选机器仍存在就原样保留，否则（包括空值及无法确认存在）清空，不填入该机器的默认目录或近期目录。检查使用去除首尾空白后的路径，保留时不改写原输入。当前会话目录不再单独置顶或补入推荐列表，沿用普通最近使用与常用排序、路径去重及存在性检查。检查期间的新输入、再次切换机器或重新打开弹窗使旧结果失效；候选列表更新不改写输入。输入框右侧「×」清空目录并将焦点留在输入框，重新显示最近目录；空目录直接提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
 
@@ -527,7 +529,7 @@ DELTA（BUG-20261015-153714-49d7c5）：最近目录的会话来源排除附属�
 
 ### 报告问题
 
-`#bug-report-dialog`（`openBugReportDialog`）。来源默认 Codex（`bugReportSource`），可选 Claude/Codex/Grok/OpenCode，无 SSH。Hub 上选处理节点。模型与推理强度用同一套选择器。描述最多 50000 字。附件：图片、视频、音频、文件，无「引用文字」。草稿用临时身份 `BUG_REPORT_DRAFT_UID`，提交后绑到处理会话。可附带当前会话和终端上下文（`captureBugReportContext`）。发送按钮「提交并启动处理会话」。失败保留草稿。已退出且未绑定的处理会话可以重新启动。提交后浮动条指向该会话（`showBugReportToast`）。
+`#bug-report-dialog`（`openBugReportDialog`）。来源默认 Codex（`bugReportSource`），可选 Codex/Kiro/Agy/Grok/Claude/OpenCode，无 SSH。Hub 上选处理节点。模型与推理强度用同一套选择器。描述最多 50000 字。附件：图片、视频、音频、文件，无「引用文字」。草稿用临时身份 `BUG_REPORT_DRAFT_UID`，提交后绑到处理会话。可附带当前会话和终端上下文（`captureBugReportContext`）。发送按钮「提交并启动处理会话」。失败保留草稿。已退出且未绑定的处理会话可以重新启动。提交后浮动条指向该会话（`showBugReportToast`）。
 
 节点记忆：`bugReportNode`、`bugReportDraftNode`、`reportDraftId.<node>`。
 
