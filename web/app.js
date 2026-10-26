@@ -7502,14 +7502,93 @@ function refreshSessionRunControls() {
   if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
     paintSessionRunControl(button, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
+  refreshComposerRunControls();
 }
-function startComposerSession(uid, agent, mode) {
-  if (!uid || S.sel !== uid || S.agent !== agent) return;
-  if (mode === 'sdk' && !SdkView.readOnly && !SdkView.openFailed) return;
-  // Editing a live session's draft must not reopen its view or take over its CLI.
-  if (mode === 'cli' && sessionLiveStatus(uid).live) return;
-  const row = sessionRunRow(uid);
-  if (row) void toggleSessionRun(agent ? {...row, agent_id: agent} : row, null, 'start', mode);
+function composerExternalCli(uid, agent = null) {
+  const live = sessionLiveStatus(uid);
+  return !agent && live.live && !live.tmux && !live.sdk && !takenOver(uid);
+}
+function paintComposerRunControl(notice, uid, agent, mode, view = null) {
+  if (!notice || !uid) return;
+  const row = agent ? {...sessionRunRow(uid), agent_id:agent} : sessionRunRow(uid);
+  const external = composerExternalCli(uid, agent);
+  const externalAcp = S.liveExternalSdk.has(uid);
+  const busy = ConsoleUI.busy.has(uid);
+  const idle = mode === 'sdk' ? view?.readOnly || view?.openFailed
+    : !agent && !sessionLiveStatus(uid).live && !sessionRunActive(row);
+  let button = notice.parentElement.querySelector('.composer-run-action');
+  if (!button) {
+    button = el('button', 'btn composer-run-action');
+    button.type = 'button';
+    button.onmousedown = event => event.preventDefault();
+    notice.after(button);
+  } else notice.after(button);
+  button.hidden = externalAcp || (!external && !idle && !busy);
+  notice.classList.toggle('external-cli-status', external);
+  if (!externalAcp && (external || idle && !busy && !view?.openFailed)) {
+    const text = external ? '正在外部CLI运行' : '未运行';
+    notice.querySelector('[role=status]').textContent = text;
+    notice.dataset.state = external ? 'ready' : 'idle';
+    notice.classList.remove('blocked');
+    notice.hidden = false;
+  }
+  const action = external ? '接管' : '启动';
+  button.textContent = action;
+  button.setAttribute('aria-label', action);
+  button.setAttribute('aria-busy', String(busy));
+  const reason = S.liveExternalSdk.has(uid) ? '外部 ACP 会话仅可查看，请在原程序中操作。'
+    : external && mode === 'sdk' && !sessionStopCapable() ? '此节点不支持停止外部 CLI。'
+    : sessionStartUnavailable(row, mode);
+  button.disabled = busy || !!reason || (mode === 'sdk' && SdkView.discovering);
+  button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
+  button.onclick = () => runComposerSession(uid, agent, mode, external);
+}
+function refreshComposerRunControls() {
+  if (S.sel && $('#conversation-status'))
+    renderActivity(cache.get(viewKey(S.sel, S.agent))?.activity);
+  const view = SdkView.active;
+  if (view?.pane && view.baseNotice) view.setNotice(...view.baseNotice);
+}
+async function runComposerSession(uid, agent, mode, takeoverExternal = false) {
+  if (!uid || S.sel !== uid || S.agent !== agent || ConsoleUI.busy.has(uid)) return;
+  const base = sessionRunRow(uid);
+  const row = agent ? {...base, agent_id:agent} : base;
+  if (!row || sessionStartUnavailable(row, mode) || S.liveExternalSdk.has(uid)) return;
+  if (!takeoverExternal) {
+    // A delayed click must not silently replace an external process.
+    if (composerExternalCli(uid, agent)) { refreshComposerRunControls(); return; }
+    await toggleSessionRun(row, null, 'start', mode);
+  } else {
+    ConsoleUI.busy.add(uid);
+    refreshSessionRunControls();
+    try {
+      const target = mode === 'sdk' ? 'SDK' : 'CLI';
+      if (!await appConfirm(`接管会停止当前外部 CLI，并由 SessionDock 以 ${target} 模式重新启动此会话。\n\n外部 CLI 未保存的输入和正在执行的任务会被中断；已保存的历史和网页草稿保留。\n\n是否继续？`)) return;
+      if (S.sel !== uid || S.agent !== agent) return;
+      if (mode === 'cli') {
+        await takeover(uid, null, true, true);
+      } else {
+        // Use the existing exact native-session stop contract, then confirm
+        // liveness before opening SDK. A failed/uncertain stop never launches.
+        const result = await requestSessionStop(row);
+        if (result.stage === 'uncertain') throw new Error('停止结果不确定，请核对外部 CLI 后重试。');
+        await refreshLive(true);
+        await loadTermList();
+        if (sessionLiveStatus(uid).live || takenOver(uid))
+          throw new Error('外部会话仍在运行，尚未启动 SDK。');
+        if (S.sel !== uid || S.agent !== agent) return;
+        await SdkView.startSession(uid, agent);
+      }
+    } catch (error) {
+      await appAlert(`接管失败：${error.message || error}`);
+    } finally {
+      ConsoleUI.busy.delete(uid);
+      refreshSessionRunControls();
+      renderComposer();
+    }
+  }
+  if (S.sel === uid && S.agent === agent)
+    (mode === 'sdk' ? SdkView.input : $('#cinput'))?.focus({preventScroll:true});
 }
 async function toggleSessionRun(row, button = null, intent = null, composerMode = null) {
   if (!row || S.liveExternalSdk.has(row.uid) || ConsoleUI.busy.has(row.uid)) return;
@@ -9929,6 +10008,7 @@ function renderActivity(activity) {
   ConversationUI.bindPopover(n, details, row);
   row.prepend(n);
   renderConversationUsage(row, S.sel);
+  paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);
 }
 

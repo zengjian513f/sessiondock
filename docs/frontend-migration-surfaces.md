@@ -162,7 +162,7 @@ DELTA：会话模式复用 SDK 的底部状态／用量样式；处理中、待�
 
 会话用量同时展示快照中的金币余额与重置卡数量，保留零值和无限额度；缺失字段不伪装为零，悬停可见记录时间和最近到期时间。底栏单行、超宽用量内部滚动，PTY 输入提示不覆盖用量；见[共用状态栏](sdk-ui.md)。
 
-DELTA：SDK／普通会话的状态栏与 composer 始终显示，点击输入框启动当前模式，不可用的发送与设置控件置灰；普通子代理不载入父会话草稿。终端全屏在所有屏宽隐藏 composer。切换视图及停止后保留草稿，见 [`tests/conversation_composer_visibility_browser.py`](../tests/conversation_composer_visibility_browser.py)。
+DELTA：SDK／普通会话的状态栏与 composer 始终显示，通过状态右侧的“启动”按钮启动当前模式，输入框点击只编辑草稿，不可用的发送与设置控件置灰；普通子代理不载入父会话草稿。终端全屏在所有屏宽隐藏 composer。切换视图及停止后保留草稿，见 [`tests/conversation_composer_visibility_browser.py`](../tests/conversation_composer_visibility_browser.py)。
 
 ### 行上能看见的东西
 

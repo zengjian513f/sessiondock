@@ -59,7 +59,8 @@ def exercise(browser, base, source, screenshots, label):
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         notice = page.locator('#composer-input-status')
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-external.png'))
-        expect(notice).to_contain_text('会话正在外部 CLI 中运行')
+        expect(page.locator('#conversation-status .sdk-status')).to_have_text('正在外部CLI运行')
+        expect(page.locator('#conversation-status .composer-run-action')).to_have_text('接管')
         expect(notice).not_to_contain_text('点击输入框启动')
         writes = []
         page.on('request', lambda request: writes.append(request.url)
@@ -89,7 +90,8 @@ def exercise(browser, base, source, screenshots, label):
         external_live['uids'] = []
         external_live['working_uids'] = []
         page.evaluate('refreshLive(true)')
-        expect(notice).to_contain_text('点击输入框启动')
+        expect(page.locator('#conversation-status .sdk-status')).to_have_text('未运行')
+        expect(page.locator('#conversation-status .composer-run-action')).to_have_text('启动')
         assert not writes, writes
         page.unroute(live_route)
         editor.fill('')
@@ -134,7 +136,7 @@ def exercise(browser, base, source, screenshots, label):
         after = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         assert after == before, {'before':before, 'after':after, 'opens':opens}
         assert page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)') == order
-        draft = f'draft for input click {label} {source} {width}'
+        draft = f'draft for explicit start {label} {source} {width}'
         with page.expect_response(lambda response: response.request.method == 'POST'
                                   and response.url.endswith('/api/session/conversation')):
             page.locator('#sdk-input').fill(draft)
@@ -150,10 +152,11 @@ def exercise(browser, base, source, screenshots, label):
 
         def start(repeat=True):
             editor = page.locator('#sdk-input')
-            # A real pointer/touch click starts, even when the editor already
-            # has programmatic focus. Repeated clicks must not duplicate opens.
+            before = len(opens)
             (editor.tap if width < 720 else editor.click)()
-            if repeat: editor.click()
+            editor.click()
+            assert len(opens) == before, 'editor clicks must only edit the draft'
+            page.locator('#sdk-composer .composer-run-action').click()
 
         def stop():
             button = page.locator('#a-session-toggle')
@@ -163,7 +166,7 @@ def exercise(browser, base, source, screenshots, label):
             expect(button).to_have_attribute('aria-label', '启动会话')
 
         expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('未运行')
-        expect(page.locator('.footer-session-toggle')).to_have_count(0)
+        expect(page.locator('#sdk-composer .composer-run-action')).to_have_text('启动')
         if label == 'node' and width == 1280 and source == 'codex':
             endpoint = '**/api/codex-sdk/open'
             page.route(endpoint, lambda route: route.fulfill(status=503, json={'error':'Synthetic startup failure'}), times=1)
@@ -319,6 +322,8 @@ def child_check(browser, root, binary, screenshots):
         page.screenshot(path=str(screenshots/'codex-child-conversation.png'))
         page.locator('#a-sdk').click()
         page.locator('#sdk-input').click()
+        assert not fake.methods('thread/resume')
+        page.locator('#sdk-composer .composer-run-action').click()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
         page.screenshot(path=str(screenshots/'codex-child-started.png'))

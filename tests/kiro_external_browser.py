@@ -131,6 +131,8 @@ def main():
         assert not fixture.received('session/load')
         # Once the external owner is gone, an explicit user action may start SDK.
         page.locator('#sdk-input').click()
+        assert not fixture.received('session/load')
+        page.locator('#sdk-composer .composer-run-action').click()
         page.wait_for_function('SdkView.connected && !SdkView.readOnly')
         page.locator('#sdk-input').fill('Managed SDK after external exit')
         page.locator('#sdk-send').click()

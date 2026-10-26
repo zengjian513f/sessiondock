@@ -79,7 +79,6 @@ const SdkUI = {
     pane.querySelector('#sdk-composer').hidden = false;
     view.input.disabled = true;
     pane.querySelector('#sdk-send').disabled = true;
-    view.input.onclick = () => startComposerSession(view.uid, view.agent, 'sdk');
     view.input.oninput = () => { view.fitInput(); CodexSdkCompose.input(view); };
     view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
@@ -325,6 +324,7 @@ const SdkUI = {
     },
     setNotice(text, kind = '', sticky = false) {
       if (!this.notice) return;
+      this.baseNotice = [text, kind, sticky];
       if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
       this.notice.querySelector('[role=status]').textContent = ConversationUI.statusSummary(text, kind);
       this.notice.title = text;
@@ -333,6 +333,7 @@ const SdkUI = {
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
       this.pane.querySelector('#sdk-status-menu').textContent = text;
+      paintComposerRunControl(this.notice, this.uid, this.agent, 'sdk', this);
       this.updateStatusDisclosure();
       this.layoutToolbar();
       sdkSyncSettings(this);
@@ -349,7 +350,7 @@ const SdkUI = {
       });
       this.toolbarObserver.observe(this.pane.querySelector('.sdk-status-row'));
       this.toolbarObserver.observe(this.notice);
-      this.layoutToolbar();
+      this.setNotice(this.readOnly ? '未运行' : '连接中', this.readOnly ? 'idle' : 'connecting');
     },
     pending(uid) {
       return typeof T === 'undefined' || S.sessions.some(row => row.uid === uid) ? null
@@ -509,6 +510,7 @@ const SdkUI = {
     const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
     const trigger = view.pane.querySelector('#sdk-more');
     const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
+      row.querySelector('.composer-run-action')?.hidden,
       [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
       controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
     if (row.dataset.footerLayout === signature) return;

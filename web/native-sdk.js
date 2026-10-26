@@ -72,7 +72,6 @@ const NativeSdkView = {
     } else if (this.externalObserved) {
       this.externalObserved = false;
       this.input.placeholder = '通过 Kiro SDK 发送';
-      this.input.onclick = () => startComposerSession(this.uid, this.agent, 'sdk');
       CodexSdkCompose.paint(this);
       this.setNotice('未运行', 'idle');
     }

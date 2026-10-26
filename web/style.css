@@ -2568,6 +2568,8 @@ header .btn[data-session-docked] { display: none; }
   height: var(--sdk-status-row-height); --sdk-status-row-height: 24px; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
 .sdk-status-row > .sdk-status { flex: none; max-width: 7em; }
+.sdk-status-row > .sdk-status.external-cli-status { max-width: none; }
+.sdk-status-row > .composer-run-action { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-gauges { flex: 0 1 auto; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
 .sdk-status-row > .sdk-gauges::-webkit-scrollbar { display: none; }
