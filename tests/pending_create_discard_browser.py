@@ -113,6 +113,10 @@ def assert_gone(context, base, page, rec, pending_uid, native_uid, where):
 
 
 def create_source(page, source, work):
+    if source != 'shell':
+        from session_start_fixtures import choose_mode
+        choose_mode(page, source, 'cli')
+        page.locator('#settings-dialog .modal-close').click()
     expect(page.locator("#new-session")).to_be_visible()
     page.locator("#new-session").click()
     expect(page.locator("#new-session-dialog")).to_be_visible()
@@ -171,7 +175,7 @@ def assert_pending_stop_disabled(page, context, base, receipt, uid, width):
         row.dispatch_event("click", {"bubbles": True})
     else:
         row.click(button="right")
-    stop = page.locator('#item-menu [data-act="stop"]')
+    stop = page.locator('#item-menu [data-run-mode="cli"]')
     expect(stop).to_have_attribute("aria-disabled", "true")
     expect(stop).to_have_attribute("title", re.compile("停止后无法续接"))
     stop.click(force=True)
@@ -252,8 +256,9 @@ def run_source(page, context, base, source, work):
             passed(f"codex: reload restores pending receipt and draft at {width}px")
         # An explicit launch URL wins over the saved mobile list choice,
         # just like a native deep link. The bare entry still restores the list.
+        launch_url = page.url
         page.locator("#detail .mobile-back").click()
-        page.reload(wait_until="networkidle")
+        page.goto(launch_url, wait_until="networkidle")
         page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
         page.locator("#detail .mobile-back").click()
         page.goto(base, wait_until="networkidle")
@@ -296,7 +301,7 @@ def run_source(page, context, base, source, work):
     # stop. Unused native AI rows still offer direct discard after the merge.
     row = page.locator(f'#side .item[data-uid="{native_uid or pending_uid}"]')
     row.click(button="right")
-    menu_stop = page.locator('#item-menu [data-act="stop"]')
+    menu_stop = page.locator('#item-menu [data-run-mode="cli"]')
     menu_delete = page.locator('#item-menu [data-act="delete"]')
     if source == "shell":
         expect(menu_stop).to_be_visible()

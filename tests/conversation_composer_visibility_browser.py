@@ -20,7 +20,7 @@ def exercise_start(browser, base, screenshots, label):
         on_popup(page, lambda dialog: dialog.accept())
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
-        # Clicking the ordinary editor starts CLI even with the SDK preference.
+        # The explicit conversation button starts CLI even with the SDK preference.
         choose_mode(page, 'codex', 'sdk')
         page.locator('#settings-dialog .modal-close').click()
         page.locator('#side .item[data-uid^="codex:"]').first.click()
@@ -32,11 +32,12 @@ def exercise_start(browser, base, screenshots, label):
                                   and response.request.method == 'POST'):
             page.locator('#cinput').fill(draft)
         assert not launches
-        expect(page.locator('.footer-session-toggle')).to_have_count(0)
+        expect(page.locator('#conversation-status .composer-run-action')).to_have_text('启动')
+        page.locator('#cinput').click()
+        assert not launches
         with page.expect_response(lambda response: '/api/term/takeover' in response.url) as started:
             editor = page.locator('#cinput')
-            (editor.tap if width < 720 else editor.click)()
-            editor.click()
+            page.locator('#conversation-status .composer-run-action').click()
         assert started.value.ok, started.value.text()
         page.wait_for_function('takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
@@ -59,7 +60,7 @@ def exercise_start(browser, base, screenshots, label):
         expect(page.locator('#cinput')).to_have_value(draft + ' after start')
         page.screenshot(path=str(screenshots/f'{label}-{width}-cli-stopped.png'))
         with page.expect_response(lambda response: '/api/term/takeover' in response.url):
-            page.locator('#cinput').click()
+            page.locator('#conversation-status .composer-run-action').click()
         page.wait_for_function('takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         expect(page.locator('#cinput')).to_be_focused()
@@ -70,7 +71,7 @@ def exercise_start(browser, base, screenshots, label):
         page.wait_for_function('!takenOver(S.sel) && !ConsoleUI.busy.has(S.sel)')
         assert not errors, errors
         context.close()
-        print('PASS conversation input CLI start/header stop and saved draft', label, width, flush=True)
+        print('PASS conversation button CLI start/header stop and saved draft', label, width, flush=True)
 
 
 def main():
@@ -108,7 +109,7 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#cesc')).to_be_disabled()
                 expect(page.locator('#conversation-status')).to_be_visible()
-                expect(page.locator('.footer-session-toggle')).to_have_count(0)
+                expect(page.locator('#conversation-status .composer-run-action')).to_have_text('启动')
                 page.screenshot(path=str(args.screenshots / f'{width}-{theme}-not-started.png'))
                 select(active)
                 expect(page.locator('#cinput')).to_be_visible()

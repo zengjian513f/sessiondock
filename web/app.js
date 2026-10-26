@@ -2468,6 +2468,7 @@ function paintLive() {
   const selected = S.sessions.find(x => x.uid === S.sel);
   if (selected) {
     renderSessionAction(selected);
+    renderComposerInputStatus();
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
   paintTransferAvailability($('#a-clone-group'), S.sel);
@@ -4055,7 +4056,6 @@ function openItemMenu(uid, x, y) {
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
   const unavailable = {
     'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
-    stop: sessionRunUnavailable(row),
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
     detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
@@ -4071,7 +4071,7 @@ function openItemMenu(uid, x, y) {
     if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
   }
   menu.querySelector('[data-act="delete"]').textContent = (row?.sdk_pending || (row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
-  paintSessionRunControl(menu.querySelector('[data-act="stop"]'), row);
+  paintSessionRunMenu(row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   placeFixedMenu(menu, x, y);
@@ -4244,9 +4244,9 @@ $('#item-menu').onclick = async e => {
     setPicking(true);
     return;
   }
-  if (button.dataset.act === 'stop') {
+  if (button.dataset.runMode) {
     const row = S.sessions.find(x => x.uid === uid) || sidebarSessions().find(x => x.uid === uid);
-    if (row) await toggleSessionRun(row, null, button.dataset.runIntent);
+    if (row) await toggleSessionRun(row, null, button.dataset.runIntent, button.dataset.runMode, true);
     return;
   }
   const row = sidebarSessions().find(session => session.uid === uid);
@@ -7446,7 +7446,7 @@ function sessionStartUnavailable(row, mode) {
   if (!row || row.pending) return sessionRunUnavailable(row);
   if (ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
   if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null) ? '' : '此会话没有可用的 SDK 启动方式。';
-  return consoleUnavailableReason(row.uid, row.agent_id || null, false);
+  return consoleUnavailableReason(row.uid, row.agent_id || null, false, true);
 }
 function sessionRunRow(uid) {
   return sidebarSessions().find(row => row.uid === uid)
@@ -7475,23 +7475,59 @@ function sessionRunUnavailable(row, mode = agentStartMode(row?.source)) {
   if (!capabilities?.resume_sources?.[row.source]) return '此会话没有可用的原生续接启动项。';
   return '';
 }
+function sessionModeActive(row, mode) {
+  if (!row) return false;
+  if (row.agent_id) return mode === 'sdk' && sessionRunActive(row);
+  if (row.pending) return mode === 'cli' && sessionRunActive(row);
+  const live = sessionLiveStatus(row.uid);
+  return mode === 'sdk' ? live.sdk || sessionHasRunningSdk(row.uid)
+    : !!takenOver(row.uid) || live.tmux || live.live && !live.sdk;
+}
+function sessionModesExclusive(row) {
+  return ['claude', 'grok', 'agy', 'kiro', 'codebuddy'].includes(row?.source);
+}
+function currentSessionRunMode(row) {
+  if (row?.pending || row?.source === 'shell') return 'cli';
+  if (SessionContentView.kind === 'sdk' || row?.agent_id) return 'sdk';
+  if (SessionContentView.kind === 'info' || SessionContentView.kind === 'resources')
+    return SdkView.preferredMode(row?.uid, row?.agent_id || null) === 'sdk' ? 'sdk' : 'cli';
+  return 'cli';
+}
+function sessionModeUnavailable(row, mode, intent) {
+  if (!row) return '会话状态尚未读取。';
+  if (S.liveExternalSdk.has(row.uid)) return '外部 ACP 会话仅可查看，请在原程序中操作。';
+  if (ConsoleUI.busy.has(row.uid)) return '正在切换会话运行状态，请稍候。';
+  if (intent === 'stop') return !sessionModeActive(row, mode) ? `${mode.toUpperCase()} 模式未运行。` : sessionStopUnavailable(row);
+  if (sessionModeActive(row, mode)) return `${mode.toUpperCase()} 模式已运行。`;
+  return sessionStartUnavailable(row, mode);
+}
+function paintSessionRunMenu(row) {
+  for (const button of document.querySelectorAll('#item-menu [data-run-mode]')) {
+    const mode = button.dataset.runMode;
+    const intent = sessionModeActive(row, mode) ? 'stop' : 'start';
+    setControlUnavailable(button, '');
+    button.dataset.runIntent = intent;
+    button.dataset.act = `${intent}-${mode}`;
+    button.textContent = `${intent === 'stop' ? '停止' : '启动'}${mode.toUpperCase()}模式`;
+    setControlUnavailable(button, sessionModeUnavailable(row, mode, intent));
+  }
+}
+
 function paintSessionRunControl(button, row) {
   if (!button) return;
-  const running = sessionRunActive(row), label = running ? '停止会话' : '启动会话';
-  // Restore the normal label before the shared unavailable hint is reapplied.
+  const mode = currentSessionRunMode(row), running = sessionModeActive(row, mode);
+  const intent = running ? 'stop' : 'start', label = running ? '停止会话' : '启动会话';
   setControlUnavailable(button, '');
-  button.title = button.ariaLabel = label;
-  if (button.closest('#item-menu')) {
-    button.textContent = label;
-  }
-  else {
-    button.innerHTML = uiIcon('power');
-    button.classList.toggle('danger', running);
-    labelSessionAction(button);
-    button.onclick = () => toggleSessionRun(row?.agent_id ? row : sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
-  }
-  button.dataset.runIntent = running ? 'stop' : 'start';
-  setControlUnavailable(button, sessionRunUnavailable(row));
+  button.title = `${running ? '停止' : '启动'}${mode.toUpperCase()}模式`;
+  button.ariaLabel = label;
+  button.innerHTML = uiIcon('power');
+  button.classList.toggle('danger', running);
+  button.dataset.runMode = mode;
+  button.dataset.runIntent = intent;
+  labelSessionAction(button);
+  button.onclick = () => toggleSessionRun(row?.agent_id ? row : sessionRunRow(row?.uid) || row,
+    button, button.dataset.runIntent, button.dataset.runMode);
+  setControlUnavailable(button, sessionModeUnavailable(row, mode, intent));
 }
 function refreshSessionRunControls() {
   const button = $('#a-session-toggle');
@@ -7500,56 +7536,131 @@ function refreshSessionRunControls() {
   // Missing from that projection does not mean its running host has stopped.
   if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
     paintSessionRunControl(button, row);
-  if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
+  if (menuUid) paintSessionRunMenu(sessionRunRow(menuUid));
+  refreshComposerRunControls();
 }
-function startComposerSession(uid, agent, mode) {
-  if (!uid || S.sel !== uid || S.agent !== agent) return;
-  if (mode === 'sdk' && !SdkView.readOnly && !SdkView.openFailed) return;
-  const row = sessionRunRow(uid);
-  if (row) void toggleSessionRun(agent ? {...row, agent_id: agent} : row, null, 'start', mode);
+function composerExternalCli(uid, agent = null) {
+  const live = sessionLiveStatus(uid);
+  return !agent && live.live && !live.tmux && !live.sdk && !takenOver(uid);
 }
-async function toggleSessionRun(row, button = null, intent = null, composerMode = null) {
-  if (!row || S.liveExternalSdk.has(row.uid) || ConsoleUI.busy.has(row.uid)) return;
-  // A live refresh can change the row after the control was painted. Keep the
-  // action the user clicked; stop is idempotent if the instance already exited.
-  if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {
-    ConsoleUI.busy.add(row.uid);
+function paintComposerRunControl(notice, uid, agent, mode, view = null) {
+  if (!notice || !uid) return;
+  const row = agent ? {...sessionRunRow(uid), agent_id:agent} : sessionRunRow(uid);
+  const external = composerExternalCli(uid, agent);
+  const externalAcp = S.liveExternalSdk.has(uid);
+  const busy = ConsoleUI.busy.has(uid);
+  const idle = mode === 'sdk' ? view?.readOnly || view?.openFailed
+    : !agent && !sessionModeActive(row, 'cli');
+  let button = notice.parentElement.querySelector('.composer-run-action');
+  if (!button) {
+    button = el('button', 'btn composer-run-action');
+    button.type = 'button';
+    button.onmousedown = event => event.preventDefault();
+    notice.after(button);
+  } else notice.after(button);
+  button.hidden = externalAcp || (!external && !idle && !busy);
+  notice.classList.toggle('external-cli-status', external);
+  if (!externalAcp && (external || idle && !busy && !view?.openFailed)) {
+    const text = external ? '正在外部CLI运行' : '未运行';
+    notice.querySelector('[role=status]').textContent = text;
+    notice.dataset.state = external ? 'ready' : 'idle';
+    notice.classList.remove('blocked');
+    notice.hidden = false;
+  }
+  const action = external ? '接管' : '启动';
+  button.textContent = action;
+  button.setAttribute('aria-label', action);
+  button.setAttribute('aria-busy', String(busy));
+  const reason = S.liveExternalSdk.has(uid) ? '外部 ACP 会话仅可查看，请在原程序中操作。'
+    : external && mode === 'sdk' && !sessionStopCapable() ? '此节点不支持停止外部 CLI。'
+    : sessionStartUnavailable(row, mode);
+  button.disabled = busy || !!reason || (mode === 'sdk' && SdkView.discovering);
+  button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
+  button.onclick = () => runComposerSession(uid, agent, mode, external);
+}
+function refreshComposerRunControls() {
+  if (S.sel && $('#conversation-status'))
+    renderActivity(cache.get(viewKey(S.sel, S.agent))?.activity);
+  const view = SdkView.active;
+  if (view?.pane && view.baseNotice) view.setNotice(...view.baseNotice);
+}
+async function runComposerSession(uid, agent, mode, takeoverExternal = false) {
+  if (!uid || S.sel !== uid || S.agent !== agent || ConsoleUI.busy.has(uid)) return;
+  const base = sessionRunRow(uid);
+  const row = agent ? {...base, agent_id:agent} : base;
+  if (!row || sessionStartUnavailable(row, mode) || S.liveExternalSdk.has(uid)) return;
+  if (!takeoverExternal) {
+    // A delayed click must not silently replace an external process.
+    if (composerExternalCli(uid, agent)) { refreshComposerRunControls(); return; }
+    await toggleSessionRun(row, null, 'start', mode);
+  } else {
+    ConsoleUI.busy.add(uid);
     refreshSessionRunControls();
     try {
-      if (row.pending) await stopPendingSession(row, button);
-      else await stopSession(row, button);
+      const target = mode === 'sdk' ? 'SDK' : 'CLI';
+      if (!await appConfirm(`接管会停止当前外部 CLI，并由 SessionDock 以 ${target} 模式重新启动此会话。\n\n外部 CLI 未保存的输入和正在执行的任务会被中断；已保存的历史和网页草稿保留。\n\n是否继续？`)) return;
+      if (S.sel !== uid || S.agent !== agent) return;
+      if (mode === 'cli') {
+        await takeover(uid, null, true, true);
+      } else {
+        // Use the existing exact native-session stop contract, then confirm
+        // liveness before opening SDK. A failed/uncertain stop never launches.
+        const result = await requestSessionStop(row);
+        if (result.stage === 'uncertain') throw new Error('停止结果不确定，请核对外部 CLI 后重试。');
+        await refreshLive(true);
+        await loadTermList();
+        if (sessionLiveStatus(uid).live || takenOver(uid))
+          throw new Error('外部会话仍在运行，尚未启动 SDK。');
+        if (S.sel !== uid || S.agent !== agent) return;
+        await SdkView.startSession(uid, agent);
+      }
+    } catch (error) {
+      await appAlert(`接管失败：${error.message || error}`);
     } finally {
-      ConsoleUI.busy.delete(row.uid);
+      ConsoleUI.busy.delete(uid);
       refreshSessionRunControls();
-      renderTakeoverBtn();
+      renderComposer();
     }
-    return;
   }
-  if (sessionRunActive(row) && !(composerMode === 'sdk' && (SdkView.openFailed || !S.liveSdk.has(row.uid)))) {
-    if (!composerMode) await openSession(row.uid, row.agent_id || null);
-    return;
-  }
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(row.source) : row.source !== 'kiro';
-  const mode = composerMode || (!hasChat && S.sel === row.uid && SessionContentView.kind === 'sdk' ? 'sdk' : agentStartMode(row.source));
-  if (sessionRunUnavailable(row, mode)) {paintSessionRunControl(button, row); return;}
+  if (S.sel === uid && S.agent === agent)
+    (mode === 'sdk' ? SdkView.input : $('#cinput'))?.focus({preventScroll:true});
+}
+async function toggleSessionRun(row, button = null, intent = null, mode = null, fromMenu = false) {
+  mode ||= currentSessionRunMode(row);
+  intent ||= sessionModeActive(row, mode) ? 'stop' : 'start';
+  if (sessionModeUnavailable(row, mode, intent)) return;
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();
   try {
-    // Input clicks preserve the editor, its selection and the current view.
-    if (!composerMode) await openSession(row.uid, row.agent_id || null);
-    // Reuse the existing exact-UID resume and its idempotent launch receipt.
-    if (mode === 'sdk')
-      await SdkView.startSession(row.uid, row.agent_id || null);
+    if (intent === 'stop') {
+      if (row.pending) await stopPendingSession(row, button);
+      else await stopSession(row, button, mode);
+      return;
+    }
+    const other = mode === 'sdk' ? 'cli' : 'sdk';
+    const replacing = sessionModesExclusive(row) && sessionModeActive(row, other);
+    // External CLI ownership also always requires explicit takeover consent.
+    const external = mode === 'sdk' && composerExternalCli(row.uid, row.agent_id || null);
+    if (replacing || external) {
+      if (!await appConfirm(`启动${mode.toUpperCase()}模式会先停止当前${other.toUpperCase()}模式。\n\n${replacing ? '此 agent 不支持两种模式同时运行。' : '当前会话正在外部 CLI 运行。'}正在执行的任务和未保存的外部输入会被中断，已保存历史和网页草稿保留。\n\n是否继续？`)) return;
+      const result = await requestSessionStop(row, other);
+      if (result.stage === 'uncertain') throw new Error('停止结果不确定，未启动新模式。');
+      await refreshLive(true);
+      await loadTermList();
+      if (sessionModeActive(row, other)) throw new Error('原模式仍在运行，未启动新模式。');
+    }
+    if (fromMenu) await openSession(row.uid, row.agent_id || null);
+    if (mode === 'sdk') await SdkView.startSession(row.uid, row.agent_id || null);
     else {
-      if (!composerMode) {
+      if (fromMenu) {
         SdkView.selectMode(row.uid, null, 'terminal');
         SessionContentView.close();
       }
-      await takeover(row.uid, null, composerMode === 'cli');
+      await takeover(row.uid, null, !fromMenu && $('#a-chat')?.getAttribute('aria-pressed') === 'true');
     }
   } catch (error) {
-    await appAlert(`启动失败：${error.message || error}`);
+    await appAlert(`${intent === 'stop' ? '停止' : '启动'}失败：${error.message || error}`);
   } finally {
     ConsoleUI.busy.delete(row.uid);
     refreshSessionRunControls();
@@ -7674,13 +7785,13 @@ const STOP_STAGE_TEXT = {
   uncertain: '已发送 Ctrl-D 与宿主停止指令，但限时内未观察到退出；结果不确定，不会自动重试',
 };
 
-async function requestSessionStop(m) {
-  const sdk = m.agent_id || sessionLiveStatus(m.uid).sdk;
+async function requestSessionStop(m, mode = null) {
+  const sdk = mode ? mode === 'sdk' : m.agent_id || sessionLiveStatus(m.uid).sdk;
   const stopUid = sdk ? m.uid : sessionStopUid(m.uid);
-  const body = { uid: stopUid, ...(m.agent_id ? {agent:m.agent_id} : {}) };
+  const body = { uid: stopUid, ...(mode === 'cli' ? {mode:'cli'} : {}), ...(m.agent_id ? {agent:m.agent_id} : {}) };
   if (sessionStopCapable()) body.request_id = requestId();
   const endpoint = !sdk ? 'api/session/stop' : !String(m.uid).startsWith('codex:') ? 'api/native-sdk/stop'
-    : m.agent_id || SdkView.pending(m.uid) ? 'api/codex-sdk/stop' : 'api/session/stop';
+    : mode === 'sdk' || m.agent_id || SdkView.pending(m.uid) ? 'api/codex-sdk/stop' : 'api/session/stop';
   const response = await fetch(appUrl(endpoint), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -7691,16 +7802,16 @@ async function requestSessionStop(m) {
     S.live.delete(stopUid);
     S.live.delete(m.uid);
   }
-  if (result.stopped || result.raw?.stopped) SdkView.stopped(m.uid, m.agent_id || null);
+  if (sdk && (result.stopped || result.raw?.stopped)) SdkView.stopped(m.uid, m.agent_id || null);
   return result;
 }
 
-async function stopSession(m, button = null) {
+async function stopSession(m, button = null, mode = null) {
   // 空闲会话停止不打断任何工作，不再确认；轮转中、等回答或状态未知仍确认。
   if (sessionTurn(m.uid) !== 'idle' && !await appConfirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
   if (button) button.disabled = true;
   try {
-    const d = await requestSessionStop(m);
+    const d = await requestSessionStop(m, mode);
     if (sessionStopCapable() && d.stage === 'uncertain') {
       await appAlert(`停止结果不确定\n\n「${m.title}」${STOP_STAGE_TEXT.uncertain}`);
     }
@@ -9926,6 +10037,7 @@ function renderActivity(activity) {
   ConversationUI.bindPopover(n, details, row);
   row.prepend(n);
   renderConversationUsage(row, S.sel);
+  paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);
 }
 

@@ -1178,6 +1178,8 @@ pub(super) async fn forget_discarded_launch(
 pub struct StopRequest {
     #[serde(default)]
     uid: String,
+    #[serde(default)]
+    mode: Option<String>,
 }
 fn invalid_stop() -> ApiError {
     ApiError::new(
@@ -1258,7 +1260,9 @@ pub async fn stop(
             "该回滚分支已不是当前运行分支，未停止共享的子会话",
         ));
     }
-    let sdk_stopped = if let Some(sdk) = &state.codex_sdk {
+    let sdk_stopped = if body.mode.as_deref() != Some("cli")
+        && let Some(sdk) = &state.codex_sdk
+    {
         let selected = uid.clone();
         let scope = state
             .reader

@@ -93,7 +93,7 @@ function sessionTerminalEnabled(uid) {
 
 const ConsoleUI = {errors: new Map(), busy: new Set()};
 
-function consoleUnavailableReason(uid, agent = null, lastError = true) {
+function consoleUnavailableReason(uid, agent = null, lastError = true, allowModeSwitch = false) {
   if (!uid) return '请先选择一个会话，再打开控制台。';
   if (S.liveExternalSdk.has(uid)) return '外部 ACP 会话仅可查看，请在原程序中操作。';
   if (agent) return '子代理没有独立控制台，请切换到主会话后打开控制台。';
@@ -103,7 +103,7 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (T.listError) return T.listError;
   if (!T.listLoaded) return '正在读取控制台状态，请稍后重试。';
   const sourceOfUid = typeof sessionSourceOf === 'function' ? sessionSourceOf(uid) : String(uid).split(':')[0];
-  if (['claude', 'grok', 'agy', 'kiro', 'codebuddy'].includes(sourceOfUid) && (S.liveSdk.has(uid) || sessionHasRunningSdk(uid)))
+  if (!allowModeSwitch && ['claude', 'grok', 'agy', 'kiro', 'codebuddy'].includes(sourceOfUid) && (S.liveSdk.has(uid) || sessionHasRunningSdk(uid)))
     return sourceOfUid === 'kiro'
       ? 'SDK 会话运行中，请先停止 SDK 会话再切换到 CLI 终端'
       : '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。';
@@ -247,6 +247,7 @@ const SessionContentView = {
       button?.classList.toggle('on', this.kind === kind);
       button?.setAttribute('aria-pressed', String(this.kind === kind));
     }
+    refreshSessionRunControls();
     return this.kind;
   },
   open(kind, uid, agent, options = {}) {

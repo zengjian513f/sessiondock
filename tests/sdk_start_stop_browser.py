@@ -49,6 +49,52 @@ def exercise(browser, base, source, screenshots, label):
         row.click()
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         assert not opens
+        # An independent CLI is live without a managed terminal or SDK.
+        # Reading/editing its ordinary conversation must never advertise a launch.
+        external_live = {'known': True, 'uids': [uid], 'working_uids': [uid],
+                         'tmux_uids': [], 'sdk_uids': []}
+        live_route = re.compile(r'/api/live(?:\?|$)')
+        page.route(live_route, lambda route: route.fulfill(json=external_live))
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        notice = page.locator('#composer-input-status')
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-external.png'))
+        expect(page.locator('#conversation-status .sdk-status')).to_have_text('正在外部CLI运行')
+        expect(page.locator('#conversation-status .composer-run-action')).to_have_text('接管')
+        expect(notice).not_to_contain_text('点击输入框启动')
+        writes = []
+        page.on('request', lambda request: writes.append(request.url)
+                if request.method == 'POST' and any(path in request.url for path in
+                    ('/open', '/resume', '/takeover', '/send', '/turn')) else None)
+        editor = page.locator('#cinput')
+        editor.click()
+        editor.fill('independent CLI draft')
+        editor.press('Enter')
+        expect(editor).to_be_focused()
+        expect(editor).to_have_value('independent CLI draft' + ('\n' if width < 720 else ''))
+        expect(page.locator('#csend')).to_be_disabled()
+        assert not writes, writes
+        for key, message in [('sdk_uids', '会话正在 SDK 中运行'),
+                             ('tmux_uids', '会话终端正在运行')]:
+            external_live['sdk_uids'] = [uid] if key == 'sdk_uids' else []
+            external_live['tmux_uids'] = [uid] if key == 'tmux_uids' else []
+            page.evaluate('refreshLive(true)')
+            expect(notice).to_contain_text(message)
+            editor.click()
+            expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+            assert not writes, writes
+            page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-{key}.png'))
+        external_live['sdk_uids'] = []
+        external_live['tmux_uids'] = []
+        # The same page recovers the idle launch hint from the next live reply.
+        external_live['uids'] = []
+        external_live['working_uids'] = []
+        page.evaluate('refreshLive(true)')
+        expect(page.locator('#conversation-status .sdk-status')).to_have_text('未运行')
+        expect(page.locator('#conversation-status .composer-run-action')).to_have_text('启动')
+        assert not writes, writes
+        page.unroute(live_route)
+        editor.fill('')
         set_mode('sdk')
         page.reload(wait_until='networkidle')
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
@@ -90,7 +136,7 @@ def exercise(browser, base, source, screenshots, label):
         after = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         assert after == before, {'before':before, 'after':after, 'opens':opens}
         assert page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)') == order
-        draft = f'draft for input click {label} {source} {width}'
+        draft = f'draft for explicit start {label} {source} {width}'
         with page.expect_response(lambda response: response.request.method == 'POST'
                                   and response.url.endswith('/api/session/conversation')):
             page.locator('#sdk-input').fill(draft)
@@ -106,10 +152,11 @@ def exercise(browser, base, source, screenshots, label):
 
         def start(repeat=True):
             editor = page.locator('#sdk-input')
-            # A real pointer/touch click starts, even when the editor already
-            # has programmatic focus. Repeated clicks must not duplicate opens.
+            before = len(opens)
             (editor.tap if width < 720 else editor.click)()
-            if repeat: editor.click()
+            editor.click()
+            assert len(opens) == before, 'editor clicks must only edit the draft'
+            page.locator('#sdk-composer .composer-run-action').click()
 
         def stop():
             button = page.locator('#a-session-toggle')
@@ -119,7 +166,7 @@ def exercise(browser, base, source, screenshots, label):
             expect(button).to_have_attribute('aria-label', '启动会话')
 
         expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('未运行')
-        expect(page.locator('.footer-session-toggle')).to_have_count(0)
+        expect(page.locator('#sdk-composer .composer-run-action')).to_have_text('启动')
         if label == 'node' and width == 1280 and source == 'codex':
             endpoint = '**/api/codex-sdk/open'
             page.route(endpoint, lambda route: route.fulfill(status=503, json={'error':'Synthetic startup failure'}), times=1)
@@ -168,6 +215,10 @@ def exercise(browser, base, source, screenshots, label):
         live_route = re.compile(r'/api/live(?:\?|$)')
         page.route(live_route, lambda route: route.fulfill(json={
             'uids': [], 'sdk_uids': [], 'tmux_uids': [], 'working_uids': []}))
+        # View selection now also reads the per-session runtime endpoint.
+        runtime_route = '**/api/session/runtime?*'
+        page.route(runtime_route, lambda route: route.fulfill(json={
+            'known': True, 'sdk': False, 'tmux': False, 'external': False}))
         page.reload(wait_until='networkidle')
         expect(page.locator('.sdk-history')).to_be_visible()
         expect(page.locator('#sdk-composer')).to_be_visible()
@@ -175,6 +226,7 @@ def exercise(browser, base, source, screenshots, label):
         count = len(opens)
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-discovery-pending.png'))
         page.unroute(live_route)
+        page.unroute(runtime_route)
         page.evaluate('refreshLive(true)')
         expect(page.locator('#sdk-input')).to_be_visible()
         connected()
@@ -270,6 +322,8 @@ def child_check(browser, root, binary, screenshots):
         page.screenshot(path=str(screenshots/'codex-child-conversation.png'))
         page.locator('#a-sdk').click()
         page.locator('#sdk-input').click()
+        assert not fake.methods('thread/resume')
+        page.locator('#sdk-composer .composer-run-action').click()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
         page.screenshot(path=str(screenshots/'codex-child-started.png'))

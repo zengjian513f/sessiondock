@@ -526,7 +526,7 @@ async function toggleLinkedTermSession(uid, terminalOnly = false) {
 }
 
 // ---------------------------------------------------------------- 接管
-async function takeover(uid, btn, keepConversation = false) {
+async function takeover(uid, btn, keepConversation = false, confirmed = false) {
   const setBtn = (t, dis) => {
     if (btn) { btn.title = btn.ariaLabel = t; btn.setAttribute('aria-busy', String(dis)); }
   };
@@ -535,12 +535,12 @@ async function takeover(uid, btn, keepConversation = false) {
     // Takeover is an idempotent, server-resolved `resume` receipt; the
     // request ID keeps a retried click from starting a second CLI.
     const request_id = requestId();
-    let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), request_id });
+    let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), request_id, ...(confirmed ? {force:true} : {}) });
     if (d.needs_confirm) {
       const n = (d.pids || []).length;
       const ok = await appConfirm(
-        `这个会话正在运行中（${n} 个进程），而且不在 tmux 里，无法直接接入。\n\n`
-        + `接管会先结束正在运行的实例，再用 tmux 重新打开它。\n`
+        `这个会话正在外部 CLI 中运行（${n} 个进程），无法直接接入。\n\n`
+        + `接管会先停止外部运行，再由 SessionDock 以 CLI 模式重新启动此会话。\n`
         + `未保存的输入会丢失，已完成的对话不受影响。\n\n继续吗？`);
       if (!ok) return;
       setBtn('结束旧实例…', true);
@@ -5217,13 +5217,14 @@ function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);
+  const live = sessionLiveStatus(composerUid);
   const lifecycle = composerUid && !takenOver(composerUid) && !receipt
-    ? {state:'starting', message:'会话未在终端运行，点击输入框启动；草稿可继续编辑'}
-    : sessionComposerEnded(composerUid)
-    ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
+    ? live.sdk ? {state:'blocked', message:'会话正在 SDK 中运行，请切换到 SDK 发送；草稿可继续编辑'}
+      : live.tmux ? {state:'blocked', message:'会话终端正在运行，请打开终端连接；草稿可继续编辑'} : null
+    : sessionComposerEnded(composerUid) ? null
     : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
       ? {state:'starting', message:'会话正在启动；输入已保留'} : null;
-  let status = lifecycle || (draft && composerUsesInputStatus()
+  let status = lifecycle || (takenOver(composerUid) && draft && composerUsesInputStatus()
     && !composerInputAllowsSend(draft.inputStatus)
     ? draft.inputStatus || composerInputStatus(null) : null);
   // Brief initial checks should not flash a notice. This only delays presentation;
@@ -6024,7 +6025,6 @@ async function submitComposer({initial = false} = {}) {
   }
 }
 
-$('#cinput').addEventListener('click', () => startComposerSession(composerUid, null, 'cli'));
 $('#cinput').addEventListener('input', e => {
   const draft = composerDraft();
   if (draft) { draft.text = e.target.value; persistComposerDraft(); }

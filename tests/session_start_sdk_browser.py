@@ -42,18 +42,15 @@ def exercise(browser, base, corpus, sid, node, width, theme, output):
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
         page.locator(f'#side .item[data-uid="{uid}"]').click()
+        page.locator('#sdk-composer .composer-run-action').click()
         expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic SDK unavailable')
         expect(page.locator('#session-content-view')).to_be_visible()
         page.screenshot(path=str(output / f'{label}-before.png'))
-        if width > 600:
-            page.locator(f'#side .item[data-uid="{uid}"]').click(button='right')
-            start = page.locator('#item-menu [data-act=stop]')
-            expect(start).to_have_text('启动会话')
-            start.click()
-        else:
-            if not page.locator('#a-session-toggle').is_visible():
-                page.locator('#a-more').click()
-            page.locator('#a-session-toggle').click()
+        if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
+        page.locator(f'#side .item[data-uid="{uid}"]').click(button='right')
+        start = page.locator('#item-menu [data-act="start-cli"]')
+        expect(start).to_have_text('启动CLI模式')
+        start.click()
         try:
             expect(page.locator('#session-content-view')).to_have_count(0, timeout=12000)
             expect(page.locator('#termpane')).to_be_visible()

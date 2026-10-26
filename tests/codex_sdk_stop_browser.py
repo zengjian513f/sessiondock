@@ -139,7 +139,7 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     expect(page.locator('.sdk-history')).to_contain_text(LATER)
     action = page.locator('#a-session-toggle')
     if not action.is_visible(): page.locator('#a-more').click()
-    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as stopped:
+    with page.expect_response(lambda response: response.url.endswith('/api/codex-sdk/stop')) as stopped:
         action.click()
     result = stopped.value.json()
     assert stopped.value.status == 200 and result['stopped'], result
@@ -148,7 +148,15 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
         'view': page.evaluate('({uid:CodexSdkView.uid,connected:CodexSdkView.connected,stopped:CodexSdkView.stopped,sel:S.sel})')}
     expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
     assert page.evaluate('S.sel') == source
+    # SDK power leaves the coexisting CLI host alive; stop CLI separately.
+    assert page.evaluate('uid => T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', source)
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
+    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as cli_stopped:
+        page.locator('#item-menu [data-act="stop-cli"]').click()
+    assert cli_stopped.value.ok, cli_stopped.value.text()
     page.wait_for_function('uid => !T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', arg=source)
+    if 'narrow' in label: page.locator(f'#side .item[data-uid="{source}"]').click()
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and branch in live['sdk_uids'], live
@@ -160,18 +168,26 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     page.wait_for_function('CodexSdkView.connected')
     action = page.locator('#a-session-toggle')
     if not action.is_visible(): page.locator('#a-more').click()
-    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as stopped:
+    with page.expect_response(lambda response: response.url.endswith('/api/codex-sdk/stop')) as stopped:
         action.click()
     result = stopped.value.json()
     assert stopped.value.status == 200 and result['stopped'], result
     expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': FORK}
     live = page.request.get(base + '/api/live?force=1').json()
+    assert branch not in live['sdk_uids'] and branch in live['tmux_uids'], live
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{branch}"]').click(button='right')
+    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as cli_stopped:
+        page.locator('#item-menu [data-act="stop-cli"]').click()
+    assert cli_stopped.value.ok, cli_stopped.value.text()
+    page.wait_for_function('uid => !T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', arg=branch)
+    live = page.request.get(base + '/api/live?force=1').json()
     assert branch not in live['uids'] and source not in live['uids'], live
     expect(page.locator('#side .item')).to_have_count(2)
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-branch-stopped.png'))
     context.close()
-    print('PASS ' + label + ': middle fork excludes later messages; exact parent PTY/SDK stop; independent branch stop; daemon retained', flush=True)
+    print('PASS ' + label + ': middle fork excludes later messages; separate parent SDK and CLI stops; independent branch stop; daemon retained', flush=True)
 
 
 def unreadable_history(browser, base, fake, screenshots, label, case):
@@ -194,8 +210,8 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
         if 'narrow' in label and page.locator('.mobile-back').first.is_visible():
             page.locator('.mobile-back').first.click()
         page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
-        with page.expect_response(lambda r: r.url.endswith('/api/session/stop')) as reply:
-            page.locator('#item-menu [data-act="stop"]').click()
+        with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/stop')) as reply:
+            page.locator('#item-menu [data-act="stop-sdk"]').click()
         return reply.value
     if case == 'unreadable':
         fake.fail_interrupt = True
@@ -218,7 +234,7 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
         # Returning to the mobile list closes the SDK view. Its sidebar action
         # must offer start after a stop, without reopening unreadable history.
         page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
-        expect(page.locator('#item-menu [data-act="stop"]')).to_have_text('启动会话')
+        expect(page.locator('#item-menu [data-act="start-sdk"]')).to_have_text('启动SDK模式')
     else:
         expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
         expect(page.locator('.sdk-pane #sdk-send')).to_be_disabled()
@@ -229,7 +245,7 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
     # A failed explicit reopen cannot revive the daemon's stale loaded entry.
     page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
     with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/open')) as reopened:
-        page.locator('#item-menu [data-act="stop"]').click()
+        page.locator('#item-menu [data-act="start-sdk"]').click()
     assert reopened.value.status != 200, reopened.value.text()
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and other in live['sdk_uids'], live

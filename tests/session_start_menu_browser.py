@@ -1,4 +1,4 @@
-"""Configured CLI start: all five sources through private real PTYs."""
+"""Explicit CLI menu start: all five sources through private real PTYs."""
 import argparse
 from pathlib import Path
 import tempfile
@@ -59,7 +59,7 @@ def exercise(browser, base, source, shots, label):
         page.wait_for_function('T.listLoaded')
         from session_start_fixtures import choose_mode
         choose_mode(page, source, 'cli')
-        expect(page.locator('#agent-start-settings [data-agent-start-mode]')).to_have_count(5)
+        expect(page.locator('#agent-start-settings [data-agent-start-mode]')).to_have_count(7)
         assert page.locator('#agent-start-settings').evaluate("group => !!(document.querySelector('#setting-console-paste-files').compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING)")
         choices = page.locator('#agent-start-settings .setting-row')
         boxes = [choices.nth(i).bounding_box() for i in range(5)]
@@ -84,7 +84,7 @@ def exercise(browser, base, source, shots, label):
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
         uid = row.get_attribute('data-uid')
         row.click(button='right')
-        start = page.locator('#item-menu [data-act="stop"]')
+        start = page.locator('#item-menu [data-act="start-cli"]')
         group = page.locator('#item-menu [data-act="group"]')
         cross_submenu(page, group, page.locator('#session-group-menu'), page.locator('#session-group-menu-add'))
         page.locator('#item-menu [data-act="copy-identity"]').hover()
@@ -104,8 +104,9 @@ def exercise(browser, base, source, shots, label):
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-cli-running.png'))
         if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
         row.click(button='right')
-        expect(start).to_have_text('停止会话')
-        start.click()
+        stop = page.locator('#item-menu [data-act="stop-cli"]')
+        expect(stop).to_have_text('停止CLI模式')
+        stop.click()
         page.wait_for_function('uid => !S.liveTmux.has(uid)', arg=uid)
         assert not errors, errors
         context.close()
@@ -131,6 +132,6 @@ def main():
                     try: exercise(browser,f'http://127.0.0.1:{hub.port}',source,args.screenshots,'hub')
                     finally: hub.stop()
         finally: browser.close()
-    print('PASS five-source CLI preference: node/Hub, wide/narrow, group submenu hover, launch, terminal and stop')
+    print('PASS five-source explicit CLI menu: node/Hub, wide/narrow, group submenu hover, launch, terminal and stop')
 
 if __name__=='__main__': main()

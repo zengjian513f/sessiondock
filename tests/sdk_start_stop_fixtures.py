@@ -20,6 +20,22 @@ from opencode_sdk_fixtures import FakeOpenCode
 from send_browser import initialize
 
 
+def mixed_launcher(peer, root, extra):
+    """One launcher dispatches PTY CLI to a shell and SDK pipes to its fake peer."""
+    import sys
+    from terminal_browser import SHELL_SCRIPT
+    config = json.loads(peer.launcher.read_text())
+    for index, profile in enumerate(config['profiles']):
+        script = root/f'mixed-peer-{index}.py'
+        script.write_text('import os, sys\n'
+            + f'if os.isatty(0): os.execv("/bin/sh", ["sh", "-c", {SHELL_SCRIPT!r}])\n'
+            + f'os.execv({profile["executable"]!r}, [{profile["executable"]!r}, *{profile.get("args", [])!r}, *sys.argv[1:]])\n')
+        profile.update(executable=sys.executable, args=[str(script)])
+    config.update(host_binary=str(REPO/'target/debug/ptyhost'), host_dir=str(root/'menu-host'))
+    path=root/'mixed-launcher.json';path.write_text(json.dumps(config))
+    extra['SESSIONDOCK_LAUNCHER_CONFIG']=str(path)
+
+
 @contextmanager
 def provider(source, root, binary, *, cli=False, report=False):
     extra = node_env(root, free_port(), '127.0.0.0/8')
@@ -38,10 +54,18 @@ def provider(source, root, binary, *, cli=False, report=False):
             'executable':'/bin/sh', 'args':['-c', SHELL_SCRIPT]}]}))
         initialize('--initialize-lifecycle', root/'menu-ledger', binary.resolve())
         extra.update(SESSIONDOCK_LAUNCHER_CONFIG=str(launcher), SESSIONDOCK_PTYHOST_DIR=str(root/'menu-host'),
-            SESSIONDOCK_LIFECYCLE_DIR=str(root/'menu-ledger'), SESSIONDOCK_NATIVE_SDKS='off',
-            SESSIONDOCK_CODEX_APP_SERVER='off')
+            SESSIONDOCK_LIFECYCLE_DIR=str(root/'menu-ledger'))
+        if cli != 'shared':
+            extra.update(SESSIONDOCK_NATIVE_SDKS='off', SESSIONDOCK_CODEX_APP_SERVER='off')
     if source == 'claude':
         peer = ClaudeFixture(root)
+        if cli == 'shared': mixed_launcher(peer, root, extra)
+        with peer.server(binary, extra) as base:
+            yield base, peer, extra
+    elif source == 'codebuddy':
+        from codebuddy_sdk_fixtures import CodebuddyFixture
+        peer = CodebuddyFixture(root)
+        if cli == 'shared': mixed_launcher(peer, root, extra)
         with peer.server(binary, extra) as base:
             yield base, peer, extra
     elif source == 'codex':
@@ -57,6 +81,7 @@ def provider(source, root, binary, *, cli=False, report=False):
         for name in ('claude', 'codex', 'grok', 'state'):
             (root/name).mkdir()
         peer = GrokFixture(root)
+        if cli == 'shared': mixed_launcher(peer, root, extra)
         initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
         with server(SimpleNamespace(root=root), binary, 'off', {
             **peer.env, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
@@ -69,6 +94,7 @@ def provider(source, root, binary, *, cli=False, report=False):
         for name in ('claude', 'codex', 'grok', 'state'):
             (root/name).mkdir()
         peer = KiroFixture(root, REPO/'target/debug/ptyhost')
+        if cli == 'shared': mixed_launcher(peer, root, extra)
         initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
         try:
             with server(SimpleNamespace(root=root), binary, 'off', {
@@ -82,6 +108,7 @@ def provider(source, root, binary, *, cli=False, report=False):
             stop_private_sdkhosts(root)
     elif source == 'agy':
         peer = AgyFixture(root, REPO/'target/debug/ptyhost')
+        if cli == 'shared': mixed_launcher(peer, root, extra)
         with patch.dict('os.environ', peer.env):
             initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
             with isolated_server(Corpus(root), binary, host_dir=root/'host', lifecycle_dir=root/'ledger',
@@ -96,6 +123,9 @@ def provider(source, root, binary, *, cli=False, report=False):
             launcher = root/'launcher.json'
             launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO/'target/debug/ptyhost'),
                 'host_dir': str(root/'host'), 'profiles': [peer.profile()]}))
+            if cli == 'shared':
+                peer.launcher = launcher
+                mixed_launcher(peer, root, extra)
             initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
             with isolated_server(Corpus(root), binary, host_dir=root/'host', state_dir=root/'state',
                     lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={
