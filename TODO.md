@@ -70,6 +70,9 @@
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
   Codex 推理禁用退避修复 `374daabf` 已交付 lyra、cygnus、pavo、hub；orion、cetus
   离线待补发，vela 启动失败，文件自动回滚后服务仍未恢复（`ROLLBACK_FAILED`）。
+  外部 CLI 启动提示修复 `5fbfc1e3`（仅前端）同样待补发 orion、cetus、vela；
+  四个在线目标已健康，vela 恢复旧前端后服务仍不可用。验证和截图位于未跟踪的
+  `target/bug-da6b3f/`，部署报告位于 `target/deploy/20261026-063432-5fbfc1e3/`。
 
 - [ ] 恢复 Vela 的服务启动：气泡修复 `89b45c19` 发布及自动恢复旧文件后，launchd
   均退出 1，stderr 为 `Store(Invalid)`，部署结果 `ROLLBACK_FAILED`，健康端点不可用。
