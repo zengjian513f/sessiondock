@@ -49,6 +49,50 @@ def exercise(browser, base, source, screenshots, label):
         row.click()
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         assert not opens
+        # An independent CLI is live without a managed terminal or SDK.
+        # Reading/editing its ordinary conversation must never advertise a launch.
+        external_live = {'known': True, 'uids': [uid], 'working_uids': [uid],
+                         'tmux_uids': [], 'sdk_uids': []}
+        live_route = re.compile(r'/api/live(?:\?|$)')
+        page.route(live_route, lambda route: route.fulfill(json=external_live))
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        notice = page.locator('#composer-input-status')
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-external.png'))
+        expect(notice).to_contain_text('会话正在外部 CLI 中运行')
+        expect(notice).not_to_contain_text('点击输入框启动')
+        writes = []
+        page.on('request', lambda request: writes.append(request.url)
+                if request.method == 'POST' and any(path in request.url for path in
+                    ('/open', '/resume', '/takeover', '/send', '/turn')) else None)
+        editor = page.locator('#cinput')
+        editor.click()
+        editor.fill('independent CLI draft')
+        editor.press('Enter')
+        expect(editor).to_be_focused()
+        expect(editor).to_have_value('independent CLI draft' + ('\n' if width < 720 else ''))
+        expect(page.locator('#csend')).to_be_disabled()
+        assert not writes, writes
+        for key, message in [('sdk_uids', '会话正在 SDK 中运行'),
+                             ('tmux_uids', '会话终端正在运行')]:
+            external_live['sdk_uids'] = [uid] if key == 'sdk_uids' else []
+            external_live['tmux_uids'] = [uid] if key == 'tmux_uids' else []
+            page.evaluate('refreshLive(true)')
+            expect(notice).to_contain_text(message)
+            editor.click()
+            expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+            assert not writes, writes
+            page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-{key}.png'))
+        external_live['sdk_uids'] = []
+        external_live['tmux_uids'] = []
+        # The same page recovers the idle launch hint from the next live reply.
+        external_live['uids'] = []
+        external_live['working_uids'] = []
+        page.evaluate('refreshLive(true)')
+        expect(notice).to_contain_text('点击输入框启动')
+        assert not writes, writes
+        page.unroute(live_route)
+        editor.fill('')
         set_mode('sdk')
         page.reload(wait_until='networkidle')
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
@@ -168,6 +212,10 @@ def exercise(browser, base, source, screenshots, label):
         live_route = re.compile(r'/api/live(?:\?|$)')
         page.route(live_route, lambda route: route.fulfill(json={
             'uids': [], 'sdk_uids': [], 'tmux_uids': [], 'working_uids': []}))
+        # View selection now also reads the per-session runtime endpoint.
+        runtime_route = '**/api/session/runtime?*'
+        page.route(runtime_route, lambda route: route.fulfill(json={
+            'known': True, 'sdk': False, 'tmux': False, 'external': False}))
         page.reload(wait_until='networkidle')
         expect(page.locator('.sdk-history')).to_be_visible()
         expect(page.locator('#sdk-composer')).to_be_visible()
@@ -175,6 +223,7 @@ def exercise(browser, base, source, screenshots, label):
         count = len(opens)
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-discovery-pending.png'))
         page.unroute(live_route)
+        page.unroute(runtime_route)
         page.evaluate('refreshLive(true)')
         expect(page.locator('#sdk-input')).to_be_visible()
         connected()

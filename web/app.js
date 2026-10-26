@@ -2468,6 +2468,7 @@ function paintLive() {
   const selected = S.sessions.find(x => x.uid === S.sel);
   if (selected) {
     renderSessionAction(selected);
+    renderComposerInputStatus();
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
   paintTransferAvailability($('#a-clone-group'), S.sel);
@@ -7505,6 +7506,8 @@ function refreshSessionRunControls() {
 function startComposerSession(uid, agent, mode) {
   if (!uid || S.sel !== uid || S.agent !== agent) return;
   if (mode === 'sdk' && !SdkView.readOnly && !SdkView.openFailed) return;
+  // Editing a live session's draft must not reopen its view or take over its CLI.
+  if (mode === 'cli' && sessionLiveStatus(uid).live) return;
   const row = sessionRunRow(uid);
   if (row) void toggleSessionRun(agent ? {...row, agent_id: agent} : row, null, 'start', mode);
 }

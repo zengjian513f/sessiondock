@@ -5217,8 +5217,16 @@ function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);
+  // No terminal binding is not evidence that the native session has stopped.
+  const live = sessionLiveStatus(composerUid);
   const lifecycle = composerUid && !takenOver(composerUid) && !receipt
-    ? {state:'starting', message:'会话未在终端运行，点击输入框启动；草稿可继续编辑'}
+    ? live.live
+      ? {state:'blocked', message:live.sdk
+        ? '会话正在 SDK 中运行，请切换到 SDK 发送；草稿可继续编辑'
+        : live.tmux
+          ? '会话终端正在运行，请打开终端连接；草稿可继续编辑'
+          : '会话正在外部 CLI 中运行，请在原程序中操作；草稿可继续编辑'}
+      : {state:'starting', message:'会话未在终端运行，点击输入框启动；草稿可继续编辑'}
     : sessionComposerEnded(composerUid)
     ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
     : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
