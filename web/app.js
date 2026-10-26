@@ -7502,9 +7502,17 @@ function sessionModeUnavailable(row, mode, intent) {
   return sessionStartUnavailable(row, mode);
 }
 function paintSessionRunMenu(row) {
-  for (const button of document.querySelectorAll('#item-menu [data-run-mode]'))
-    setControlUnavailable(button, sessionModeUnavailable(row, button.dataset.runMode, button.dataset.runIntent));
+  for (const button of document.querySelectorAll('#item-menu [data-run-mode]')) {
+    const mode = button.dataset.runMode;
+    const intent = sessionModeActive(row, mode) ? 'stop' : 'start';
+    setControlUnavailable(button, '');
+    button.dataset.runIntent = intent;
+    button.dataset.act = `${intent}-${mode}`;
+    button.textContent = `${intent === 'stop' ? '停止' : '启动'}${mode.toUpperCase()}模式`;
+    setControlUnavailable(button, sessionModeUnavailable(row, mode, intent));
+  }
 }
+
 function paintSessionRunControl(button, row) {
   if (!button) return;
   const mode = currentSessionRunMode(row), running = sessionModeActive(row, mode);

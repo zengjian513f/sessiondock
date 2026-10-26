@@ -27,11 +27,14 @@ def exercise(browser, base, source, shots, label):
             card=page.locator(f'#side .item[data-uid^="{source}:"]').first
             if not card.is_visible():page.locator(f'#chips button[data-source="{source}"]').click()
             uid=card.get_attribute('data-uid')
+            card=page.locator(f'#side .item[data-uid="{uid}"]')
             def menu(action):
                 if page.locator('#detail .mobile-back').is_visible():page.locator('#detail .mobile-back').click()
                 card.click(button='right')
                 button=page.locator(f'#item-menu [data-act="{action}"]')
                 expect(button).not_to_have_attribute('aria-disabled','true')
+                expect(page.locator('#item-menu [data-run-mode]')).to_have_count(2)
+                page.screenshot(path=str(shots/f'{label}-{source}-{width}-{action}-menu.png'))
                 return button
             def power():
                 button=page.locator('#a-session-toggle')
@@ -40,9 +43,10 @@ def exercise(browser, base, source, shots, label):
             def stopped(mode):page.wait_for_function('mode => !sessionModeActive(sessionRunRow(S.sel),mode) && !ConsoleUI.busy.has(S.sel)',arg=mode)
             def started(mode):page.wait_for_function('mode => sessionModeActive(sessionRunRow(S.sel),mode) && !ConsoleUI.busy.has(S.sel)',arg=mode)
             menu('start-sdk')
-            expect(page.locator('#item-menu [data-run-mode]')).to_have_count(4)
+            expect(page.locator('#item-menu [data-run-mode]')).to_have_count(2)
             for mode in ('sdk','cli'):
-                expect(page.locator(f'#item-menu [data-act="stop-{mode}"]')).to_have_attribute('aria-disabled','true')
+                expect(page.locator(f'#item-menu [data-run-mode="{mode}"]')).to_have_text(f'启动{mode.upper()}模式')
+                expect(page.locator(f'#item-menu [data-act="stop-{mode}"]')).to_have_count(0)
             page.screenshot(path=str(shots/f'{label}-{source}-{width}-idle-menu.png'))
             page.locator('#item-menu [data-act="start-sdk"]').click();started('sdk')
             expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed','true')
@@ -56,15 +60,16 @@ def exercise(browser, base, source, shots, label):
                 power().click();started('sdk')
                 assert writes[-1][0] == 'open',writes
             # Start CLI despite the SDK being active, cancel before any mutation.
-            before=len(writes);menu('start-cli').click()
+            action=menu('start-cli');before=len(writes);action.click()
             exclusive=source in ('claude','grok','agy','kiro','codebuddy')
             dialog=page.locator('dialog.app-popup[open]')
             if exclusive:
                 expect(dialog).to_contain_text('启动CLI模式会先停止当前SDK模式')
-                assert len(writes)==before
+                # SDK view reconnects can issue /open; cancellation must not stop SDK or launch CLI.
+                assert not any(path in ('stop','takeover') for path,_ in writes[before:]),writes
                 page.screenshot(path=str(shots/f'{label}-{source}-{width}-switch-confirm.png'))
                 dialog.locator('[data-popup-action="cancel"]').click()
-                started('sdk');assert len(writes)==before
+                started('sdk');assert not any(path in ('stop','takeover') for path,_ in writes[before:]),writes
                 if source == 'claude' and label == 'node' and width == 1280:
                     for response in ({'error':'Synthetic mode stop failure'}, {'ok':True,'stopped':False,'stage':'uncertain'}):
                         page.route('**/api/native-sdk/stop',lambda route, *, response=response:

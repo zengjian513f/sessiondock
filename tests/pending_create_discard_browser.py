@@ -175,7 +175,7 @@ def assert_pending_stop_disabled(page, context, base, receipt, uid, width):
         row.dispatch_event("click", {"bubbles": True})
     else:
         row.click(button="right")
-    stop = page.locator('#item-menu [data-act="stop-cli"]')
+    stop = page.locator('#item-menu [data-run-mode="cli"]')
     expect(stop).to_have_attribute("aria-disabled", "true")
     expect(stop).to_have_attribute("title", re.compile("停止后无法续接"))
     stop.click(force=True)
@@ -301,7 +301,7 @@ def run_source(page, context, base, source, work):
     # stop. Unused native AI rows still offer direct discard after the merge.
     row = page.locator(f'#side .item[data-uid="{native_uid or pending_uid}"]')
     row.click(button="right")
-    menu_stop = page.locator('#item-menu [data-act="stop-cli"]')
+    menu_stop = page.locator('#item-menu [data-run-mode="cli"]')
     menu_delete = page.locator('#item-menu [data-act="delete"]')
     if source == "shell":
         expect(menu_stop).to_be_visible()
