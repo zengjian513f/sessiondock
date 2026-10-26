@@ -359,7 +359,10 @@
 </div>
 
 <div id="item-menu" class="ctx-menu" hidden role="menu" aria-label="会话操作">
-  <button type="button" role="menuitem" data-act="stop" hidden>启动会话</button>
+  <button type="button" role="menuitem" data-act="start-sdk" data-run-mode="sdk" data-run-intent="start">启动SDK模式</button>
+  <button type="button" role="menuitem" data-act="start-cli" data-run-mode="cli" data-run-intent="start">启动CLI模式</button>
+  <button type="button" role="menuitem" data-act="stop-sdk" data-run-mode="sdk" data-run-intent="stop">停止SDK模式</button>
+  <button type="button" role="menuitem" data-act="stop-cli" data-run-mode="cli" data-run-intent="stop">停止CLI模式</button>
   <button type="button" role="menuitem" data-act="copy-identity">复制会话标识</button>
   <button type="button" role="menuitem" data-act="pick">多选…</button>
   <hr role="separator">
@@ -649,7 +652,7 @@
       <input id="setting-console-paste-files" type="checkbox">
     </label>
     <section id="agent-start-settings" aria-labelledby="agent-start-settings-title">
-      <p id="agent-start-settings-title" class="setting-group-title">会话启动方式<small>用于新建、启动已有会话和报告问题；已运行会话保持原方式。</small></p>
+      <p id="agent-start-settings-title" class="setting-group-title">会话启动方式<small>用于新建、接续会话和报告问题；已有会话可按模式分别启动。</small></p>
     <label class="setting-row"><span><b>Codex</b></span><select data-agent-start-mode="codex" aria-label="Codex 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     <label class="setting-row"><span><b>Kiro</b></span><select data-agent-start-mode="kiro" aria-label="Kiro 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     <label class="setting-row"><span><b>CodeBuddy</b></span><select data-agent-start-mode="codebuddy" aria-label="CodeBuddy 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>

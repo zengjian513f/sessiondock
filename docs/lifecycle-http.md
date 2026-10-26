@@ -368,8 +368,11 @@ match SID/file identity and ancestry, never ports or fuzzy command-line text.
 
 ## Stopping a session
 
-`POST /api/session/stop {uid, request_id?}` accepts unrelated dictionary
+`POST /api/session/stop {uid, request_id?, mode?}` accepts unrelated dictionary
 members; a valid optional request ID only adds managed-stop replay.
+DELTA: `mode:"cli"` stops only the CLI and does not unsubscribe the Codex SDK
+thread. SDK-only controls use the provider SDK stop endpoint; omitted mode
+preserves the existing whole-session stop behavior for bulk operations.
 The UID is checked against the index's native catalog (404 `session_missing`),
 then resolved through a fresh guarded runtime observation and native process
 scan. Managed targets use `guarded_v1`; external targets use exact native
