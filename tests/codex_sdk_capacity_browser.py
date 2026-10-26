@@ -14,10 +14,11 @@ from codex_sdk_compose_browser import saved
 from codex_sdk_queue_browser import open_page
 from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
-from history_fixtures import BINARY
+from history_fixtures import BINARY, codex_row, encoded
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
+REASONING = "This model's reasoning capability is disabled. Please choose a different model."
 CAPACITY = 'Selected model is at capacity. Please try a different model.'
 
 class CapacityServer(ErrorsServer):
@@ -25,6 +26,20 @@ class CapacityServer(ErrorsServer):
         super().__init__(*args)
         self.retries = []
         self.reject_retry = False
+
+    def finish_reply(self, text, *, native=False, phase='final_answer'):
+        async def complete():
+            turn = self.turn
+            if not native:
+                await self._agent(turn, turn + '-reply', text, phase)
+            with self.rollout.open('ab') as rollout:
+                rollout.write(encoded(codex_row('event_msg', {'type': 'task_complete',
+                    'turn_id': turn, 'last_agent_message': text if phase == 'final_answer' else 'Done'})))
+            self.turn = None
+            await self.notify('turn/completed', {'turn': {
+                'id': turn, 'status': 'completed', 'items': [], 'error': None}})
+            await self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+        asyncio.run_coroutine_threadsafe(complete(), self.loop).result(timeout=5)
 
     async def _handle(self, writer, message):
         params = message.get('params', {})
@@ -121,9 +136,46 @@ def exercise(browser, base, fake, width, theme, screenshots, long):
             threading_event.wait(.1)
         assert len(fake.retries) == before + 1
         context, page = open_page(browser, base, width, theme)
+        box, send = page.locator('#sdk-input'), page.locator('#sdk-send')
+        page.on('pageerror', lambda error: errors.append(str(error)))
         expect(page.locator('.sdk-live')).to_contain_text('容量恢复后继续处理')
         fake.finish('completed')
         expect(page.locator('#sdk-send')).to_have_text('发送')
+    # BUG-20261026-030436-0b8fbd: this upstream refusal arrives as
+    # assistant output and a successful completion, without any error code.
+    submit('思考能力停用后继续原上下文')
+    before = len(fake.retries)
+    started = time.monotonic()
+    fake.finish_reply(REASONING)
+    page.wait_for_function('CodexSdkView.summary?.capacity_retry?.delay_seconds === 15')
+    expect(page.locator('#sdk-status-menu')).to_contain_text(REASONING)
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_text('正在重试')
+    shot('reasoning-disabled')
+    page.reload(wait_until='networkidle')
+    page.wait_for_function('CodexSdkView.summary?.capacity_retry?.delay_seconds === 15')
+    page.wait_for_function('!!CodexSdkView.turn', timeout=22000)
+    assert len(fake.retries) == before + 1
+    assert fake.retries[-1] - started >= 14.8
+    # Missing live message: the same completed turn's native last reply is
+    # authoritative. This must retain the previous delay rather than reset it.
+    fake.finish_reply(REASONING, native=True)
+    page.wait_for_function('CodexSdkView.summary?.capacity_retry?.delay_seconds === 30')
+    expect(page.locator('#sdk-status-menu')).to_contain_text(REASONING)
+    page.locator('#sdk-stop').click()
+    page.wait_for_function('CodexSdkView.summary?.capacity_retry == null')
+    page.reload(wait_until='networkidle')
+    assert page.evaluate('CodexSdkView.summary.capacity_retry == null')
+    # A structured error also participates, but quotes and commentary do not.
+    submit('结构化错误使用相同退避')
+    fake.finish('failed', REASONING)
+    page.wait_for_function('CodexSdkView.summary?.capacity_retry?.delay_seconds === 15')
+    page.locator('#sdk-stop').click()
+    for text, phase in ((f'Quoted error: {REASONING}', 'final_answer'), (REASONING, 'commentary')):
+        submit('正常说明不应触发退避')
+        fake.finish_reply(text, phase=phase)
+        expect(send).to_have_text('发送')
+        page.wait_for_timeout(1000)  # cover the node's native-file fallback tick
+        assert page.evaluate('CodexSdkView.summary.capacity_retry == null')
     assert not errors, errors
     context.close()
     print(f'PASS {width}/{theme}: capacity/native fallback, real backoff, reload, stop, new input, no replay', flush=True)

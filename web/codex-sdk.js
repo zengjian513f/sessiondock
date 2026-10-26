@@ -737,7 +737,7 @@ const CodexSdkView = {
     const errorText = this.summary?.last_error?.message || nativeError;
     const capacityRetry = this.summary?.capacity_retry;
     if (capacityRetry) {
-      parts.push(`容量不足，${capacityRetry.delay_seconds} 秒后自动重试（${new Date(capacityRetry.retry_at).toLocaleTimeString()}）；可停止重试。${capacityRetry.error?.message || ''}`);
+      parts.push(`正在重试，${capacityRetry.delay_seconds} 秒后自动重试（${new Date(capacityRetry.retry_at).toLocaleTimeString()}）；可停止重试。${capacityRetry.error?.message || ''}`);
       kind = 'retrying';
     }
     else if (errorText) { parts.push(`错误：${errorText}`); kind = 'blocked'; }

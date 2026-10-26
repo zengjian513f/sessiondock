@@ -1,4 +1,4 @@
-//! Retry confirmed model-capacity failures without replaying user input.
+//! Retry confirmed model availability failures without replaying user input.
 use super::Inner;
 use serde_json::{Value, json};
 use std::{
@@ -7,6 +7,13 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+
+pub(super) const REASONING_DISABLED: &str =
+    "This model's reasoning capability is disabled. Please choose a different model.";
+
+pub(super) fn reasoning_disabled(message: &str) -> Option<Value> {
+    (message.trim() == REASONING_DISABLED).then(|| json!({"message": REASONING_DISABLED}))
+}
 
 #[derive(Default)]
 pub(super) struct Retry {
@@ -24,6 +31,7 @@ impl Retry {
             || error["codex_error_info"] == "server_overloaded"
             || error["message"].as_str().is_some_and(|message| {
                 message.contains("Selected model is at capacity. Please try a different model.")
+                    || reasoning_disabled(message).is_some()
             });
         if !capacity || self.deadline.is_some() {
             return false;
@@ -86,8 +94,9 @@ impl Inner {
                     if inner.stopped.lock().expect("stopped").contains(live.id()) {
                         return;
                     }
-                    // Some daemon versions send systemError without turn.error.
-                    // Read only that exact completed turn; never revive an older
+                    // Some daemons omit turn.error or return an availability
+                    // refusal as a successful reply. Read only this completed
+                    // turn; never revive an older
                     // failure on open, reconnect, or after explicit cancellation.
                     if let Some((turn, path)) = live.capacity_check() {
                         let expected = turn.clone();
@@ -165,7 +174,16 @@ fn native_error(path: &str, turn: &str) -> Option<Value> {
             let payload = &row["payload"];
             match payload["type"].as_str() {
                 Some("task_complete") => {
-                    return (payload["turn_id"] == turn).then(|| payload["error"].clone());
+                    return (payload["turn_id"] == turn).then(|| {
+                        if !payload["error"].is_null() {
+                            payload["error"].clone()
+                        } else {
+                            payload["last_agent_message"]
+                                .as_str()
+                                .and_then(reasoning_disabled)
+                                .unwrap_or(Value::Null)
+                        }
+                    });
                 }
                 Some("task_started" | "turn_aborted") => return None,
                 _ => {}
