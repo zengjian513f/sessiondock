@@ -381,6 +381,13 @@ behavior; they do not require other sources to expose unsupported controls.
   (`serverOverloaded` / native `server_overloaded`, or the exact selected-model
   capacity message) schedules a node-owned continuation after 15, 30, 60, 120,
   240, 480, then 600 seconds; subsequent failures keep the 600-second interval.
+  DELTA (BUG-20261026-030436-0b8fbd): the exact message
+  `This model's reasoning capability is disabled. Please choose a different model.`
+  uses the same backoff, including when the upstream returns it as the complete
+  final assistant reply and marks the turn `completed` without an error. Only
+  the complete reply matches; quoted text and commentary do not. If the live
+  reply is absent, read `last_agent_message` from that matching latest native
+  `task_complete`; opening historical completed turns never arms a retry.
   Empty-input `turn/start` continues native context without replaying user input
   or changing model/effort/tier. A missing live error is recovered only from the
   matching latest native `task_complete`, never from an older turn. Native

@@ -152,7 +152,11 @@ impl LiveThread {
 
     pub(super) fn capacity_check(&self) -> Option<(String, String)> {
         let mut state = self.state.lock().expect("live");
-        if state.last_turn["status"] != "failed" || state.capacity.checked {
+        if !matches!(
+            state.last_turn["status"].as_str(),
+            Some("failed" | "completed")
+        ) || state.capacity.checked
+        {
             return None;
         }
         if !state.last_error.is_null() || state.resume["thread"]["path"].as_str().is_none() {
@@ -167,7 +171,12 @@ impl LiveThread {
 
     pub(super) fn capacity_error(&self, turn: &str, error: Value) {
         let mut state = self.state.lock().expect("live");
-        if state.last_turn["id"] != turn || state.last_turn["status"] != "failed" {
+        if state.last_turn["id"] != turn
+            || !matches!(
+                state.last_turn["status"].as_str(),
+                Some("failed" | "completed")
+            )
+        {
             return;
         }
         if state.capacity.checked {
@@ -179,6 +188,8 @@ impl LiveThread {
             let retry = state.capacity.summary();
             let event = state.event("bridge/capacityRetry", retry);
             let _ = self.tx.send(event);
+        } else if state.last_turn["status"] == "completed" {
+            state.capacity.cancel();
         }
     }
 
@@ -357,15 +368,31 @@ impl State {
                 self.last_turn = json!({
                     "id": params["turn"]["id"], "status": params["turn"]["status"],
                 });
+                // The upstream reasoning-disabled response can be a successful
+                // final assistant message, with no native error at all. Match
+                // only the complete final reply, never quotes or commentary.
+                let reply_error = params["turn"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                    .chain(self.items.values().rev())
+                    .find(|item| item["type"] == "agentMessage")
+                    .filter(|item| item["phase"] == "final_answer")
+                    .and_then(|item| item["text"].as_str())
+                    .and_then(super::capacity::reasoning_disabled);
                 self.items.clear();
                 self.retry_error = Value::Null;
                 if params["turn"]["status"] == "completed" {
-                    self.last_error = Value::Null;
+                    self.last_error = reply_error.unwrap_or(Value::Null);
                 } else if params["turn"]["status"] == "failed" && !params["turn"]["error"].is_null()
                 {
                     self.last_error = params["turn"]["error"].clone();
                 }
-                if params["turn"]["status"] == "failed" {
+                if matches!(
+                    params["turn"]["status"].as_str(),
+                    Some("failed" | "completed")
+                ) {
                     if !self.capacity.schedule(&self.last_error) && !self.last_error.is_null() {
                         self.capacity.cancel();
                     }
