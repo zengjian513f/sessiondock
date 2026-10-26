@@ -77,6 +77,10 @@
   orion、cetus 连接超时，vela 自动恢复旧文件后服务仍不可用，待恢复后补发。
   浏览器验证及视觉证据在未跟踪的 `target/explicit-composer-start/`，部署报告在
   `target/deploy/20261026-070212-3178d1eb/`。
+  分模式启动／停止与互斥切换确认 `fd99ce5d`（服务端及前端）已交付 lyra、cygnus、
+  pavo、hub 并通过健康检查；orion、cetus 连接超时，vela 文件自动回滚后服务仍未恢复
+  （`ROLLBACK_FAILED`），待恢复后补发。验证和视觉证据在未跟踪的
+  `target/session-mode-controls/`，部署报告在 `target/deploy/20261026-072055-fd99ce5d/`。
 
 - [ ] 恢复 Vela 的服务启动：气泡修复 `89b45c19` 发布及自动恢复旧文件后，launchd
   均退出 1，stderr 为 `Store(Invalid)`，部署结果 `ROLLBACK_FAILED`，健康端点不可用。
