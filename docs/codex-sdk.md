@@ -68,6 +68,13 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   A permanently closed browser EventSource also schedules a reconnect; closing
   or switching the view cancels that timer. Reconnection retains the unsent draft
   and recovers the server snapshot without submitting another turn.
+  A native RPC that reaches its 120-second deadline retires the whole bridge
+  connection, fails its pending calls and triggers the same retained-subscription
+  recovery even when the socket remains open. Waiting for that deadline outlives
+  a cancelled HTTP request; a Hub timeout or page navigation cannot disable it.
+  Uncertain input is not replayed, and a fresh snapshot replaces stale turn state.
+  [Silent-socket browser coverage](../tests/codex_sdk_stalled_browser.py) interrupts
+  a turn, abandons the HTTP request, recovers idle state and explicitly continues.
   A transient network/server failure during reconnect keeps retrying; a browser
   regression injects a 503 before allowing the real snapshot stream to recover.
   The browser regression closes the SDK view during a live turn, generates

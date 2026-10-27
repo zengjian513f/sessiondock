@@ -565,7 +565,7 @@ impl Inner {
 
     async fn ensure_on(
         self: &Arc<Self>,
-        connection: &Connection,
+        connection: &Arc<Connection>,
         thread_id: &str,
     ) -> Result<Arc<LiveThread>, RpcError> {
         let thread = {
@@ -621,7 +621,7 @@ impl Inner {
 
     async fn recover_receipts(
         &self,
-        connection: &Connection,
+        connection: &Arc<Connection>,
         thread: &LiveThread,
     ) -> Result<(), RpcError> {
         // The native process can consume an input while this service is down,
@@ -662,7 +662,7 @@ impl Inner {
 
     async fn recover_active_turn(
         &self,
-        connection: &Connection,
+        connection: &Arc<Connection>,
         thread: &LiveThread,
     ) -> Result<(), RpcError> {
         if let Some(revision) = thread.missing_active_turn() {
@@ -755,7 +755,7 @@ impl Inner {
     /// the daemon never waits for an answer no page can give.
     pub(crate) fn server_request(
         &self,
-        connection: &Connection,
+        connection: &Arc<Connection>,
         id: Value,
         method: &str,
         params: Value,

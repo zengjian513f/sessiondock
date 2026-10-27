@@ -30,6 +30,13 @@
 
 ## Native interaction semantics
 
+- [ ] BUG-20261027-082713-1f9886：已修复 Codex RPC 超时后仍复用失活连接、
+  HTTP 取消使超时检测丢失的问题；首次原生事件接收阻塞的触发条件仍未确定。
+  新增 `codex_sdk.rpc_timeout` 元数据日志，复发时结合 native 与桥接时间线核对。
+  同次验证的 `codex_sdk_cancel_recovery_browser.py` 在原版与修复版均停在
+  `legacy_attachment_queue` 的首次 connected 等待，需单独修复其夹具/打开路径。
+  见[诊断记录](docs/history-incidents.md#bug-20261027-082713-1f9886)。
+
 - [ ] 排查 `codex_sdk_browser.py` 的 `usage_opening_check`：2026-10-24 在
   原前端与长回合分页修复前端均因 7d 用量的 `9%` 元素缺失而失败；长回合缺陷
   回归、历史分页与 Codex 过程折叠另已通过，不能把该用量检查记为通过。

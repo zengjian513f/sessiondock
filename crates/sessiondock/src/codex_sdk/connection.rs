@@ -81,11 +81,12 @@ impl Connection {
             let (socket, _) = tokio_tungstenite::client_async("ws://localhost/", stream)
                 .await
                 .map_err(|error| RpcError::Unavailable(format!("握手失败：{error}")))?;
+            let closed = CancellationToken::new();
             let connection = Arc::new(Self {
-                out: spawn_io(inner, socket, generation)?,
+                out: spawn_io(inner, socket, generation, closed.clone())?,
                 next_id: AtomicI64::new(1),
                 pending: Mutex::new(HashMap::new()),
-                closed: CancellationToken::new(),
+                closed,
                 generation,
             });
             connection.attach_reader();
@@ -120,7 +121,7 @@ impl Connection {
         let _ = self.out.send(message.to_string());
     }
 
-    pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+    pub async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, RpcError> {
         if self.is_closed() {
             return Err(RpcError::Disconnected);
         }
@@ -128,13 +129,29 @@ impl Connection {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("pending").insert(id, tx);
         self.send(json!({"method": method, "id": id, "params": params}));
-        match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
-            Ok(Ok(result)) => result,
-            _ => {
-                self.pending.lock().expect("pending").remove(&id);
-                Err(RpcError::Disconnected)
+        // HTTP cancellation (including the Hub's shorter timeout) must not
+        // cancel detection of a stalled native connection. Never replay the RPC.
+        let connection = self.clone();
+        let method = method.to_owned();
+        tokio::spawn(async move {
+            match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
+                Ok(Ok(result)) => result,
+                Err(_) => {
+                    crate::log::warn(
+                        "codex_sdk.rpc_timeout",
+                        json!({"method":method,"generation":connection.generation(),
+                            "timeout_seconds":REQUEST_TIMEOUT.as_secs()}),
+                    );
+                    // A socket can remain open while no replies are arriving.
+                    // Retire it so retained subscriptions recover fresh snapshots.
+                    connection.close();
+                    Err(RpcError::Disconnected)
+                }
+                Ok(Err(_)) => Err(RpcError::Disconnected),
             }
-        }
+        })
+        .await
+        .unwrap_or(Err(RpcError::Disconnected))
     }
 
     pub fn reply(&self, id: Value, result: Value) -> Result<(), RpcError> {
@@ -240,6 +257,7 @@ fn spawn_io(
     inner: Arc<Inner>,
     socket: tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>,
     generation: u64,
+    closed: CancellationToken,
 ) -> Result<mpsc::UnboundedSender<String>, RpcError> {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -251,6 +269,7 @@ fn spawn_io(
         let reason = loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break "shutdown",
+                _ = closed.cancelled() => break "request timed out",
                 message = outgoing.recv() => {
                     let Some(message) = message else { break "closed" };
                     if sink.send(Message::text(message)).await.is_err() {
