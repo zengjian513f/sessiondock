@@ -818,7 +818,7 @@ async fn handle(
             let transfers = state.transfers.clone();
             let registry = state.registry.clone();
             let client = state.client.clone();
-            // Workers own compensation/commit; progress renews their foreground lease.
+            // Detached workers own execution and compensation even if the browser sleeps.
             let cancel = path == "/api/session/transfer/cancel";
             let progress = path == "/api/session/transfer/progress";
             let result = tokio::spawn(async move {

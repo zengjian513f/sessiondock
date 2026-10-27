@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
 
 const IDLE: Duration = Duration::from_secs(300);
-const FOREGROUND_LEASE: Duration = Duration::from_secs(30);
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Request {
     pub uid: String,
@@ -56,7 +55,7 @@ pub struct Transfers {
     // Move the guard into the blocking write: cancelling its async waiter must
     // not let a later save overtake it or reuse its temporary file.
     saves: crate::transfer::coordination::Locks,
-    heartbeats: std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
+    executions: std::sync::Mutex<std::collections::BTreeMap<String, std::sync::Weak<()>>>,
     cancellations:
         std::sync::Mutex<std::collections::BTreeMap<String, tokio_util::sync::CancellationToken>>,
 }
@@ -112,7 +111,7 @@ impl Transfers {
             saves: Default::default(),
             gates: Default::default(),
             cancellations: Default::default(),
-            heartbeats: Default::default(),
+            executions: Default::default(),
         })
     }
     pub fn with_policy(mut self, policy: crate::transfer::transport::Policy) -> Self {
@@ -142,8 +141,8 @@ impl Transfers {
                             .values().map(|journal| journal.request.clone()).collect();
                         for request in requests {
                             let id = request.operation_id.clone();
-                            let active = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner())
-                                .get(&id).is_some_and(|seen| seen.elapsed() < FOREGROUND_LEASE);
+                            let active = self.executions.lock().unwrap_or_else(|e| e.into_inner())
+                                .get(&id).is_some_and(|worker| worker.strong_count() > 0);
                             if active || !recovering.insert(id.clone()) { continue; }
                             let transfers = self.clone(); let registry = registry.clone(); let client = client.clone();
                             workers.spawn(async move {
@@ -374,14 +373,6 @@ impl Transfers {
                 "操作已绑定其他迁移目标",
             ));
         }
-        if let Some(seen) = self
-            .heartbeats
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&request.operation_id)
-        {
-            *seen = std::time::Instant::now();
-        }
         // Journals written by older versions have no preview. Fetch only this
         // selected operation; listing tasks must work even when a node is offline.
         if journal.preview.is_none() {
@@ -498,14 +489,13 @@ impl Transfers {
         // Validate binding above, then interrupt preparation before taking the
         // operation lock. Never wait behind an unrelated transfer.
         {
-            // Recheck the lease after loading the journal, not just when the
-            // worker took its snapshot. Registering execution uses this same
-            // lock so a fresh foreground lease cannot lose its token to recovery.
-            let heartbeats = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner());
+            // Recheck ownership after loading the journal. Only abandoned workers
+            // are recovered; browser polling is not an execution lease.
+            let executions = self.executions.lock().unwrap_or_else(|e| e.into_inner());
             if recovery
-                && heartbeats
+                && executions
                     .get(&request.operation_id)
-                    .is_some_and(|seen| seen.elapsed() < FOREGROUND_LEASE)
+                    .is_some_and(|worker| worker.strong_count() > 0)
             {
                 return Ok(Self::public(&journal));
             }
@@ -746,9 +736,10 @@ impl Transfers {
             }
         }
         let cancellation = tokio_util::sync::CancellationToken::new();
+        let execution = Arc::new(());
         {
-            let mut heartbeats = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner());
-            heartbeats.insert(request.operation_id.clone(), std::time::Instant::now());
+            let mut executions = self.executions.lock().unwrap_or_else(|e| e.into_inner());
+            executions.insert(request.operation_id.clone(), Arc::downgrade(&execution));
             self.cancellations
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -762,7 +753,7 @@ impl Transfers {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&request.operation_id);
-        self.heartbeats
+        self.executions
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&request.operation_id);

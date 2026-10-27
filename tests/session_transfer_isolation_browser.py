@@ -168,7 +168,7 @@ def main():
         print('PASS in-flight Chromium cancellation bypasses execution lock and restores source before stalled request is released',flush=True)
         release.set()
         first.close()
-        for action in ('cancel-copy','close-copy','crash-copy','restart-hub'):
+        for action in ('cancel-copy','close-copy','background-copy','crash-copy','restart-hub'):
             # Hold the source's final recheck after a complete bundle was received,
             # before publishing anything. Both nodes must reclaim their payloads.
             blocked.clear();release.clear();held.update(id=None,phase='received')
@@ -190,6 +190,28 @@ def main():
                 assert cancelled.value.ok,cancelled.value.text()
                 assert time.monotonic()-started<10
                 if action=='close-copy':expect(dialog).to_have_count(0)
+            elif action in ('background-copy','crash-copy'):
+                # Model suspended background polling without weakening the old
+                # 30-second deadline: server work must own its own lifetime.
+                if action=='crash-copy':page.close()
+                else:page.route('**/api/session/transfer/progress',lambda route:route.abort())
+                time.sleep(36)
+                journal=hubroot/'transfers'/f'{operation}.json'
+                assert json.loads(journal.read_text())['phase'] not in ('aborted','aborting'),action
+                release.set()
+                deadline=time.monotonic()+20
+                while json.loads(journal.read_text())['phase']!='complete':
+                    assert time.monotonic()<deadline,(action,json.loads(journal.read_text())['phase'])
+                    time.sleep(.1)
+                if action=='background-copy':
+                    page.unroute('**/api/session/transfer/progress')
+                    expect(dialog).to_have_count(0,timeout=15000)
+                    result=json.loads(journal.read_text())['result']
+                    expect(page.locator('#side .item.sel')).to_have_attribute('data-uid',result['target_uid'])
+                    page.close()
+                assert all(path.is_file() for path in claude.values())
+                print('PASS '+action+' completes after 36 seconds without browser progress polling',flush=True)
+                continue
             else:
                 if action=='restart-hub':hub.stop();hub.start()
                 else:page.close()
