@@ -8,7 +8,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from codex_sdk_browser import THREAD, build, server, open_sdk
+from codex_sdk_browser import THREAD as SDK_THREAD, build, server, open_sdk
+
+THREAD = "01a10000-0000-7000-8000-000000000001"
 from codex_sdk_fixtures import FakeAppServer
 from grok_sdk_lifecycle_browser import advance
 from history_fixtures import BINARY
@@ -41,6 +43,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-codex-retention-') as temporary:
         root = Path(temporary)
         corpus = build(root)
+        old=corpus.paths['sdk']
+        native=old.with_name('rollout-2026-09-11T10-00-00-'+THREAD+'.jsonl')
+        native.write_text(old.read_text().replace(SDK_THREAD,THREAD).replace('/synthetic/sdk',str(root)))
+        old.unlink();corpus.paths['sdk']=native
         (root / 'state').mkdir()
         library = root / 'clock.so'
         subprocess.run(['cc', '-shared', '-fPIC', '-O2', str(Path(__file__).with_name('grok_sdk_idle_clock.c')),
@@ -91,6 +97,18 @@ def main():
                     return {status:r.status,body:await r.json()};}''', corpus.uid('sdk'))
                 assert result['status'] == 200, result
                 assert THREAD not in retained()
+                # The fake daemon retains its writer after unsubscribe, like
+                # native last-subscriber grace. Display stop is not quiescence.
+                page.locator('#a-clone-group').click()
+                dialog=page.locator('#clone-group-dialog')
+                expect(dialog.locator('.transfer-error')).to_contain_text('会话仍在运行')
+                dialog.locator('.clone-cancel').click()
+                fake.loaded=False
+                page.locator('#a-clone-group').click()
+                expect(page.locator('#clone-group-dialog .clone-confirm')).to_be_enabled(timeout=10000)
+                page.locator('#clone-group-dialog .clone-cancel').click()
+                fake.loaded=True
+                print('PASS Chromium migration blocks stopped-but-loaded native writer until actual unload',flush=True)
                 page.close()
             n = len(fake.methods('thread/resume'))
             with server(corpus, args.binary, socket, env) as base:

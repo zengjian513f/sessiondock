@@ -875,7 +875,8 @@ impl TransferService {
         }
         let mut extended_metadata = BTreeSet::new();
         if !op.new_ids() {
-            let (extended, metadata) = prefix::prepare(self, &mut op)?;
+            let (mut extended, metadata) = prefix::prepare(self, &mut op)?;
+            extended.extend(self.returning_placeholders(&op)?);
             extended_metadata = metadata;
             op.native_before = Some(native::preflight_prefix(
                 op.rewritten.as_ref().unwrap(),

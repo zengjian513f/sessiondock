@@ -17,6 +17,16 @@ pub(super) struct Sample {
 
 impl CodexSdk {
     pub async fn live_threads(&self) -> Vec<String> {
+        self.observe_threads(false).await
+    }
+
+    /// Unsubscribe is not native unload: destructive operations must still see
+    /// stopped threads while the daemon can flush metadata or history.
+    pub async fn writing_threads(&self) -> Vec<String> {
+        self.observe_threads(true).await
+    }
+
+    async fn observe_threads(&self, writers: bool) -> Vec<String> {
         // One small read per observer interval, shared by concurrent fleet reads.
         let mut sample = self.inner.observation.lock().await;
         let generation = self
@@ -27,7 +37,10 @@ impl CodexSdk {
             .as_ref()
             .filter(|connection| !connection.is_closed())
             .map(|connection| connection.generation());
-        if sample.at.is_none_or(|at| at.elapsed() >= TTL) || sample.generation != generation {
+        if writers
+            || sample.at.is_none_or(|at| at.elapsed() >= TTL)
+            || sample.generation != generation
+        {
             let result = tokio::time::timeout(TTL, async {
                 let connection = self.inner.connection_mode(false).await?;
                 // No limit means the daemon returns all loaded identities.
@@ -64,8 +77,10 @@ impl CodexSdk {
         ids.extend(self.loaded_threads().await);
         ids.sort();
         ids.dedup();
-        let stopped = self.inner.stopped.lock().expect("stopped");
-        ids.retain(|id| !stopped.contains(id));
+        if !writers {
+            let stopped = self.inner.stopped.lock().expect("stopped");
+            ids.retain(|id| !stopped.contains(id));
+        }
         ids
     }
 }

@@ -123,7 +123,7 @@ pub(super) async fn observe_liveness(
         }
     }
     if let Some(sdk) = &state.codex_sdk {
-        let loaded = sdk.live_threads().await;
+        let loaded = sdk.writing_threads().await;
         for row in rows {
             if row["source"] == "codex"
                 && row["sid"]

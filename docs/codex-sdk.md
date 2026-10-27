@@ -89,7 +89,9 @@ or unsubscribe removes the bridge's subscription evidence; a read-only
 `thread/loaded/list` observation still identifies threads retained by the daemon,
 including before the first click and after a service restart. Observation never
 starts the daemon, resumes threads or grants terminal coexistence authority;
-unload or failed observation withdraws discovered evidence. An external process
+unload or failed observation withdraws discovered evidence. Destructive migration/trash
+checks freshly query native loaded threads and retain stopped-but-loaded writers;
+an unsubscribe reply does not prove that delayed native writes have finished. An external process
 alone stays green.
 `/api/live.sdk_uids` carries this evidence through the Hub and live events,
 separately from `tmux_uids`, which continues to mean console ownership. SDK

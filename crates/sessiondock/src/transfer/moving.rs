@@ -255,8 +255,31 @@ impl TransferService {
         self.reclaim_prior_moves(&op)?;
         Ok(op)
     }
-    /// An explicitly completed import can return a retired identity to this
-    /// node. Keep old handoff records, but let the new operation own those UIDs.
+    /// Recognize delayed native index writes only under an unreclaimed retirement.
+    pub(super) fn returning_placeholders(
+        &self,
+        op: &Operation,
+    ) -> Result<BTreeSet<String>, TransferError> {
+        if op.incoming_digest.is_none() || op.new_ids() {
+            return Ok(BTreeSet::new());
+        }
+        let retired: BTreeSet<_> = self
+            .journal_summaries()?
+            .iter()
+            .filter(|old| old.retired_source)
+            .flat_map(|old| old.locked_uids.iter().cloned())
+            .collect();
+        let candidates = op
+            .group()
+            .members
+            .iter()
+            .filter(|m| m.source == "codex" && retired.contains(&m.uid) && !m.path.exists())
+            .map(|m| (m.sid.clone(), m.path.clone()))
+            .collect();
+        super::native::retired_placeholders(op.rewritten.as_ref().unwrap(), &candidates)
+    }
+
+    /// An explicitly completed import reclaims old source UIDs for the new operation.
     pub(super) fn reclaim_prior_moves(&self, op: &Operation) -> Result<(), TransferError> {
         if op.phase != "complete" || op.incoming_digest.is_none() {
             return Ok(());

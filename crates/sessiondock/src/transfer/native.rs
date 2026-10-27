@@ -550,6 +550,81 @@ fn shared_table(name: &str) -> bool {
     matches!(name, "projects" | "project_roots" | "thread_sections")
 }
 
+/// Identify empty native index rows recreated after a verified source retirement.
+pub fn retired_placeholders(
+    native: &Native,
+    candidates: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeSet<String>, TransferError> {
+    let ids: BTreeSet<_> = candidates.keys().cloned().collect();
+    if ids.is_empty() {
+        return Ok(ids);
+    }
+    let mut placeholders = BTreeSet::new();
+    let mut occupied = BTreeSet::new();
+    for database in &native.databases {
+        let db = Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        for table in &database.tables {
+            if shared_table(&table.name) {
+                continue;
+            }
+            // Query by all returning identities, including tables for which the
+            // source has no rows. A target-only goal/item must not be overlooked.
+            let Some(current) = read(&db, &table.name, &ids)? else {
+                continue;
+            };
+            for row in current.rows {
+                if table.name != "threads" {
+                    for id in &ids {
+                        if owned(&row, &BTreeSet::from([id.clone()])) {
+                            occupied.insert(id.clone());
+                        }
+                    }
+                    continue;
+                }
+                let Some(id) = row.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(path) = candidates.get(id) else {
+                    continue;
+                };
+                let incoming = table.rows.iter().find(|r| r.get("id") == row.get("id"));
+                let empty = row.get("source").and_then(Value::as_str) == Some("unknown")
+                    && row
+                        .get("rollout_path")
+                        .and_then(Value::as_str)
+                        .map(Path::new)
+                        == Some(path.as_path())
+                    && row.iter().all(|(key, value)| match key.as_str() {
+                        "id" | "rollout_path" | "source" => true,
+                        "created_at" | "updated_at" | "recency_at" | "created_at_ms"
+                        | "updated_at_ms" | "recency_at_ms" => value.is_number(),
+                        "model_provider" | "history_mode" => {
+                            incoming.is_some_and(|r| r.get(key) == Some(value))
+                        }
+                        "approval_mode" => value == "on-request",
+                        "sandbox_policy" => {
+                            value
+                                .as_str()
+                                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                                == Some(serde_json::json!({"type":"read-only"}))
+                        }
+                        "memory_mode" => value == "enabled",
+                        _ => {
+                            value.is_null()
+                                || value.as_str() == Some("")
+                                || value.as_i64() == Some(0)
+                        }
+                    });
+                if empty {
+                    placeholders.insert(id.to_owned());
+                }
+            }
+        }
+    }
+    placeholders.retain(|id| !occupied.contains(id));
+    Ok(placeholders)
+}
+
 /// Capture the destination rows after file-level prefix and rollout checks.
 /// Existing history keys must be a subset; changing the current rollout is
 /// never inferred merely from a matching thread ID.

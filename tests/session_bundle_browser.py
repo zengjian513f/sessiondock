@@ -261,8 +261,46 @@ def main():
                             print('PASS '+provider+' Hub/node restart retry preserves continued target and fixed identity',flush=True)
                             if args.move:
                                 target_local=provider+':'+completed['target_uid'].split('~',1)[1]
-                                status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local,'new_ids':False,'mode':'move'});assert status==200,raw
-                                back=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':completed['target_uid'],'target_node':a.nid,'operation_id':json.loads(raw)['operation_id']})
+                                if provider=='codex' and args.preserve:
+                                    # A delayed native metadata flush after a prior
+                                    # retirement can recreate an empty index row.
+                                    sid=json.loads(originals[str(source.paths['a'])].splitlines()[0])['payload']['id']
+                                    dbpath=source.root/'codex/state_5.sqlite'
+                                    with sqlite3.connect(dbpath) as db:
+                                        db.execute('INSERT INTO threads(id,rollout_path,source,name,is_pinned,archived) VALUES (?,?,?,?,?,?)',
+                                            (sid,str(source.paths['a']),'unknown','user-created name',0,0))
+                                    page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
+                                    page.locator(f'#side .item[data-uid="{completed["target_uid"]}"]').click()
+                                    page.locator('#a-clone-group').click()
+                                    dialog=page.locator('#clone-group-dialog');expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                                    select_target(dialog,a.nid);dialog.locator('[name="transfer-mode"][value="move"]').check()
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as rejected:
+                                        dialog.locator('.clone-confirm').click()
+                                    assert rejected.value.status==409 and rejected.value.json()['code']=='move_conflict',rejected.value.text()
+                                    with sqlite3.connect(dbpath) as db:
+                                        assert db.execute('SELECT name FROM threads WHERE id=?',(sid,)).fetchone()[0]=='user-created name'
+                                        db.execute('UPDATE threads SET name=NULL WHERE id=?',(sid,))
+                                    expect(dialog.locator('.clone-confirm')).to_have_text('移动整组',timeout=15000)
+                                    expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+                                    # Same empty row with target-only native history
+                                    # must also be kept instead of being replaced.
+                                    with sqlite3.connect(dbpath) as db:
+                                        db.execute('INSERT INTO thread_dynamic_tools VALUES (?,?,?,?,?)',(sid,0,'keep','target tool','{}'))
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as rejected:
+                                        dialog.locator('.clone-confirm').click()
+                                    assert rejected.value.status==409 and rejected.value.json()['code']=='move_conflict',rejected.value.text()
+                                    with sqlite3.connect(dbpath) as db:
+                                        assert db.execute('SELECT name FROM thread_dynamic_tools WHERE thread_id=?',(sid,)).fetchone()[0]=='keep'
+                                        db.execute('DELETE FROM thread_dynamic_tools WHERE thread_id=?',(sid,))
+                                    expect(dialog.locator('.clone-confirm')).to_have_text('移动整组',timeout=15000)
+                                    expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as returned:
+                                        dialog.locator('.clone-confirm').click()
+                                    back=returned.value
+                                    print('PASS Chromium return migration preserves meaningful orphan metadata/history, replaces only retired empty placeholder',flush=True)
+                                else:
+                                    status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local,'new_ids':False,'mode':'move'});assert status==200,raw
+                                    back=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':completed['target_uid'],'target_node':a.nid,'operation_id':json.loads(raw)['operation_id']})
                                 assert back.ok,back.text();assert back.json()['target_uid']==scoped(a.nid,target_local)
                                 returned_uid=back.json()['target_uid']
                                 restored=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/conversation',params={'uid':returned_uid})
