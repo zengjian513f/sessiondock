@@ -25,7 +25,9 @@ from session_transfer_cache_fixtures import Opens
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY)
+    parser.add_argument('--screenshots',type=Path)
     args=parser.parse_args()
+    if args.screenshots: args.screenshots.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-transfer-isolation-') as tmp, sync_playwright() as pw, ExitStack() as stack:
         root=Path(tmp);roots,claude,_,_=fixture(root/'source');source=Corpus(root/'source');destination=Corpus(root/'destination')
         for corpus in (source,destination):
@@ -43,6 +45,7 @@ def main():
         with (cwd/'build-output').open('wb') as out:out.truncate(8*1024**3)
         huge_atime=(cwd/'build-output').stat().st_atime_ns
         real_port=free_port();blocked=threading.Event();release=threading.Event();held={'id':None,'phase':'manifest'}
+        wire={'framing':None,'relayed':0}
         class Proxy(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
             def do_GET(self):self.forward()
@@ -59,7 +62,27 @@ def main():
                     response=remote.getresponse();data=response.read();self.send_response(response.status)
                     for key,value in response.getheaders():
                         if key.lower() not in ('transfer-encoding','content-length','connection'):self.send_header(key,value)
-                    self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+                    framing=wire['framing'] if self.path.endswith('/transfer/manifest') and response.status==200 and operation!=held['id'] else None
+                    if framing:
+                        # A native projection's numeric byte arrays are cheap on
+                        # the wire but expensive as serde_json::Value. Unknown
+                        # fields also exercise forwarding without Hub rewriting.
+                        prefix=data.rstrip()[:-1]+b',"wire_padding":['
+                        block=b'0,'*32768;blocks=1152;suffix=b'0]}'
+                        size=len(prefix)+len(block)*blocks+len(suffix)
+                        self.send_header('Transfer-Encoding','chunked') if framing=='chunked' else self.send_header('Content-Length',str(size))
+                        self.end_headers()
+                        def send(part):
+                            if framing=='chunked':self.wfile.write(('%x\r\n'%len(part)).encode())
+                            self.wfile.write(part)
+                            if framing=='chunked':self.wfile.write(b'\r\n')
+                        send(prefix)
+                        for _ in range(blocks):send(block)
+                        send(suffix)
+                        if framing=='chunked':self.wfile.write(b'0\r\n\r\n')
+                        wire['relayed']+=1
+                    else:
+                        self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
                 except (BrokenPipeError,ConnectionResetError,http.client.RemoteDisconnected):pass
                 finally:remote.close()
         proxy=ThreadingHTTPServer(('127.0.0.1',0),Proxy);proxy.daemon_threads=True
@@ -112,13 +135,22 @@ def main():
         held['id']=planned.value.json()['operation_id']
         assert blocked.wait(5),'first transfer never reached preparation'
         expect(dialog.locator('.transfer-progress')).to_have_attribute('data-phase','preparing',timeout=10000)
-        second=context.new_page();other=open_dialog(second,uid('grok',source.root/'grok/project'/ident(10)),False)
         unrelated_watch=Opens([checkpoint]);stack.callback(unrelated_watch.close)
-        with second.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=15000) as copied:
-            other.locator('.clone-confirm').click()
-        assert copied.value.ok,copied.value.text()
-        assert not release.is_set()
-        expect(second.locator('#msgs')).to_contain_text('Grok answer 10')
+        for framing in ('length','chunked'):
+            wire['framing']=framing
+            second=context.new_page();other=open_dialog(second,uid('grok',source.root/'grok/project'/ident(10)),False)
+            with second.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=30000) as copied:
+                other.locator('.clone-confirm').click()
+            assert copied.value.ok,copied.value.text()
+            assert not release.is_set()
+            expect(second.locator('#msgs')).to_contain_text('Grok answer 10')
+            memory=Path(f'/proc/{hub.process.pid}/status').read_text()
+            high_kib=int(next(line.split()[1] for line in memory.splitlines() if line.startswith('VmHWM:')))
+            assert high_kib<200*1024,(framing,high_kib)
+            print(f'PASS Chromium copy with 72 MiB numeric manifest, {framing} framing; Hub peak {high_kib} KiB',flush=True)
+            second.close()
+        assert wire['relayed']==2,wire
+        wire['framing']=None
         assert not unrelated_watch.take(),'target publication scanned unrelated checkpoint history'
         target_cache=json.loads((destination.root/'state/transfers/relationships-v1.json').read_text())
         assert str(unrelated/'chat_history.jsonl') not in {row[0] for row in target_cache},'target rebuilt whole-store relationships'
@@ -159,12 +191,21 @@ def main():
                 assert time.monotonic()-started<10
                 if action=='close-copy':expect(dialog).to_have_count(0)
             else:
-                page.close()
                 if action=='restart-hub':hub.stop();hub.start()
+                else:page.close()
                 deadline=time.monotonic()+45
                 while json.loads((hubroot/'transfers'/f'{operation}.json').read_text())['phase']!='aborted':
                     assert time.monotonic()<deadline,action
-                    time.sleep(.1)
+                    if action=='restart-hub':page.wait_for_timeout(100)
+                    else:time.sleep(.1)
+                if action=='restart-hub':
+                    expect(dialog.locator('.transfer-error')).to_contain_text('本次操作已撤回，未完成迁移',timeout=15000)
+                    expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+                    if args.screenshots:
+                        for width,theme in ((1440,'dark'),(390,'light')):
+                            page.set_viewport_size({'width':width,'height':900})
+                            page.evaluate("theme => {document.documentElement.dataset.theme=theme;}",theme)
+                            page.screenshot(path=str(args.screenshots/f'aborted-{width}-{theme}.png'),full_page=True)
             for directory in (source.root/'state/transfers'/operation,target_dir):
                 assert json.loads((directory/'operation.json').read_text())['phase']=='aborted',action
                 assert [path.name for path in directory.iterdir()]==['operation.json'],(action,list(directory.iterdir()))

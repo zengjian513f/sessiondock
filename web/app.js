@@ -12481,8 +12481,8 @@ async function cloneSessionGroup(uid, resumed = null) {
           ++executionSequence; busy = false; uncertain = false; operationStarted = false; plan = null; overallProgress = 0;
           // Progress may finish rollback before the execution response arrives.
           // Keep its durable failure reason when replacing the stale preview.
-          if (await refreshPlan() && data.error && dialog.isConnected) {
-            error.textContent = `${data.error}。本次操作已撤回，请核对更新后的清单再确认。`;
+          if (await refreshPlan() && dialog.isConnected) {
+            error.textContent = `${data.error ? data.error + '。' : ''}本次操作已撤回，未完成迁移。请核对更新后的清单再确认。`;
             error.hidden = false;
           }
         }

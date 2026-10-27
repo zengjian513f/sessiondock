@@ -1,5 +1,6 @@
 //! Durable cross-node clone orchestration over the authenticated node channel.
 //! The Hub forwards tar chunks without buffering the archive in memory.
+mod manifest;
 mod transport;
 
 use super::{Client, Registry, Target, client, namespace};
@@ -968,27 +969,16 @@ impl Transfers {
             if current.0 == 404 {
                 journal.phase = "preparing".into();
                 self.save(&journal).await?;
-                let manifest = call_work(
-                    &client,
-                    &source_address,
-                    "/api/session/transfer/manifest",
-                    &json!({"operation_id":request.operation_id,"reserve":reserve_manifest}),
-                    true,
-                    Some(&live),
-                )
-                .await?
-                .1;
-                journal.phase = "checking".into();
-                self.save(&journal).await?;
-                let checked = call_work(
-                    &client,
-                    &target_address,
-                    "/api/session/transfer/check",
-                    &manifest,
-                    true,
-                    Some(&live),
-                )
-                .await?;
+                let checked = self
+                    .check_manifest(
+                        &client,
+                        &source_address,
+                        &target_address,
+                        &json!({"operation_id":request.operation_id,"reserve":reserve_manifest}),
+                        &mut journal,
+                        &live,
+                    )
+                    .await?;
                 if moving && checked.1["move_handoff"] != true {
                     return Err(TransferError::new(
                         "move_group_unsupported",
@@ -1299,6 +1289,15 @@ async fn call_work(
                 .and_then(|s| s.parse().ok()),
         )
     });
+    read_reply(response, success, received).await
+}
+
+async fn read_reply(
+    response: client::Response,
+    success: bool,
+    received: Option<crate::transfer::progress::Task>,
+) -> Result<(u16, Value), TransferError> {
+    let failed = network;
     let status = response.status;
     let mut response_body = response.into_body();
     let mut raw = Vec::new();
