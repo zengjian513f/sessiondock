@@ -95,10 +95,23 @@ async fn stopped(
             "runtime_ms": started.elapsed().saturating_sub(indexed).as_millis()}),
     );
     for (uid, title) in uids {
-        if matches!(live.state(&uid), RunState::Running(_)) {
+        if let RunState::Running(evidence) = live.state(&uid) {
+            let row = rows.iter().find(|row| row["uid"] == uid);
+            let message = if evidence == "sdk_thread"
+                && row.is_some_and(|row| row["source"] == "codex")
+            {
+                format!("Codex 原生线程尚未卸载，仍可能写入历史：{title}。停止 SDK 模式只会中断当前工作并取消本连接的订阅，不代表原生线程已卸载。请等待卸载，或关闭仍连接此会话的其他客户端后重试。")
+            } else {
+                format!("会话仍在运行：{title}")
+            };
+            crate::log::info(
+                "transfer.blocked_by_writer",
+                json!({"uid": uid, "sid": row.and_then(|row| row["sid"].as_str()),
+                    "evidence": evidence, "operation_id": op.id}),
+            );
             return Err(Box::new(failure(TransferError::new(
                 "move_session_running",
-                format!("会话仍在运行：{title}"),
+                message,
             ))));
         }
     }

@@ -39,7 +39,10 @@ def main():
     from playwright.sync_api import sync_playwright, expect
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-codex-retention-') as temporary:
         root = Path(temporary)
         corpus = build(root)
@@ -101,7 +104,16 @@ def main():
                 # native last-subscriber grace. Display stop is not quiescence.
                 page.locator('#a-clone-group').click()
                 dialog=page.locator('#clone-group-dialog')
-                expect(dialog.locator('.transfer-error')).to_contain_text('会话仍在运行')
+                expect(dialog.locator('.transfer-error')).to_be_visible()
+                if args.screenshots:
+                    for width, theme in [(1280, 'light'), (390, 'dark')]:
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        page.emulate_media(color_scheme=theme)
+                        page.screenshot(path=str(args.screenshots / f'writer-{width}-{theme}.png'))
+                    page.set_viewport_size({'width': 1280, 'height': 900})
+                expect(dialog.locator('.transfer-error')).to_contain_text('Codex 原生线程尚未卸载')
+                expect(dialog.locator('.transfer-error')).to_contain_text('不代表原生线程已卸载')
+                expect(dialog.locator('.clone-confirm')).to_be_disabled()
                 dialog.locator('.clone-cancel').click()
                 fake.loaded=False
                 page.locator('#a-clone-group').click()
