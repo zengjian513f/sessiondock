@@ -85,14 +85,13 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  重连修复 `89780dc6`（仅前端）待补发 orion、cetus、vela：前两者连接超时，
-  vela 恢复旧文件后既有启动故障仍未恢复；lyra、cygnus、pavo、hub 已部署且健康。
-  两份部署报告位于未跟踪的 `target/deploy/20261029-005109-89780dc6/`。
+  当前前端快照 `7e122589`（滚动漏画修复，含此前重连及外部 CLI 启动提示修复）
+  待补发 orion、cetus、vela：前两者连接超时；vela 部署前即未正常运行，恢复旧文件后
+  服务仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub 已部署且健康；
+  cygnus 首次 45 秒健康检查超时并回滚，同快照以 90 秒窗口重试成功。
+  两份部署报告位于未跟踪的 `target/deploy/20261029-232108-7e122589/`。
   Codex 推理禁用退避修复 `374daabf` 已交付 lyra、cygnus、pavo、hub；orion、cetus
   离线待补发，vela 启动失败，文件自动回滚后服务仍未恢复（`ROLLBACK_FAILED`）。
-  外部 CLI 启动提示修复 `5fbfc1e3`（仅前端）同样待补发 orion、cetus、vela；
-  四个在线目标已健康，vela 恢复旧前端后服务仍不可用。验证和截图位于未跟踪的
-  `target/bug-da6b3f/`，部署报告位于 `target/deploy/20261026-063432-5fbfc1e3/`。
   显式启动/接管按钮及模式绑定 `3178d1eb`（仅前端）已交付上述四个在线目标；
   orion、cetus 连接超时，vela 自动恢复旧文件后服务仍不可用，待恢复后补发。
   浏览器验证及视觉证据在未跟踪的 `target/explicit-composer-start/`，部署报告在
