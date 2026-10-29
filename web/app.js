@@ -3088,7 +3088,15 @@ function renderNetworkNotice() {
   }
   notice.querySelector('.network-status-text').textContent = issue;
 }
-async function recoverNetworkConnection() {
+let networkRecovery = null;
+function recoverNetworkConnection() {
+  // Repeated clicks/online events must not cancel the stream that this
+  // recovery just opened while its history read is still waiting.
+  if (networkRecovery) return networkRecovery;
+  networkRecovery = runNetworkRecovery().finally(() => { networkRecovery = null; });
+  return networkRecovery;
+}
+async function runNetworkRecovery() {
   renderNetworkNotice();
   if (!navigator.onLine || SessionDockNetwork.paused) return;
   closeUiEvents(); startUiEvents();
