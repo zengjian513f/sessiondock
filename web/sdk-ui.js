@@ -3,6 +3,18 @@
 // Source-neutral SDK view contract. Providers own snapshots, status semantics,
 // settings and protocol actions; history uses the ordinary conversation cache.
 const SdkUI = {
+  reconnectEvents(view) {
+    if (!view.pane || view.readOnly || !view.es
+        || view.uid !== S.sel || view.agent !== S.agent) return;
+    clearTimeout(view.reconnectTimer);
+    view.es.close();
+    view.es = null;
+    view.setConnected(false);
+    view.setNotice('重连中', 'connecting');
+    // Only replace the browser subscription; do not add an SDK open request,
+    // clear live output, or replay an input whose outcome is unknown.
+    view.connectEvents(view.generation);
+  },
   titleRenameView(heading) {
     const view = SdkView.active;
     return heading?.dataset.uid === S.sel && SessionContentView.kind === 'sdk'

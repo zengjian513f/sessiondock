@@ -317,7 +317,10 @@ Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-pr
 
 DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒无进展期限，收到响应头或正文分块重置计时；超时沿用可见错误与自动重试，已加载内容保留。断网、正文同步失败或通知流停滞时使用现有浮动提示样式说明内容可能不是最新，并提供“立即重连”；恢复后清除相应提示。取消信号贯穿响应体，不在收到响应头时失效。
 DELTA（重连合并）：当前恢复操作尚未结束时，重复点击“立即重连”及 online 通知共用该操作，
-不重复关闭、新建通知流。操作结束后允许再次恢复；保留草稿与历史，不自动发送输入。
+不重复关闭、新建通知流，按钮显示“正在重连…”。开始恢复时取消当前在途的增量历史读取，
+立即从已接受游标重读；同时重新订阅当前已连接 SDK 的浏览器事件流，获取最新快照，
+不额外请求 SDK open、不重启任务。普通对话重建 watch，未运行／只读 SDK 不因重连而启动。
+操作结束后允许再次恢复；保留草稿与历史，不自动发送输入。
 覆盖见 [`tests/network_recovery_browser.py`](../tests/network_recovery_browser.py)。
 
 渲染：`renderSession` → `planTurns` / `appendMessages` / `msgNode`。角色包括 `user`、`user·subagent`、`assistant`、`assistant·subagent`、`thinking`、`tool`、`tool_result`、`question`、`answer`、`command`，以及事件行（`eventNode`）。子代理视图从标题栏下拉进入（`sessionViewRows`：主会话在前，运行中的子代理靠前并带绿点）。

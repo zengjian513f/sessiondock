@@ -114,32 +114,7 @@ const NativeSdkView = {
       void this.loadModels(generation);
       if (this.capabilities.agents) void this.request('api/native-sdk/agents',{uid:this.uid}).then(response => {if(this.current(generation)){this.nativeAgents=response.agents || response.raw?.agents || response.raw?.data || response.raw;NativeSdkControls.paintSettings(this);}}).catch(()=>{});
       void NativeSdkControls.loadUsage(this, /^(agy|kiro):/.test(this.uid) ? 'auto' : true);
-      const es = new EventSource(appUrl(`api/native-sdk/events?${new URLSearchParams({uid:this.uid,agent:this.agent || ''})}`));
-      this.es = es;
-      es.addEventListener('sdk', event => {
-        if (!this.current(generation) || this.es !== es) return;
-        let packet;
-        try { packet = JSON.parse(event.data); } catch { return; }
-        if (packet.method === 'bridge/stopped') { SdkView.stopped(this.uid, this.agent); return; }
-        if (packet.method === 'bridge/reset') { this.reconnect(); return; }
-        if (packet.type === 'input_queue') {
-          const stick = this.nearBottom();
-          this.raw.input_queue = packet.raw?.input_queue || [];
-          NativeSdkControls.paintQueue(this);
-          this.paintStatus();
-          if (stick) this.scrollBottom();
-          return;
-        }
-        if (packet.type === 'snapshot' || packet.method === 'snapshot') {
-          this.seq = packet.seq ?? this.seq;
-          this.applySnapshot(packet.raw || {});
-        }
-      });
-      es.onerror = () => {
-        if (!this.current(generation) || this.es !== es) return;
-        this.setConnected(false); this.setNotice('重连中', 'connecting');
-        if (es.readyState === EventSource.CLOSED) this.reconnect();
-      };
+      this.connectEvents(generation);
     } catch (error) {
       if (this.current(generation)) {
         this.openFailed = true;
@@ -157,6 +132,35 @@ const NativeSdkView = {
         }
       }
     } finally { if (this.openRead === read) this.openRead = null; }
+  },
+
+  connectEvents(generation) {
+    const es = new EventSource(appUrl(`api/native-sdk/events?${new URLSearchParams({uid:this.uid,agent:this.agent || ''})}`));
+    this.es = es;
+    es.addEventListener('sdk', event => {
+      if (!this.current(generation) || this.es !== es) return;
+      let packet;
+      try { packet = JSON.parse(event.data); } catch { return; }
+      if (packet.method === 'bridge/stopped') { SdkView.stopped(this.uid, this.agent); return; }
+      if (packet.method === 'bridge/reset') { this.reconnect(); return; }
+      if (packet.type === 'input_queue') {
+        const stick = this.nearBottom();
+        this.raw.input_queue = packet.raw?.input_queue || [];
+        NativeSdkControls.paintQueue(this);
+        this.paintStatus();
+        if (stick) this.scrollBottom();
+        return;
+      }
+      if (packet.type === 'snapshot' || packet.method === 'snapshot') {
+        this.seq = packet.seq ?? this.seq;
+        this.applySnapshot(packet.raw || {});
+      }
+    });
+    es.onerror = () => {
+      if (!this.current(generation) || this.es !== es) return;
+      this.setConnected(false); this.setNotice('重连中', 'connecting');
+      if (es.readyState === EventSource.CLOSED) this.reconnect();
+    };
   },
 
   retryOpen() { if (this.openFailed) { this.es?.close(); this.es = null; void this.start(this.generation); } },

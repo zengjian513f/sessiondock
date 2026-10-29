@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from agy_sdk_fixtures import AgyFixture
 from claude_sdk_fixtures import ClaudeFixture
+from codebuddy_sdk_fixtures import CodebuddyFixture
 from codex_sdk_browser import build, server
 from codex_sdk_status_browser import StatusDaemon
 from grok_sdk_fixtures import GrokFixture
@@ -23,8 +24,8 @@ from sdkhost_fixtures import stop_private_sdkhosts
 def provider(source, root, binary):
     extra = node_env(root, free_port(), '127.0.0.0/8')
     extra['SESSIONDOCK_CODEX_ROOT'] = str(root/'codex')
-    if source == 'claude':
-        peer = ClaudeFixture(root)
+    if source in ('claude', 'codebuddy'):
+        peer = (ClaudeFixture if source == 'claude' else CodebuddyFixture)(root)
         with peer.server(binary, extra) as base:
             yield base, peer, extra
     elif source == 'codex':

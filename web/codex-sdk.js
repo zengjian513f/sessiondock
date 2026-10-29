@@ -162,6 +162,11 @@ const CodexSdkView = {
     this.openFailed = false; this.openRetryDelay = 1000;
     this.setNotice('连接中', 'connecting');
     this.loadModels(generation);
+    this.connectEvents(generation);
+  },
+
+  connectEvents(generation) {
+    const uid = this.uid;
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
     es.addEventListener('sdk', event => {

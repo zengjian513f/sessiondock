@@ -1876,6 +1876,7 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
 /** 兜底用的主动拉取。正常情况下更新由服务端 SSE 推过来, 这里只在
  *  连接还没建起来或断了的时候补一手。 */
 const syncingViews = new Map();
+const syncControllers = new Map();
 // Migration-only failures stop background retries for this exact view. Keep
 // the last good snapshot; only a successful explicit HTTP retry clears them.
 const migrationReadFailures = new Map();
@@ -2039,6 +2040,7 @@ function syncSession(uid, agent = S.agent) {
   if (current) return current;
   const task = (async () => {
     const ac = new AbortController();
+    syncControllers.set(key, ac);
     let stallTimer = null;
     const keepAlive = () => {
       clearTimeout(stallTimer);
@@ -2058,6 +2060,7 @@ function syncSession(uid, agent = S.agent) {
       return 0;
     } finally {
       clearTimeout(stallTimer);
+      if (syncControllers.get(key) === ac) syncControllers.delete(key);
     }
   })().finally(() => {
     if (syncingViews.get(key) === task) syncingViews.delete(key);
@@ -3087,13 +3090,17 @@ function renderNetworkNotice() {
     actions.append(retry); notice.append(text, actions); floatStack().append(notice);
   }
   notice.querySelector('.network-status-text').textContent = issue;
+  notice.querySelector('button').textContent = networkRecovery ? '正在重连…' : '立即重连';
 }
 let networkRecovery = null;
 function recoverNetworkConnection() {
   // Repeated clicks/online events must not cancel the stream that this
   // recovery just opened while its history read is still waiting.
   if (networkRecovery) return networkRecovery;
-  networkRecovery = runNetworkRecovery().finally(() => { networkRecovery = null; });
+  networkRecovery = Promise.resolve().then(runNetworkRecovery).finally(() => {
+    networkRecovery = null;
+    renderNetworkNotice();
+  });
   return networkRecovery;
 }
 async function runNetworkRecovery() {
@@ -3104,10 +3111,19 @@ async function runNetworkRecovery() {
   if (typeof recoverComposerDrafts === 'function') void recoverComposerDrafts();
   if (S.sel) {
     const uid = S.sel, agent = S.agent;
-    if (cache.has(viewKey(uid, agent))) {
+    const key = viewKey(uid, agent);
+    SdkUI.reconnectEvents(SdkView.active);
+    closeWatch();
+    // An explicit retry must replace the stalled read, not wait for its
+    // deadline or mistake its old response for a new recovery attempt.
+    const pending = syncingViews.get(key);
+    syncControllers.get(key)?.abort();
+    if (pending) await pending;
+    if (S.sel !== uid || S.agent !== agent) return;
+    if (cache.has(key)) {
       await syncSession(uid, agent);
       if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
-    } else if (!String(uid).startsWith('tmux:')) void openSession(uid, agent);
+    } else if (!String(uid).startsWith('tmux:')) await openSession(uid, agent);
   }
 }
 addEventListener('offline', renderNetworkNotice);
