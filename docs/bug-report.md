@@ -9,6 +9,10 @@ and `files/write.rs` (`bug_report_upload`). The route is `501
 bug_report_disabled` and `capabilities.bug_report` is `false` until every
 dependency is configured.
 
+Worker investigation follows the problem: diagnostic files and native ledgers are
+reference evidence to read when relevant, not a mandatory first step or a requirement
+to read every bundle file in full. Bundle capture remains available for investigation.
+
 ## SDK / CLI launch preference
 
 DELTA: the browser's per-agent launch preference applies to new sessions,
@@ -320,7 +324,7 @@ published copy (`BUG-20260929-162939-2fafba`).
 
 ### Prompt
 
-`worker_prompt` is rewritten for this repository: read the bundle, locate the
+`worker_prompt` is rewritten for this repository: select relevant evidence, locate the
 first event that diverges across layers, keep the user's working-tree changes,
 make the minimal complete fix, run only the validation proportionate to the
 change, then commit only the fix's own files (other sessions' uncommitted

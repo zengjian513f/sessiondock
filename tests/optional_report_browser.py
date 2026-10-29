@@ -106,6 +106,9 @@ def main():
                     assert all((Path(result['path']) / f).is_file() for f in diagnostic_files)
                     assert f"诊断包所在机器：处理会话本机（主机 {manifest['hostname']}）" in prompt
                     assert '问题机器：Origin（主机 origin-host）' in prompt
+                    assert '不要求每个报告都读取诊断包或完整阅读所有文件' in prompt
+                    assert '根据问题选择必要的证据' in prompt
+                    assert '请先完整阅读' not in prompt and '先用诊断包里的' not in prompt
                     assert '不要去问题机器寻找这个诊断包目录' in prompt
                     assert (Path(result['path'])/'terminal.txt').read_text() == 'origin terminal frame'
                     assert json.loads((Path(result['path'])/'events.jsonl').read_text().splitlines()[0])['event'] == 'origin.capture'

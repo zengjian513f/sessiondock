@@ -711,7 +711,7 @@ pub fn attachment_block(attachments: &[(Attachment, String)]) -> String {
         .join("\n")
 }
 
-/// The worker's task, rewritten for this repository: read the bundle, find
+/// The worker's task, rewritten for this repository: use relevant evidence, find
 /// the first event that diverges, fix minimally, validate proportionately,
 /// then commit, push and deploy the validated fix. `origin` names the machine
 /// the problem was seen on; `local_hostname` is the worker's machine.
@@ -767,8 +767,8 @@ pub fn worker_prompt(
         investigation = if feature {
             "1. 根据用户描述和附件明确功能需求，参考已有同类功能和界面。\n2. 实现最小而完整的功能，打通界面、保存与处理链路，并验证用户操作流程；"
         } else {
-            "1. 先用诊断包里的 browser-state、events.jsonl（浏览器审计事件）与 environment.json 定位，
-   配合服务端账本（delivery/lifecycle 目录）、终端画面与原生 JSONL 核对；能便宜复现再用
+            "1. 根据问题选择必要的证据；需要诊断上下文时，按需读取诊断包相关文件，
+   并结合相关服务端账本（delivery/lifecycle 目录）、终端画面或原生 JSONL 核对；能便宜复现再用
    假 CLI 或无头浏览器套件复现，偶发问题不要为强行复现耗掉任务；
 2. 找到跨层链路中第一个与预期不一致的事件，不能只隐藏页面症状；"
         },
@@ -782,7 +782,7 @@ pub fn worker_prompt(
             "本任务是功能需求，直接依据上述描述和附件实现。未采集诊断包，不需要查找或要求用户补交诊断文件。".to_owned()
         } else {
             format!(
-                "诊断包：{}\n诊断包所在机器：处理会话本机（主机 {}），请直接读取本机上述绝对路径。\n问题机器：{}\n相关会话：{}\n\n请先完整阅读诊断包目录中的 manifest.json、browser-state.json、environment.json、events.jsonl，\n如有 terminal.txt 也一并查看。",
+                "诊断包：{}\n诊断包所在机器：处理会话本机（主机 {}），需要时从本机上述绝对路径读取。\n问题机器：{}\n相关会话：{}\n\n诊断包供按需参考，可选择 manifest.json、browser-state.json、environment.json、events.jsonl 或 terminal.txt（如有）中的相关内容；不要求每个报告都读取诊断包或完整阅读所有文件。",
                 report_dir.display(),
                 local_hostname,
                 origin_label(origin),
