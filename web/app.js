@@ -5277,6 +5277,8 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     const scope = sideHeightScope();
     const heights = new Map(groups.map(group => [group, group._rows.map(r => sideRowHeight(r, scope))]));
     const box = side.getBoundingClientRect();
+    // Rects use scaled viewport pixels; scrollTop and row heights use layout pixels.
+    const zoom = side.currentCSSZoom || 1;
     // The row under the viewport top, read before any write (see the end).
     const anchor = force ? null : [...side.querySelectorAll('.glist > .item')]
       .find(node => node.getBoundingClientRect().bottom > box.top);
@@ -5291,7 +5293,7 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     const pinned = sidebarPinnedKeys(side);
     const plans = groups.map(group => {
       const ul = group.querySelector(':scope > .glist'), rows = group._rows, list = heights.get(group);
-      const listTop = ul.getBoundingClientRect().top - box.top + side.scrollTop;
+      const listTop = (ul.getBoundingClientRect().top - box.top) / zoom + side.scrollTop;
       const span = margin => {
         let y = listTop, start = rows.length, end = rows.length;
         for (let i = 0; i < rows.length; i++) {
@@ -5322,12 +5324,18 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     const context = {picked: pickedSessions, sessionSignatures: new Map(),
       highlightKey: JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0])};
     const changed = plans.filter(plan => plan.changed);
-    for (const plan of changed) {
+    for (const plan of plans) {
       const {group, ul, rows, list, start, end} = plan;
       let before = 0, after = 0;
       for (let i = 0; i < start; i++) before += list[i];
       for (let i = end; i < rows.length; i++) after += list[i];
-      placeSidebarRows(ul, rows.slice(start, end), context, {before, after});
+      if (plan.changed) placeSidebarRows(ul, rows.slice(start, end), context, {before, after});
+      else {
+        // New measurements change the estimates even when the row range stays
+        // empty/unchanged. Keep its spacers in the geometry used by every plan.
+        sideWindowSpacer(ul, 'before').style.height = `${before}px`;
+        sideWindowSpacer(ul, 'after').style.height = `${after}px`;
+      }
       group._window = {start, end};
     }
     // Abbreviating a timeline path can remove many wrapped lines. Measure
@@ -5356,7 +5364,7 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     // overflow-anchor is off for #side: keep the row under the viewport top
     // still when rows above it were measured at a different height.
     if (anchor?.isConnected && anchorTop !== undefined) {
-      const delta = anchor.getBoundingClientRect().top - anchorTop;
+      const delta = (anchor.getBoundingClientRect().top - anchorTop) / zoom;
       if (Math.abs(delta) >= 1) side.scrollTop += delta;
     }
     return changed.map(plan => plan.group);
@@ -5382,7 +5390,7 @@ function sidebarRowNode(uid, agent = null, reveal = false) {
     let offset = 0;
     for (let i = 0; i < index; i++) offset += sideRowHeight(group._rows[i], scope);
     const box = side.getBoundingClientRect();
-    const rowTop = ul.getBoundingClientRect().top - box.top + side.scrollTop + offset;
+    const rowTop = (ul.getBoundingClientRect().top - box.top) / (side.currentCSSZoom || 1) + side.scrollTop + offset;
     const height = sideRowHeight(group._rows[index], scope);
     const head = group.querySelector(':scope > .ghead')?.offsetHeight || 0;
     if (rowTop - head < side.scrollTop) side.scrollTop = rowTop - head;
