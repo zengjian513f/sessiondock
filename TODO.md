@@ -80,6 +80,9 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
+  重连修复 `89780dc6`（仅前端）待补发 orion、cetus、vela：前两者连接超时，
+  vela 恢复旧文件后既有启动故障仍未恢复；lyra、cygnus、pavo、hub 已部署且健康。
+  两份部署报告位于未跟踪的 `target/deploy/20261029-005109-89780dc6/`。
   Codex 推理禁用退避修复 `374daabf` 已交付 lyra、cygnus、pavo、hub；orion、cetus
   离线待补发，vela 启动失败，文件自动回滚后服务仍未恢复（`ROLLBACK_FAILED`）。
   外部 CLI 启动提示修复 `5fbfc1e3`（仅前端）同样待补发 orion、cetus、vela；
