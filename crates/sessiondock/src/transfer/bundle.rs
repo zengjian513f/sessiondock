@@ -114,9 +114,15 @@ impl TransferService {
         op.phase = if completed { "exported" } else { "planned" }.into();
         op.export_lease_until = 0;
         self.save(&op)?;
+        if completed {
+            self.compact_after_finish(&mut op);
+        }
         Ok(op)
     }
-    pub fn bundle_roots(&self, op: &Operation) -> Result<BTreeMap<String, PathBuf>, TransferError> {
+    pub fn bundle_roots<N>(
+        &self,
+        op: &Operation<N>,
+    ) -> Result<BTreeMap<String, PathBuf>, TransferError> {
         let mut roots = BTreeMap::new();
         for member in &op.group().members {
             let root = match member.source.as_str() {

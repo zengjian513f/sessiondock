@@ -1,5 +1,7 @@
 //! Durable same-node clone transaction. Plans contain server-derived paths only;
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
+#[path = "compact.rs"]
+mod compact;
 #[path = "journal.rs"]
 mod journal;
 #[path = "names.rs"]
@@ -35,6 +37,8 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Operation<N = Native> {
     pub id: String,
+    #[serde(default)]
+    pub compacted: bool,
     #[serde(default)]
     pub created_ms: u64,
     pub phase: String,
@@ -170,7 +174,7 @@ pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), Transfe
     Ok(())
 }
 impl TransferService {
-    pub fn operation_keys(&self, op: &Operation) -> Vec<String> {
+    pub fn operation_keys<N>(&self, op: &Operation<N>) -> Vec<String> {
         let mut keys = vec![format!("operation:{}", op.id)];
         if op.codex_names.is_some() {
             keys.push("codex-name-index".into());
@@ -508,6 +512,7 @@ impl TransferService {
         let mut planning = super::cleanup::PlanningDirectory(directory.clone(), false);
         let mut op = Operation {
             id,
+            compacted: false,
             created_ms: crate::session_links::now_ms(),
             phase: "planned".into(),
             uid: selected.into(),
@@ -1177,6 +1182,7 @@ impl TransferService {
         if op.phase == "complete" {
             self.cleanup_markers(&op)?;
             self.reclaim_prior_moves(&op)?;
+            self.compact_after_finish(&mut op);
         }
         Ok(op)
     }

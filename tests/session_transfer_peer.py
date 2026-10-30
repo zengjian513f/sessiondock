@@ -113,7 +113,11 @@ def serve(config,root):
                         db.execute('UPDATE threads SET rollout_path=? WHERE id=?',(request['rollout'],request['sid']))
                 elif op=='receipt':
                     with sqlite3.connect(owned(request['path'])) as db:
-                        result['receipt']=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()[0])
+                        receipt=db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()
+                        result['receipt']=json.loads(receipt[0]) if receipt else None
+                elif op=='put_receipt':
+                    with sqlite3.connect(owned(request['path'])) as db:
+                        db.execute('INSERT INTO _sessiondock_clone_journal VALUES (?,?)',(request['operation_id'],json.dumps(request['receipt'])))
                 elif op=='finish':stop();print(json.dumps({'ok':True}),flush=True);break
                 else:raise ValueError('unknown fixture command')
                 print(json.dumps({'ok':True,**result}),flush=True)

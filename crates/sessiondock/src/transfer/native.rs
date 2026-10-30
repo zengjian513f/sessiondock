@@ -1123,3 +1123,22 @@ fn row_ids(table: &Table) -> BTreeSet<String> {
         })
         .collect()
 }
+
+/// A terminal transfer no longer needs its rollback-only SQLite receipt.
+/// Delete only SessionDock's row, never the imported native conversation rows.
+pub(super) fn forget_receipts(paths: &[PathBuf], operation: &str) -> Result<(), TransferError> {
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let exists: i64 = db.query_row("SELECT count(*) FROM sqlite_master WHERE name='_sessiondock_clone_journal' AND type='table'", [], |r| r.get(0))?;
+        if exists != 0 {
+            db.execute(
+                "DELETE FROM _sessiondock_clone_journal WHERE operation_id=?",
+                [operation],
+            )?;
+        }
+    }
+    Ok(())
+}

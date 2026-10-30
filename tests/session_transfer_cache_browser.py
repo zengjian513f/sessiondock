@@ -129,7 +129,7 @@ def main():
         # Historical operation payloads are much larger than their lock/ownership
         # metadata. They must not be parsed again for every new small transfer.
         old=json.loads((operation_dir/'operation.json').read_text())
-        old.update(phase='exported',incoming_digest=None,ownership_sequence=50)
+        old.update(phase='exported',incoming_digest=None,ownership_sequence=50,compacted=False)
         old['native']={'databases':[{'path':str(corpus.root/'unused.sqlite'),'tables':[
             {'name':'thread_items','columns':['thread_id','payload'],'keys':['thread_id'],
              'schema':'synthetic archived metadata','rows':[
@@ -143,11 +143,19 @@ def main():
             journal=directory/'operation.json';journal.write_text(json.dumps(old));journals.append(journal)
         # Let the existing abandoned-preview worker observe new terminal entries
         # once; it is independent of the on-demand lock/ownership summary cache.
-        page.wait_for_timeout(11000)
+        original_bytes=sum(p.stat().st_size for p in journals)
+        deadline=time.monotonic()+30
+        while not all(json.loads(p.read_text()).get('compacted') for p in journals):
+            assert time.monotonic()<deadline,'legacy receipts did not compact in background'
+            page.wait_for_timeout(500)
+        compact_bytes=sum(p.stat().st_size for p in journals)
+        assert compact_bytes<original_bytes/100,'terminal receipts retained bulk conversation snapshots'
+        assert all(not json.loads(p.read_text())['native']['databases'] for p in journals)
+        print(f'Legacy journal compaction: {original_bytes/2**20:.1f} MiB -> {compact_bytes/1024:.1f} KiB',flush=True)
         indexes=[p.with_name('startup-index-v1.json') for p in journals]
         assert all(p.is_file() for p in indexes),'old journals did not acquire rebuildable indexes'
         index_bytes=sum(p.stat().st_size for p in indexes)
-        assert index_bytes<sum(p.stat().st_size for p in journals)/100,'indexes retained bulk recovery data'
+        assert index_bytes<original_bytes/100,'indexes retained bulk recovery data'
         print(f'Persistent startup indexes: {index_bytes/1024:.1f} KiB',flush=True)
         page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()

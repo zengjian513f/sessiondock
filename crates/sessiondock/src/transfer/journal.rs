@@ -29,6 +29,8 @@ pub(in crate::transfer) struct Summary {
 #[derive(Serialize, Deserialize)]
 pub(in crate::transfer) struct Index {
     version: u32,
+    #[serde(default)]
+    pub compacted: bool,
     source: Stamp,
     home: PathBuf,
     pub summary: Summary,
@@ -126,6 +128,7 @@ impl TransferService {
         };
         Ok(Index {
             version: 1,
+            compacted: op.compacted,
             source,
             home: self.home.clone(),
             summary: Summary {

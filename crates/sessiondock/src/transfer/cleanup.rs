@@ -56,6 +56,24 @@ impl TransferService {
                         op.summary.phase.as_str(),
                         "complete" | "aborted" | "exported" | "retired"
                     ) {
+                        if !op.compacted {
+                            let service = self.clone();
+                            let compact_id = id.clone();
+                            match tokio::task::spawn_blocking(move || {
+                                service.compact_archived(&compact_id)
+                            })
+                            .await
+                            {
+                                Ok(Ok(())) => {}
+                                error => {
+                                    crate::log::warn(
+                                        "transfer.compact.pending",
+                                        serde_json::json!({"operation_id":id,"error":format!("{error:?}")}),
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
                         self.foreground
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())

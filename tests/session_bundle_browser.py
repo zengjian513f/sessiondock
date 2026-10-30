@@ -244,7 +244,7 @@ def main():
                                 assert locked==409 and json.loads(raw)['code']=='move_recovery_required',raw
                             if args.preserve and not args.move:
                                 recovered=json.loads(read_target(reused_path))
-                                assert recovered['phase']=='failed',recovered['phase']
+                                assert recovered['phase']=='failed',(recovered['phase'],recovered.get('error'))
                                 assert read_target(continued[0])==continued[1]
                                 print('PASS '+provider+' restart compensation preserves reused files and continued history',flush=True)
                             result=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']})
@@ -436,6 +436,7 @@ def main():
                             cleanup_obstruction=source.root/'trash'/f'move-{operation}-{provider}'/'files/1'
                             cleanup_obstruction.mkdir(parents=True)
                             print('PASS target remains fenced and ready across restart before source handoff',flush=True)
+                        source_snapshot=json.loads((source.root/'state/transfers'/move_plan.value.json()['operation_id']/'operation.json').read_text())
                         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
                             dialog.locator('.clone-confirm').click()
                         reply=response.value
@@ -599,6 +600,8 @@ def main():
                         expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
+                        assert source_op['compacted'] and target_op['compacted']
+                        assert not source_op['native']['databases'] and target_op['rewritten'] is None
                         assert source_op['phase']==('retired' if args.move else 'exported') and target_op['phase']=='complete' and target_op['incoming_digest']
                         if args.move:
                             # Historical ledger IDs retain their original source node.
@@ -654,7 +657,7 @@ def main():
                                 assert not any(str(row.get('record_id','')).endswith(rid) for row in pending.json()['pending'] for rid in receipt_ids[:4]),pending.text()
                                 page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
                                 print('PASS '+provider+' move clears bound/aliased/old-rollout and already-discarded receipts; preserves unrelated and other-provider identities',flush=True)
-                            for database in source_op['native']['databases']:
+                            for database in source_snapshot['native']['databases']:
                                 with sqlite3.connect(database['path']) as db:
                                     for table in database['tables']:
                                         for row in table['rows']:
@@ -683,17 +686,36 @@ def main():
                             # A new operation can reuse the exact existing files
                             # and native rows; its receipt must not claim them.
                             status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected,'new_ids':False});assert status==200,raw
-                            repeated=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':json.loads(raw)['operation_id']})
+                            repeated_id=json.loads(raw)['operation_id']
+                            status,archive=node_call(a,'/api/session/transfer/export',{'operation_id':repeated_id});assert status==200,archive[:200]
+                            status,raw=node_call(b,'/api/session/transfer/receive',raw=archive);assert status==200,raw
+                            prepared_reuse=json.loads(read_target(destination.root/'state/transfers'/repeated_id/'operation.json'))
+                            repeated=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':repeated_id})
                             assert repeated.ok,repeated.text()
-                            reused=json.loads(read_target(destination.root/'state/transfers'/repeated.json()['operation_id']/'operation.json'))
-                            assert len(reused['reused_files'])==len(target_op['staged']['files'])+len(target_op['file_publications'])
-                            assert target_op['rewritten']==source_op['native']
-                            for db in reused['rewritten']['databases']:
+                            reused=json.loads(read_target(destination.root/'state/transfers'/repeated_id/'operation.json'))
+                            assert reused['compacted'] and not reused['native']['databases'] and reused['rewritten'] is None
+                            for db in prepared_reuse['rewritten']['databases']:
                                 if peer:receipt=peer.call('receipt',path=db['path'],operation_id=reused['id'])['receipt']
                                 else:
                                     with sqlite3.connect(db['path']) as connection:
-                                        receipt=json.loads(connection.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(reused['id'],)).fetchone()[0])
-                                assert all(not table['rows'] for table in receipt['inserted']['tables'])
+                                        receipt=connection.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(reused['id'],)).fetchone()
+                                assert receipt is None,'completed receipt retained SQL snapshots'
+                            # Reconstruct the pre-completion reuse-only receipt:
+                            # no new metadata or native rows were owned by this copy.
+                            prepared_reuse['metadata_after']={}
+                            prepared_reuse['metadata_replaced']={}
+                            for db in prepared_reuse['rewritten']['databases']:
+                                inserted=copy.deepcopy(db)
+                                for table in inserted['tables']:table['rows']=[]
+                                receipt={'planned':db,'inserted':inserted,'replaced':None}
+                                if peer:peer.call('put_receipt',path=db['path'],operation_id=reused['id'],receipt=receipt)
+                                else:
+                                    with sqlite3.connect(db['path']) as connection:
+                                        connection.execute('INSERT INTO _sessiondock_clone_journal VALUES (?,?)',(reused['id'],json.dumps(receipt)))
+                            prepared_reuse['file_publications']=reused['file_publications']
+                            prepared_reuse['staged']=reused['staged']
+                            prepared_reuse['reused_files']=[str(Path(roots['codex'])/f['relative']) for f in reused['staged']['files']]+[f['target'] for f in reused['file_publications']]
+                            reused=prepared_reuse
                             # Simulate interruption after a reuse-only publication.
                             # Recovery must never delete reused files or native rows.
                             reused['phase']='verifying'

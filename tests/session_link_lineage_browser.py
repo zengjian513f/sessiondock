@@ -99,6 +99,10 @@ def main():
         open_link(original_uid,c['target_uid'],copied=True)
         open_link(original+'/agent:'+agent,c['target_uid'],agent_view=True,copied=True)
         print('PASS original-first; nearest then oldest; copies-of-copies; old UID and agent links through actual page',flush=True)
+        receipts=list((corpus.root/'state/transfers').glob('*/operation.json'))
+        assert all(json.loads(p.read_text()).get('compacted') for p in receipts)
+        assert all(not json.loads(p.read_text())['native']['databases'] for p in receipts)
+        print('PASS old UID, native ID and agent links resolve using compact terminal receipts',flush=True)
         hub.stop();servers.close()
         # Simulate receipts written by an older release before identity maps.
         for receipt in (hubroot/'transfers').glob('*.json'):

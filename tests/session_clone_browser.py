@@ -436,6 +436,7 @@ def main():
                         assert native_rows(destination.root/'codex')==destination_db_before
                         assert all(Path(p).read_bytes()==content for p,content in destination_before.items())
                         print('PASS transfer table, machine/mode/identity controls, unsupported-action guard and mobile layout',flush=True)
+                        planned_snapshots={p.parent.name:json.loads(p.read_text()) for p in (corpus.root/'state/transfers').glob('*/operation.json')}
                         for text in (custom_title,'Common ancestor','Parent agent','A agent'):
                             expect(dialog).to_contain_text(text)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
@@ -451,7 +452,10 @@ def main():
                         expect(page.locator('#msgs')).not_to_contain_text('Discarded old branch tail')
                         # The confirmation really published files, not a staging-only receipt.
                         saved=json.loads((corpus.root/'state/transfers'/operation/'operation.json').read_text())
-                        goal_map=saved['plan']['identities']
+                        assert saved['compacted'] and not saved['native']['databases'] and saved['rewritten'] is None
+                        assert not saved['plan']['identities']['records'] and not saved['plan']['identities']['turns']
+                        assert all(not f['boundaries'] for f in saved['staged']['files'])
+                        goal_map=planned_snapshots[operation]['plan']['identities']
                         expected_name=name_raw.replace(('"id" : "'+ident(2)+'"').encode(),('"id" : "'+goal_map['threads'][ident(2)]+'"').encode())
                         assert (corpus.root/'codex/session_index.jsonl').read_bytes()==names_before+expected_name
                         expect(page.locator('.dtitle h2')).to_contain_text(custom_title)
@@ -490,11 +494,9 @@ def main():
                                 assert copied[0]!=source[0]
                         print('PASS attachment and legacy artifact membership IDs remapped; opaque payload bytes and client keys preserved',flush=True)
                         assert saved['phase']=='complete'
-                        starred_copy = next(row for row in saved['metadata_after'].values() if row.get('starred'))
-                        assert starred_copy['group'] == '待办'
                         persisted = json.loads((corpus.root / 'state/session-metadata.json').read_text())
-                        assert any(row.get('group') == '待办'
-                                   for uid, row in persisted['sessions'].items() if uid in saved['metadata_after'])
+                        assert persisted['sessions'][saved['target_uid']]['group']=='待办'
+                        assert persisted['sessions'][saved['target_uid']]['starred']
                         ids=saved['plan']['identities']['threads']
                         page.locator('#a-view-switch').click()
                         page.locator(f'#session-view-menu button[data-agent="{ids[ident(7)]}"]').click()
@@ -520,11 +522,9 @@ def main():
                             row=db.execute('SELECT name,is_pinned,project_id FROM threads WHERE id=?',(ids[ident(2)],)).fetchone()
                             assert row==('Native a',1,'external-project'),row
                             assert db.execute('SELECT parent_thread_id FROM thread_spawn_edges WHERE child_thread_id=?',(ids[ident(7)],)).fetchone()==(ids[ident(2)],)
-                            receipt=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(operation,)).fetchone()[0])
-                            shared={'projects','project_roots','thread_sections'}
-                            assert all(not t['rows'] for t in receipt['inserted']['tables'] if t['name'] in shared)
-                            projects=next(t['rows'] for t in receipt['planned']['tables'] if t['name']=='projects')
-                            assert [r['id'] for r in projects]==['external-project']
+                            assert db.execute('SELECT count(*) FROM _sessiondock_clone_journal WHERE operation_id=?',(operation,)).fetchone()[0]==0
+                            assert db.execute('SELECT id FROM projects WHERE id=?',('external-project',)).fetchone()==('external-project',)
+                        print('PASS completed clone keeps IDs, discards snapshot/row mappings and SQLite rollback receipt',flush=True)
                         print('PASS Chromium/Hub confirms complex group clone, opens new history and agent; native metadata and code-mode references',flush=True)
                     else:
                         # Retry after process restart must return the same group and

@@ -149,6 +149,7 @@ impl TransferService {
                     let _ = probe.remove(&root);
                 }
             }
+            self.compact_after_finish(&mut op);
         }
         Ok(op)
     }
@@ -184,6 +185,7 @@ impl TransferService {
         op.phase = "aborted".into();
         self.save(&op)?;
         self.cleanup_staging(&op)?;
+        self.compact_after_finish(&mut op);
         Ok(op)
     }
     pub fn abort_local(&self, id: &str) -> Result<Operation, TransferError> {
@@ -206,6 +208,7 @@ impl TransferService {
         op.phase = "aborted".into();
         self.save(&op)?;
         self.cleanup_staging(&op)?;
+        self.compact_after_finish(&mut op);
         Ok(op)
     }
     pub fn switch_source(
@@ -253,6 +256,7 @@ impl TransferService {
         self.save(&op)?;
         self.cleanup_markers(&op)?;
         self.reclaim_prior_moves(&op)?;
+        self.compact_after_finish(&mut op);
         Ok(op)
     }
     /// Recognize delayed native index writes only under an unreclaimed retirement.
@@ -617,6 +621,7 @@ impl TransferService {
                 let _ = probe.remove(&root);
             }
         }
+        self.compact_after_finish(&mut op);
         Ok(op)
     }
 }
