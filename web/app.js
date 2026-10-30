@@ -5693,15 +5693,34 @@ function sidebarSnippet(text) {
   return hl(text);
 }
 
+function activeSearchBox() {
+  return SessionContentView.kind === 'sdk' ? SdkView.box : $('#msgs');
+}
+
+// Query changes only repaint annotations. Keep the opened conversation, its
+// disclosure choices and scroll position, including the hidden ordinary view.
+function refreshSearchHighlights() {
+  S.cur = -1; S.autoOpen = 0; S.markCapped = false;
+  for (const box of document.querySelectorAll('#msgs, .sdk-msgs')) {
+    for (const mark of box.querySelectorAll('mark')) {
+      const parent = mark.parentNode;
+      mark.replaceWith(document.createTextNode(mark.textContent));
+      parent.normalize();
+    }
+    box.querySelectorAll('.hashit').forEach(node => node.classList.remove('hashit'));
+    markMatches(box);
+  }
+  updateMatchNav();
+}
+
 /** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
 function markMatches(root) {
   if (!S.term) return 0;
   if (S.opts.regex) { markRegexMatches(root); return 0; }
   const re = reTerm(true);
   if (!re) return 0;
-  const messageBox = $('#msgs');
-  const existing = messageBox && root !== messageBox && messageBox.contains(root)
-    ? messageBox.querySelectorAll('mark').length : 0;
+  const messageBox = root.closest('.msgs');
+  const existing = messageBox?.querySelectorAll('mark').length || 0;
   const budget = Math.max(0, MARK_MAX - existing);
   // 只高亮正文: 折叠预览是正文副本, 高亮在那里会造成重复计数。
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -5756,7 +5775,7 @@ async function markRegexMatches(root) {
     const ranges = await regexMatches(text);
     if (generation !== `${S.term}\0${JSON.stringify(S.opts)}` || !root.isConnected) return;
     if (!node.isConnected || node.nodeValue !== text || node.parentElement.closest('mark')) continue;
-    const budget = MARK_MAX - ($('#msgs')?.querySelectorAll('mark').length || 0);
+    const budget = MARK_MAX - (root.closest('.msgs')?.querySelectorAll('mark').length || 0);
     if (budget <= 0) { S.markCapped = true; break; }
     if (!ranges.length) continue;
     const fragment = document.createDocumentFragment();
@@ -5775,7 +5794,7 @@ async function markRegexMatches(root) {
 }
 
 function jumpMark(delta) {
-  const marks = [...document.querySelectorAll('#msgs mark')].filter(
+  const marks = [...(activeSearchBox()?.querySelectorAll('mark') || [])].filter(
     m => m.checkVisibility ? m.checkVisibility({ visibilityProperty: true }) : m.offsetParent);
   if (!marks.length) return;
   S.cur = (S.cur + delta + marks.length) % marks.length;
@@ -5789,7 +5808,8 @@ function jumpMark(delta) {
 function updateMatchNav({jump = false} = {}) {
   const c = $('#mcount');
   if (!c) return 0;
-  const hits = document.querySelectorAll('#msgs mark').length;
+  c.parentElement.hidden = !S.term;
+  const hits = activeSearchBox()?.querySelectorAll('mark').length || 0;
   c.textContent = hits ? `${hits}${S.markCapped ? '+' : ''} 处匹配` : '本页无匹配';
   const capped = S.markCapped || S.autoOpen >= AUTO_OPEN_MAX;
   c.classList.toggle('capped', capped);
@@ -7212,9 +7232,9 @@ function head(m, total) {
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
-        ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
+        <div class="session-menu-search" ${S.term ? '' : 'hidden'}><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
-          <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+          <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>
         <div class="session-menu-diagnostics session-run-actions">
           ${m.agent_id && !SdkView.available(m.uid, m.agent_id) ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
@@ -9622,11 +9642,13 @@ function msgNode(m) {
     return n;
   }
   // 命中的消息展开且不截断, 保证高亮可见; 但设上限, 否则搜 "a" 会把整个会话全量展开
+  const collapsible = !['assistant', 'assistant·subagent'].includes(m.role);
+  let long = collapsible && m.text.length > CLIP;
   const found = SEARCH_ROLES.has(m.role) && hasTerm(m.text);
   const hit = found && S.autoOpen < AUTO_OPEN_MAX;
-  if (hit) S.autoOpen++;
+  if (hit && long) S.autoOpen++;
   // 对话内容从不整泡折叠；长内容只在泡内提供“展开全文”。
-  const n = el('div', 'msg' + (found && !hit ? ' hashit' : ''));
+  const n = el('div', 'msg' + (long && found && !hit ? ' hashit' : ''));
   n.dataset.role = m.role;
   if (m.native_type) n.dataset.nativeType = m.native_type;
   if (m.counted === false) n.dataset.counted = 'false';
@@ -9659,13 +9681,13 @@ function msgNode(m) {
   };
   n.appendChild(body);
   const setAction = addAction(n);
-  const collapsible = !['assistant', 'assistant·subagent'].includes(m.role);
-  let long = collapsible && m.text.length > CLIP;
   let expanded = false, needsMore = long;
   const full = () => {
     expanded = true;
+    n.classList.remove('hashit');
     body.classList.remove('clip'); paint(true);
     setAction(needsMore ? '收起' : '', needsMore ? clipped : null, needsMore ? true : null);
+    if (n.isConnected && S.term) { markMatches(n); updateMatchNav(); }
   };
   const clipped = () => {
     expanded = false;
@@ -9702,9 +9724,11 @@ function msgNode(m) {
         if (!n.isConnected) return;
         n._applyRegexMatch = null;
         if (generation !== regexGeneration || !ranges.matched) return;
-        if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
-        S.autoOpen++;
-        if (long) full();
+        if (long) {
+          if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
+          S.autoOpen++;
+          full();
+        }
         markMatches(n);
       };
       n._applyRegexMatch();
@@ -11053,7 +11077,7 @@ MOBILE.addEventListener?.('change', e => {
 const searchController = SessionDockSearch.create({
   state: S, select: $, capabilities: SessionDockCapabilities, store,
   hub: HUB_MODE, sources: SOURCES, nodes: Nodes, appUrl, esc,
-  resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount,
+  resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount, refreshSearchHighlights,
   renderNodes, selectedNodeIds, applyNodeState,
 });
 // Existing sidebar and terminal callers use the same public actions.

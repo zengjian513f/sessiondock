@@ -252,6 +252,8 @@ const SdkUI = {
     }
     view.toolGroupNodes = retained;
     ConversationUI.refreshToolTails(view.box);
+    markMatches(view.live);
+    updateMatchNav();
   },
 
   foldLiveTurns(view, messages, {tailComplete}) {
@@ -298,6 +300,7 @@ const SdkUI = {
   },
 
   paintHistory(view, messages, {tailComplete = true, decorate} = {}) {
+    S.autoOpen = 0; S.markCapped = false;
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
     view.history.replaceChildren();
@@ -316,6 +319,8 @@ const SdkUI = {
         folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
     }
     refreshMessageTimeDividers(view.history);
+    markMatches(view.history);
+    updateMatchNav();
     // History is only part of a snapshot: live tools may still be unpacked.
     // Measure/scroll after the complete history + live reconciliation.
     const box = view.box;

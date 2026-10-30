@@ -6,12 +6,14 @@
 globalThis.SessionDockSearch = Object.freeze({
   create({state: S, select: $, capabilities: SessionDockCapabilities, store,
     hub: HUB_MODE, sources: SOURCES, nodes: Nodes, appUrl, esc,
-    resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount,
+    resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount, refreshSearchHighlights,
     renderNodes, selectedNodeIds, applyNodeState}) {
     $('#q').oninput = e => {
       cancelSearch();
       S.term = e.target.value.trim();
-      searchInputTimer = setTimeout(() => { searchInputTimer = null; renderSide(); }, 120);
+      searchInputTimer = setTimeout(() => {
+        searchInputTimer = null; renderSide(); refreshSearchHighlights();
+      }, 120);
     };
 
     $('#q').onkeydown = async e => {
@@ -33,7 +35,7 @@ globalThis.SessionDockSearch = Object.freeze({
       S.results = null;
       S.searchClosed.clear();
       S.searchNestClosed.clear();
-      if (clearQuery) { S.term = ''; $('#q').value = ''; }
+      if (clearQuery) { S.term = ''; $('#q').value = ''; refreshSearchHighlights(); }
       $('#stat').textContent = ''; $('#stat').classList.remove('err');
       if (HUB_MODE) { Nodes.errors.delete('search'); renderNodes(); }
     }
@@ -149,6 +151,7 @@ globalThis.SessionDockSearch = Object.freeze({
       const q = $('#q').value.trim();
       cancelSearch();
       S.term = q;
+      refreshSearchHighlights();
       const run = searchRun;
       if (!q) { S.results = null; showSessionCount(); renderSide(); return; }
       if (!SessionDockCapabilities.allows('search')) {
@@ -220,7 +223,7 @@ globalThis.SessionDockSearch = Object.freeze({
       S.opts[k] = !S.opts[k];
       store.set('opts', S.opts);
       renderOpts();
-      if (S.results) runSearch(); else renderSide();
+      if (S.results) runSearch(); else { renderSide(); refreshSearchHighlights(); }
     };
 
     $('#search-mode').onclick = e => {

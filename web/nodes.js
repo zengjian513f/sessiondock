@@ -248,6 +248,7 @@ const SessionContentView = {
       button?.setAttribute('aria-pressed', String(this.kind === kind));
     }
     refreshSessionRunControls();
+    updateMatchNav();
     return this.kind;
   },
   open(kind, uid, agent, options = {}) {

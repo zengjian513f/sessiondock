@@ -148,11 +148,10 @@ async def exercise(browser, base, data, stale_payload, width, height):
             await pane.dispose()
             pane = None
         await page.reload(wait_until="domcontentloaded")
-        # The sid URL restores detail asynchronously after the shell mounts.
-        # Leave that restored view only after it is actually ready.
-        await expect(page.locator("#msgs")).to_contain_text("PaneSentinel")
-        if width == 390:
-            await page.locator(".mobile-back").click()
+        # Mobile Back removes sid and reload stays on the list. Desktop keeps
+        # its deep link and restores detail asynchronously after shell mount.
+        if width != 390:
+            await expect(page.locator("#msgs")).to_contain_text("PaneSentinel")
         await expect(q).to_have_value("")
         await expect(rows).to_have_count(3)
         await expect(page.locator("#side-search-state")).to_be_hidden()
