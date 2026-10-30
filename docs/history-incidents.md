@@ -11,8 +11,8 @@
 浏览器在 01:30:54.994Z、01:31:15.815Z 点击启动；01:31:16.504Z 的状态按钮
 记录原生拒绝：旧会话使用 openai，当前 provider 是 openai_catalog_cache。
 历史读取成功，游标保持 11230910；SDK 队列既有四项均 sent，CLI lifecycle
-没有该会话记录。首个可定位的链路偏差是 thread/resume 未指定会话 provider，
-继承了改变后的 daemon 默认值；不是模型名、历史渲染或输入投递故障。
+没有该会话记录。最初将问题归因于 thread/resume 未指定会话 provider，
+但后续原生验证否定了“仅补参数即可恢复”的结论，见下文更正。
 
 桥接现在先 thread/read（不读 turns），再把原生 modelProvider 传给 resume；
 不修改全局配置或原生文件。provider 浏览器回归覆盖节点 openai、Hub 自定义
@@ -29,6 +29,16 @@ SDK 综合套件的 usage_opening_check 在新旧二进制上都因缺少 9% 额
 六个 ptyhost 保留。orion、cetus 连接超时；vela 恢复旧二进制后仍不可用，
 stderr 为既有 `Store(Invalid)`，结果 ROLLBACK_FAILED。待办见 TODO；两份
 工具报告在未跟踪的 `target/deploy/20261030-014212-b6bc5dd1/`。
+
+后续更正（附件 188）：Cygnus 确实运行上述后端，01:58:03.332Z 的启动点击
+之后，01:58:08.032Z 仍记录同一 provider 错误；用户新开页面后也重试了启动。
+直接只读 thread/read 确认原生返回 openai、notLoaded。使用正在运行 daemon
+所对应的 Codex 0.166.0 二进制，在临时 HOME/CODEX_HOME、合成 JSONL、
+命令行 gpt-5.6-luna/low 下仅执行 initialize/resume，不发送模型输入：默认
+provider 为 cache 时，省略覆盖、modelProvider=openai、config 覆盖和 path
+恢复均返回结构化 modelProviderMismatch；进程启动参数改为 openai 时恢复成功，
+返回模型为 gpt-5.6-luna。上一轮假 CLI 未模拟进程级限制，不能证明
+用户问题已解决。未改生产配置、原生历史或重启共享 daemon；具体处理方向待定。
 
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 

@@ -43,11 +43,14 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
   connection; later pages reuse it. Before resuming, `thread/read` with
   `includeTurns: false` supplies the thread's native `modelProvider`, which is
-  passed explicitly to resume. Changing the daemon's default provider must not
-  prevent opening older threads or silently select a different provider.
+  passed explicitly to resume. Codex 0.166.0 additionally requires the native
+  process's current provider to match the stored provider: neither `modelProvider`
+  nor a per-request `config.model_provider` override bypasses that check.
+  Cross-provider histories can therefore still fail with `modelProviderMismatch`.
   Missing/empty provider metadata leaves native defaults in effect; native read
   and resume errors remain visible. This does not rewrite rollouts or global
-  configuration. Covered by [provider recovery](../tests/codex_sdk_provider_browser.py).
+  configuration. The [synthetic provider suite](../tests/codex_sdk_provider_browser.py)
+  verifies parameter forwarding; it does not model the 0.166.0 process-level gate.
   If it is already active without a local
   turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
   descending, full items) before publishing its snapshot. This restores
