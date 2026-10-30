@@ -49,6 +49,20 @@ low、medium、high、xhigh、max，由 CLI 判断没有强度变体元数据的
 未安装或未配置时禁用该节点的 Agy 选择。未绑定 pending 清理只处理启动回执和
 宿主，不删除原生数据库。当前浏览器套件针对 legacy 前端。
 
+## 全局规则与共享 Markdown
+
+Agy 使用原生[规则入口](https://antigravity.google/docs/rules/)：
+`~/.gemini/AGENTS.md`（也支持 `GEMINI.md`）作为始终加载的全局规则。
+多台机器共享规则时，在每台机器的 CLI 用户 HOME 中将该入口软链到共享入口文档；
+HOME 本身不因项目目录共享而共享。已有规则文件须保留并合并入口说明，不能直接覆盖。
+共享入口应明确以 `agy` 选择客户端规则，并按实际 hostname 读取机器规则。
+
+SessionDock 的 CLI 与 SDK 使用 launcher profile 的环境和会话 cwd，
+由原生 Agy 读取规则，不将共享 Markdown 拼进用户消息，也不扫描全部共享文档。
+profile 覆盖 HOME 时须在对应 HOME 配置入口；`SESSIONDOCK_AGY_HOME` 是会话数据根，
+不能代替全局规则入口。配置后以新会话验证；已有进程不保证重新加载规则。
+入口可读取只证明配置可用，实际读取哪些引用文档仍须以该会话的原生上下文或工具记录确认。
+
 ## 原生存储与只读镜像
 
 agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动发现它。

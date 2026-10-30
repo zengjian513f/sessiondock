@@ -4,6 +4,20 @@ Kiro 使用同一原生 SID 提供 CLI 终端与 ACP SDK 两种模式。接入�
 [实施计划](../implementation_plan_codex_for_kiro.md)与[SDK 桥接](kiro-sdk.md)。
 不解析 TUI；原生 V3 历史只读观测，不改写原生会话文件。
 
+## 全局规则与共享 Markdown
+
+Kiro 使用原生[全局 Steering](https://kiro.dev/docs/steering/)：
+`~/.kiro/steering/AGENTS.md` 始终作为规则加载，不需要 frontmatter。
+多台机器共享规则时，在每台机器的 CLI 用户 HOME 中将该入口软链到共享入口文档；
+保留已有入口内容，不覆盖用户规则。共享入口以 `kiro` 选择客户端规则，
+按实际 hostname 读取机器规则，参考文档按任务需要读取。
+
+SessionDock 的 CLI 与 ACP SDK 沿用 launcher profile 的环境和会话 cwd，
+不额外注入规则或递归加载共享 Markdown。HOME 或原生 Kiro 配置目录被覆盖时，
+须在实际生效的原生目录配置入口；`SESSIONDOCK_KIRO_ROOT` 是目录/历史观测根，
+不能代替 Steering。配置后以新会话验证，已有会话不保证热更新。
+入口可读取只证明配置可用，不证明模型已读取入口引用的所有文件。
+
 ## 原生验证及限制
 
 2026-10-21 在独立 HOME/XDG、配置目录和工作目录中验证 `kiro-cli 2.24.1`：
