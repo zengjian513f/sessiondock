@@ -96,6 +96,10 @@ def main():
             expect(page.locator('#sdk-model')).to_have_value('fake-sol')
             expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
             page.screenshot(path=str(args.screenshots/'managed-sdk.png'))
+            page.locator('#a-chat').click()
+            expect(page.locator('#conversation-status [data-balance="reset-credits"]')).to_have_text('重置卡 2 张')
+            expect(page.locator('#conversation-status .sdk-gauges')).to_contain_text('40%')
+            page.screenshot(path=str(args.screenshots/'managed-conversation.png'))
             saved=page.request.get(base+'/api/quotas').json()['agents'][0]
             assert saved['buckets'][0]['remaining_percent']==60,saved
             # A failed explicit collection keeps the SDK's successful snapshot;

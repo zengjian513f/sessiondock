@@ -258,7 +258,7 @@ const CodexSdkView = {
     this.limitsRecordedAt = null;
     this.limitsFresh = true;
     this.resetCards = raw?.rateLimitResetCredits || null;
-    UsageUI.rememberCodexLimits(this.uid,this.limits);
+    UsageUI.rememberCodexLimits(this.uid,raw);
     this.paintGauges();
   },
 
@@ -632,7 +632,7 @@ const CodexSdkView = {
           this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
           this.limitsRecordedAt = null;
           this.limitsFresh = true;
-          UsageUI.rememberCodexLimits(this.uid,this.limits);
+          UsageUI.rememberCodexLimits(this.uid,{rateLimits:this.limits});
         }
         break;
       case 'error':

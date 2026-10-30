@@ -20,17 +20,28 @@ const UsageUI = {
     if(quota && (!previous || !previous.captured_at || Date.parse(quota.captured_at)>=Date.parse(previous.captured_at)))
       this.accounts.set(this.accountKey(uid),quota);
   },
-  rememberCodexLimits(uid, limits) {
-    const buckets=[];
-    for(const name of ['primary','secondary']) {
-      const window=limits?.[name];
-      if(!window)continue;
-      buckets.push({id:`codex:${name}`,group:'codex',window:window.windowDurationMins,
-        remaining_percent:Number.isFinite(window.usedPercent)?100-window.usedPercent:null,
-        resets_at:window.resetsAt==null?null:new Date(window.resetsAt*1000).toISOString()});
+  rememberCodexLimits(uid, raw) {
+    const limits=raw?.rateLimitsByLimitId || {codex:raw?.rateLimits};
+    const ids=new Set(Object.keys(limits));
+    const buckets=(this.quota(uid)?.buckets || []).filter(row=>!ids.has(row.id?.split(':')[0])
+      && !(raw?.rateLimitResetCredits && row.id==='reset-credits'));
+    for(const [id,limit] of Object.entries(limits)) {
+      for(const name of ['primary','secondary']) {
+        const window=limit?.[name];
+        if(!window)continue;
+        buckets.push({id:`${id}:${name}`,group:limit.limitName || id,window:window.windowDurationMins,
+          remaining_percent:Number.isFinite(window.usedPercent)?100-window.usedPercent:null,
+          resets_at:window.resetsAt==null?null:new Date(window.resetsAt*1000).toISOString()});
+      }
+      if(limit?.credits)buckets.push({id:`${id}:credits`,group:`${limit.limitName || id} credits`,
+        remaining_text:limit.credits.unlimited?'不限量':limit.credits.balance});
     }
-    if(limits?.credits)buckets.push({id:'codex:credits',group:'codex credits',
-      remaining_text:limits.credits.unlimited?'不限量':limits.credits.balance});
+    const resets=raw?.rateLimitResetCredits;
+    if(resets){
+      const expiries=(resets.credits || []).filter(row=>row.status==='available' && Number.isFinite(row.expiresAt)).map(row=>row.expiresAt);
+      buckets.push({id:'reset-credits',group:'重置卡',remaining_text:Number.isFinite(resets.availableCount)?`${resets.availableCount} 张`:null,
+        expires_at:expiries.length?new Date(Math.min(...expiries)*1000).toISOString():null});
+    }
     this.rememberQuota(uid,{source:'codex',captured_at:new Date().toISOString(),buckets});
   },
   async readQuota(uid, signal, refresh=false) {
