@@ -38,7 +38,22 @@ stderr 为既有 `Store(Invalid)`，结果 ROLLBACK_FAILED。待办见 TODO；�
 provider 为 cache 时，省略覆盖、modelProvider=openai、config 覆盖和 path
 恢复均返回结构化 modelProviderMismatch；进程启动参数改为 openai 时恢复成功，
 返回模型为 gpt-5.6-luna。上一轮假 CLI 未模拟进程级限制，不能证明
-用户问题已解决。未改生产配置、原生历史或重启共享 daemon；具体处理方向待定。
+用户问题已解决。当时未改生产配置、原生历史或重启共享 daemon。
+
+随后用户选择调整会话 provider。确认两个标识均使用 OpenAI 推理后，新增显式
+单会话维护脚本 `deploy/codex_provider_migrate.py`（提交 `69e41008`），默认只读
+计划，应用时遵守原生写入锁并先保存私有备份。仅修改数据库 provider、JSONL
+首条元数据和最后一条本线程设置快照中的 provider，按字节增量同步分页索引。
+真实 Codex 0.166.0 的隔离 Chromium 回归先重现拒绝，迁移后通过页面启动、刷新、
+两轮历史及分页偏移检查，并验证已加载线程拒绝迁移；无模型输入。亲自查看
+完整页面截图，历史和就绪状态正常。文档链接、AGENTS 与 diff 检查通过。
+
+仅对报告线程执行上述维护：修改两处 provider，文件增长 28 字节，更新并检查
+21 个回合的偏移，投影仍位于文件末尾。原生只读 thread/read 随即返回
+`openai_catalog_cache`，模型仍为 `gpt-6-astra`，状态仍为 notLoaded。原文件及
+数据库原字段已保存在服务私有备份目录。没有发送生产模型请求，也未替用户启动
+实际会话；实际页面重试仍待用户确认。其他会话、全局配置和共享 daemon 均未变。
+本轮只增加维护脚本、测试和文档，不发布运行产物或重启服务。
 
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 

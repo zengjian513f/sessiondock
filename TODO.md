@@ -30,12 +30,6 @@
 
 ## Native interaction semantics
 
-- [ ] BUG-20261030-013132-fb51f9：`b6bc5dd1` 补传 provider 未解决 Codex 0.166.0
-  的进程级 modelProviderMismatch。已用真实二进制、临时 home 和合成历史复现，
-  无模型输入。需确定多 provider 运行实例路由或配置调整方案，保留现有会话、
-  默认值与原生历史；不能把假 CLI 的参数转发通过当作原生恢复成功。
-  见[更正记录](docs/history-incidents.md#bug-20261030-013132-fb51f9旧会话-provider-与-daemon-默认值不一致)。
-
 - [ ] BUG-20261029-001953-cbb6c1、BUG-20261029-071653-e3316c：恢复链路已补齐
   历史请求替换与 SDK 浏览器订阅，但手机和桌面均有浏览器至入口的传输停顿。
   后一次约 35 秒后自动恢复，原生任务正常完成，未点击手动重连。现有入口日志
