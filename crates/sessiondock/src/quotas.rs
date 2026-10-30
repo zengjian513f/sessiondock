@@ -109,6 +109,20 @@ impl Quotas {
         }
         json!({"agents":agents})
     }
+    /// Publish an account read from the already connected SDK into the same
+    /// snapshot used by external sessions and the quota page.
+    pub async fn record_codex(&self, raw: &Value) {
+        let Some(dir) = &self.directory else { return };
+        let Ok(value) = codex_snapshot(raw) else {
+            return;
+        };
+        let requested_at = Instant::now();
+        let mut completed = self.refresh[0].lock().await;
+        if completed.is_some_and(|time| time >= requested_at) { return; }
+        if save(&dir.join("codex.json"), &value).is_ok() {
+            *completed = Some(Instant::now());
+        }
+    }
     pub async fn collect(&self) -> Value {
         self.collect_selected(None, false).await
     }
@@ -286,38 +300,62 @@ async fn query(profile: &CliProfile, kiro_home: Option<&Path>) -> Result<Value, 
             if value["id"]==2 {
                 if value.get("error").is_some() {return Err(())}
                 let result=&value["result"];
-                let limits:Vec<(&str,&Value)>=match result["rateLimitsByLimitId"].as_object() {
-                    Some(map) if !map.is_empty()=>map.iter().map(|(k,v)|(k.as_str(),v)).collect(),
-                    _=>vec![("codex",&result["rateLimits"])],
-                };
-                let mut buckets=Vec::new();
-                let mut credit_rows=Vec::new();
-                for (id,limit) in limits {
-                    if limit["credits"].is_object() {
-                        let c=&limit["credits"];
-                        let remaining=if c["unlimited"]==true {json!("不限量")} else {c["balance"].clone()};
-                        credit_rows.push(json!({"id":format!("{id}:credits"),"group":format!("{} credits",limit["limitName"].as_str().unwrap_or(id)),"remaining_text":remaining}));
-                    }
-                    for window in ["primary","secondary"] {
-                        let b=&limit[window]; if !b.is_object() {continue}
-                        buckets.push(bucket(&format!("{id}:{window}"),limit["limitName"].as_str().unwrap_or(id),b["windowDurationMins"].clone(),b["usedPercent"].as_f64().map(|v|100.-v),epoch(&b["resetsAt"])));
-                    }
-                }
-                let resets=&result["rateLimitResetCredits"];
-                if buckets.is_empty() && credit_rows.is_empty() && !resets.is_object() {return Err(())}
-                if credit_rows.is_empty() {credit_rows.push(json!({"id":"credits","group":"Credits","remaining_text":null}));}
-                buckets.extend(credit_rows);
-                // The authoritative count can exceed the number of detail rows.
-                let expiry=resets["credits"].as_array().and_then(|rows|rows.iter()
-                    .filter(|c|c["status"]=="available").filter_map(|c|c["expiresAt"].as_i64()).min());
-                buckets.push(json!({"id":"reset-credits","group":"重置卡","remaining_text":resets["availableCount"].as_i64().map(|n|format!("{n} 张")),"expires_at":epoch(&json!(expiry))}));
-                return Ok(snapshot("codex",buckets));
+                return codex_snapshot(result);
             }
         }
     }.await;
     let _ = child.kill().await;
     let _ = child.wait().await;
     result
+}
+fn codex_snapshot(result: &Value) -> Result<Value, ()> {
+    let limits: Vec<(&str, &Value)> = match result["rateLimitsByLimitId"].as_object() {
+        Some(map) if !map.is_empty() => map.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+        _ => vec![("codex", &result["rateLimits"])],
+    };
+    let mut buckets = Vec::new();
+    let mut credit_rows = Vec::new();
+    for (id, limit) in limits {
+        if limit["credits"].is_object() {
+            let c = &limit["credits"];
+            let remaining = if c["unlimited"] == true {
+                json!("不限量")
+            } else {
+                c["balance"].clone()
+            };
+            credit_rows.push(json!({"id":format!("{id}:credits"),"group":format!("{} credits",limit["limitName"].as_str().unwrap_or(id)),"remaining_text":remaining}));
+        }
+        for window in ["primary", "secondary"] {
+            let b = &limit[window];
+            if !b.is_object() {
+                continue;
+            }
+            buckets.push(bucket(
+                &format!("{id}:{window}"),
+                limit["limitName"].as_str().unwrap_or(id),
+                b["windowDurationMins"].clone(),
+                b["usedPercent"].as_f64().map(|v| 100. - v),
+                epoch(&b["resetsAt"]),
+            ));
+        }
+    }
+    let resets = &result["rateLimitResetCredits"];
+    if buckets.is_empty() && credit_rows.is_empty() && !resets.is_object() {
+        return Err(());
+    }
+    if credit_rows.is_empty() {
+        credit_rows.push(json!({"id":"credits","group":"Credits","remaining_text":null}));
+    }
+    buckets.extend(credit_rows);
+    // The authoritative count can exceed the number of detail rows.
+    let expiry = resets["credits"].as_array().and_then(|rows| {
+        rows.iter()
+            .filter(|c| c["status"] == "available")
+            .filter_map(|c| c["expiresAt"].as_i64())
+            .min()
+    });
+    buckets.push(json!({"id":"reset-credits","group":"重置卡","remaining_text":resets["availableCount"].as_i64().map(|n|format!("{n} 张")),"expires_at":epoch(&json!(expiry))}));
+    Ok(snapshot("codex", buckets))
 }
 /// Kiro account usage through the CLI's own ACP `_kiro/account/getUsage` handler.
 /// It is not listed in `extensionMethods`; an unsupported CLI fails like any query.

@@ -14,14 +14,34 @@ const UsageUI = {
     this.sessions.set(key, structuredClone(data));
   },
   quota(uid) { return this.accounts.get(this.accountKey(uid)); },
-  rememberQuota(uid, quota) { if(quota)this.accounts.set(this.accountKey(uid),quota); },
-  async readQuota(uid, signal) {
+  rememberQuota(uid, quota) {
+    const previous=this.quota(uid);
+    if(previous?.buckets?.length && !quota?.captured_at && !quota?.buckets?.length)return;
+    if(quota && (!previous || !previous.captured_at || Date.parse(quota.captured_at)>=Date.parse(previous.captured_at)))
+      this.accounts.set(this.accountKey(uid),quota);
+  },
+  rememberCodexLimits(uid, limits) {
+    const buckets=[];
+    for(const name of ['primary','secondary']) {
+      const window=limits?.[name];
+      if(!window)continue;
+      buckets.push({id:`codex:${name}`,group:'codex',window:window.windowDurationMins,
+        remaining_percent:Number.isFinite(window.usedPercent)?100-window.usedPercent:null,
+        resets_at:window.resetsAt==null?null:new Date(window.resetsAt*1000).toISOString()});
+    }
+    if(limits?.credits)buckets.push({id:'codex:credits',group:'codex credits',
+      remaining_text:limits.credits.unlimited?'不限量':limits.credits.balance});
+    this.rememberQuota(uid,{source:'codex',captured_at:new Date().toISOString(),buckets});
+  },
+  async readQuota(uid, signal, refresh=false) {
     const node=HUB_MODE ? nodeOf(uid) : '';
     const path=node ? `api/nodes/${encodeURIComponent(node)}/api/quotas` : 'api/quotas';
-    const response=await fetch(appUrl(path),{cache:'no-store',signal});
+    const response=await fetch(appUrl(path + (refresh ? `/refresh?cached=true&source=${encodeURIComponent(String(uid).split(':')[0])}` : '')),{method:refresh?'POST':'GET',cache:'no-store',signal});
     if(!response.ok)throw new Error('quota snapshot unavailable');
     const data=await response.json();
-    return data.agents?.find(item=>item.source===String(uid).split(':')[0]);
+    const quota=data.agents?.find(item=>item.source===String(uid).split(':')[0]);
+    this.rememberQuota(uid,quota);
+    return this.quota(uid);
   },
   minutes(value) {
     if (typeof value === 'number') return value;

@@ -12,6 +12,10 @@
 
 ## Runtime and platform coverage
 
+- [ ] 更新 `codex_sdk_browser.py` 与 `codex_sdk_status_browser.py` 的旧自动启动假设：
+  选择只读会话后需按当前显式启动流程操作；两套件当前分别停在历史额度和外部状态断言。
+  外部额度、普通对话与显式启动后的额度写回由 `external_quota_browser.py` 覆盖。
+
 - [ ] 根据 [外部程序启动审计](docs/process-launch-audit.md) 补足共享 tmux/systemd、
   容器/调度器/常驻 RPC 服务的每作业身份或因果证据；无证据时保持未归属。
   不能把启动请求、业务租约释放或自然语言“完成”当作 OS 资源归属/释放证明。

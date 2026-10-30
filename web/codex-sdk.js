@@ -32,8 +32,8 @@ const CodexSdkView = {
     this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
     const remembered=UsageUI.remembered(uid,agent);
-    this.limits=remembered?.limits || null;this.cachedUsage=remembered?.usage || null;
-    this.limitsRecordedAt=this.limits ? '' : null;
+    this.limits=null;this.cachedUsage=remembered?.usage || null;
+    this.limitsRecordedAt=null;
     SdkUI.mount(this, {name: 'Codex', readOnly, historyReady,
       settings: (view, values) => CodexSdkControls.settings(view, values)});
     pane.querySelector('.sdk-gauges').innerHTML = `
@@ -56,29 +56,26 @@ const CodexSdkView = {
     this.mountToolbar(generation);
     this.paintPickers();
     this.paintGauges();
-    // Disk quota reads do not depend on app-server startup or history loading.
+    this.applyQuota(UsageUI.quota(uid));
+    // Account collection is shared by every session on this node. It does not
+    // resume the selected thread, including an externally running CLI.
     const quotaRead=new AbortController();this.quotaRead=quotaRead;
-    void UsageUI.readQuota(uid,quotaRead.signal).then(quota=>{
-      if(!this.current(generation) || this.limitsFresh || this.limits || !quota)return;
-      const windows=(quota.buckets || []).filter(row=>row.id?.startsWith('codex:') && Number.isFinite(row.remaining_percent));
-      const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
-      if(!windows.length && !credit)return;
-      this.limits={};
-      if(credit){
-        const unlimited=['不限量','无限','unlimited'].includes(String(credit.remaining_text).toLowerCase());
-        const balance=Number(credit.remaining_text);
-        if(unlimited || Number.isFinite(balance))this.limits.credits={unlimited,balance:unlimited ? null : balance,hasCredits:balance>0};
+    void (async()=>{
+      for(const refresh of [false,true]) {
+        try {
+          const quota=await UsageUI.readQuota(uid,quotaRead.signal,refresh);
+          if(!this.current(generation))return;
+          this.applyQuota(quota);
+        } catch(error) { if(quotaRead.signal.aborted)return; }
       }
-      windows.slice(0,2).forEach((row,index)=>this.limits[index?'secondary':'primary']={usedPercent:100-row.remaining_percent,windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null});
-      this.limitsRecordedAt=quota.captured_at || '';this.paintGauges();
-    }).catch(()=>{});
+    })();
     this.refreshHistory(generation);
     this.setNotice('连接中', 'connecting');
     this.start(generation);
   },
 
   close() {
-    if(this.uid)UsageUI.remember(this.uid,this.agent,{limits:this.limits,usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
+    if(this.uid)UsageUI.remember(this.uid,this.agent,{usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
     this.quotaRead?.abort();this.quotaRead=null;
     this.setConnected(false);
     if (this.input) PathCompletion.close(this.input);
@@ -240,11 +237,28 @@ const CodexSdkView = {
     }
   },
 
+  applyQuota(quota) {
+    if(this.limitsFresh || !quota?.captured_at)return;
+    if(this.limitsRecordedAt && Date.parse(this.limitsRecordedAt)>Date.parse(quota.captured_at))return;
+    const windows=(quota.buckets || []).filter(row=>['codex:primary','codex:secondary'].includes(row.id) && Number.isFinite(row.remaining_percent));
+    const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
+    if(!windows.length && !credit)return;
+    this.limits={limitId:'codex'};
+    if(credit){
+      const unlimited=['不限量','无限','unlimited'].includes(String(credit.remaining_text).toLowerCase());
+      const balance=Number(credit.remaining_text);
+      if(unlimited || Number.isFinite(balance))this.limits.credits={unlimited,balance:unlimited ? null : balance,hasCredits:balance>0};
+    }
+    for(const row of windows)this.limits[row.id.split(':')[1]]={usedPercent:100-row.remaining_percent,windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null};
+    this.limitsRecordedAt=quota.captured_at;this.paintGauges();
+  },
+
   applyLimits(raw) {
     this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
     this.limitsRecordedAt = null;
     this.limitsFresh = true;
     this.resetCards = raw?.rateLimitResetCredits || null;
+    UsageUI.rememberCodexLimits(this.uid,this.limits);
     this.paintGauges();
   },
 
@@ -618,6 +632,7 @@ const CodexSdkView = {
           this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
           this.limitsRecordedAt = null;
           this.limitsFresh = true;
+          UsageUI.rememberCodexLimits(this.uid,this.limits);
         }
         break;
       case 'error':

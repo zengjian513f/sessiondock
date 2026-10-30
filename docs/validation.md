@@ -30,6 +30,8 @@ being wrong. A suite whose first 40 lines carry `# run_validation: serial` runs
 alone after both pools (timing assertions). Summary and JSON keep the plan
 order; `--jobs 1` runs everything serially in that order.
 
+[external_quota_browser.py](../tests/external_quota_browser.py) covers external Codex account refresh and shared snapshots on node/Hub.
+
 [quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
 Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
 

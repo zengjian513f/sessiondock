@@ -24,7 +24,7 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 - GET `/api/quotas` 只读 `<SESSIONDOCK_STATE_DIR>/quotas/{source}.json`。
 - POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy、Kiro profile；Claude 只重读快照。
   同节点按来源合并同时发生的查询，不同来源互不阻塞；不打开会话、不发送推理请求，不做定时刷新。
-  自动查询使用 `?cached=true`，复用一分钟内的采集或失败尝试；显式刷新跳过有效期。
+  可用 `source` 参数只查询当前来源。自动查询使用 `?cached=true`，复用一分钟内的采集或失败尝试；显式刷新跳过有效期。
 - Hub 页面通过已有 `/api/nodes/{nid}/api/...` 代理逐节点读取；一台失败不阻塞其它结果。
 - 复用 launcher profile 的 executable、固定参数与环境，清除会话身份环境变量；工作目录为临时目录。
   CLI 查询最长 25 秒，结束或取消时回收子进程。stderr 与原始认证错误不返回网页。
@@ -35,7 +35,8 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
   时间按浏览器本地时区显示。打开弹窗、独立页及页面重载先读取快照，再按有效期自动查询一次；
   每个节点独立推进，慢节点不延迟其它节点采集。点击刷新也主动查询，页面停留时不轮询。
   DELTA：打开页面从只读旧快照改为先显示快照、再检查有效期；Agy、Kiro SDK 与设置页
-  共用持久快照、有效期及进行中的查询。失败尝试同样缓存一分钟，手动刷新及网页
+  共用持久快照、有效期及进行中的查询。普通对话与外部只读 Codex 入口也先读快照、
+  再按当前来源检查有效期；Codex SDK 的完整账号读取和兑换后读取写回同一快照。失败尝试同样缓存一分钟，手动刷新及网页
   `/usage` 可立即重试。SDK 首屏与菜单条件见[SDK 界面合同](sdk-ui.md)。
 
 Codex：启动 `app-server --stdio`，先 `initialize` / `initialized`，再
@@ -76,6 +77,9 @@ CLI 调用 `sessiondock quota-statusline STATE_DIRECTORY` 时先保存额度，�
 由 CLI 控制；尚未收到回调时页面显示 N/A。
 
 ## 验收
+
+[外部会话额度回归](../tests/external_quota_browser.py)：节点与 Hub 的外部 Codex、普通对话切换，
+旧快照自动刷新、同机缓存复用与 SDK 账号查询写回。
 
 `python3 tests/quotas_browser.py`：真实隔离 Node/Hub 与合成 CLI，点击设置入口、刷新、返回；
 验证 Codex 握手/多桶、Agy 零回合 JSON、Claude wrapper 原输出及字段过滤，

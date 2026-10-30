@@ -396,6 +396,7 @@ pub async fn limits(
     let sdk = service(&state)?;
     let _ = &query.uid;
     let value = sdk.rate_limits().await.map_err(rpc)?;
+    state.quotas.record_codex(&value).await;
     Ok(Json(json!({"ok": true, "raw": value})))
 }
 
@@ -426,6 +427,7 @@ pub async fn reset_credit(
         .map_err(rpc)?;
     // The daemon says to read the windows again instead of inferring them.
     let limits = sdk.rate_limits().await.map_err(rpc)?;
+    state.quotas.record_codex(&limits).await;
     Ok(Json(
         json!({"ok": true, "raw": {"outcome": outcome, "limits": limits}}),
     ))

@@ -9994,8 +9994,6 @@ function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = can
   return n;
 }
 
-const conversationUsage = new Map();
-
 function renderConversationBalances(holder, quota) {
   const balances = (quota?.buckets || []).filter(bucket =>
     bucket.id === 'credits' || bucket.id?.endsWith(':credits'));
@@ -10022,28 +10020,23 @@ function renderConversationBalances(holder, quota) {
 }
 
 function renderConversationUsage(row, uid) {
-  const node = HUB_MODE ? nodeOf(uid) : '';
   const source = String(uid || '').split(':')[0];
-  const key = `${node}:${source}`;
-  const paint = data => {
+  const paint = agent => {
     if (!row.isConnected || uid !== S.sel) return;
     const gauges = row.querySelector('.sdk-gauges');
     gauges.replaceChildren();
-    const agent = data?.agents?.find(item => item.source === source);
     UsageUI.appendQuotas(gauges,agent,source);
     renderConversationBalances(gauges, agent);
     if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
   };
-  const saved = conversationUsage.get(key);
-  paint(saved?.data);
-  if (saved && Date.now() - saved.at < 60000) { saved.pending?.then(paint); return; }
-  const entry = {at: Date.now(), data: saved?.data};
-  conversationUsage.set(key, entry);
-  const path = node ? `api/nodes/${encodeURIComponent(node)}/api/quotas` : 'api/quotas';
-  entry.pending = fetch(appUrl(path), {cache: 'no-store', signal: AbortSignal.timeout(10000)})
-    .then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })
-    .then(data => { entry.data = data; paint(data); return data; })
-    .catch(() => { paint(entry.data); return entry.data; });
+  paint(UsageUI.quota(uid));
+  void (async()=>{
+    for(const refresh of [false,true]) {
+      if(!row.isConnected || uid !== S.sel)return;
+      try { paint(await UsageUI.readQuota(uid,AbortSignal.timeout(30000),refresh)); }
+      catch(error) { paint(UsageUI.quota(uid)); }
+    }
+  })();
 }
 
 function observedConversationActivity(activity, uid, agent = null) {
