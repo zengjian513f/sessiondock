@@ -167,7 +167,7 @@ def main(bind_native=False, bare_shell=False):
                             # Back from the phone width, the header returns its global buttons.
                             expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
                             assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-chat","a-info","a-more","a-resources","a-sdk","a-session-action","a-session-toggle","a-term","report-bug"]
-                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话" if bare_shell else "丢弃当前会话")
                             expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","停止会话")
                             if bare_shell:
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
@@ -321,7 +321,7 @@ def main(bind_native=False, bare_shell=False):
                                     action=action_page.locator("#a-session-action")
                                     if not action.is_visible():
                                         action_page.locator("#a-more").click()
-                                expect(action).to_have_attribute("aria-label","删除会话")
+                                expect(action).to_have_attribute("aria-label","删除会话" if bare_shell else "丢弃当前会话")
                                 with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()

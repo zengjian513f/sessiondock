@@ -2478,6 +2478,7 @@ function paintLive() {
   refreshSessionRunControls();
   paintTreeDeleteAvailability($('#a-delete-tree'), selected);
   if (menuUid) {
+    paintItemDeleteAction(sidebarSessions().find(row => row.uid === menuUid));
     paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
     paintTreeDeleteAvailability($('#item-menu [data-act="delete-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
   }
@@ -4070,10 +4071,6 @@ function openItemMenu(uid, x, y) {
   const list = sidebarSessions();
   const row = list.find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
-  const running = sessionStoppable(uid);
-  const unusedLaunch = SdkView.pending(uid) || (!row?.pending && unusedNewAssignedLaunch(row));
-  // 运行中的 SSH 会话先停止，结束后才删除；未使用的原生启动仍可直接丢弃。
-  const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
   const nested = !!(row?.nest_parent?.source && row.nest_parent.sid);
   const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
   // Keep every action in its fixed position, with the same unavailable hints as
@@ -4084,8 +4081,6 @@ function openItemMenu(uid, x, y) {
     detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
     'delete-tree': treeDeleteUnavailable(row),
-    delete: ((!row?.pending && running && !unusedLaunch) || shellRunning)
-        ? '请先停止会话再删除。' : '',
     group: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available
       ? '此会话当前不能保存分组。' : '',
     pick: parent ? '分叉父会话不能加入多选。' : '',
@@ -4094,7 +4089,7 @@ function openItemMenu(uid, x, y) {
     button.hidden = false;
     if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
   }
-  menu.querySelector('[data-act="delete"]').textContent = (row?.sdk_pending || (row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
+  paintItemDeleteAction(row);
   paintSessionRunMenu(row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
@@ -4274,7 +4269,8 @@ $('#item-menu').onclick = async e => {
     return;
   }
   const row = sidebarSessions().find(session => session.uid === uid);
-  const launch = unusedNewAssignedLaunch(row);
+  const {launch, unavailable} = sessionDeleteState(row);
+  if (unavailable) return;
   if (launch && typeof deletePendingSession === 'function') {
     await deletePendingSession(launch);
     return;
@@ -7442,6 +7438,38 @@ function unusedNewAssignedLaunch(session) {
   return launch;
 }
 
+// 两个菜单按同一份当前状态区分丢弃启动与删除记录；旧 sdk_pending
+// 快照不能把已落盘会话重新变成可丢弃的启动。
+function sessionDeleteState(row) {
+  if (!row) return {discard: false, launch: null, unavailable: '会话状态尚未读取。'};
+  const launch = !row.pending && unusedNewAssignedLaunch(row);
+  const discard = !!(SdkView.pending(row.uid) || launch || (row.pending && row.source !== 'shell'));
+  const running = row.pending ? pendingShellRunning(row) : sessionStoppable(row.uid);
+  return {discard, launch, unavailable: running && !discard ? '请先停止会话再删除。' : ''};
+}
+
+function paintItemDeleteAction(row) {
+  const button = $('#item-menu [data-act="delete"]');
+  const state = sessionDeleteState(row);
+  button.textContent = state.discard ? '丢弃会话' : '删除会话';
+  setControlUnavailable(button, state.unavailable);
+}
+
+function paintSessionDeleteAction(row, button) {
+  const state = sessionDeleteState(row);
+  button.innerHTML = uiIcon('trash');
+  button.title = button.ariaLabel = state.discard ? '丢弃当前会话' : row.pending ? '删除会话' : '删除当前会话';
+  labelSessionAction(button);
+  setControlUnavailable(button, state.unavailable);
+  button.onclick = () => {
+    const current = sessionRunRow(row.uid) || row;
+    const latest = sessionDeleteState(current);
+    if (latest.unavailable) return;
+    if (latest.launch || current.pending) return deletePendingSession(latest.launch || current, button);
+    return del(current);
+  };
+}
+
 function renderSessionFreeze(m, button = $('#a-session-freeze')) {
   if (!button || m.uid !== S.sel) return;
   const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid);
@@ -7728,17 +7756,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
   renderSessionFreeze(m, heading?.querySelector('#a-session-freeze'));
   paintSessionRunControl(heading?.querySelector('#a-session-toggle'), m);
   if (!button || m.uid !== S.sel) return;
-  setControlUnavailable(button, '');
-  const launch = unusedNewAssignedLaunch(m);
-  button.innerHTML = uiIcon('trash');
-  button.title = button.ariaLabel = '删除当前会话';
-  labelSessionAction(button);
-  if (launch && typeof deletePendingSession === 'function') {
-    button.onclick = () => deletePendingSession(launch, button);
-    return;
-  }
-  setControlUnavailable(button, !SdkView.pending(m.uid) && sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
-  button.onclick = () => del(m);
+  paintSessionDeleteAction(m, button);
 }
 
 // `session_stop` capability: the server stops only a managed host instance (Ctrl-D,

@@ -2041,11 +2041,7 @@ function renderPendingSessionAction(info, button = $('#a-session-action')) {
   const current = pendingSessionRow(info.name) || { ...info, running: false, stale: true, state: 'exited' };
   paintSessionRunControl(button.closest('.dhead')?.querySelector('#a-session-toggle'),
     {...current, uid:pendingUid(info.name), pending:true});
-  button.innerHTML = uiIcon('trash');
-  button.title = button.ariaLabel = '删除会话';
-  labelSessionAction(button);
-  setControlUnavailable(button, pendingShellRunning(current) ? '请先停止会话再删除。' : '');
-  button.onclick = () => deletePendingSession(current, button);
+  paintSessionDeleteAction({...current, uid:pendingUid(info.name), pending:true}, button);
 }
 
 function refreshPendingStage(name) {

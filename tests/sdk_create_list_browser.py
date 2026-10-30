@@ -13,6 +13,7 @@ from hub_fixtures import Hub
 from new_session_model_browser import open_dialog
 from node_auth_fixtures import TOKEN
 from sdk_start_stop_fixtures import provider
+from codex_sdk_create_browser import check_delete_menus
 
 
 def exercise(browser, base, source, peer, root, screenshots, label):
@@ -84,6 +85,8 @@ def exercise(browser, base, source, peer, root, screenshots, label):
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-{theme}.png'), full_page=True)
         row.click()
         expect(page.locator('#sdk-input')).to_be_visible()
+        pending = not page.evaluate('uid => S.sessions.some(row => row.uid === uid)', uid)
+        check_delete_menus(page, uid, pending, screenshots, f'{label}-{source}-{width}-{theme}')
     page.set_viewport_size({'width': 1440, 'height': 900})
     text = f'first input {source} {label}'
     page.locator('#sdk-input').fill(text)

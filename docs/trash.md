@@ -85,6 +85,16 @@ with visible scope labels: **删除当前会话** uses the trash icon and
 unlabelled trash buttons. The global **回收站** entry opens deleted items;
 the deletion confirmations and tree member preview keep their existing scope.
 
+DELTA（BUG-20261030-075303-cff37f）：右键／长按菜单与标题栏使用同一删除状态判断。
+尚未进入原生目录的 SDK 创建回执、未落盘 CLI 启动和尚未被对话使用的已绑定启动
+显示「丢弃会话／丢弃当前会话」，沿用停止并丢弃启动的流程，不提示移入回收站。
+已记录会话显示删除，运行中提示先停止；旧 `sdk_pending` 标记不能覆盖当前目录状态。
+打开的右键菜单随运行状态更新，点击时复查当前状态。停止仍为独立动作，保留历史与草稿；
+不可续接的未落盘 CLI 启动继续禁用单独停止，SSH 保留先停止、再删除最终画面的规则。
+覆盖：[SDK 创建](../tests/codex_sdk_create_browser.py)、
+[多来源创建](../tests/sdk_create_list_browser.py)、
+[CLI 创建与丢弃](../tests/pending_create_discard_browser.py)。
+
 - `POST /api/session/tree/plan` with `{uid}` previews the exact member list,
   logical session count and owned file sizes. It reuses the transfer relationship
   inventory; it does not stage a copy, rewrite identities or snapshot native DBs.

@@ -135,11 +135,13 @@ def create_source(page, source, work):
     return receipt, pending_uid
 
 
-def discard_selected(page, native=False):
+def discard_selected(page, source, screenshots):
     action = page.locator("#a-session-action")
     if not action.is_visible():
         page.locator("#a-more").click()
-    expect(action).to_have_attribute("aria-label", "删除当前会话" if native else "删除会话")
+    expect(action).to_have_attribute("aria-label", "删除会话" if source == 'shell' else "丢弃当前会话")
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{source}-header-menu.png'), full_page=True)
     action.click()
 
 
@@ -194,7 +196,7 @@ def assert_pending_stop_disabled(page, context, base, receipt, uid, width):
     passed(f"{receipt['source']}: header/menu/bulk cannot stop an unsaved launch at {width}px")
 
 
-def run_source(page, context, base, source, work):
+def run_source(page, context, base, source, work, screenshots):
     receipt, pending_uid = create_source(page, source, work)
     passed(f"{source}: created running launch_kind={receipt.get('launch_kind')}")
 
@@ -323,8 +325,10 @@ def run_source(page, context, base, source, work):
         expect(menu_stop).not_to_have_attribute("aria-disabled", "true")
     expect(menu_delete).to_be_visible()
     expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{source}-sidebar-menu.png'), full_page=True)
     page.keyboard.press("Escape")
-    discard_selected(page, native=bool(native_uid))
+    discard_selected(page, source, screenshots)
     deadline = time.monotonic() + 8
     last = None
     while time.monotonic() < deadline:
@@ -385,7 +389,10 @@ def run_saved_transition(page, context, base, corpus, work):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     if os.name != "posix":
         print("SKIP pending_create_discard_browser: POSIX required", flush=True)
         return
@@ -456,7 +463,7 @@ def main():
                 on_popup(page, lambda dialog: dialog.accept())
                 page.goto(base, wait_until="networkidle")
                 for source in SOURCES:
-                    run_source(page, context, base, source, root / "work")
+                    run_source(page, context, base, source, root / "work", args.screenshots)
                 run_saved_transition(page, context, base, corpus, root / "work")
                 if errors:
                     fail("pageerror", errors)

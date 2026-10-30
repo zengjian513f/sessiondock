@@ -23,6 +23,34 @@ from new_session_model_browser import open_dialog
 from node_auth_fixtures import TOKEN, node_env
 
 
+def check_delete_menus(page, uid, pending, screenshots, label, running=True):
+    action = page.locator('#a-session-action')
+    if not action.is_visible():
+        page.locator('#a-more').click()
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{label}-header-menu.png'), full_page=True)
+    expect(action).to_have_attribute('aria-label', '丢弃当前会话' if pending else '删除当前会话')
+    if pending or not running:
+        expect(action).not_to_have_attribute('aria-disabled', 'true')
+    else:
+        expect(action).to_have_attribute('aria-disabled', 'true')
+    page.keyboard.press('Escape')
+    if page.locator('#detail .mobile-back').is_visible():
+        page.locator('#detail .mobile-back').click()
+    row = page.locator(f'#side .item[data-uid="{uid}"]')
+    row.click(button='right')
+    action = page.locator('#item-menu [data-act="delete"]')
+    expect(action).to_have_text('丢弃会话' if pending else '删除会话')
+    if pending or not running:
+        expect(action).not_to_have_attribute('aria-disabled', 'true')
+    else:
+        expect(action).to_have_attribute('aria-disabled', 'true')
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{label}-sidebar-menu.png'), full_page=True)
+    page.keyboard.press('Escape')
+    row.click()
+
+
 def exercise(browser, base, fake, root, width, theme, screenshots, label):
     print(f"{label}: create/retry/reload/first SEND", flush=True)
     context = browser.new_context(viewport={"width": width, "height": 844 if width < 500 else 900},
@@ -74,6 +102,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     expect(page.locator("#session-content-view #sdk-status-menu")).not_to_contain_text("失败")
     if screenshots:
         page.screenshot(path=str(screenshots / f"{label}-empty.png"))
+    check_delete_menus(page, uid, True, screenshots, label + '-empty')
 
     # A reload rejoins the same live thread, with no invented history file.
     page.reload(wait_until="domcontentloaded")
@@ -94,6 +123,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     page.wait_for_function("uid => S.sessions.some(row => row.uid === uid)", arg=uid)
     expect(page.locator('#detail > .dhead h2')).to_contain_text(text)
     assert page.evaluate("S.sel") == uid, "native history changed the selected identity"
+    check_delete_menus(page, uid, False, screenshots, label + '-persisted')
     # Existing conversation view remains available during the retirement transition.
     page.locator("#a-chat").click()
     expect(page.locator('#msgs')).to_contain_text('All done after approval')
@@ -109,11 +139,28 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         print('reload ownership',page.evaluate('({selection:SdkView.selection,live:[...S.live],sdk:[...S.liveSdk],termError:T.listError,nodeErrors:[...Nodes.errors],uid:S.sel})'),flush=True)
         raise
     expect(page.locator(".sdk-history")).to_contain_text("All done after approval")
+    # Stopping preserves the record. Both menus then offer the same recoverable
+    # deletion; opening and cancelling its confirmation must not discard it.
+    power = page.locator('#a-session-toggle')
+    if not power.is_visible():
+        page.locator('#a-more').click()
+    power.click()
+    popup = page.locator('dialog.app-popup[open]')
+    if popup.is_visible():
+        popup.locator('[data-popup-action="ok"]').click()
+    page.wait_for_function('uid => !sessionModeActive(sessionRunRow(uid), "sdk") && !ConsoleUI.busy.has(uid)', arg=uid)
+    check_delete_menus(page, uid, False, screenshots, label + '-stopped', running=False)
+    page.locator('#a-more').click()
+    page.locator('#a-session-action').click()
+    expect(popup).to_contain_text('文件会移入服务端回收站')
+    popup.locator('[data-popup-action="cancel"]').click()
+    assert fake.rollout.is_file()
+    assert not any('/discard' in url for url in requests)
     assert not errors, errors
     context.close()
 
 
-def discard_empty(browser, base, fake, root, label):
+def discard_empty(browser, base, fake, root, label, entry):
     print(f"{label}: missing directory confirmation and discard before first SEND", flush=True)
     context = browser.new_context(service_workers="block")
     page = context.new_page()
@@ -136,10 +183,17 @@ def discard_empty(browser, base, fake, root, label):
     path = fake.rollout
     row = page.locator(f'#side .item[data-uid="{uid}"]')
     expect(row).to_be_visible()
-    row.scroll_into_view_if_needed()
-    page.wait_for_timeout(150)  # Let the sidebar's scroll-to-close handler settle.
-    row.click(button='right')
-    page.locator('#item-menu [data-act="delete"]').click()
+    check_delete_menus(page, uid, True, None, label)
+    if entry == 'header':
+        page.locator('#a-more').click()
+        action = page.locator('#a-session-action')
+    else:
+        row.click(button='right')
+        action = page.locator('#item-menu [data-act="delete"]')
+    with page.expect_response(lambda response: response.url.endswith('/api/codex-sdk/discard')) as discarded:
+        action.click()
+    assert discarded.value.status == 200, discarded.value.text()
+    expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
     expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_have_count(0)
     assert not path.exists()
     page.reload(wait_until='domcontentloaded')
@@ -178,7 +232,8 @@ def main():
                                 for width, theme in ((1280, "light"), (390, "dark"), (1280, "dark"), (390, "light")):
                                     label = f"{mode}-{width}-{theme}"
                                     exercise(browser, url, fake, root, width, theme, args.screenshots, label)
-                                discard_empty(browser, url, fake, root, mode + '-discard')
+                                for entry in ('header', 'sidebar'):
+                                    discard_empty(browser, url, fake, root, mode + '-discard-' + entry, entry)
                         finally:
                             browser.close()
                 finally:
