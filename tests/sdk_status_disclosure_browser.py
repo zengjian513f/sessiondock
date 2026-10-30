@@ -140,6 +140,14 @@ def native(browser, base, source, events, shots):
     print(f'PASS {source}: SDK and conversation states, mouse/keyboard, widths/themes', flush=True)
 
 
+class FullQuotaServer(ControlsServer):
+    def _bucket(self):
+        bucket = super()._bucket()
+        bucket['rateLimitReachedType'] = 'primary'
+        bucket['primary']['usedPercent'] = 100
+        return bucket
+
+
 def codex(browser, base, corpus, fake, shots):
     def notify(method, params):
         asyncio.run_coroutine_threadsafe(fake.notify(method, params), fake.loop).result(timeout=5)
@@ -157,6 +165,8 @@ def codex(browser, base, corpus, fake, shots):
         status, menu = page.locator('.sdk-pane .sdk-status'), page.locator('#sdk-status-menu')
         notify('turn/completed', {'turn': {'id': 'status', 'status': 'completed', 'items': []}})
         notify('thread/status/changed', {'status': {'type': 'idle'}})
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(shots / f'codex-quota-{width}-{theme}.png'))
         check_status(page, status, menu, '就绪')
         notify('turn/started', {'turn': {'id': 'status', 'status': 'inProgress', 'items': []}})
         for flags, label in [([], '处理中'), (['waitingOnApproval'], '待批准'), (['waitingOnUserInput'], '待回答')]:
@@ -196,7 +206,7 @@ def main():
             codex_root = root / 'codex'
             codex_root.mkdir()
             corpus = build(codex_root)
-            with ControlsServer(codex_root / 'app.sock', corpus.paths['sdk'], THREAD) as fake, \
+            with FullQuotaServer(codex_root / 'app.sock', corpus.paths['sdk'], THREAD) as fake, \
                     server(corpus, args.binary, codex_root / 'app.sock') as base:
                 codex(browser, base, corpus, fake, args.screenshots)
             for source in ('claude', 'grok', 'opencode', 'agy'):

@@ -735,7 +735,6 @@ const CodexSdkView = {
     const compact = [...this.items.values()].findLast(item => item.type === 'contextCompaction');
     const parts = [];
     let kind = 'ready';
-    if (this.limits?.rateLimitReachedType) { parts.push('用量已满'); kind = 'waiting'; }
     const nativeError = !active && status.type === 'systemError'
       && this.historyData?.activity?.state === 'failed'
       ? this.historyData.activity.error : null;
