@@ -527,6 +527,7 @@ const SdkUI = {
     const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
     const trigger = view.pane.querySelector('#sdk-more');
     const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
+      row.querySelector(':scope > .sdk-credits')?.textContent,
       row.querySelector('.composer-run-action')?.hidden,
       [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
       controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);

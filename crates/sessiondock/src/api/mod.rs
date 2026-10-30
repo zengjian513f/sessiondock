@@ -290,6 +290,7 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/respond", post(codex_sdk::respond))
         .route("/codex-sdk/models", get(codex_sdk::models))
         .route("/codex-sdk/limits", get(codex_sdk::limits))
+        .route("/codex-sdk/recorded-usage", get(codex_sdk::recorded_usage))
         .route("/codex-sdk/reset-credit", post(codex_sdk::reset_credit))
         .route("/codex-sdk/turns", post(codex_sdk_actions::turns))
         .route("/codex-sdk/fork", post(codex_sdk_actions::fork))

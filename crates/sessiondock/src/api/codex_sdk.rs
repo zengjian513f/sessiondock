@@ -389,6 +389,49 @@ pub async fn respond(
     Ok(Json(json!({"ok": true})))
 }
 
+/// Read the selected native rollout without connecting or resuming a CLI.
+pub async fn recorded_usage(
+    State(state): State<AppState>,
+    Query(query): Query<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let (source, path, model) = state
+        .reader
+        .run(move |sessions| {
+            let view = sessions.snapshot(&query.uid, &query.agent)?;
+            Ok((
+                view.native_scope()?.source,
+                view.metadata()["path"]
+                    .as_str()
+                    .map(std::path::PathBuf::from),
+                view.metadata()["model"].clone(),
+            ))
+        })
+        .await?;
+    if source != "codex" {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "codex_sdk_unsupported",
+            "只支持 Codex 会话",
+        ));
+    }
+    let snapshot = tokio::task::spawn_blocking(move || {
+        path.and_then(|path| crate::codex_sdk::usage::latest(&path))
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(|error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "usage_read_failed",
+            error.to_string(),
+        )
+    })?;
+    Ok(Json(
+        json!({"ok":true,"usage":snapshot.usage,"captured_at":snapshot.captured_at,
+        "recorded_limits":snapshot.limits,"model":model}),
+    ))
+}
+
 pub async fn limits(
     State(state): State<AppState>,
     Query(query): Query<Target>,

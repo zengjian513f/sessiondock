@@ -8,11 +8,12 @@ import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 from playwright.sync_api import sync_playwright, expect
 from codex_sdk_browser import build, server, THREAD
 from codex_sdk_fixtures import FakeAppServer
-from history_fixtures import BINARY, codex_row, codex_message
+from history_fixtures import BINARY, codex_row, codex_message, batch35_agent_meta
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
@@ -38,7 +39,18 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sd-external-quota-') as temp, ExitStack() as stack:
         root=Path(temp);corpus=build(root)
         corpus.put('external','codex',[codex_row('session_meta',{'id':'external','cwd':'/synthetic/usage'}),
-            codex_message('user','外部 CLI 用量：同一机器共享额度，保留独立会话上下文')],[])
+            codex_message('user','外部 CLI 用量：同一机器共享额度，保留独立会话上下文'),
+            codex_row('turn_context',{'model':'external-model','effort':'high'}),
+            codex_row('event_msg',{'type':'token_count','info':{
+                'last_token_usage':{'total_tokens':800},'model_context_window':4000,
+                'total_token_usage':{'total_tokens':90000,'input_tokens':80000,'output_tokens':10000}},
+                'rate_limits':{'primary':{'used_percent':11,'window_minutes':10080},
+                    'credits':{'balance':'37358.1','has_credits':True,'unlimited':False}}})],[])
+        child='0199a100-0000-7000-8000-000000000002'
+        corpus.put(child,'codex',[batch35_agent_meta(child,THREAD),
+            codex_message('user','Child usage is independent'),
+            codex_row('event_msg',{'type':'token_count','info':{
+                'last_token_usage':{'total_tokens':2000},'model_context_window':4000}})],[],parent='sdk')
         state=root/'state';(state/'quotas').mkdir(parents=True)
         quota=state/'quotas/codex.json'
         (root/'host').mkdir(mode=0o700)
@@ -73,6 +85,16 @@ def main():
                     assert not [q for q in fake.methods('thread/resume') if q.get('params',{}).get('threadId')=='external']
                     expect(page.locator('[data-gauge="7d"] b')).to_have_text('40%',timeout=30000)
                     expect(page.locator('.sdk-pane .sdk-credits')).to_contain_text('30,817')
+                    expect(page.locator('[data-gauge="context"] b')).to_have_text('20%')
+                    expect(page.locator('[data-gauge="context"]')).to_have_attribute('title',re.compile('最近落盘测量'))
+                    credit=page.locator('.sdk-pane .sdk-credits')
+                    assert credit.bounding_box()['x']+credit.bounding_box()['width']<=width
+                    for selector in ['#sdk-model','#sdk-effort','#sdk-tier','#sdk-mode','#sdk-control-approval','#sdk-control-sandbox']:
+                        if not page.locator(selector).is_visible():page.locator('#sdk-more').click()
+                        expect(page.locator(selector)).to_be_visible()
+                        expect(page.locator(selector)).to_be_disabled()
+                    page.screenshot(path=str(args.screenshots/f'{mode}-{width}-disabled-controls.png'))
+                    page.keyboard.press('Escape')
                     page.screenshot(path=str(args.screenshots/f'{mode}-{width}-sdk.png'))
                     captured=json.loads(quota.read_text())['captured_at']
                     count=(root/'calls').read_text().count('query')
@@ -85,6 +107,36 @@ def main():
                     assert (root/'calls').read_text().count('query')==count
                     assert json.loads(quota.read_text())['captured_at']==captured
                     assert not errors,errors
+                    if mode=='node' and width==1280:
+                        original=corpus.paths['external'].read_bytes()
+                        # Compaction invalidates the last request's context until
+                        # the external process writes a new measurement.
+                        with corpus.paths['external'].open('a') as stream:
+                            stream.write(json.dumps(codex_row('compacted',{'message':'compacted'}))+'\n')
+                        with page.expect_response('**/api/codex-sdk/recorded-usage?*'):page.reload()
+                        expect(page.locator('[data-gauge="context"]')).to_be_hidden()
+                        # Native recorded credits remain visible if the account
+                        # service has no snapshot or cannot refresh.
+                        corpus.paths['external'].write_bytes(original)
+                        page.route(re.compile(r'/api/quotas(?:/refresh)?(?:\?|$)'),lambda r:r.fulfill(status=503,json={'error':'offline'}))
+                        page.reload()
+                        expect(page.locator('.sdk-pane .sdk-credits')).to_contain_text('37,358')
+                        expect(page.locator('[data-gauge="context"] b')).to_have_text('20%')
+                        page.screenshot(path=str(args.screenshots/'native-fallback.png'))
+                        for balance in [None,'0']:
+                            packet=codex_row('event_msg',{'type':'token_count','info':None,
+                                'rate_limits':{'credits':{'balance':balance,'has_credits':False}}})
+                            with corpus.paths['external'].open('a') as stream:stream.write(json.dumps(packet)+'\n')
+                            with page.expect_response('**/api/codex-sdk/recorded-usage?*'):page.reload()
+                            if balance is None:expect(page.locator('.sdk-pane .sdk-credits')).to_be_hidden()
+                            else:expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 0')
+                        corpus.paths['external'].write_bytes(original)
+                    page.goto(url+'/?'+urlencode({'sid':'codex:'+THREAD+'/agent:'+child}))
+                    expect(page.locator('.sdk-history')).to_contain_text('Child usage is independent')
+                    expect(page.locator('[data-gauge="context"] b')).to_have_text('50%')
+                    assert page.evaluate('CodexSdkView.readOnly')
+                    assert not [q for q in fake.methods('thread/resume') if q.get('params',{}).get('threadId')==child]
+                    page.screenshot(path=str(args.screenshots/f'{mode}-{width}-child.png'))
                     context.close()
                     print('PASS',mode,width,theme,flush=True)
             # Full native account reads publish the same normalized snapshot.

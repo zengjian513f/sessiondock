@@ -517,7 +517,14 @@ behavior; they do not require other sources to expose unsupported controls.
   single window shows only that one), and `上下文` (`last.totalTokens /
   modelContextWindow`). Tooltips give used/remaining percent, reset time and
   token counts. `🪙 N` is `credits.balance` (`无限` when unlimited). The
-  row is hidden while nothing is known. On resume, the node reads the latest
+  row is hidden while nothing is known. External/read-only views use
+  `GET /api/codex-sdk/recorded-usage?uid=…&agent=…` to read the selected native
+  rollout without an SDK connection or resume. It supplies context, cumulative
+  tokens and recorded credits; the tooltip identifies the last persisted measurement.
+  A new history checkpoint refreshes that measurement, and live SDK usage takes precedence.
+  Model/effort controls remain visible but disabled while read-only; narrow views
+  keep them in the existing overflow menu. Credits stay outside the scrolling gauges.
+  On resume, the node reads the latest
   native `token_count.info` from the rollout returned by app-server, so context
   appears before the next message. It uses the last request's token usage,
   never cumulative session tokens, and does not reuse pre-compaction counts.

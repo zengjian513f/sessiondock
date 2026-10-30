@@ -19,7 +19,7 @@ mod observation;
 mod queue;
 mod receipts;
 mod retention;
-mod usage;
+pub(crate) mod usage;
 
 use std::{
     collections::{HashMap, HashSet},

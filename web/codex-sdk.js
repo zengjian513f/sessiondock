@@ -69,6 +69,7 @@ const CodexSdkView = {
         } catch(error) { if(quotaRead.signal.aborted)return; }
       }
     })();
+    void this.loadRecordedUsage(generation);
     this.refreshHistory(generation);
     this.setNotice('连接中', 'connecting');
     this.start(generation);
@@ -77,6 +78,7 @@ const CodexSdkView = {
   close() {
     if(this.uid)UsageUI.remember(this.uid,this.agent,{usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
     this.quotaRead?.abort();this.quotaRead=null;
+    this.recordedRead?.abort();this.recordedRead=null;this.recordedEnd=null;this.recordedAt=null;this.recordedModel=null;
     this.setConnected(false);
     if (this.input) PathCompletion.close(this.input);
     CodexSdkCompose.close(this);
@@ -112,6 +114,7 @@ const CodexSdkView = {
     const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
     const usage = this.pane.querySelector('#sdk-usage-toggle');
     row.insertBefore(gauges, usage);
+    row.insertBefore(this.pane.querySelector('.sdk-credits'),usage);
     usage.hidden = true;
     const buttons = ['fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
@@ -237,6 +240,25 @@ const CodexSdkView = {
     }
   },
 
+  async loadRecordedUsage(generation) {
+    if(this.recordedRead || this.connected || !this.uid)return;
+    const read=new AbortController();this.recordedRead=read;
+    try {
+      const params=new URLSearchParams({uid:this.uid,agent:this.agent || ''});
+      const response=await fetch(appUrl(`api/codex-sdk/recorded-usage?${params}`),{signal:read.signal});
+      if(!response.ok)return;
+      const data=await response.json();
+      if(!this.current(generation) || this.connected)return;
+      this.cachedUsage=data.usage;this.recordedAt=data.captured_at;this.recordedModel=data.model;
+      const recorded=data.recorded_limits;
+      if(!this.limitsFresh && recorded?.rateLimits && (!this.limitsRecordedAt || Date.parse(recorded.capturedAt)>Date.parse(this.limitsRecordedAt))) {
+        this.limits=recorded.rateLimits;this.limitsRecordedAt=recorded.capturedAt || '';
+      }
+      this.paintGauges();this.paintPickers();
+    } catch(error) { /* Keep the last successful measurement if a read fails. */ }
+    finally { if(this.recordedRead===read)this.recordedRead=null; }
+  },
+
   applyQuota(quota) {
     if(this.limitsFresh || !quota?.captured_at)return;
     if(this.limitsRecordedAt && Date.parse(this.limitsRecordedAt)>Date.parse(quota.captured_at))return;
@@ -324,17 +346,17 @@ const CodexSdkView = {
     const used = usage?.last?.totalTokens;
     if (size && used != null) {
       this.gauge('context', '上下文', used / size * 100,
-        `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
+        `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）${!this.connected && this.recordedAt ? `；最近落盘测量 ${UsageUI.time(this.recordedAt)}` : ''}`);
     } else this.gauge('context', '上下文', NaN, '');
     const credits = bucket.credits;
     const creditNode = this.pane.querySelector('.sdk-credits');
-    const balance = Number(credits?.balance);
-    creditNode.hidden = !credits || (!credits.unlimited && !credits.hasCredits && !Number.isFinite(balance));
+    const balance = credits?.balance == null || String(credits.balance).trim()==='' ? NaN : Number(credits.balance);
+    creditNode.hidden = !credits || (!credits.unlimited && !Number.isFinite(balance));
     if (!creditNode.hidden) {
       creditNode.textContent = credits.unlimited ? '🪙 无限'
         : `🪙 ${Number.isFinite(balance) ? balance.toLocaleString(undefined, {maximumFractionDigits: 0}) : credits.balance}`;
-      creditNode.title = '剩余 usage credits';
-      creditNode.setAttribute('aria-label', creditNode.textContent.replace('🪙', 'Credits'));
+      creditNode.title = `金币余额（usage credits）${this.limitsRecordedAt ? `；记录于 ${UsageUI.time(this.limitsRecordedAt)}` : ''}`;
+      creditNode.setAttribute('aria-label', creditNode.textContent.replace('🪙', '金币'));
     }
     const cards = this.resetCards?.credits || [];
     const holder = this.pane.querySelector('.sdk-reset');
@@ -392,7 +414,7 @@ const CodexSdkView = {
   paintPickers() {
     if (!this.pane) return;
     const modelSelect = this.pane.querySelector('#sdk-model');
-    const currentModel = this.summary?.settings?.model || '';
+    const currentModel = this.summary?.settings?.model || this.recordedModel || '';
     const modelName = sdkSettingValue(this, 'model', currentModel);
     modelSelect.replaceChildren();
     for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
@@ -400,7 +422,7 @@ const CodexSdkView = {
       modelSelect.append(new Option(modelName, modelName));
     ConversationUI.selectValue(modelSelect, modelName, '选择模型');
     modelSelect.title = modelName;
-    modelSelect.closest('label').hidden = !this.models.length && !modelName;
+    modelSelect.closest('label').hidden = false;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
     let chosen = sdkSettingValue(this, 'effort', this.summary?.settings?.effort || '');
@@ -416,7 +438,7 @@ const CodexSdkView = {
       else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
     ConversationUI.selectValue(select, chosen, '选择强度');
-    select.closest('label').hidden = !model?.supportedReasoningEfforts?.length && !chosen;
+    select.closest('label').hidden = false;
     CodexSdkControls.paintTier(this);
     sdkSyncSettings(this);
     this.layoutToolbar();
@@ -427,6 +449,10 @@ const CodexSdkView = {
   paintHistory() {
     const data = this.historyData;
     if (!data || !this.history) return;
+    if(this.readOnly && this.recordedEnd!==data.end) {
+      this.recordedEnd=data.end;
+      void this.loadRecordedUsage(this.generation);
+    }
     let messages = data?.messages || [];
     let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
     const userText = this.activeUserText();
