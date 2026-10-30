@@ -55,7 +55,11 @@ def main():
         server_log=corpus.root/'relationship-server.log'
         servers=stack.enter_context(ExitStack())
         def start():
+            started=time.monotonic()
             servers.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env,log_path=server_log))
+            elapsed=time.monotonic()-started
+            print(f'Node startup to HTTP health: {elapsed:.3f}s',flush=True)
+            return elapsed
         start()
         # A bounded observation window catches eager background discovery without
         # waiting for the former 60-second timer. No list/preview request yet.
@@ -129,7 +133,9 @@ def main():
         old['native']={'databases':[{'path':str(corpus.root/'unused.sqlite'),'tables':[
             {'name':'thread_items','columns':['thread_id','payload'],'keys':['thread_id'],
              'schema':'synthetic archived metadata','rows':[
-                 {'thread_id':ident(990),'payload':'x'*(8*1024*1024)}]}]}]}
+                 {'thread_id':ident(990),'payload':json.dumps({'text':'Synthetic archived row '+str(i),
+                     'items':[{'kind':'tool_result','text':'x'*128}]*4})}
+                 for i in range(10000)]}]}]}
         journals=[]
         for _ in range(32):
             old['id']=str(uuid.uuid4())
@@ -143,7 +149,8 @@ def main():
         dialog,_,journal_cold=preview();dialog.locator('.clone-cancel').click()
         journal_watch=Opens(journals,shared=idle_watch);stack.callback(journal_watch.close)
         dialog,_,journal_warm=preview()
-        print(f'Historical journals 256 MiB: cold preview {journal_cold:.3f}s, warm preview {journal_warm:.3f}s',flush=True)
+        journal_bytes=sum(p.stat().st_size for p in journals)
+        print(f'Historical journals {journal_bytes/2**20:.1f} MiB: cold preview {journal_cold:.3f}s, warm preview {journal_warm:.3f}s',flush=True)
         assert not journal_watch.take(),'warm preview reopened unchanged historical operation journals'
         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST',timeout=30000) as copied:
             dialog.locator('.clone-confirm').click()
@@ -177,7 +184,9 @@ def main():
         assert watch.take()=={unrelated[0].name},'must reread only changed unrelated history'
         dialog.locator('.clone-cancel').click()
         # The old process-only cache lost all relationships on every deployment.
-        servers.close();start()
+        journal_stamps={p:p.stat().st_mtime_ns for p in journals if p.exists()}
+        servers.close();startup=start()
+        assert all(p.stat().st_mtime_ns==stamp for p,stamp in journal_stamps.items()),'startup rewrote archived journals'
         page.reload(wait_until='networkidle')
         page.wait_for_function('(id)=>Nodes.list.find(n=>n.id===id)?.online===true',arg=node.nid,timeout=20000)
         page.locator('#q').fill(selected)
@@ -193,7 +202,7 @@ def main():
         assert not idle_watch.take(),'preview after restart reparsed cached checkpoint relationships'
         assert cache.stat().st_mtime_ns==stamp,'unchanged preview rewrote persistent index'
         dialog.locator('.clone-cancel').click()
-        print(f'PASS Chromium restart preview {restarted:.3f}s reuses persisted relationships',flush=True)
+        print(f'PASS Chromium restart health {startup:.3f}s, preview {restarted:.3f}s; archived journals preserved and relationships reused',flush=True)
         # Removing it must also invalidate the relationship cache.
         raw=unrelated[0].read_bytes();unrelated[0].write_bytes(raw[:raw.rfind(b'\n',0,len(raw)-1)+1])
         watch.take()

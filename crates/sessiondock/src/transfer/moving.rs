@@ -280,7 +280,7 @@ impl TransferService {
     }
 
     /// An explicitly completed import reclaims old source UIDs for the new operation.
-    pub(super) fn reclaim_prior_moves(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn reclaim_prior_moves<N>(&self, op: &Operation<N>) -> Result<(), TransferError> {
         if op.phase != "complete" || op.incoming_digest.is_none() {
             return Ok(());
         }

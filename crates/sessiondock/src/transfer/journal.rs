@@ -47,7 +47,7 @@ impl TransferService {
                 summaries.push(summary);
                 continue;
             }
-            let op: Operation = serde_json::from_slice(&fs::read(&path)?)?;
+            let op: Operation<serde::de::IgnoredAny> = serde_json::from_slice(&fs::read(&path)?)?;
             let retired_source = op.phase == "retired" && op.moving && op.incoming_digest.is_none();
             let source_uids: BTreeSet<_> =
                 op.group().members.iter().map(|m| m.uid.clone()).collect();

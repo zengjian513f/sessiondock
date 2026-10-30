@@ -45,7 +45,7 @@ impl TransferService {
                     let service = self.clone();
                     let load_id = id.clone();
                     let Ok(Ok(op)) =
-                        tokio::task::spawn_blocking(move || service.load(&load_id)).await
+                        tokio::task::spawn_blocking(move || service.load_metadata(&load_id)).await
                     else {
                         continue;
                     };

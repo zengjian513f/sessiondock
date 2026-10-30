@@ -30,8 +30,10 @@ use std::{
     sync::Arc,
 };
 
+/// Full native rows are needed only for execution/compensation. Metadata-only
+/// readers use `IgnoredAny`; `save` accepts only the full operation type.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Operation {
+pub struct Operation<N = Native> {
     pub id: String,
     #[serde(default)]
     pub created_ms: u64,
@@ -39,8 +41,8 @@ pub struct Operation {
     pub uid: String,
     pub target_uid: Option<String>,
     pub plan: ClonePlan,
-    pub native: Native,
-    pub rewritten: Option<Native>,
+    pub native: N,
+    pub rewritten: Option<N>,
     pub staged: Option<StagedClone>,
     pub error: Option<String>,
     pub metadata_before: BTreeMap<String, Value>,
@@ -64,7 +66,7 @@ pub struct Operation {
     #[serde(default)]
     pub replaced_files: BTreeMap<PathBuf, prefix::Original>,
     #[serde(default)]
-    pub native_before: Option<Native>,
+    pub native_before: Option<N>,
     #[serde(default)]
     pub codex_names: Option<names::Names>,
     #[serde(default)]
@@ -84,7 +86,7 @@ pub struct Publication {
     pub sha256: String,
     pub symlink: bool,
 }
-impl Operation {
+impl<N> Operation<N> {
     pub fn new_ids(&self) -> bool {
         self.plan.mode == codex::Mode::Clone
     }
@@ -206,6 +208,10 @@ impl TransferService {
         metadata: Option<Arc<MetadataStore>>,
         names_path: Option<PathBuf>,
     ) -> Result<Self, TransferError> {
+        let started = std::time::Instant::now();
+        let mut journal_count = 0;
+        let mut journal_bytes = 0;
+        let mut recovery_count = 0;
         let home = roots
             .codex
             .as_ref()
@@ -266,7 +272,14 @@ impl TransferService {
                 }
                 continue;
             }
-            let mut operation: Operation = serde_json::from_slice(&fs::read(&file)?)?;
+            // Historical journals can contain gigabytes of native database
+            // rows. Startup needs their decisions and file mappings, not SQL
+            // payloads. Only actual compensation loads those payloads below.
+            let raw = fs::read(&file)?;
+            journal_count += 1;
+            journal_bytes += raw.len() as u64;
+            let mut operation: Operation<serde::de::IgnoredAny> = serde_json::from_slice(&raw)?;
+            drop(raw);
             if operation.created_ms == 0 {
                 operation.created_ms = fs::metadata(&file)?
                     .modified()?
@@ -275,6 +288,11 @@ impl TransferService {
                     .as_millis() as u64;
             }
             service.remember_links(&operation);
+            let recover = || {
+                let mut full = service.load(&operation.id)?;
+                full.created_ms = operation.created_ms;
+                Ok::<_, TransferError>(full)
+            };
             if operation.phase == "aborted" {
                 service.cleanup_staging(&operation)?;
                 continue;
@@ -283,7 +301,9 @@ impl TransferService {
                 && !operation.moving
                 && operation.incoming_digest.is_none()
             {
+                recovery_count += 1;
                 if let Err(error) = service.abort_local(&operation.id) {
+                    let mut operation = recover()?;
                     operation.error = Some(error.message);
                     service.save(&operation)?;
                 }
@@ -291,7 +311,9 @@ impl TransferService {
             }
             if operation.phase == "aborting" && operation.incoming_digest.is_some() {
                 // The source already durably rejected future ownership switches.
+                recovery_count += 1;
                 if let Err(error) = service.abort_target(&operation.id) {
+                    let mut operation = recover()?;
                     operation.error = Some(error.message);
                     service.save(&operation)?;
                 }
@@ -305,6 +327,8 @@ impl TransferService {
                 operation.phase.as_str(),
                 "publishing" | "verifying" | "rollback_required"
             ) {
+                recovery_count += 1;
+                let mut operation = recover()?;
                 match service.rollback(&operation) {
                     Ok(()) => operation.phase = "failed".into(),
                     Err(e) => {
@@ -315,9 +339,26 @@ impl TransferService {
                 service.save(&operation)?;
             }
         }
+        crate::log::info(
+            "transfer.startup",
+            json!({"ms":started.elapsed().as_millis(),"journals":journal_count,
+                "journal_bytes":journal_bytes,"recoveries":recovery_count}),
+        );
         Ok(service)
     }
     pub fn load(&self, id: &str) -> Result<Operation, TransferError> {
+        self.load_journal(id)
+    }
+    pub(super) fn load_metadata(
+        &self,
+        id: &str,
+    ) -> Result<Operation<serde::de::IgnoredAny>, TransferError> {
+        self.load_journal(id)
+    }
+    fn load_journal<N: serde::de::DeserializeOwned + Default>(
+        &self,
+        id: &str,
+    ) -> Result<Operation<N>, TransferError> {
         if id.len() != 36 || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
             return Err(TransferError::new("move_plan_stale", "复制记录不存在"));
         }
@@ -678,9 +719,9 @@ impl TransferService {
         }
         Ok(())
     }
-    pub(crate) fn member_target_uid(
+    pub(crate) fn member_target_uid<N>(
         &self,
-        op: &Operation,
+        op: &Operation<N>,
         member: &group::Member,
         staged: &StagedClone,
     ) -> Result<String, TransferError> {
@@ -697,7 +738,7 @@ impl TransferService {
             Ok(crate::sessions::uid_for(&member.source, &path))
         }
     }
-    pub(super) fn publications(&self, op: &Operation) -> Vec<Publication> {
+    pub(super) fn publications<N>(&self, op: &Operation<N>) -> Vec<Publication> {
         let mut result = op.file_publications.clone();
         if let Some(staged) = &op.staged {
             result.extend(staged.files.iter().map(|f| {
@@ -739,7 +780,7 @@ impl TransferService {
         false
     }
     /// Keep the small durable decision, remove only private transfer payloads.
-    pub(super) fn cleanup_staging(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn cleanup_staging<N>(&self, op: &Operation<N>) -> Result<(), TransferError> {
         let directory = self.directory.join(&op.id);
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
@@ -755,7 +796,7 @@ impl TransferService {
         fs::File::open(directory)?.sync_all()?;
         Ok(())
     }
-    pub(super) fn cleanup_markers(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn cleanup_markers<N>(&self, op: &Operation<N>) -> Result<(), TransferError> {
         for file in self.publications(op) {
             let marker = Self::marker(&op.id, &file.target);
             if let Some(old) = op.replaced_files.get(&file.target) {
@@ -1132,7 +1173,7 @@ impl TransferService {
         }
         Ok(op)
     }
-    pub fn link_map(op: &Operation) -> BTreeMap<String, String> {
+    pub fn link_map<N>(op: &Operation<N>) -> BTreeMap<String, String> {
         let mut map = BTreeMap::new();
         for (old, new) in &op.plan.identities.threads {
             map.insert(format!("codex:{old}"), format!("codex:{new}"));
@@ -1154,7 +1195,7 @@ impl TransferService {
         }
         map
     }
-    fn remember_links(&self, op: &Operation) {
+    fn remember_links<N>(&self, op: &Operation<N>) {
         let mut public = Self::public(op);
         public["incoming"] = op.incoming_digest.is_some().into();
         self.progress_public
@@ -1190,7 +1231,7 @@ impl TransferService {
             .cloned()
             .collect()
     }
-    pub fn public(op: &Operation) -> Value {
+    pub fn public<N>(op: &Operation<N>) -> Value {
         json!({"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"scp_transfer":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,

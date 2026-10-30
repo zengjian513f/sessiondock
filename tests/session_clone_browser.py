@@ -213,6 +213,7 @@ def main():
                     if restart and interrupted:
                         recovered=json.loads(interrupted.read_text())
                         assert recovered['phase']=='failed', recovered['error']
+                        assert recovered['created_ms']>0,'legacy recovery lost the journal creation time'
                         assert all(not (corpus.root/'codex'/f['relative']).exists() for f in recovered['staged']['files'])
                         print('PASS restart compensates an interrupted publication with a committed native database',flush=True)
                     if not restart:
@@ -552,6 +553,7 @@ def main():
                     if not restart:
                         interrupted=journal
                         next_op['phase']='publishing'
+                        next_op['created_ms']=0
                         # Reproduce the legacy journal shape, which did not
                         # include shared association rows, for upgrade recovery.
                         for database in next_op['rewritten']['databases']:
