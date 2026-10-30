@@ -643,17 +643,21 @@ const SdkView = new Proxy({
       const termRow = (termName && (T.list || []).find(row => row.name === termName && row.running !== false && !row.stale))
         || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
       const console = !!termRow || (!unknown && state.known === true && state.tmux === true);
-      const external = !unknown && state.known === true && state.external === true;
+      // Offline and external-CLI sessions have no managed view to restore.
+      // Use the current setting; choosing SDK remains read-only here.
+      const unmanaged = !unknown && state.known === true && !sdk && !console;
+      const configured = agentStartMode(sessionSourceOf(uid)) === 'sdk' ? 'sdk' : hasChat ? 'chat' : 'terminal';
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {
         selection.mode = sdk ? 'sdk'
           : console ? 'terminal'
-          : candidate || defaultSessionView(uid);
+          : unmanaged ? configured : candidate || defaultSessionView(uid);
       } else {
         // A previous view is only a candidate. Current server ownership decides
         // whether it can still accept input, including across clients/reloads.
         selection.mode = console ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
-          : sdk ? 'sdk' : external || unknown || (typeof terminalListUncertain !== 'function' || terminalListUncertain(uid)) ? 'chat' : candidate || defaultSessionView(uid);
+          : sdk ? 'sdk' : unmanaged ? configured
+          : unknown || (typeof terminalListUncertain !== 'function' || terminalListUncertain(uid)) ? 'chat' : candidate || defaultSessionView(uid);
       }
       // The mode a console discovered later would select; self-heal above
       // reopens only when it differs from the decision just made.

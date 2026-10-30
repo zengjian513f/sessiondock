@@ -16,6 +16,7 @@ from history_fixtures import BINARY
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
 from sdk_mode_fixtures import provider
+from session_start_fixtures import choose_mode
 
 
 def exercise(browser, base, source, peer, screenshots, label):
@@ -122,8 +123,12 @@ def exercise(browser, base, source, peer, screenshots, label):
             print(page.evaluate('({selection:SdkView.selection,discovering:SdkView.discovering,readOnly:SdkView.readOnly,connected:SdkView.connected,notice:SdkView.notice?.textContent})'), flush=True)
             raise
 
-        # A stale SDK view must yield when the server now reports an external
-        # CLI; ordinary chat cannot silently create a second SDK writer.
+        # External CLI uses the configured mode, independent of old SDK views.
+        if page.locator('#detail .mobile-back').is_visible():
+            page.locator('#detail .mobile-back').click()
+        choose_mode(page, source, 'cli')
+        page.locator('#settings-dialog .modal-close').click()
+        choose()
         page.locator('#a-chat').click()
         state['mode'] = 'cli'
         count = len(opens)
@@ -140,6 +145,7 @@ def exercise(browser, base, source, peer, screenshots, label):
         state['mode'] = 'sdk'
         choose()
         expect(page.locator('#sdk-input')).to_be_visible()
+        page.wait_for_function("SdkView.selection?.mode === 'sdk' && !SdkView.discovering && SdkView.connected")
         state['mode'] = 'cli'
         count = len(opens)
         choose()

@@ -52,6 +52,11 @@ The frontend `web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
 frontend directory.
 
+`python3 tests/session_view_preference_browser.py --binary target/release/sessiondock`
+covers seven sources on node/Hub, wide/light and narrow/dark: offline and external
+CLI session clicks follow SDK/CLI settings despite prior views, including reload,
+without starting or taking over a runtime.
+
 Shared browser helpers live in [`browser_runtime.py`](../tests/browser_runtime.py);
 asynchronous polling awaits the resolved condition within the original deadline.
 The original UI, identity, checkpoint and race assertions remain in place.
