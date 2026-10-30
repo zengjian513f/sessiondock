@@ -1867,13 +1867,14 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .page-sleep-dialog .btn { width: auto; padding: 0 10px; gap: 6px; }
 
 /* 已接管会话的输入框；SDK 视图的输入框沿用同一外观。 */
+#right { --composer-status-padding: 6px; --composer-status-gap: 4px; }
 #composer, #sdk-composer {
   flex: none; display: flex; flex-direction: column; gap: 7px;
   position: relative; z-index: 2;
   width: 100%;
   padding: 9px 18px; border-top: 1px solid var(--border); background: var(--panel);
 }
-#sdk-composer { gap: 4px; padding-top: 6px; }
+#sdk-composer { gap: var(--composer-status-gap); padding-top: var(--composer-status-padding); }
 .composer-row {
   --composer-control-height: 36px;
   display: flex; gap: 8px; align-items: flex-end; min-width: 0;
@@ -2227,7 +2228,8 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     max-width: none; gap: 6px;
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
   }
-  #sdk-composer { gap: 3px; padding-top: 5px; }
+  #right { --composer-status-padding: 5px; --composer-status-gap: 3px; }
+  #sdk-composer { gap: var(--composer-status-gap); padding-top: var(--composer-status-padding); }
   .composer-row { gap: 4px; }
   .composer-status-slot { left: 8px; right: 8px; }
   #cadd, #sdk-add { min-width: var(--composer-control-height); }
@@ -2721,12 +2723,18 @@ header .btn[data-session-docked] { display: none; }
 
 /* Conversation mode uses the SDK status/usage strip without SDK controls. */
 #right:has(#conversation-status:not(.hidden)) > #composer .composer-status-slot { position: static; }
-#conversation-status { flex: none; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--panel); }
+#right:has(#conversation-status:not(.hidden)) > #composer .composer-status-slot:has(> .hidden) { display: none; }
+#right:has(#conversation-status:not(.hidden)) > #composer {
+  border-top: 0; padding-top: var(--composer-status-gap); gap: var(--composer-status-gap);
+}
+/* The separate conversation strip keeps the same 24px content row as SDK. */
+#conversation-status { flex: none; box-sizing: content-box;
+  padding: var(--composer-status-padding) 18px 0;
+  border-top: 1px solid var(--border); background: var(--panel); }
 #conversation-status .sdk-gauges { flex-wrap: nowrap; }
 #right.term-full #conversation-status, #right.terminal-first #conversation-status { display: none; }
 @media (max-width: 720px) {
   #conversation-status { padding-inline: 8px; }
-  #conversation-status .sdk-gauges { gap: 4px 8px; }
 }
 
 /* The Codex wrapper is not a scroll surface. Focus moving between the

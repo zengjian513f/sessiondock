@@ -55,7 +55,7 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
         row.click()
         page.locator('#a-sdk').click()
         page.wait_for_function('SdkView.pane && !SdkView.historyReady && SdkView.historyData')
-        for mode in (('sdk',) if source == 'kiro' else ('sdk', 'chat')):
+        for mode in (('sdk',) if source in ('kiro', 'codebuddy') else ('sdk', 'chat')):
             page.locator('#a-' + mode).click()
             box = page.locator('.sdk-msgs' if mode == 'sdk' else '#msgs')
             expect(box).to_contain_text('答复 23')

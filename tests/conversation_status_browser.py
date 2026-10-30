@@ -80,6 +80,14 @@ def main():
                     expect(page.locator('#msgs #activity')).to_have_count(0)
                     expect(page.locator('#msgs')).to_contain_text('Existing conversation content')
                     assert_single_status_row(footer)
+                    layout = footer.evaluate('''row => {
+                      const css = getComputedStyle(row), composer = document.querySelector('#composer');
+                      const input = composer.querySelector('.composer-row');
+                      return {contentHeight: row.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom),
+                        inputGap: input.getBoundingClientRect().top - row.getBoundingClientRect().bottom,
+                        border: getComputedStyle(composer).borderTopWidth};
+                    }''')
+                    assert layout == {'contentHeight': 24, 'inputGap': 3 if width <= 720 else 4, 'border': '0px'}, layout
                     if status == 'working':
                         assert_reset_countdown(page, footer.locator('.sdk-quota-windows .sdk-gauge').first, 1800000000)
                     if status == 'failed':
