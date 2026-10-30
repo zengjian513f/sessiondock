@@ -106,6 +106,16 @@ bounded) and falls back to the arguments above without `--remote` if it cannot.
 Fixed-argv adapters are
 unchanged. See the [official configuration reference](https://developers.openai.com/codex/config-reference).
 
+DELTA (shared Codex feature ownership): when adding `--remote`, the launcher
+omits the legacy profile's `--enable default_mode_request_user_input` request
+(also the joined `--enable=…` and comma-list forms). The shared daemon owns
+that setting; a terminal-only override can stop startup at Codex's incompatible
+feature/restart prompt. Other features and arguments are preserved. Independent
+launches, including the unreachable-daemon fallback, keep the configured flag.
+No daemon settings are written and no daemon is restarted to attach a terminal.
+`tests/lifecycle_cli_browser.py` exercises new and resumed shared terminals,
+their input readiness, and the unchanged independent launch arguments.
+
 DELTA (SDK terminal attachment): a live SDK subscription to the exact native
 thread plus a CLI profile targeting the same app-server socket bypasses external
 process replacement in `term/takeover`. The new terminal joins that daemon;

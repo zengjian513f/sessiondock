@@ -771,6 +771,7 @@ impl Launcher {
             // lives in the daemon, which starts it in its own directory
             // unless told: `-C` keeps the session's launch directory.
             if let (true, Some(remote)) = (remote, &self.codex_remote) {
+                argv = codex_shared_feature_args(argv);
                 argv.extend([
                     OsString::from("--remote"),
                     OsString::from(&remote.arg),
@@ -1408,6 +1409,54 @@ fn check_executable(path: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
+/// Old launcher profiles enabled synchronous questions in default mode. A
+/// shared daemon owns that feature setting; requesting it just for its TUI can
+/// stop attachment at Codex's daemon-restart prompt (BUG-20261030-181617-102553).
+/// Leave independent launches and every other configured feature untouched.
+fn codex_shared_feature_args(argv: Vec<OsString>) -> Vec<OsString> {
+    const LEGACY_FEATURE: &str = "default_mode_request_user_input";
+    let mut args = argv.into_iter();
+    let mut result = Vec::new();
+    // The executable is never an option.
+    result.extend(args.next());
+    while let Some(arg) = args.next() {
+        let joined = arg.to_str().and_then(|arg| arg.strip_prefix("--enable="));
+        if arg == "--enable" || joined.is_some() {
+            let value = if let Some(joined) = joined {
+                OsString::from(joined)
+            } else if let Some(value) = args.next() {
+                value
+            } else {
+                result.push(arg);
+                break;
+            };
+            if let Some(value_text) = value.to_str()
+                && value_text.split(',').any(|name| name == LEGACY_FEATURE)
+            {
+                let kept = value_text
+                    .split(',')
+                    .filter(|name| *name != LEGACY_FEATURE)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !kept.is_empty() {
+                    if joined.is_some() {
+                        result.push(format!("--enable={kept}").into());
+                    } else {
+                        result.extend([arg, kept.into()]);
+                    }
+                }
+            } else if joined.is_some() {
+                result.push(arg);
+            } else {
+                result.extend([arg, value]);
+            }
+        } else {
+            result.push(arg);
+        }
+    }
+    result
+}
+
 fn executable_metadata(metadata: &Metadata) -> Result<(), Error> {
     ordinary(metadata, false)?;
     #[cfg(unix)]

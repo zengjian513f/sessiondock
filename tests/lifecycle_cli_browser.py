@@ -38,6 +38,17 @@ FREE_SHELL = ('exec /bin/sh -c \'stty -echo 2>/dev/null; printf "RS_SHELL_READY\
 # One argument per line: the browser xterm is narrower than a full command
 # line, so an ordered line sequence is the exact argv assertion.
 FAKE_CODEX = """#!/bin/sh
+remote=false
+legacy_feature=false
+for arg in "$@"; do
+  case "$arg" in --remote) remote=true ;; *default_mode_request_user_input*) legacy_feature=true ;; esac
+done
+if $remote && $legacy_feature; then
+  printf 'Background server has incompatible feature settings\\n'
+  printf 'This session requires default_mode_request_user_input to be enabled\\n'
+  while IFS= read -r line; do :; done
+  exit 1
+fi
 printf 'FAKE_CODEX_ARGV_BEGIN\\n'
 i=0
 for arg in "$@"; do printf 'A%s [%s]\\n' "$i" "$arg"; i=$((i+1)); done
@@ -90,7 +101,7 @@ def claude_uid(root, sid):
 
 # Long argv lines wrap at the xterm width; join wrapped rows back into logical
 # lines before matching so the exact command line can be asserted as one string.
-XTERM_LOGICAL = """() => [...T.views.values()].map(view => {
+XTERM_LOGICAL = """() => [...T.views.values()].filter(view => view.name === T.name).map(view => {
   const buffer = view.term?.buffer?.active;
   if (!buffer) return '';
   const lines = [];
@@ -124,7 +135,8 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True, 
         page.locator("#header-more-btn").click()
     expect(page.locator("#new-session")).to_be_visible()
     page.locator("#new-session").click()
-    page.locator('input[name="new-source"][value="claude"]').check()
+    page.locator('label:has(input[name="new-source"][value="claude"])').click()
+    expect(page.locator('input[name="new-source"][value="claude"]')).to_be_checked()
     cwd = page.locator("#new-cwd")
     if expect_completion:
         # Completion preserves the entered spelling and does not treat cwd as
@@ -258,6 +270,7 @@ def main():
                     claims = []
                     takeovers = []
                     def watch(context):
+                        context.add_init_script("for (const source of ['claude', 'codex']) localStorage.setItem('sessiondock.agentStartMode.' + source, JSON.stringify('cli'));")
                         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                         context.on("request", lambda request: claims.append(request.post_data_json)
                             if urlsplit(request.url).path == "/api/term/claim" else None)
@@ -297,7 +310,8 @@ def main():
                     listed = context.request.get(base + "/api/term/list").json()
                     row = next(row for row in listed["sessions"] if row["uid"] == uid)
                     assert row["name"] == receipt["name"] and row["instance_id"] == receipt["instance_id"] and row["sid"] == receipt["declared_sid"], row
-                    assert listed["resume_sources"] == {"claude": True, "codex": True, "grok": False, "opencode": False, "agy": False}, listed
+                    assert listed["resume_sources"] == {"claude": True, "codex": True, "grok": False,
+                        "opencode": False, "agy": False, "kiro": False, "codebuddy": False}, listed
 
                     # ---- Resume the synthetic Codex session with the existing console button.
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
@@ -424,21 +438,30 @@ def main():
                 # keeps the session's directory, which the daemon would otherwise
                 # replace with its own. The scripted daemon only has to accept the
                 # reachability check; a TUI never starts one it was told to join.
+                # The fake CLI blocks like Codex when the old profile's default-
+                # mode question flag conflicts with the shared daemon settings.
                 from codex_sdk_fixtures import FakeAppServer
                 (root / "host-remote").mkdir(mode=0o700)
                 remote_configuration = root / "launcher-remote.json"
                 remote_configuration.touch(mode=0o600)
-                remote_configuration.write_text(json.dumps({**launcher, "host_dir": str(root / "host-remote")}))
+                remote_launcher = json.loads(json.dumps(launcher))
+                remote_launcher["host_dir"] = str(root / "host-remote")
+                remote_launcher["profiles"][1]["new_args"] = [
+                    "--enable", "worktrees,default_mode_request_user_input",
+                    "--enable=default_mode_request_user_input,transcript_v2",
+                    "--enable=default_mode_request_user_input"]
+                remote_configuration.write_text(json.dumps(remote_launcher))
                 initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger-remote")],
                     cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
                 assert initialized.returncode == 0, initialized.stderr.decode()
                 app_socket = root / "app.sock"
-                with FakeAppServer(app_socket, None, CODEX_SID):
+                with FakeAppServer(app_socket, corpus.paths[CODEX_SID], CODEX_SID):
                     with isolated_server(corpus, server_wrapper, host_dir=root / "host-remote", lifecycle_dir=root / "ledger-remote",
                                          launcher_config=remote_configuration,
                                          extra_env={"SESSIONDOCK_CODEX_APP_SERVER": str(app_socket)}) as (base, _):
                         errors = []
                         context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                        context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.codex', JSON.stringify('cli'));")
                         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                         page = context.new_page()
                         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -450,10 +473,52 @@ def main():
                         page.locator("#a-term").click()
                         expect(page.locator("#termpane")).to_be_visible()
                         page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
-                        xterm_includes(page, argv_lines("CODEX", ["--enable", "default_mode_request_user_input", "-c",
+                        xterm_includes(page, argv_lines("CODEX", ["-c",
                             "suppress_unstable_features_warning=true", "resume", CODEX_SID,
                             "-c", "check_for_update_on_startup=false",
                             "--remote", f"unix://{app_socket}", "-C", str(root / "work/codex-area")]))
+                        xterm_includes(page, "RS_SHELL_READY")
+                        terminal = page.locator("#termpane .xterm-helper-textarea:visible")
+                        terminal.press_sequentially("resume works")
+                        terminal.press("Enter")
+                        xterm_includes(page, "RS_INPUT_OK")
+                        screenshots = os.environ.get("SESSIONDOCK_TEST_SCREENSHOTS")
+                        if screenshots:
+                            Path(screenshots).mkdir(parents=True, exist_ok=True)
+                            page.screenshot(path=str(Path(screenshots) / "codex-shared-resume.png"), full_page=True)
+
+                        # New sessions use the same normalization, including
+                        # repeated/joined flags; unrelated features survive.
+                        page.locator("#new-session").click()
+                        page.locator('label:has(input[name="new-source"][value="codex"])').click()
+                        expect(page.locator('input[name="new-source"][value="codex"]')).to_be_checked()
+                        page.locator("#new-cwd").fill(str(root / "work/codex-area"))
+                        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/create") as created:
+                            page.locator("#new-session-go").click()
+                        assert created.value.status == 200, created.value.text()
+                        fresh = created.value.json()
+                        assert fresh["launch_kind"] == "new_pending", fresh
+                        page.locator("#a-term").click()
+                        expect(page.locator("#termpane")).to_be_visible()
+                        page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                        xterm_includes(page, argv_lines("CODEX", ["-c",
+                            "suppress_unstable_features_warning=true", "--enable", "worktrees",
+                            "--enable=transcript_v2", "-c", "check_for_update_on_startup=false",
+                            "--remote", f"unix://{app_socket}", "-C", str(root / "work/codex-area")]))
+                        terminal.press_sequentially("new session works")
+                        terminal.press("Enter")
+                        xterm_includes(page, "RS_INPUT_OK")
+                        assert "incompatible feature settings" not in page.evaluate(XTERM_LOGICAL)
+                        page.set_viewport_size({"width": 472, "height": 700})
+                        page.emulate_media(color_scheme="dark")
+                        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                        page.locator(f'#side .item[data-uid="tmux:{fresh["name"]}"]').click()
+                        expect(page.locator("#termpane")).to_be_visible()
+                        terminal.press_sequentially("mobile input works")
+                        terminal.press("Enter")
+                        page.wait_for_function("(" + XTERM_LOGICAL + ")().split('RS_INPUT_OK').length === 3")
+                        if screenshots:
+                            page.screenshot(path=str(Path(screenshots) / "codex-shared-new-mobile.png"), full_page=True)
                         assert not errors, errors
                         context.close()
             finally:
@@ -480,7 +545,8 @@ def main():
           "declared identity followed after the fake CLI persisted its record, Codex resume via console button "
           "with exact `resume <sid>` argv, inherited service PATH/HOME/custom env, explicit overrides/removals, "
           "stale parent identity removal, executable wrapper, reuse including legacy force, tmux refusal, native bytes unchanged, "
-          "agent creation through a host that predates --no-record, deleting an ended session without its receipt reappearing")
+          "agent creation through a host that predates --no-record, deleting an ended session without its receipt reappearing, "
+          "shared-daemon Codex resume/create accepts input without legacy feature mismatch")
 
 
 if __name__ == "__main__":

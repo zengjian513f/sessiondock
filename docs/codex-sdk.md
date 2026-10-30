@@ -144,6 +144,9 @@ required; a TUI told to `--remote` never starts a daemon and exits with a
 connection error when none runs, so before each Codex launch the launcher
 connects, else runs `codex app-server daemon start` (bounded 30 s) and, if the
 daemon still is not reachable, launches the old way without `--remote`.
+Shared launches omit the old launcher's `--enable default_mode_request_user_input`
+override and use the daemon's setting, avoiding a feature-mismatch restart prompt;
+independent fallback launches retain it ([launcher contract](lifecycle-launcher.md)).
 
 The default endpoint applies only when the configured Codex sessions root's
 parent is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
