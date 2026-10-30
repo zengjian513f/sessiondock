@@ -319,6 +319,9 @@ class MacOSNode(TargetHandler):
         return res
 
     def rollback(self, backup_dir: str) -> None:
+        # Freeze only the web service, never its detached SDK/PTY hosts.
+        active, _ = self._service()
+        self.export_storage_for_rollback(f"launchctl kill SIGSTOP {self.domain}" if active else "true")
         p = self.prefix
         self.expected_versions, self.staged = {}, []
         for name in self.bins:
@@ -346,6 +349,7 @@ class MacOSNode(TargetHandler):
                              f"-name 'backup-deploy-*' | sed 's#^\\./##'", timeout=30)
         names = sorted((n.strip() for n in out.splitlines() if n.strip()), key=_backup_stamp)
         doomed = names[:-keep] if keep > 0 else names
+        doomed = [name for name in doomed if f"{self.prefix}/{name}" != getattr(self, "rollback_backup", None)]
         for n in doomed:
             self.sh.run(f"rm -rf {_q(self.prefix + '/' + n)}", timeout=120, check=True)
         return [f"{self.prefix}/{n}" for n in doomed]

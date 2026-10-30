@@ -462,7 +462,9 @@ impl Catalog {
                 bytes.push(b'\n');
             }
         }
-        publish(&entry.path.join("messages.jsonl"), &bytes)?;
+        if snapshot["items"].is_array() {
+            publish(&entry.path.join("messages.jsonl"), &bytes)?;
+        }
         let summary = entry.path.join("summary.json");
         let mut value: Value =
             serde_json::from_slice(&std::fs::read(&summary).map_err(|e| e.to_string())?)
@@ -501,7 +503,9 @@ impl Catalog {
                     .map_err(|e| e.to_string())?;
                 bytes.push(b'\n');
             }
-            publish(&path.join("messages.jsonl"), &bytes)?;
+            if task["items"].is_array() {
+                publish(&path.join("messages.jsonl"), &bytes)?;
+            }
             let mut child = value.clone();
             child["uid"] = json!(format!("kiro:{}", &key[..16]));
             child["aliases"] = json!([]);

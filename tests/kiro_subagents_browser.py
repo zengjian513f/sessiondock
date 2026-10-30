@@ -6,6 +6,7 @@ from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
+from storage_tiering_fixtures import checkpoints, read_checkpoint, legacy_checkpoint
 import sys
 import tempfile
 import time
@@ -191,13 +192,13 @@ def run(args):
                 # representation, then exercise the automatic read-only upgrade.
                 page.goto('about:blank')
                 stack.close(); stack = ExitStack()
-                checkpoint = next(p for p in (root / 'state/sdk-adapters/kiro').glob('*.json')
-                                  if json.loads(p.read_text()).get('uid') == ('kiro:' + uid.split('~')[-1] if '~' in uid else uid))
-                state = json.loads(checkpoint.read_text())
+                checkpoint = next(p for p in checkpoints(root / 'state/sdk-adapters/kiro')
+                                  if read_checkpoint(p).get('uid') == ('kiro:' + uid.split('~')[-1] if '~' in uid else uid))
+                state = read_checkpoint(checkpoint)
                 for task in state.pop('subtasks').values():
                     state['items'].extend(task['state']['items'])
                 state.pop('transcript_version')
-                checkpoint.write_text(json.dumps(state))
+                legacy_checkpoint(checkpoint, state)
                 uid = boot()
                 refresh_agents(True)
                 verify_views()
@@ -264,15 +265,15 @@ def run(args):
                 # Exercise upgrade of an already persisted v1 replay checkpoint.
                 page.goto('about:blank')
                 stack.close(); stack = ExitStack()
-                for checkpoint in (root / 'state/sdk-adapters/kiro').glob('*.json'):
-                    state = json.loads(checkpoint.read_text())
+                for checkpoint in checkpoints(root / 'state/sdk-adapters/kiro'):
+                    state = read_checkpoint(checkpoint)
                     if 'review-c' not in state.get('subtasks', {}):
                         continue
                     state['transcript_version'] = 1
                     for task in state['subtasks'].values():
                         task.pop('tool_call_id', None)
                         task['status'] = 'in_progress'
-                    checkpoint.write_text(json.dumps(state))
+                    legacy_checkpoint(checkpoint, state)
                 uid = boot()
                 page.wait_for_function("""async uid => {
                     await loadSessions(true);
@@ -286,8 +287,8 @@ def run(args):
                 expect(page.locator('#session-view-menu')).to_contain_text('review-c')
                 expect(page.locator('#session-view-menu')).not_to_contain_text('运行中')
                 expect(page.locator('#side')).not_to_contain_text('运行中')
-                for checkpoint in (root / 'state/sdk-adapters/kiro').glob('*.json'):
-                    state = json.loads(checkpoint.read_text())
+                for checkpoint in checkpoints(root / 'state/sdk-adapters/kiro'):
+                    state = read_checkpoint(checkpoint)
                     if 'review-c' in state.get('subtasks', {}):
                         assert {k: v['status'] for k, v in state['subtasks'].items()} == {
                             'review-a': 'completed', 'review-b': 'failed', 'review-c': 'interrupted'}

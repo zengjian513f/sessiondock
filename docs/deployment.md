@@ -24,6 +24,12 @@ Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的
 构建机的架构和 glibc 基线须兼容 Linux 目标，macOS/Windows 仍在目标机原生构建。
 不同构建机的独立 checkout 不共享部署锁，执行前须确认没有另一轮部署。
 
+存储格式回滚：若新版已生成分层 SQLite 账本，回滚先停止节点写入，再通过
+[存储导出工具](../deploy/storage_rollback.py)导出旧 JSON、恢复压缩的宿主输出，随后
+启动旧二进制。保留身份、发送回执、RPC 和读取游标；正常发布不执行此全量导出。
+发布失败／回滚失败后也执行既定备份保留数量，保留最近备份及本次回滚来源，
+清理失败单独报告，不覆盖原部署结果。
+
 ## 命令
 
 发布范围遵循 [AGENTS.md](../AGENTS.md#scope-and-boundaries)：

@@ -475,6 +475,7 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
                 why = f"{type(e2).__name__}: {e2}".splitlines()[0][:200]
                 return finish("FAILED", err + f" (live files unchanged; staged files may remain, discard raised {why})")
             return finish("FAILED", err + " (staged files removed; live files unchanged)")
+        h.rollback_backup = backup
         try:
             log(f"rolling back from {backup}")
             h.rollback(backup)
@@ -482,7 +483,17 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
             fill(row, "after", after)
             problems = rollback_problems(before, after, list(before.binary_versions), None, before.build)
         except Exception as e2:
+            if opts.keep_backups > 0:
+                try:
+                    row["pruned"] = h.prune_backups(opts.keep_backups)
+                except Exception as cleanup_error:
+                    log(f"backup retention failed: {cleanup_error}")
             return finish("ROLLBACK_FAILED", f"{err}; rollback raised {type(e2).__name__}: {e2}")
+        if opts.keep_backups > 0:
+            try:
+                row["pruned"] = h.prune_backups(opts.keep_backups)
+            except Exception as cleanup_error:
+                log(f"backup retention failed: {cleanup_error}")
         if problems:
             return finish("ROLLBACK_FAILED", f"{err}; after rollback: {'; '.join(problems)}")
         return finish("ROLLED_BACK", err)

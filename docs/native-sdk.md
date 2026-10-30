@@ -152,9 +152,12 @@ Grok、Agy、Claude 的独立 TUI 不能像 Codex daemon 那样共享实时上�
 
 ## 持久输入与失败恢复
 
-有 state dir 时，`native-sdk-inputs.json` 保存原始提交、可信发布后的实际输入、
-投递 ID、准入结果与重试操作回执；目录/文件权限沿用私有状态目录约定。
-无 state dir 时仅内存保存。账本不改写原生 transcript，也不作为原生任务宿主。
+DELTA：有 state dir 时，`native-sdk-inputs.sqlite` 按记录保存原始提交、可信发布后的
+实际输入、投递 ID、准入结果与重试回执。启动只加载在途／恢复中的记录；完成回执
+按提交 ID 查询，不常驻队列。每次状态变更只提交该条记录，返回结果不保存
+`raw.items/subtasks` 历史副本。正文恢复、原生执行结果及去重身份保持原语义。
+旧 `native-sdk-inputs.json` 一次性导入，事务提交后移除；中断后重跑不覆盖新记录。
+目录/文件保持私有，无 state dir 时用内存数据库；账本不改写原生 transcript。
 
 Grok/Agy/Claude 按所选 UID/agent 串行调度，前一任务、审批或问题未结束时继续排队。
 OpenCode 保留原生 inbox 的 queue/steer 语义，本地账本只跟踪未确认准入。

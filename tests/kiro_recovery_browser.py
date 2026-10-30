@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 from pathlib import Path
+from storage_tiering_fixtures import read_inputs, legacy_inputs
 import sys
 import tempfile
 import threading
@@ -215,7 +216,7 @@ def run(args):
                 guard_root = root / "deploy-guard"
                 guard_state = guard_root / "state"
                 guard_state.mkdir(parents=True)
-                ledger = json.loads((root / "state/native-sdk-inputs.json").read_text())
+                ledger = read_inputs(root / "state/native-sdk-inputs.json")
                 active = [r for rows in ledger.values() for r in rows
                           if r["state"] in ("sending", "accepted", "recovering") or r.get("runtime_state")]
                 assert active, ledger
@@ -243,10 +244,10 @@ def run(args):
                 page.goto("about:blank")
                 stack.close()
                 journal_path = root / "state/native-sdk-inputs.json"
-                interrupted = json.loads(journal_path.read_text())
+                interrupted = read_inputs(journal_path)
                 pending = next(r for rows in interrupted.values() for r in rows if r['draft'].get('text') == 'RECOVERY_WAIT')
                 pending.update(state='sending', result=None, runtime_state='')
-                journal_path.write_text(json.dumps(interrupted))
+                legacy_inputs(journal_path, interrupted)
                 restart()
                 page.wait_for_function("window.__kiroSnapshot?.running === true")
                 assert len(fixture.received("session/prompt")) == before_prompts
@@ -302,21 +303,21 @@ def run(args):
                 page.goto("about:blank")
                 stack.close()
                 journal_path = root / "state/native-sdk-inputs.json"
-                journal = json.loads(journal_path.read_text())
+                journal = read_inputs(journal_path)
                 legacy = next(r for rows in journal.values() for r in rows if r['draft'].get('text') == 'WORK_THEN_ERROR')
                 assert legacy['state'] == 'completed' and legacy['result']
                 legacy['state'] = 'failed'
                 legacy['error'] = 'The model is not available after executing work'
                 legacy.pop('runtime_state', None)
                 legacy.pop('runtime_error', None)
-                journal_path.write_text(json.dumps(journal))
+                legacy_inputs(journal_path, journal)
                 restart()
                 page.wait_for_function("window.__kiroSnapshot?.error?.includes('after executing work')")
                 page.wait_for_function("NativeSdkView.connected && NativeSdkView.raw?.error?.includes('after executing work')")
                 expect(page.locator('#sdk-send')).to_be_enabled()
                 assert len(fixture.received("session/prompt")) == before_error_restart
                 expect(queue.locator('[data-queue-id]')).to_have_count(0)
-                migrated = next(r for rows in json.loads(journal_path.read_text()).values() for r in rows if r['draft'].get('text') == 'WORK_THEN_ERROR')
+                migrated = next(r for rows in read_inputs(journal_path).values() for r in rows if r['draft'].get('text') == 'WORK_THEN_ERROR')
                 assert migrated['state'] == 'completed' and migrated['error'] is None
                 assert 'after executing work' in migrated['runtime_error']
                 for width, theme in ((1280, 'light'), (390, 'dark')):
@@ -335,12 +336,34 @@ def run(args):
                 prompt_count = len(fixture.received("session/prompt"))
                 shot("kiro-recovery-completed-exit.png")
 
+                # Cold exited-host output remains readable with original offsets.
+                import gzip
+                for status_path in (root / 'state/sdkhost').glob('*/status.json'):
+                    status = json.loads(status_path.read_text())
+                    if status.get('exit') is None or not status.get('stdout_eof') or not status.get('stderr_eof'):
+                        continue
+                    for name in ('stdout', 'stderr'):
+                        stream = status_path.parent / name
+                        with gzip.open(stream.with_suffix('.gz'), 'wb') as compressed:
+                            compressed.write(stream.read_bytes())
+                        stream.unlink()
                 restart()
                 print("exit-restart terminal", json.dumps(page.evaluate("({last_turn:window.__kiroSnapshot.last_turn,runtime_error:window.__kiroSnapshot.runtime_error})")), flush=True)
                 page.wait_for_function("window.__kiroSnapshot?.last_turn?.status === 'completed'")
                 assert len(fixture.received("session/prompt")) == prompt_count
                 assert len(fixture.received("session/load")) == before_loads, "restart spawned a replacement for a finished host"
                 assert native_prompt == fixture.received("session/prompt")[0]
+                if args.rollback_binary:
+                    import subprocess
+                    page.goto("about:blank")
+                    stack.close()
+                    subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'deploy/storage_rollback.py'), str(root / 'state')], check=True, timeout=30)
+                    args.binary = args.rollback_binary
+                    restart()
+                    page.wait_for_function("window.__kiroSnapshot?.last_turn?.status === 'completed'")
+                    assert len(fixture.received('session/prompt')) == prompt_count
+                    assert len(fixture.received('session/load')) == before_loads
+                    print('PASS: tiered state exported, previous binary restores verdict without replay', flush=True)
                 print(json.dumps({"uid": uid, "sid": fixture.sid, "prompts": prompt_count, "loads": before_loads, "approval_responses": len(answers)}))
                 browser.close()
         finally:
@@ -356,6 +379,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
+    parser.add_argument("--rollback-binary", type=Path)
     args = parser.parse_args()
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)

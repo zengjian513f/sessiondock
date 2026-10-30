@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+from storage_tiering_fixtures import read_inputs, legacy_inputs
 import signal
 import socket
 import time
@@ -70,7 +71,7 @@ class NativeQueueFixture:
 
     def journal(self):
         path = self.root / 'state/native-sdk-inputs.json'
-        return [row for rows in json.loads(path.read_text()).values() for row in rows] if path.exists() else []
+        return [row for rows in read_inputs(path).values() for row in rows]
 
     def entry(self, request):
         return next(row for row in self.journal() if row['request_id'] == request)

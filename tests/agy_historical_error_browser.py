@@ -4,6 +4,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from storage_tiering_fixtures import read_inputs, legacy_inputs
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO
@@ -48,11 +49,11 @@ def exercise(browser, fixture, screenshots):
             context.close()
     # Simulate the previous bridge verdict in a private delivery ledger only.
     journal_path = fixture.root / 'state/native-sdk-inputs.json'
-    journal = json.loads(journal_path.read_text())
+    journal = read_inputs(journal_path)
     entry = next(row for rows in journal.values() for row in rows
                  if row['request_id'] == receipt['request_id'])
     entry['runtime_error'] = 'agy_sdk_native_ERROR: stale malformed function call'
-    journal_path.write_text(json.dumps(journal))
+    legacy_inputs(journal_path, journal)
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture)
         try:

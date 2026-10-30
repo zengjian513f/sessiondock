@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    fs,
-    io::{self, Write},
+    fs, io,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -38,7 +37,7 @@ pub(crate) struct Input {
 
 type Document = BTreeMap<String, Vec<Input>>;
 pub(super) struct Journal {
-    path: Option<PathBuf>,
+    database: Mutex<rusqlite::Connection>,
     rows: Mutex<Document>,
     pub events: broadcast::Sender<Arc<str>>,
 }
@@ -62,6 +61,23 @@ pub(super) fn input_id(operation: &str, request: &str) -> String {
 
 fn terminal(input: &Input) -> bool {
     matches!(input.state.as_str(), "completed" | "cancelled")
+}
+
+// Receipts retain native verdicts and operation identities, never a second
+// transcript. Draft/prepared input remain available for explicit recovery.
+fn compact(input: &mut Input) {
+    if let Some(raw) = input
+        .result
+        .as_mut()
+        .and_then(|v| v.get_mut("raw"))
+        .and_then(Value::as_object_mut)
+    {
+        raw.remove("items");
+        raw.remove("subtasks");
+    }
+}
+fn hot(input: &Input) -> bool {
+    !terminal(input) || !input.runtime_state.is_empty()
 }
 
 fn log_transition(before: Option<&Input>, after: &Input, reason: &str) {
@@ -92,21 +108,78 @@ fn log_transition(before: Option<&Input>, after: &Input, reason: &str) {
 
 impl Journal {
     pub fn open(directory: Option<&PathBuf>) -> io::Result<Self> {
-        let path = directory.map(|path| path.join("native-sdk-inputs.json"));
-        if let Some(parent) = path.as_ref().and_then(|path| path.parent()) {
-            fs::create_dir_all(parent)?;
+        use rusqlite::params;
+        if let Some(directory) = directory {
+            fs::create_dir_all(directory)?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
             }
         }
-        let mut rows: Document = match path.as_ref().map(fs::read).transpose() {
-            Ok(Some(bytes)) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-            Ok(None) => BTreeMap::new(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(error) => return Err(error),
-        };
+        let mut database = match directory {
+            Some(dir) => rusqlite::Connection::open(dir.join("native-sdk-inputs.sqlite")),
+            None => rusqlite::Connection::open_in_memory(),
+        }
+        .map_err(io::Error::other)?;
+        if let Some(directory) = directory {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(
+                    directory.join("native-sdk-inputs.sqlite"),
+                    fs::Permissions::from_mode(0o600),
+                )?;
+            }
+        }
+        database
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS inputs(scope TEXT NOT NULL, id TEXT NOT NULL,
+            active INTEGER NOT NULL, row TEXT NOT NULL, PRIMARY KEY(scope,id));
+            CREATE INDEX IF NOT EXISTS active_inputs ON inputs(active);",
+            )
+            .map_err(io::Error::other)?;
+        // One-time import. Commit before unlinking; INSERT OR IGNORE makes a
+        // crash between commit and unlink safe without replaying old verdicts.
+        if let Some(legacy) = directory
+            .map(|dir| dir.join("native-sdk-inputs.json"))
+            .filter(|p| p.exists())
+        {
+            let old: Document =
+                serde_json::from_reader(io::BufReader::new(fs::File::open(&legacy)?))
+                    .map_err(io::Error::other)?;
+            let tx = database.transaction().map_err(io::Error::other)?;
+            for (key, entries) in old {
+                for mut row in entries {
+                    compact(&mut row);
+                    tx.execute(
+                        "INSERT OR IGNORE INTO inputs VALUES (?1,?2,?3,?4)",
+                        params![key, row.id, hot(&row), serde_json::to_string(&row)?],
+                    )
+                    .map_err(io::Error::other)?;
+                }
+            }
+            tx.commit().map_err(io::Error::other)?;
+            fs::remove_file(&legacy)?;
+        }
+        let mut rows: Document = BTreeMap::new();
+        {
+            let mut query = database
+                .prepare("SELECT scope,row FROM inputs WHERE active=1 ORDER BY rowid")
+                .map_err(io::Error::other)?;
+            let entries = query
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(io::Error::other)?;
+            for entry in entries {
+                let (key, value) = entry.map_err(io::Error::other)?;
+                rows.entry(key)
+                    .or_default()
+                    .push(serde_json::from_str(&value).map_err(io::Error::other)?);
+            }
+        }
         let mut recovered = Vec::new();
         for input in rows.values_mut().flatten() {
             let before = input.clone();
@@ -164,42 +237,68 @@ impl Journal {
         }
         let (events, _) = broadcast::channel(128);
         let journal = Self {
-            path,
+            database: Mutex::new(database),
             rows: Mutex::new(rows),
             events,
         };
+        for (key, entries) in journal.rows.lock().expect("SDK input journal").iter() {
+            for row in entries {
+                journal.save(key, row).map_err(io::Error::other)?;
+            }
+        }
         journal
-            .save(&journal.rows.lock().expect("SDK input journal"))
-            .map_err(io::Error::other)?;
+            .rows
+            .lock()
+            .expect("SDK input journal")
+            .retain(|_, entries| {
+                entries.retain(hot);
+                !entries.is_empty()
+            });
         for (before, after) in recovered {
             log_transition(Some(&before), &after, "service_recovery");
         }
         Ok(journal)
     }
 
-    fn save(&self, rows: &Document) -> Result<(), String> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let temporary = path.with_extension("tmp");
-        let result = (|| -> io::Result<()> {
-            let mut options = fs::OpenOptions::new();
-            options.create(true).truncate(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
+    fn save(&self, key: &str, row: &Input) -> Result<(), String> {
+        self.database.lock().map_err(|_| "SDK input database poisoned")?
+            .execute("INSERT INTO inputs VALUES (?1,?2,?3,?4) ON CONFLICT(scope,id) DO UPDATE SET active=excluded.active,row=excluded.row",
+                rusqlite::params![key,row.id,hot(row),serde_json::to_string(row).map_err(|e|e.to_string())?])
+            .map(|_|()).map_err(|e|format!("SDK 输入队列保存失败：{e}"))
+    }
+
+    fn stored(&self, key: &str, id: &str) -> Result<Option<Input>, String> {
+        use rusqlite::OptionalExtension;
+        let value: Option<String> = self
+            .database
+            .lock()
+            .map_err(|_| "SDK input database poisoned")?
+            .query_row(
+                "SELECT row FROM inputs WHERE scope=?1 AND id=?2",
+                [key, id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
+            .transpose()
+    }
+
+    fn install(rows: &mut Document, key: &str, row: Input) {
+        let entries = rows.entry(key.to_owned()).or_default();
+        if let Some(index) = entries.iter().position(|entry| entry.id == row.id) {
+            if hot(&row) {
+                entries[index] = row;
+            } else {
+                entries.remove(index);
             }
-            let mut file = options.open(&temporary)?;
-            file.write_all(&serde_json::to_vec(rows)?)?;
-            file.sync_all()?;
-            fs::rename(&temporary, path)?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
+        } else if hot(&row) {
+            entries.push(row);
         }
-        result.map_err(|error| format!("SDK 输入队列保存失败：{error}"))
+        if entries.is_empty() {
+            rows.remove(key);
+        }
     }
 
     fn publish(&self, key: &str, rows: &Document) {
@@ -208,22 +307,18 @@ impl Journal {
 
     pub fn stop(&self, key: &str) -> Result<(), String> {
         let mut rows = self.rows.lock().map_err(|_| "SDK input journal poisoned")?;
-        let mut next = rows.clone();
-        for row in next.get_mut(key).into_iter().flatten() {
+        for mut row in rows.get(key).cloned().unwrap_or_default() {
+            let before = row.clone();
             row.runtime_state.clear();
-            if !terminal(row) {
+            if !terminal(&row) {
                 row.state = "cancelled".into();
                 row.stop_requested = true;
             }
+            compact(&mut row);
+            self.save(key, &row)?;
+            log_transition(Some(&before), &row, "stop");
+            Self::install(&mut rows, key, row);
         }
-        self.save(&next)?;
-        for after in next.get(key).into_iter().flatten() {
-            let before = rows
-                .get(key)
-                .and_then(|rows| rows.iter().find(|row| row.id == after.id));
-            log_transition(before, after, "stop");
-        }
-        *rows = next;
         self.publish(key, &rows);
         Ok(())
     }
@@ -236,11 +331,8 @@ impl Journal {
         let key = scope(target);
         let id = input_id(operation, request);
         let mut rows = self.rows.lock().map_err(|_| "SDK input journal poisoned")?;
-        if let Some(input) = rows
-            .get(&key)
-            .and_then(|rows| rows.iter().find(|row| row.id == id))
-        {
-            return Ok(input.clone());
+        if let Some(input) = self.stored(&key, &id)? {
+            return Ok(input);
         }
         let input = Input {
             id,
@@ -260,11 +352,9 @@ impl Journal {
             runtime_state: String::new(),
             runtime_error: None,
         };
-        let mut next = rows.clone();
-        next.entry(key.clone()).or_default().push(input.clone());
-        self.save(&next)?;
+        self.save(&key, &input)?;
         log_transition(None, &input, "admission");
-        *rows = next;
+        Self::install(&mut rows, &key, input.clone());
         self.publish(&key, &rows);
         Ok(input)
     }
@@ -276,17 +366,20 @@ impl Journal {
         mutate: impl FnOnce(&mut Input) -> Result<(), String>,
     ) -> Result<Input, String> {
         let mut rows = self.rows.lock().map_err(|_| "SDK input journal poisoned")?;
-        let mut next = rows.clone();
-        let input = next
-            .get_mut(key)
-            .and_then(|rows| rows.iter_mut().find(|row| row.id == id))
-            .ok_or("SDK 队列项目不存在")?;
+        let mut input = rows
+            .get(key)
+            .and_then(|entries| entries.iter().find(|row| row.id == id))
+            .cloned();
+        if input.is_none() {
+            input = self.stored(key, id)?;
+        }
+        let mut input = input.ok_or("SDK 队列项目不存在")?;
         let before = input.clone();
-        mutate(input)?;
-        let input = input.clone();
-        self.save(&next)?;
+        mutate(&mut input)?;
+        compact(&mut input);
+        self.save(key, &input)?;
         log_transition(Some(&before), &input, "update");
-        *rows = next;
+        Self::install(&mut rows, key, input.clone());
         self.publish(key, &rows);
         Ok(input)
     }

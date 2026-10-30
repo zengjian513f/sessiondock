@@ -54,7 +54,22 @@ pub(super) struct LiveState {
     pub(super) running: bool,
     pub(super) loading: bool,
     pub(super) interrupted_turn: bool,
+    #[serde(default, skip_serializing)]
     pub(super) items: Vec<Value>,
+    #[serde(default)]
+    pub(super) history_len: usize,
+    #[serde(skip)]
+    pub(super) history_store: Option<PathBuf>,
+    #[serde(skip)]
+    pub(super) history_key: String,
+    #[serde(skip)]
+    pub(super) history_loaded: bool,
+    #[serde(skip)]
+    pub(super) history_dirty: std::collections::BTreeSet<usize>,
+    #[serde(skip)]
+    pub(super) projection_dirty: bool,
+    #[serde(skip)]
+    pub(super) checkpoint_db: Option<rusqlite::Connection>,
     /// `item["id"]` -> its index in `items`, so replay/live reducers locate the
     /// row to mutate in O(1) instead of a linear scan (the scan made cold-start
     /// `session/load` replay O(n^2)). `items` is append-only between bulk
@@ -138,6 +153,13 @@ impl LiveState {
             loading: false,
             interrupted_turn: false,
             items: Vec::new(),
+            history_len: 0,
+            history_store: None,
+            history_key: String::new(),
+            history_loaded: true,
+            history_dirty: Default::default(),
+            projection_dirty: true,
+            checkpoint_db: None,
             item_index: HashMap::new(),
             requests: HashMap::new(),
             last_turn: None,
@@ -186,6 +208,9 @@ impl LiveState {
             self.transcript_version = 2;
             return Ok(());
         }
+        #[cfg(unix)]
+        let file = sdkhost_client::cold::open(stdout).map_err(|e| e.to_string())?;
+        #[cfg(not(unix))]
         let file = std::fs::File::open(stdout).map_err(|e| e.to_string())?;
         let prompts: Vec<_> = self
             .journal
@@ -243,6 +268,9 @@ impl LiveState {
         // No native subtask evidence: retain the old projection instead of guessing.
         if !replay.subtasks.is_empty() {
             self.items = replay.items;
+            self.history_dirty = (0..self.items.len()).collect();
+            self.history_len = self.items.len();
+            self.projection_dirty = true;
             self.subtasks = replay.subtasks;
             self.next_item_id = replay.next_item_id;
             self.current_assistant_id = replay.current_assistant_id;
@@ -273,6 +301,9 @@ impl LiveState {
     }
 
     pub(super) fn persist(&mut self) -> Result<(), String> {
+        if let Some(error) = self.checkpoint_error.clone() {
+            return Err(error);
+        }
         if let Some(path) = self.checkpoint.clone() {
             if let Err(error) = checkpoint::save(&path, self) {
                 self.checkpoint_error = Some(error.clone());
@@ -710,17 +741,20 @@ impl LiveState {
         for task in self.subtasks.values_mut() {
             if matches!(task.status.as_str(), "pending" | "in_progress") {
                 task.status = "interrupted".into();
+                task.state.projection_dirty = true;
                 if let Some(id) = &task.tool_call_id {
                     interrupted_calls.insert(id.clone());
                 }
             }
         }
-        for item in &mut self.items {
+        for (index, item) in self.items.iter_mut().enumerate() {
             if item["toolCallId"]
                 .as_str()
                 .is_some_and(|id| interrupted_calls.contains(id))
             {
                 item["status"] = json!("interrupted");
+                self.history_dirty.insert(index);
+                self.projection_dirty = true;
             }
         }
     }
@@ -778,6 +812,11 @@ impl LiveState {
                     state,
                 }
             });
+            if let Err(error) = checkpoint::hydrate(&mut task.state) {
+                self.checkpoint_error = Some(error);
+                return;
+            }
+            task.state.projection_dirty = true;
             task.state.observing = true;
             if u["_meta"]["kiro"]["kind"] == "agent-subtask" {
                 if let Some(id) = u["toolCallId"].as_str() {
@@ -819,6 +858,7 @@ impl LiveState {
                 .find(|task| task.tool_call_id.as_deref() == Some(id))
         {
             task.status = status.to_owned();
+            task.state.projection_dirty = true;
         }
         let kind = u["sessionUpdate"]
             .as_str()
@@ -1326,6 +1366,9 @@ impl LiveState {
     /// the reducers go through here so `item_index` stays in sync, keeping
     /// later lookups O(1).
     fn push_item(&mut self, item: Value) {
+        self.history_dirty.insert(self.items.len());
+        self.history_len = self.items.len() + 1;
+        self.projection_dirty = true;
         if let Some(id) = item["id"].as_str() {
             self.item_index.insert(id.to_owned(), self.items.len());
         }
@@ -1345,6 +1388,8 @@ impl LiveState {
                 .collect();
         }
         let idx = *self.item_index.get(id)?;
+        self.history_dirty.insert(idx);
+        self.projection_dirty = true;
         // Defend against any index drift: verify the row still matches.
         match self.items.get(idx) {
             Some(item) if item["id"].as_str() == Some(id) => self.items.get_mut(idx),
@@ -1354,6 +1399,7 @@ impl LiveState {
                     .iter()
                     .position(|item| item["id"].as_str() == Some(id))?;
                 self.item_index.insert(id.to_owned(), found);
+                self.history_dirty.insert(found);
                 self.items.get_mut(found)
             }
         }
@@ -1371,6 +1417,10 @@ impl LiveState {
         if role == "user" {
             self.current_assistant_id = None;
             self.current_thinking_id = None;
+            if message_id.is_none() && !self.items.is_empty() {
+                self.history_dirty.insert(self.items.len() - 1);
+                self.projection_dirty = true;
+            }
             let existing = if message_id.is_none() {
                 self.items
                     .last_mut()
@@ -1640,13 +1690,13 @@ impl LiveState {
             "cwd": cwd,
             "running": self.running,
             "loading": self.loading,
-            "items": if wire { json!(self.windowed_items()) } else { json!(self.items) },
+            "items": if wire { json!(self.windowed_items()) } else if self.projection_dirty { json!(self.items) } else { Value::Null },
             // The projection needs each subtask's full `state.items` to write the
             // per-subagent message store that `/api/messages` serves. The wire
             // never renders subtask items from the snapshot (subagent views read
             // their own projected history), so the public frame carries only
             // lightweight subtask metadata.
-            "subtasks": self.subtasks.iter().map(|(id, task)| {
+            "subtasks": self.subtasks.iter().filter(|(_, task)| wire || task.state.projection_dirty).map(|(id, task)| {
                 if wire {
                     json!({"id": id, "title": task.title, "type": task.kind, "status": task.status})
                 } else {
@@ -1661,7 +1711,7 @@ impl LiveState {
                         })
                     }).flatten();
                     json!({"id": id, "title": task.title, "type": task.kind,
-                        "status": task.status, "items": task.state.items, "failure": failure})
+                        "status": task.status, "items": if task.state.history_loaded { json!(task.state.items) } else { Value::Null }, "failure": failure})
                 }
             }).collect::<Vec<_>>(),
             "requests": requests,

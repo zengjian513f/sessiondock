@@ -370,7 +370,14 @@ class WindowsNode(TargetHandler):
     def swap(self) -> None:
         if "PY" not in self.vars:
             raise RuntimeError("service.python unknown: configure it or keep `set PY=` in restart-session1.cmd")
-        remote = self._upload_script("swap-restart.cmd", self._scripts()["swap-restart.cmd"])
+        script = self._scripts()["swap-restart.cmd"]
+        if getattr(self, "storage_rollback", False):
+            helper = Path(__file__).resolve().parents[1] / "storage_rollback.py"
+            remote_helper = self.deploy_dir + "\\storage_rollback.py"
+            self.sh.scp_upload(helper, remote_helper)
+            export = f'"%PY%" "{remote_helper}" "%SD%\\state"\nif errorlevel 1 ( echo STORAGE_EXPORT_FAILED & exit /b 5 )\n'
+            script = script.replace("echo ===SWAP_BINARY===", export + "echo ===SWAP_BINARY===")
+        remote = self._upload_script("swap-restart.cmd", script)
         out = self._run_script(remote, "===END===", SWAP_TIMEOUT)
         self.restarted = True
         for name in self.staged:
@@ -437,6 +444,7 @@ class WindowsNode(TargetHandler):
         return res
 
     def rollback(self, backup_dir: str) -> None:
+        self.storage_rollback = True
         p = self.prefix
         self.expected_versions, self.staged, self.restarted = {}, [], False
         for name in self.bins:
@@ -465,6 +473,7 @@ class WindowsNode(TargetHandler):
         names = sorted((n.strip() for n in out.splitlines() if n.strip().startswith("backup-deploy-")),
                        key=_backup_stamp)
         doomed = names[:-keep] if keep > 0 else names
+        doomed = [name for name in doomed if f"{self.prefix}\\{name}" != getattr(self, "rollback_backup", None)]
         for n in doomed:
             self.sh.run(f'rd /s /q "{self.prefix}\\{n}"', timeout=120, check=True)
         return [f"{self.prefix}\\{n}" for n in doomed]

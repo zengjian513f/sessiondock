@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from storage_tiering_fixtures import read_inputs, legacy_inputs
 import signal
 import tempfile
 import time
@@ -408,7 +409,7 @@ def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
     row = {'id': 'bridge:' + request, 'request_id': request, 'delivery_id': request,
            'operation': 'turn', 'target': target, 'draft': draft, 'input': draft,
            'state': original_state, 'consumption': 'observed', 'attempts': 0, 'actions': {},
-           'result': {'accepted': True},
+           'result': {'accepted': True, 'raw': {'items': [{'text': 'old snapshot ' * 100000}], 'subtasks': []}},
            'error': '服务已重启，原生投递结果未确认；请核对会话后明确重试或移除，系统不会自动重发。'}
     if original_state == 'failed':
         row['error'] = 'agy_sdk_native_ERROR: The stream was interrupted. Please continue the task you were working on.'
@@ -418,6 +419,8 @@ def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             gone(page, request)
+            assert not (fixture.root / 'state/native-sdk-inputs.json').exists()
+            assert 'items' not in (fixture.entry(request).get('result') or {}).get('raw', {})
             assert fixture.entry(request)['state'] == 'completed'
             assert fixture.entry(request)['runtime_error'] == row['error']
             assert fixture.entry(request)['error'] is None
@@ -677,7 +680,7 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
     # Reproduce an older bridge's durable verdict while retaining the real
     # synthetic host output/binding. Never alter production or native records.
     journal_path = fixture.root / 'state/native-sdk-inputs.json'
-    journal = json.loads(journal_path.read_text())
+    journal = read_inputs(journal_path)
     entry = next(row for rows in journal.values() for row in rows
                  if row['request_id'] == current['request_id'])
     entry['state'] = persisted_state
@@ -686,7 +689,7 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
     if mismatched_delivery:
         entry['delivery_id'] = 'different-native-delivery'
     saved_entry = json.loads(json.dumps(entry))
-    journal_path.write_text(json.dumps(journal))
+    legacy_inputs(journal_path, journal)
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:

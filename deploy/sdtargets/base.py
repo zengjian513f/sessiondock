@@ -16,8 +16,9 @@ Invariants every handler must keep:
   file busy" on Linux and locked on Windows.
 - Never touch ptyhost session hosts: only the web service restarts. `probe()` records
   the ptyhost pids (or host records) and `verify()` proves the same set is still alive.
-- Never touch private data or config under the prefix (etc/, state/, delivery/,
+- Ordinary publishing never touches private data or config under the prefix (etc/, state/, delivery/,
   lifecycle/, host/, audit/, trash/, search-cache/, hub/): only bin/ and web/ change.
+  Rollback may export versioned bridge state while its writer is stopped.
 - Backups live at `<prefix>/backup-deploy-<short commit>-<UTC stamp>/{bin,web}`.
 - `verify()` must show the service active, `/api/meta` answering on the target's own
   loopback, binary release markers and the served web build matching the release date version.
@@ -305,6 +306,22 @@ class TargetHandler:
 
     def verify(self) -> VerifyResult:
         raise NotImplementedError
+
+    def export_storage_for_rollback(self, stop: str) -> None:
+        """Downgrade private bridge storage only after stopping its sole writer."""
+        script = (Path(__file__).resolve().parents[1] / "storage_rollback.py").read_text()
+        state = shlex.quote(self.t.prefix + "/state")
+        # An older release has neither SQLite journal nor cold streams.
+        rc, _ = self.sh.run(f"test -f {state}/native-sdk-inputs.sqlite", timeout=20)
+        if rc != 0:
+            return
+        self.sh.run(stop, timeout=120, check=True)
+        try:
+            self.sh.run(f"python3 -c {shlex.quote(script)} {state}", timeout=300, check=True)
+        except Exception:
+            self.restart()
+            raise
+        self.log("exported tiered bridge storage for rollback")
 
     def rollback(self, backup_dir: str) -> None:
         """Restore bin/ and web/ from `backup_dir`, restart, and leave verify to the caller."""

@@ -115,20 +115,31 @@ impl Session {
         // cost of switching back to a Kiro session. Do it once; later opens just
         // keep the catalog reference.
         let already = self.projection.lock().unwrap().is_some();
-        let st = self.state.lock().unwrap();
-        if !already && !st.uid.is_empty() {
+        let mut st = self.state.lock().unwrap();
+        if !already && !st.uid.is_empty() && !st.loading {
+            checkpoint::prepare_projection(&mut st)?;
             catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])?;
+            checkpoint::projected(&mut st);
         }
         *self.projection.lock().unwrap() = Some(catalog);
         Ok(())
     }
     pub(super) fn project(&self, st: &mut LiveState) {
+        if st.loading {
+            return;
+        }
+        if let Err(error) = checkpoint::prepare_projection(st) {
+            st.runtime_error = Some(error);
+            return;
+        }
         if let Some(catalog) = self.projection.lock().unwrap().as_ref() {
             if !st.uid.is_empty() {
                 if let Err(error) =
                     catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])
                 {
                     st.runtime_error = Some(format!("kiro_sdk_projection: {error}"));
+                } else {
+                    checkpoint::projected(st);
                 }
             }
         }
@@ -156,7 +167,7 @@ impl Session {
         if let (Some(dir), Some(key)) = (host_dir, host_key) {
             let key = sanitize_host_key(key);
             let path = checkpoint::path(dir, &key);
-            if path.exists() || Client::attach(dir, &key).await.is_ok() {
+            if checkpoint::exists(&path) || Client::attach(dir, &key).await.is_ok() {
                 return Self::attach_existing(dir, &key, uid, sid, cwd, shutdown)
                     .await
                     .map(SpawnedSession::Reused);
@@ -186,9 +197,7 @@ impl Session {
         shutdown: CancellationToken,
     ) -> Result<Arc<Self>, String> {
         let path = checkpoint::path(dir, &sanitize_host_key(key));
-        let bytes = std::fs::read(&path)
-            .map_err(|e| format!("kiro_sdk_recovery_unknown: checkpoint: {e}"))?;
-        let mut state: LiveState = serde_json::from_slice(&bytes)
+        let mut state = checkpoint::load(&path)
             .map_err(|e| format!("kiro_sdk_recovery_unknown: checkpoint: {e}"))?;
         if (!uid.is_empty() && !state.uid.is_empty() && uid != state.uid)
             || (!sid.is_empty() && !state.session_id.is_empty() && sid != state.session_id)

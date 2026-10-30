@@ -47,6 +47,7 @@ mod security;
 pub mod sessions;
 pub mod shell_env;
 mod state;
+mod storage_maintenance;
 pub(crate) mod terminal;
 pub mod transfer;
 pub(crate) mod trash;
@@ -588,6 +589,7 @@ fn build_app(
     if let Some(service) = &conversations {
         service.housekeeping(shutdown.clone());
     }
+    storage_maintenance::spawn(config.state_dir.clone(), shutdown.clone());
     let shell_env = config.shell_env_command.clone().map(|command| {
         let watch = config.shell_env_watch.clone();
         let service = Arc::new(shell_env::ShellEnv::new(command, watch));

@@ -319,7 +319,7 @@ def main():
                 # publication must nevertheless retain the newer idle state.
                 status("task_complete",failed=True)
                 page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).activity?.state==='failed'")
-                expect(page.locator("#activity")).to_contain_text("执行失败")
+                expect(page.locator("#activity")).to_have_attribute("title", "执行失败")
                 page.evaluate("window.__deferNextPageRender=true")
                 click_page()
                 page.wait_for_function("window.__heldPageRender!==null")

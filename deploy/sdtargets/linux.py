@@ -184,11 +184,16 @@ class LinuxNodeHandler(TargetHandler):
         """
         if self.kind != "linux-node":
             return
-        script = '''import json, pathlib, sys
+        script = '''import json, pathlib, sqlite3, sys
 path = pathlib.Path(sys.argv[1])
-if not path.exists():
+database = path.with_suffix(".sqlite")
+if database.exists():
+    with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as db:
+        rows = {"active": [json.loads(r[0]) for r in db.execute("SELECT row FROM inputs WHERE active=1")]}
+elif path.exists():
+    rows = json.loads(path.read_text())
+else:
     sys.exit(0)
-rows = json.loads(path.read_text())
 def hosted_kiro(row):
     # Older Kiro bridges omitted result.sdkhost. Match the actual prompt's
     # durable bridge journal and host receipt, not merely the agent name.
@@ -196,8 +201,16 @@ def hosted_kiro(row):
     request_id = row.get("request_id")
     if target.get("source") != "kiro" or not request_id:
         return False
-    for checkpoint in (path.parent / "sdk-adapters" / "kiro").glob("*.json"):
-        state = json.loads(checkpoint.read_text())
+    directory = path.parent / "sdk-adapters" / "kiro"
+    for checkpoint in list(directory.glob("*.sqlite")) + list(directory.glob("*.json")):
+        if checkpoint.suffix == ".sqlite":
+            with sqlite3.connect(f"{checkpoint.as_uri()}?mode=ro", uri=True) as db:
+                found = db.execute("SELECT state FROM checkpoint WHERE id=1").fetchone()
+                if not found:
+                    continue
+                state = json.loads(found[0])
+        else:
+            state = json.loads(checkpoint.read_text())
         if state.get("uid") != target.get("uid"):
             continue
         writes = {rpc.get("write_id") for rpc in state.get("journal", [])
@@ -338,6 +351,7 @@ if active:
         if not BACKUP_RE.match(backup_dir.rsplit("/", 1)[-1]):
             raise RuntimeError(f"refusing to roll back from {backup_dir!r}: not a backup-deploy-* dir")
         self.sh.run(f"test -d {q(backup_dir + '/bin')}", timeout=30, check=True)
+        self.export_storage_for_rollback(f"{self.systemctl} stop {q(self.unit)}")
         script = "\n".join([
             f"set -e; P={q(self.prefix)}; B={q(backup_dir)}",
             'rm -rf "$P/web.staging"',
@@ -367,7 +381,8 @@ if active:
     def prune_backups(self, keep: int) -> list[str]:
         if keep <= 0:
             return []
-        doomed = self.list_backups()[keep:]
+        doomed = [path for path in self.list_backups()[keep:]
+                  if path != getattr(self, "rollback_backup", None)]
         for path in doomed:
             self.sh.run(f"rm -rf {q(path)}", timeout=120, check=True)
             self.log(f"pruned {path}")

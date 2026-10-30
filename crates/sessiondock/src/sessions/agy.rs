@@ -115,7 +115,7 @@ type FileIdentity = (u64, u64);
 #[cfg(not(unix))]
 type FileIdentity = String;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Stamp {
     size: u64,
     modified: Option<std::time::SystemTime>,
@@ -354,6 +354,30 @@ impl Mirror {
         private_dir(&directory)?;
         let messages = directory.join(MESSAGES_FILE);
         let summary = directory.join(SUMMARY_FILE);
+        let version_path = directory.join("mirror-version.json");
+        // Restart reads only the small version, never unchanged bodies.
+        if !exported.contains_key(sid) {
+            if let Ok(bytes) = fs::read(&version_path) {
+                if let Ok(saved) = serde_json::from_slice::<Value>(&bytes) {
+                    let version = saved
+                        .get("native_version")
+                        .cloned()
+                        .and_then(|value| serde_json::from_value::<Option<Stamp>>(value).ok());
+                    let mirror_version = saved
+                        .get("mirror_version")
+                        .cloned()
+                        .and_then(|value| serde_json::from_value::<Stamp>(value).ok());
+                    if saved["format"] == FORMAT && mirror_version == stamp(&messages).ok() {
+                        if let Some(version) = version {
+                            exported.insert(
+                                sid.to_owned(),
+                                (saved["catalog_session"].clone(), version),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let cached = exported.get(sid);
         if cached.is_some_and(|(last_session, last_stamp)| {
             last_session == session && *last_stamp == current
@@ -437,6 +461,14 @@ impl Mirror {
         if previous_bytes.as_deref() != Some(bytes.as_slice()) || !summary.is_file() {
             write_atomic(&summary, &bytes)?;
         }
+        write_atomic(
+            &version_path,
+            &serde_json::to_vec(&json!({
+                "format":FORMAT,"catalog_session":session,"native_version":current,
+                "mirror_version":stamp(&messages).ok()
+            }))
+            .map_err(io::Error::other)?,
+        )?;
         exported.insert(sid.to_owned(), (session.clone(), current));
         Ok(())
     }

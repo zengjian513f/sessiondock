@@ -952,3 +952,8 @@ fn startup_autopilot_value(payload: &Value) -> Option<String> {
                 .map(|value| value.to_string())
         })
 }
+
+// Only the background collector for already exited hosts calls this.
+pub(crate) fn migrate_checkpoint(path: &std::path::Path) -> Result<(), String> {
+    checkpoint::migrate(path)
+}

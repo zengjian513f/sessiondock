@@ -303,11 +303,19 @@ impl Client {
             }
             Request::Read { stream, offset } => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-                let mut file = tokio::fs::File::open(self.dir.join(match stream {
+                let path = self.dir.join(match stream {
                     Stream::Stdout => "stdout",
                     Stream::Stderr => "stderr",
-                }))
-                .await?;
+                });
+                let mut file = if status.exit.is_some() && status.stdout_eof && status.stderr_eof {
+                    let restore = path.clone();
+                    let file = tokio::task::spawn_blocking(move || crate::cold::open(&restore))
+                        .await
+                        .map_err(io::Error::other)??;
+                    tokio::fs::File::from_std(file)
+                } else {
+                    tokio::fs::File::open(path).await?
+                };
                 let (mut len, eof) = match stream {
                     Stream::Stdout => (status.stdout_len, status.stdout_eof),
                     Stream::Stderr => (status.stderr_len, status.stderr_eof),

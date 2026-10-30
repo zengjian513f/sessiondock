@@ -11,6 +11,7 @@ name = "sessiondock-hub"
 path = "src/bin/sessiondock-hub.rs"
 
 [dependencies]
+flate2 = "1.1"
 base64 = "0.22"
 tar = "0.4"
 # Raw WebSocket pass-through after the 101 (`hyper::upgrade` + `TokioIo`);

@@ -7,3 +7,6 @@ pub use unix::*;
 mod unsupported;
 #[cfg(not(unix))]
 pub use unsupported::*;
+
+#[cfg(unix)]
+pub mod cold;
