@@ -170,6 +170,21 @@ not capture the original SDK RPC error; the attachment shows the writer-lock
 notice. [Recovery browser coverage](../tests/codex_sdk_recovery_browser.py)
 exercises native lock rejection, a real private PTY stop and subsequent SDK SEND.
 
+## Explicit provider migration maintenance
+
+For an explicitly authorized migration between compatible backends, use
+`python3 deploy/codex_provider_migrate.py --home <codex-home> --thread <sid>
+--from-provider <old> --to-provider <new> --backup <new-private-directory>`.
+The default is a read-only plan; `--apply` performs the single-thread change.
+Native writer coordination prevents changing a loaded writer. The tool backs
+up the rollout and selected database metadata, changes only the provider in
+session metadata and the latest owned settings snapshot, and adjusts dependent
+turn/projection byte offsets. Earlier settings remain historical records.
+It does not change the global provider, submit input, or restart a daemon.
+The backup contains private session data and must not be committed or shared.
+The [real native browser regression](../tests/codex_provider_migrate_browser_real.py)
+uses a temporary home and synthetic paginated history without inference requests.
+
 ## HTTP
 
 Existing-session routes take the page's opaque session `uid` (query or body), so a Hub
