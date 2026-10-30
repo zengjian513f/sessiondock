@@ -23,6 +23,13 @@ SDK 综合套件的 usage_opening_check 在新旧二进制上都因缺少 9% 额
 检查通过。亲自查看节点/Hub 整页截图：历史、状态栏和输入框可读且对齐，
 状态恢复为就绪；本次无前端样式修改。未运行真实模型回合。
 
+运行修复提交 `b6bc5dd1` 已推送。全部七个节点/Hub 均经发布工具尝试，仅更新
+后端二进制；资源代理和 ptyhost 不在范围。lyra、cygnus、pavo、hub 部署重启
+并健康；cygnus 首次 45 秒检查超时自动回滚，同产物以 120 秒窗口重试成功，
+六个 ptyhost 保留。orion、cetus 连接超时；vela 恢复旧二进制后仍不可用，
+stderr 为既有 `Store(Invalid)`，结果 ROLLBACK_FAILED。待办见 TODO；两份
+工具报告在未跟踪的 `target/deploy/20261030-014212-b6bc5dd1/`。
+
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 
 本次只读核对报告 manifest、browser-state、相关 events、原生主会话 JSONL、

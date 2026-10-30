@@ -85,6 +85,9 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
+  后端 provider 恢复修复 `b6bc5dd1` 已交付 lyra、cygnus、pavo、hub 且健康；
+  orion、cetus 连接超时，vela 既有 `Store(Invalid)` 故障导致旧文件恢复后仍不健康，
+  三者待补发。两份报告在 `target/deploy/20261030-014212-b6bc5dd1/`。
   当前前端快照 `7e122589`（滚动漏画修复，含此前重连及外部 CLI 启动提示修复）
   待补发 orion、cetus、vela：前两者连接超时；vela 部署前即未正常运行，恢复旧文件后
   服务仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub 已部署且健康；
