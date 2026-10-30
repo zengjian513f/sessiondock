@@ -582,13 +582,27 @@ impl Inner {
             self.recover_active_turn(connection, &thread).await?;
             return Ok(thread);
         }
-        match connection
-            .request(
-                "thread/resume",
-                json!({"threadId": thread_id, "excludeTurns": true}),
-            )
-            .await
-        {
+        // Resume the thread with its own provider, not the daemon's current
+        // default (which may have changed since this history was created).
+        // Native read also resolves loaded and not-yet-persisted threads.
+        let result = async {
+            let native = connection
+                .request(
+                    "thread/read",
+                    json!({"threadId": thread_id, "includeTurns": false}),
+                )
+                .await?;
+            let mut params = json!({"threadId": thread_id, "excludeTurns": true});
+            if let Some(provider) = native["thread"]["modelProvider"]
+                .as_str()
+                .filter(|provider| !provider.is_empty())
+            {
+                params["modelProvider"] = json!(provider);
+            }
+            connection.request("thread/resume", params).await
+        }
+        .await;
+        match result {
             Ok(result) => {
                 if let Some(path) = result["thread"]["path"].as_str() {
                     let path = PathBuf::from(path);

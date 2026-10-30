@@ -3,6 +3,26 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261030-013132-fb51f9：旧会话 provider 与 daemon 默认值不一致
+
+诊断包的 manifest、browser-state、environment、220 条 events 与附件已核对；
+没有 terminal.txt，页面终端也未连接。原生 session_meta 的 model_provider 为
+`openai`，本机配置与报告 worker 回执为 `openai_catalog_cache`。
+浏览器在 01:30:54.994Z、01:31:15.815Z 点击启动；01:31:16.504Z 的状态按钮
+记录原生拒绝：旧会话使用 openai，当前 provider 是 openai_catalog_cache。
+历史读取成功，游标保持 11230910；SDK 队列既有四项均 sent，CLI lifecycle
+没有该会话记录。首个可定位的链路偏差是 thread/resume 未指定会话 provider，
+继承了改变后的 daemon 默认值；不是模型名、历史渲染或输入投递故障。
+
+桥接现在先 thread/read（不读 turns），再把原生 modelProvider 传给 resume；
+不修改全局配置或原生文件。provider 浏览器回归覆盖节点 openai、Hub 自定义
+provider、缺失值兼容，以及发送、刷新和断线重连不重放。修复版和 SDK controls
+浏览器套件通过，旧部署二进制在隔离 provider 夹具中无法连接。
+SDK 综合套件的 usage_opening_check 在新旧二进制上都因缺少 9% 额度元素失败，
+对应 TODO 已登记的既有问题；未声称综合套件通过。构建、文档链接和 AGENTS
+检查通过。亲自查看节点/Hub 整页截图：历史、状态栏和输入框可读且对齐，
+状态恢复为就绪；本次无前端样式修改。未运行真实模型回合。
+
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 
 本次只读核对报告 manifest、browser-state、相关 events、原生主会话 JSONL、

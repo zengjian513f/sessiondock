@@ -41,7 +41,14 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - Handshake: `initialize` with `clientInfo.name = "sessiondock"` and
   `capabilities.experimentalApi = true`, then `initialized`.
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
-  connection; later pages reuse it. If it is already active without a local
+  connection; later pages reuse it. Before resuming, `thread/read` with
+  `includeTurns: false` supplies the thread's native `modelProvider`, which is
+  passed explicitly to resume. Changing the daemon's default provider must not
+  prevent opening older threads or silently select a different provider.
+  Missing/empty provider metadata leaves native defaults in effect; native read
+  and resume errors remain visible. This does not rewrite rollouts or global
+  configuration. Covered by [provider recovery](../tests/codex_sdk_provider_browser.py).
+  If it is already active without a local
   turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
   descending, full items) before publishing its snapshot. This restores
   explicit steer, interrupt and all replies/tools for work started in a TUI

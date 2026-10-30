@@ -172,6 +172,8 @@ class FakeAppServer:
             self.created[self.thread_id] = result
             self.settings = {"model": result["model"], "effort": result["reasoningEffort"]}
             await reply(result)
+        elif method == "thread/read":
+            await reply({"thread": {"id": params["threadId"], "modelProvider": "openai"}})
         elif method == "thread/resume":
             if params.get("threadId") != self.thread_id:
                 await self.send(writer, {"id": mid, "error": {"code": -32602, "message": "no rollout found"}})
