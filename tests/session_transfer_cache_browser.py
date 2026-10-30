@@ -89,7 +89,7 @@ def main():
             return dialog,planned.value.json(),time.monotonic()-started
         dialog,plan,cold=preview();assert plan['session_count']==4,plan
         operation_dir=corpus.root/'state/transfers'/plan['operation_id']
-        assert {p.name for p in operation_dir.iterdir()}=={'operation.json'},'preview staged native files'
+        assert {p.name for p in operation_dir.iterdir()}=={'operation.json','startup-index-v1.json'},'preview staged native files'
         assert watch.take()=={p.name for p in unrelated},'cold preview skipped candidate histories'
         assert idle_watch.take()=={checkpoint.name},'cold preview skipped compacted relationships'
         saved=json.loads(cache.read_text())
@@ -144,6 +144,11 @@ def main():
         # Let the existing abandoned-preview worker observe new terminal entries
         # once; it is independent of the on-demand lock/ownership summary cache.
         page.wait_for_timeout(11000)
+        indexes=[p.with_name('startup-index-v1.json') for p in journals]
+        assert all(p.is_file() for p in indexes),'old journals did not acquire rebuildable indexes'
+        index_bytes=sum(p.stat().st_size for p in indexes)
+        assert index_bytes<sum(p.stat().st_size for p in journals)/100,'indexes retained bulk recovery data'
+        print(f'Persistent startup indexes: {index_bytes/1024:.1f} KiB',flush=True)
         page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         dialog,_,journal_cold=preview();dialog.locator('.clone-cancel').click()
@@ -185,7 +190,9 @@ def main():
         dialog.locator('.clone-cancel').click()
         # The old process-only cache lost all relationships on every deployment.
         journal_stamps={p:p.stat().st_mtime_ns for p in journals if p.exists()}
-        servers.close();startup=start()
+        servers.close();journal_watch.take();startup=start()
+        assert not journal_watch.take(),'restart reopened indexed historical journals'
+
         assert all(p.stat().st_mtime_ns==stamp for p,stamp in journal_stamps.items()),'startup rewrote archived journals'
         page.reload(wait_until='networkidle')
         page.wait_for_function('(id)=>Nodes.list.find(n=>n.id===id)?.online===true',arg=node.nid,timeout=20000)
@@ -201,8 +208,27 @@ def main():
         watch.take()
         assert not idle_watch.take(),'preview after restart reparsed cached checkpoint relationships'
         assert cache.stat().st_mtime_ns==stamp,'unchanged preview rewrote persistent index'
+        assert not journal_watch.take(),'preview after restart reopened indexed historical journals'
         dialog.locator('.clone-cancel').click()
         print(f'PASS Chromium restart health {startup:.3f}s, preview {restarted:.3f}s; archived journals preserved and relationships reused',flush=True)
+        # Missing/truncated indexes are disposable; only their source journals
+        # should be read. All recovery originals remain unchanged.
+        servers.close()
+        journals[1].with_name('startup-index-v1.json').unlink()
+        journals[2].with_name('startup-index-v1.json').write_text('{')
+        healthy_watch=Opens(journals[3:]);stack.callback(healthy_watch.close)
+        journal_watch.take();start()
+        assert journal_watch.take(),'missing/broken indexes did not fall back to original journals'
+        assert not healthy_watch.take(),'fallback rescanned unrelated valid indexed journals'
+        assert all(p.stat().st_mtime_ns==stamp for p,stamp in journal_stamps.items())
+        page.reload(wait_until='networkidle')
+        page.wait_for_function('(id)=>Nodes.list.find(n=>n.id===id)?.online===true',arg=node.nid,timeout=20000)
+        page.locator('#q').fill(selected)
+        page.locator(f'#side .item[data-uid="{selected}"]').click()
+        page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+        dialog,plan,_=preview();assert plan['session_count']==5,plan
+        dialog.locator('.clone-cancel').click()
+        print('PASS Chromium restart uses only small indexes; missing/corrupt indexes rebuild without changing recovery journals',flush=True)
         # Removing it must also invalidate the relationship cache.
         raw=unrelated[0].read_bytes();unrelated[0].write_bytes(raw[:raw.rfind(b'\n',0,len(raw)-1)+1])
         watch.take()

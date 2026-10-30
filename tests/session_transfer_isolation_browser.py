@@ -230,7 +230,7 @@ def main():
                             page.screenshot(path=str(args.screenshots/f'aborted-{width}-{theme}.png'),full_page=True)
             for directory in (source.root/'state/transfers'/operation,target_dir):
                 assert json.loads((directory/'operation.json').read_text())['phase']=='aborted',action
-                assert [path.name for path in directory.iterdir()]==['operation.json'],(action,list(directory.iterdir()))
+                assert {path.name for path in directory.iterdir()}=={'operation.json','startup-index-v1.json'},(action,list(directory.iterdir()))
             assert all(path.is_file() for path in claude.values())
             assert not list((source.root/'claude').rglob('.sessiondock-*.pending'))
             print('PASS '+action+' reclaims both staged copies and preserves source; elapsed '+str(round(time.monotonic()-started,2))+'s',flush=True)

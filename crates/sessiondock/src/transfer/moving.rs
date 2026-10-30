@@ -293,18 +293,28 @@ impl TransferService {
             .iter()
             .map(|m| self.member_target_uid(op, m, staged))
             .collect::<Result<BTreeSet<_>, _>>()?;
+        self.reclaim_active_uids(&op.id, op.ownership_sequence, &active)
+    }
+    pub(super) fn reclaim_active_uids(
+        &self,
+        id: &str,
+        ownership_sequence: u64,
+        active: &BTreeSet<String>,
+    ) -> Result<(), TransferError> {
         for old in self.journal_summaries()? {
-            if old.id == op.id
-                || !old.retired_source
-                || op.ownership_sequence <= old.ownership_sequence
-            {
+            if old.id == id || !old.retired_source || ownership_sequence <= old.ownership_sequence {
                 continue;
             }
-            let uids: Vec<_> = old.source_uids.intersection(&active).cloned().collect();
+            let uids: Vec<_> = old
+                .source_uids
+                .intersection(active)
+                .filter(|uid| old.reclaimed_by.get(*uid).is_none_or(|owner| owner != id))
+                .cloned()
+                .collect();
             if !uids.is_empty() {
                 let mut old = self.load(&old.id)?;
                 for uid in uids {
-                    old.reclaimed_by.insert(uid, op.id.clone());
+                    old.reclaimed_by.insert(uid, id.to_owned());
                 }
                 self.save(&old)?;
             }

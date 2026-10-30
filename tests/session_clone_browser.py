@@ -581,7 +581,7 @@ def main():
                         failed=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/clone',data={'uid':selected,'operation_id':next_id})
                         assert not failed.ok,failed.text()
                         saved=json.loads(journal.read_text());assert saved['phase']=='aborted',saved.get('error')
-                        assert [p.name for p in journal.parent.iterdir()]==['operation.json']
+                        assert {p.name for p in journal.parent.iterdir()}=={'operation.json','startup-index-v1.json'}
                         assert all(not (corpus.root/'codex'/f['relative']).exists() for f in saved['staged']['files'])
                         with sqlite3.connect(corpus.root/'codex/state_5.sqlite') as db:
                             assert not db.execute('SELECT id FROM threads WHERE id=?',(saved['plan']['identities']['threads'][ident(1)],)).fetchall()

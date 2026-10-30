@@ -44,13 +44,16 @@ impl TransferService {
                     }
                     let service = self.clone();
                     let load_id = id.clone();
-                    let Ok(Ok(op)) =
-                        tokio::task::spawn_blocking(move || service.load_metadata(&load_id)).await
+                    let Ok(Ok(op)) = tokio::task::spawn_blocking(move || {
+                        service
+                            .journal_index(&service.directory.join(load_id).join("operation.json"))
+                    })
+                    .await
                     else {
                         continue;
                     };
                     if matches!(
-                        op.phase.as_str(),
+                        op.summary.phase.as_str(),
                         "complete" | "aborted" | "exported" | "retired"
                     ) {
                         self.foreground
@@ -60,9 +63,9 @@ impl TransferService {
                         finished.insert(id);
                         continue;
                     }
-                    if op.incoming_digest.is_some()
+                    if op.incoming
                         || !matches!(
-                            op.phase.as_str(),
+                            op.summary.phase.as_str(),
                             "planned" | "failed" | "publishing" | "verifying" | "rollback_required"
                         )
                     {

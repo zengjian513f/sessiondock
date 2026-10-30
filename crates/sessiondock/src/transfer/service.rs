@@ -272,35 +272,23 @@ impl TransferService {
                 }
                 continue;
             }
-            // Historical journals can contain gigabytes of native database
-            // rows. Startup needs their decisions and file mappings, not SQL
-            // payloads. Only actual compensation loads those payloads below.
-            let raw = fs::read(&file)?;
             journal_count += 1;
-            journal_bytes += raw.len() as u64;
-            let mut operation: Operation<serde::de::IgnoredAny> = serde_json::from_slice(&raw)?;
-            drop(raw);
-            if operation.created_ms == 0 {
-                operation.created_ms = fs::metadata(&file)?
-                    .modified()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-            }
-            service.remember_links(&operation);
+            journal_bytes += fs::metadata(&file)?.len();
+            let index = service.journal_index(&file)?;
+            let operation = &index.summary;
+            service.remember_index(&index);
             let recover = || {
                 let mut full = service.load(&operation.id)?;
-                full.created_ms = operation.created_ms;
+                full.created_ms = index.public["created_ms"]
+                    .as_u64()
+                    .unwrap_or(full.created_ms);
                 Ok::<_, TransferError>(full)
             };
             if operation.phase == "aborted" {
-                service.cleanup_staging(&operation)?;
+                service.cleanup_directory(&operation.id)?;
                 continue;
             }
-            if operation.phase == "aborting"
-                && !operation.moving
-                && operation.incoming_digest.is_none()
-            {
+            if operation.phase == "aborting" && !index.moving && !index.incoming {
                 recovery_count += 1;
                 if let Err(error) = service.abort_local(&operation.id) {
                     let mut operation = recover()?;
@@ -309,7 +297,7 @@ impl TransferService {
                 }
                 continue;
             }
-            if operation.phase == "aborting" && operation.incoming_digest.is_some() {
+            if operation.phase == "aborting" && index.incoming {
                 // The source already durably rejected future ownership switches.
                 recovery_count += 1;
                 if let Err(error) = service.abort_target(&operation.id) {
@@ -320,8 +308,18 @@ impl TransferService {
                 continue;
             }
             if operation.phase == "complete" {
-                service.cleanup_markers(&operation)?;
-                service.reclaim_prior_moves(&operation)?;
+                service.cleanup_publications(
+                    &operation.id,
+                    &index.publications,
+                    &index.replaced_files,
+                )?;
+                if index.incoming {
+                    service.reclaim_active_uids(
+                        &operation.id,
+                        operation.ownership_sequence,
+                        &index.active_uids,
+                    )?;
+                }
             }
             if matches!(
                 operation.phase.as_str(),
@@ -339,20 +337,16 @@ impl TransferService {
                 service.save(&operation)?;
             }
         }
+        let (journal_bytes_read, index_hits) = service.journals.startup_stats();
         crate::log::info(
             "transfer.startup",
             json!({"ms":started.elapsed().as_millis(),"journals":journal_count,
-                "journal_bytes":journal_bytes,"recoveries":recovery_count}),
+                "journal_bytes":journal_bytes,"journal_bytes_read":journal_bytes_read,
+                "index_hits":index_hits,"recoveries":recovery_count}),
         );
         Ok(service)
     }
     pub fn load(&self, id: &str) -> Result<Operation, TransferError> {
-        self.load_journal(id)
-    }
-    pub(super) fn load_metadata(
-        &self,
-        id: &str,
-    ) -> Result<Operation<serde::de::IgnoredAny>, TransferError> {
         self.load_journal(id)
     }
     fn load_journal<N: serde::de::DeserializeOwned + Default>(
@@ -370,12 +364,14 @@ impl TransferService {
         let mut raw = Vec::new();
         // Do not apply cancellation to journal reads: compensation also needs them.
         std::io::copy(&mut file, &mut super::progress::Io(&mut raw, counter))?;
+        self.journals.record_read(raw.len() as u64);
         let _decode = super::progress::Task::new("解析迁移记录", "", None);
         Ok(serde_json::from_slice(&raw)?)
     }
     pub(super) fn save(&self, op: &Operation) -> Result<(), TransferError> {
         persist(&self.directory.join(&op.id).join("operation.json"), op)?;
         self.remember_links(op);
+        self.save_journal_index(op);
         Ok(())
     }
     pub fn progress_status(&self, id: &str) -> Result<Value, TransferError> {
@@ -781,10 +777,13 @@ impl TransferService {
     }
     /// Keep the small durable decision, remove only private transfer payloads.
     pub(super) fn cleanup_staging<N>(&self, op: &Operation<N>) -> Result<(), TransferError> {
-        let directory = self.directory.join(&op.id);
+        self.cleanup_directory(&op.id)
+    }
+    fn cleanup_directory(&self, id: &str) -> Result<(), TransferError> {
+        let directory = self.directory.join(id);
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
-            if entry.file_name() == "operation.json" {
+            if entry.file_name() == "operation.json" || entry.file_name() == journal::INDEX_FILE {
                 continue;
             }
             if entry.file_type()?.is_dir() {
@@ -797,9 +796,17 @@ impl TransferService {
         Ok(())
     }
     pub(super) fn cleanup_markers<N>(&self, op: &Operation<N>) -> Result<(), TransferError> {
-        for file in self.publications(op) {
-            let marker = Self::marker(&op.id, &file.target);
-            if let Some(old) = op.replaced_files.get(&file.target) {
+        self.cleanup_publications(&op.id, &self.publications(op), &op.replaced_files)
+    }
+    fn cleanup_publications(
+        &self,
+        id: &str,
+        publications: &[Publication],
+        replaced_files: &BTreeMap<PathBuf, prefix::Original>,
+    ) -> Result<(), TransferError> {
+        for file in publications {
+            let marker = Self::marker(id, &file.target);
+            if let Some(old) = replaced_files.get(&file.target) {
                 for (path, expected) in [
                     (marker.with_extension("publish"), &file.sha256),
                     (marker.with_extension("restore"), &old.sha256),
@@ -1194,6 +1201,18 @@ impl TransferService {
             }
         }
         map
+    }
+    fn remember_index(&self, index: &journal::Index) {
+        self.progress_public
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(index.summary.id.clone(), index.public.clone());
+        if let Some(record) = &index.local_link {
+            self.link_records
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(record.id.clone(), record.clone());
+        }
     }
     fn remember_links<N>(&self, op: &Operation<N>) {
         let mut public = Self::public(op);
