@@ -99,6 +99,12 @@ orion、cetus SSH 超时；vela 新版本未启动，自动恢复旧文件后仍
 服务重启恢复，并验证后台隔离、新建 openai，无模型输入。首次新增手机切换步骤
 因侧栏收起超时，补上实际返回列表操作后通过；执行者亲自检查 Hub、手机双 provider
 和终端整页截图，历史与状态栏可读，启动转换弹窗已移除。
+恢复提交 `47e22e3d` 已推送。全部七目标发布均已尝试：lyra、cygnus、pavo、Hub
+部署、重启并健康；orion、cetus SSH 超时；vela 自动恢复旧文件后仍不健康
+（`ROLLBACK_FAILED`），18 个终端宿主保留。资源代理和 ptyhost 产物不在范围；
+cygnus 两个既有 Codex 后台 PID 在发布前后保持不变。报告位于未跟踪的
+`target/deploy/20261031-015331-47e22e3d/report-20261031-020112.json`。
+文档链接、AGENTS、品牌和 diff 检查通过，未完成目标见 TODO。
 
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 

@@ -92,9 +92,9 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  provider 启动确认与迁移 `d15208cb` 已交付 lyra、cygnus、pavo、hub 且健康；
+  恢复 provider 路由 `47e22e3d` 已交付 lyra、cygnus、pavo、hub 且健康；
   orion、cetus SSH 超时，vela 自动恢复旧文件后仍不健康，三者待补发。
-  报告在未跟踪的 `target/deploy/20261031-013718-d15208cb/`。
+  报告在未跟踪的 `target/deploy/20261031-015331-47e22e3d/`。
   当前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
   已交付 lyra、cygnus、pavo、hub 且健康；
   orion、cetus 连接超时，vela 既有 `Store(Invalid)` 故障导致旧文件恢复后仍不健康，
