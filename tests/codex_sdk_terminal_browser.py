@@ -28,7 +28,7 @@ class ProviderPeer(FakeAppServer):
     async def _handle(self, writer, message):
         method = message.get('method')
         if method in ('config/read', 'thread/read', 'thread/loaded/list'):
-            result = {'config':{'model_provider':'openai'}} if method=='config/read' else ({'thread':{'id':THREAD,'modelProvider':'custom-provider'}} if method=='thread/read' else {'data':[]})
+            result = {'config':{'model_provider':'openai_catalog_cache'}} if method=='config/read' else ({'thread':{'id':THREAD,'modelProvider':'openai'}} if method=='thread/read' else {'data':[]})
             await self.send(writer, {'id':message['id'], 'result':result})
             return
         await super()._handle(writer,message)
@@ -56,7 +56,7 @@ def main():
         proc_pid(proc, 500, 'codex', ['codex', 'resume', 'independent-cli-thread'], 1,
                  fds={3:corpus.paths['independent']})
         log = root / 'argv.jsonl'
-        socket = root/'sd-providers'/('custom-provider'.encode().hex()+'.sock')
+        socket = root/'sd-providers'/('openai'.encode().hex()+'.sock')
         socket.parent.mkdir()
         shared = root/'app-server-control/app-server-control.sock'
         shared.parent.mkdir()

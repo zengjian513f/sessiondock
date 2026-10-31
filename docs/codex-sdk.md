@@ -21,26 +21,35 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
                                        default `codex` TUI ─┘ (same daemon, same thread)
 ```
 
-- DELTA (provider routing): new sessions default to `openai`. Existing sessions
-  retain their native `modelProvider`; absent/empty metadata falls back to `openai`.
-  Codex 0.166.0 checks provider identity at process level, so the node keeps one
-  connection per native listener and routes all thread operations to its owner.
-- With `SESSIONDOCK_CODEX_APP_SERVER` unset, the node discovers the ordinary
-  `<CODEX_HOME>/app-server-control/app-server-control.sock` without replacing it.
-  Already-loaded threads stay on their owning process. Otherwise `config/read`
-  identifies whether the shared process matches the requested provider. A missing
-  provider listener starts on demand with `codex -c model_provider=… app-server
-  --listen unix://…`, using the same `CODEX_HOME`, native authentication and history.
-  Additional sockets and private logs live under `<CODEX_HOME>/sd-providers/`,
-  with UTF-8 provider IDs encoded as hexadecimal filenames (not hashes).
-  Detached listeners survive ordinary SessionDock restarts; observations and
-  subscription recovery discover them without starting historical sessions.
-  A connection failure resets only that connection's threads; generations are
-  unique across listeners. Model lists are cached per connection.
-- An explicit socket remains operator-managed: no extra processes are started,
-  and native provider mismatch errors remain visible. `off` disables SDK mode;
-  non-Unix nodes report `codex_sdk: false`. No global provider configuration,
-  credential files or existing conversation provider fields are changed.
+- DELTA (provider confirmation): new sessions use `openai`. Before opening an
+  existing non-`openai` session, both SDK and terminal entry points ask whether
+  to change this session to `openai` and start. No/cancel leaves provider metadata
+  unchanged and sends no resume, turn or terminal takeover request. Direct SDK
+  open and terminal launch also reject non-`openai` identities on the server.
+  Missing/empty native provider metadata is treated as `openai`.
+- Yes explicitly authorizes a single-thread migration before startup. The node
+  takes the native coordination/writer locks, saves the original rollout and
+  changed database fields under its private `provider-backups` state directory,
+  changes the session metadata and latest owned settings snapshot, and updates
+  the native thread provider and pagination byte offsets in SQLite transactions.
+  Other history bytes, model choices, older settings and other sessions remain
+  unchanged. A still-owned native writer blocks migration before changes; the
+  user must stop that session and wait for native unload before retrying.
+- With `SESSIONDOCK_CODEX_APP_SERVER` unset, the existing shared daemon is reused
+  when its effective provider is `openai`. Otherwise an OpenAI listener starts
+  on demand with `codex -c model_provider="openai" app-server --listen unix://…`,
+  using the same `CODEX_HOME`, authentication and native history. Its private
+  socket/log live under `<CODEX_HOME>/sd-providers/`. No non-OpenAI provider
+  process is newly started or resumed. Existing listeners remain observable for
+  writer ownership and explicit stop; unrelated running sessions are preserved.
+  OpenAI listeners survive ordinary SessionDock restarts. Connection generations
+  remain unique, failures reset only their own threads, and model lists are
+  cached per connection.
+- Explicit sockets remain operator-managed and must use an OpenAI process to
+  resume migrated sessions; native errors remain visible. `off` disables SDK
+  mode; non-Unix nodes report `codex_sdk: false`. Migration needs the configured
+  native home and private state directory. Global provider configuration and
+  credential files are never changed.
 - A configured Codex launcher whose installation probe reports missing or
   non-executable (including wrappers returning 126/127) also reports
   `codex_sdk: false` and refuses SDK requests. The node and Hub new-session
@@ -53,11 +62,11 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
   connection; later pages reuse it. Before resuming, `thread/read` with
   `includeTurns: false` supplies the thread's native `modelProvider`, which is
-  passed explicitly to resume on the selected provider process. Native read,
+  passed explicitly to resume on the OpenAI process after the provider check. Native read,
   configuration and resume errors remain visible; no per-request override is
   treated as a substitute for selecting the correct process. Coverage includes
-  [synthetic process routing](../tests/codex_sdk_provider_browser.py) and
-  [real Codex browser routing](../tests/codex_sdk_provider_routing_browser_real.py)
+  [confirmation and migration](../tests/codex_sdk_provider_browser.py) and
+  [real Codex confirmation](../tests/codex_sdk_provider_confirmation_browser_real.py)
   with isolated Luna/low sessions and no inference input.
   If it is already active without a local
   turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
@@ -100,10 +109,10 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 
 ### Terminal coexistence
 
-Managed terminal creation uses the same provider selection: new sessions use
-`openai`, resumes select the native owner. The chosen socket is recorded in the
+Managed terminal creation uses the same confirmation policy: new sessions use
+`openai`; existing non-OpenAI identities require a confirmed migration first. The chosen socket is recorded in the
 internal launch receipt and passed as `--remote`; a provider-specific SDK thread
-therefore joins its own listener rather than the unrelated default daemon.
+therefore joins the OpenAI listener rather than an unrelated default daemon.
 
 DELTA (SDK → PTY): when this bridge has the exact thread loaded on a live
 connection, and the configured Codex CLI profile joins that same Unix socket,
@@ -215,6 +224,8 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | --- | --- |
 | POST `/api/codex-sdk/create` `{request_id, cwd, create_cwd?, model?, effort?}` | `thread/start`; returns `{uid, session, cwd, thread_id, raw}`; a missing directory returns `needs_create` before starting anything |
 | POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
+| POST `/api/codex-sdk/provider` `{uid, agent?}` | Read native provider metadata without resuming; return `needs_confirmation` |
+| POST `/api/codex-sdk/migrate-provider` `{uid, agent?, source_provider, confirmed:true}` | Explicit, backed-up migration to `openai`; reject missing confirmation, changed source and active writer |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
 | POST `/api/codex-sdk/turn` `{uid, request_id?, text?, attachments?, quotes?, model?, effort?, expected_turn_id?}` | With `expected_turn_id`, direct native steer; otherwise server-owned FIFO input; starts immediately when idle, otherwise waits; repeated `request_id` returns the same submission; staged attachments are resolved once |

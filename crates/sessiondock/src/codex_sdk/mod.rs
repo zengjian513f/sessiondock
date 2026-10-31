@@ -16,6 +16,7 @@ mod connection;
 mod controls;
 mod live;
 mod observation;
+mod provider_migration;
 mod providers;
 mod queue;
 mod receipts;
@@ -48,6 +49,7 @@ pub struct Endpoint {
     /// The socket was named by `SESSIONDOCK_CODEX_APP_SERVER`.
     pub explicit: bool,
     pub provider: Option<String>,
+    pub native_home: Option<PathBuf>,
 }
 
 /// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
@@ -136,6 +138,7 @@ impl Endpoint {
                 autostart_home: None,
                 explicit: true,
                 provider: None,
+                native_home: codex_root.and_then(|p| p.parent()).map(PathBuf::from),
             }),
             None => {
                 let home = codex_root?.parent()?.to_path_buf();
@@ -143,9 +146,10 @@ impl Endpoint {
                     socket: home
                         .join("app-server-control")
                         .join("app-server-control.sock"),
-                    autostart_home: Some(home),
+                    autostart_home: Some(home.clone()),
                     explicit: false,
                     provider: None,
+                    native_home: Some(home),
                 })
             }
         }
@@ -190,6 +194,7 @@ type CreateReceipt = watch::Receiver<Option<Result<Value, RpcError>>>;
 
 pub(crate) struct Inner {
     endpoint: Endpoint,
+    backup_root: Option<PathBuf>,
     connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
     providers: tokio::sync::Mutex<HashMap<String, Arc<Connection>>>,
     routes: Mutex<HashMap<String, String>>,
@@ -231,6 +236,9 @@ impl CodexSdk {
 
     /// Hand a managed terminal the exact listener selected for this identity.
     pub async fn launch_socket(&self, thread_id: Option<&str>) -> Result<PathBuf, RpcError> {
+        if let Some(id) = thread_id {
+            self.require_openai(id).await?;
+        }
         if self.inner.endpoint.explicit {
             return Ok(self.inner.endpoint.socket.clone());
         }
@@ -268,10 +276,11 @@ impl CodexSdk {
     ) -> std::io::Result<Arc<Self>> {
         let queue = queue::Queue::open(state_dir.clone())?;
         let receipts = receipts::Receipts::open(state_dir.clone())?;
-        let retention = retention::Retention::open(state_dir, &endpoint.socket)?;
+        let retention = retention::Retention::open(state_dir.clone(), &endpoint.socket)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
                 endpoint,
+                backup_root: state_dir.map(|p| p.join("provider-backups")),
                 queue,
                 connection: tokio::sync::Mutex::new(None),
                 providers: tokio::sync::Mutex::new(HashMap::new()),
@@ -376,6 +385,7 @@ impl CodexSdk {
     /// Resume `thread_id` on the shared connection (once per connection) and
     /// return the thread metadata the daemon reported.
     pub async fn open(&self, thread_id: &str) -> Result<Value, RpcError> {
+        self.require_openai(thread_id).await?;
         let thread = self.inner.ensure(thread_id).await?;
         self.inner
             .stopped
@@ -383,6 +393,76 @@ impl CodexSdk {
             .expect("stopped")
             .remove(thread_id);
         Ok(thread.summary())
+    }
+
+    pub async fn provider(&self, thread_id: &str) -> Result<String, RpcError> {
+        // Metadata read only: never resume a non-openai thread for a prompt.
+        let loaded = self
+            .inner
+            .threads
+            .lock()
+            .expect("threads")
+            .get(thread_id)
+            .and_then(|t| t.loaded_on());
+        let connection = if let Some(c) = self
+            .inner
+            .connected()
+            .await
+            .into_iter()
+            .find(|c| Some(c.generation()) == loaded)
+        {
+            c
+        } else if let Ok(c) = self.inner.writing_connection(thread_id).await {
+            c
+        } else {
+            match self.inner.connection_mode(false).await {
+                Ok(c) => c,
+                Err(_) => self.inner.provider_connection("openai", true).await?,
+            }
+        };
+        let value = connection
+            .request(
+                "thread/read",
+                json!({"threadId":thread_id,"includeTurns":false}),
+            )
+            .await?;
+        Ok(value["thread"]["modelProvider"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .unwrap_or("openai")
+            .to_owned())
+    }
+
+    async fn require_openai(&self, id: &str) -> Result<(), RpcError> {
+        let provider = self.provider(id).await?;
+        if provider != "openai" {
+            return Err(RpcError::ProviderMismatch(provider));
+        }
+        Ok(())
+    }
+
+    pub async fn migrate_provider(&self, id: &str, source: &str) -> Result<Value, RpcError> {
+        let guard = self.inner.queue.lock(id);
+        let _guard = guard.lock().await;
+        let home = self.inner.endpoint.native_home.clone().ok_or_else(|| {
+            RpcError::Storage("未配置本机 Codex 数据目录，无法迁移 provider".into())
+        })?;
+        let backup = self
+            .inner
+            .backup_root
+            .clone()
+            .ok_or_else(|| RpcError::Storage("未配置私有状态目录，无法保存迁移备份".into()))?;
+        let id = id.to_owned();
+        let thread = id.clone();
+        let source = source.to_owned();
+        let result = tokio::task::spawn_blocking(move || {
+            provider_migration::migrate(&home, &backup, &thread, &source)
+        })
+        .await
+        .map_err(|e| RpcError::Storage(e.to_string()))??;
+        self.inner.routes.lock().expect("routes").remove(&id);
+        self.inner.threads.lock().expect("threads").remove(&id);
+        Ok(result)
     }
 
     /// Stop just this thread, preserving the shared daemon and other threads.
@@ -631,6 +711,13 @@ impl Inner {
                     json!({"threadId": thread_id, "includeTurns": false}),
                 )
                 .await?;
+            let provider = native["thread"]["modelProvider"]
+                .as_str()
+                .filter(|p| !p.is_empty())
+                .unwrap_or("openai");
+            if provider != "openai" {
+                return Err(RpcError::ProviderMismatch(provider.to_owned()));
+            }
             let mut params = json!({"threadId": thread_id, "excludeTurns": true});
             if let Some(provider) = native["thread"]["modelProvider"]
                 .as_str()

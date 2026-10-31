@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real process provider routing, no model input or credentials, private homes."""
+"""Real provider confirmation and migration, no model input or credentials, private homes."""
 from contextlib import ExitStack
 import argparse
 import json
@@ -62,34 +62,44 @@ base_url="http://127.0.0.1:9/v1"
                 with server(corpus,args.binary,root/'unused.sock',env) as base:
                     page = browser.new_page(viewport={'width':1280,'height':900})
                     page.goto(base,wait_until='networkidle')
-                    for label, provider in [('provider migration history','openai'),('cache provider history','openai_catalog_cache')]:
-                        page.locator('#side .item').filter(has_text=label).first.click()
-                        start_sdk(page)
-                        page.wait_for_function('CodexSdkView.connected')
-                        summary=page.evaluate('CodexSdkView.summary')
-                        assert summary['resume']['modelProvider']==provider, summary
-                        assert summary['settings']['model']==fixture.MODEL, summary
-                        assert summary['settings']['effort']=='low', summary
-                        expect(page.locator('.sdk-history')).to_contain_text('preserved answer 1')
-                        page.reload(wait_until='networkidle')
-                        page.wait_for_function('CodexSdkView.connected')
+                    page.locator('#side .item').filter(has_text='cache provider history').first.click()
+                    if run==0:
+                        page.locator('.sdk-pane .composer-run-action').click()
+                        popup=page.locator('dialog.app-popup[open]')
+                        expect(popup).to_contain_text('openai_catalog_cache')
                         if args.screenshots:
                             args.screenshots.mkdir(parents=True,exist_ok=True)
-                            page.screenshot(path=str(args.screenshots/f'{run}-{provider}.png'),full_page=True)
-                    if run==0:
-                        # Losing one provider must not reset the other provider's
-                        # loaded thread, and reopening starts only the lost one.
-                        pid = int(pidlog.read_text().splitlines()[-1])
-                        os.kill(pid, signal.SIGTERM)
-                        deadline=time.monotonic()+10
-                        while Path(f'/proc/{pid}').exists():
-                            assert time.monotonic()<deadline
-                            time.sleep(.05)
-                        assert page.evaluate('CodexSdkView.connected'), 'one provider reset another'
-                        assert page.evaluate('CodexSdkView.summary.resume.modelProvider')=='openai_catalog_cache'
-                        page.locator('#side .item').filter(has_text='provider migration history').first.click()
+                            page.screenshot(path=str(args.screenshots/'native-provider-prompt.png'),full_page=True)
+                        popup.get_by_role('button',name='否，不启动',exact=True).click()
+                        assert not page.evaluate('CodexSdkView.connected')
+                        import sqlite3
+                        db=sqlite3.connect(home/'state_5.sqlite')
+                        assert db.execute('select model_provider from threads where id=?',(fixture.SID,)).fetchone()[0]=='openai_catalog_cache'
+                        page.locator('.sdk-pane .composer-run-action').click()
+                        popup.get_by_role('button',name='是，修改并启动',exact=True).click()
+                        page.wait_for_function('CodexSdkView.connected')
+                        assert db.execute('select model_provider from threads where id=?',(fixture.SID,)).fetchone()[0]=='openai'
+                        history=sqlite3.connect(home/'thread_history_1.sqlite')
+                        offsets=history.execute('select rollout_byte_offset,rollout_end_byte_offset from thread_turns where thread_id=?',(fixture.SID,)).fetchall()
+                        assert len(offsets)==2
+                        with second.open('rb') as f:
+                            for start,end in offsets:
+                                for offset in (start,end):
+                                    if offset:
+                                        f.seek(offset-1);assert f.read(1)==b'\n'
+                        history.close();db.close()
+                    else:
                         start_sdk(page)
-                        assert page.evaluate('CodexSdkView.summary.resume.modelProvider')=='openai'
+                    summary=page.evaluate('CodexSdkView.summary')
+                    assert summary['resume']['modelProvider']=='openai',summary
+                    assert summary['settings']['model']==fixture.MODEL,summary
+                    assert summary['settings']['effort']=='low',summary
+                    expect(page.locator('.sdk-history')).to_contain_text('preserved answer 1')
+                    page.reload(wait_until='networkidle');start_sdk(page)
+                    expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots/f'native-provider-ready-{run}.png'),full_page=True)
+                    if run==0:
                         open_dialog(page)
                         page.locator('input[name="new-source"][value="codex"]').check()
                         page.locator('#new-model').click()
@@ -103,9 +113,9 @@ base_url="http://127.0.0.1:9/v1"
                         assert summary['resume']['modelProvider']=='openai',summary
                         assert summary['settings']['model']==fixture.MODEL,summary
                     page.close()
-            assert len(pidlog.read_text().splitlines()) == 2, 'service restart spawned a duplicate provider process'
+            assert len(pidlog.read_text().splitlines()) == 1, 'service restart spawned a duplicate provider process'
             assert shared.poll() is None, 'shared daemon was stopped'
-            print('PASS native provider routing: both providers, default openai create, reload and service restart; no model input')
+            print('PASS native provider confirmation: No unchanged, Yes migrated and resumed, indexed offsets preserved, default openai create, reload/restart; no model input')
         finally:
             browser.close()
             stack.close()

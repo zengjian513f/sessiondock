@@ -692,6 +692,8 @@ pub async fn proxy(
                 | "/api/native-sdk/models"
                 | "/api/codex-sdk/open"
                 | "/api/codex-sdk/create"
+                | "/api/codex-sdk/provider"
+                | "/api/codex-sdk/migrate-provider"
                 | "/api/codex-sdk/models"
         )
     {

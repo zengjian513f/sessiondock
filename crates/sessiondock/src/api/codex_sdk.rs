@@ -44,6 +44,11 @@ pub(super) fn rpc(error: RpcError) -> ApiError {
             "codex_sdk_unavailable",
             message,
         ),
+        RpcError::ProviderMismatch(provider) => ApiError::new(
+            StatusCode::CONFLICT,
+            "codex_sdk_provider_mismatch",
+            format!("该会话的 provider 是 {provider}，需要确认改为 openai 后才能启动"),
+        ),
         RpcError::Storage(_) => ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "codex_sdk_storage",
@@ -185,6 +190,49 @@ pub async fn open(
     Ok(Json(
         json!({"ok": true, "thread_id": thread, "raw": summary}),
     ))
+}
+
+pub async fn provider(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
+    let provider = sdk.provider(&thread).await.map_err(rpc)?;
+    Ok(Json(
+        json!({"ok":true,"provider":provider,"needs_confirmation":provider != "openai"}),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct ProviderMigration {
+    uid: String,
+    #[serde(default)]
+    agent: String,
+    source_provider: String,
+    #[serde(default)]
+    confirmed: bool,
+}
+
+pub async fn migrate_provider(
+    State(state): State<AppState>,
+    Json(body): Json<ProviderMigration>,
+) -> Result<Json<Value>, ApiError> {
+    if !body.confirmed {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "codex_sdk_provider_confirmation_required",
+            "请先确认将此会话的 provider 改为 openai",
+        ));
+    }
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
+    let raw = sdk
+        .migrate_provider(&thread, &body.source_provider)
+        .await
+        .map_err(rpc)?;
+    state.reader.store.invalidate_inventory();
+    Ok(Json(json!({"ok":true,"raw":raw})))
 }
 
 pub async fn events(

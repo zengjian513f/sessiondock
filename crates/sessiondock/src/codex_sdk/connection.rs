@@ -34,6 +34,7 @@ pub enum RpcError {
         message: String,
     },
     Storage(String),
+    ProviderMismatch(String),
     NoActiveTurn,
     UnknownRequest,
 }
@@ -45,6 +46,10 @@ impl std::fmt::Display for RpcError {
             Self::Disconnected => f.write_str("与 Codex app-server 的连接中断；请求可能已执行"),
             Self::Remote { message, .. } => write!(f, "Codex app-server：{message}"),
             Self::Storage(message) => f.write_str(message),
+            Self::ProviderMismatch(provider) => write!(
+                f,
+                "该会话的 provider 是 {provider}，需要确认改为 openai 后才能启动"
+            ),
             Self::NoActiveTurn => f.write_str("当前没有进行中的回合"),
             Self::UnknownRequest => f.write_str("该请求已被处理或已失效"),
         }
