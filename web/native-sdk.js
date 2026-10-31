@@ -269,9 +269,10 @@ const NativeSdkView = {
     this.capabilities = {...this.capabilities, ...raw.capabilities};
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
+    const source = String(this.uid).split(':')[0];
     this.items = (this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
-      : rawItems).map(nativeSdkMessage);
+      : rawItems).map(item => nativeSdkMessage(item, source));
     this.setConnected(true);
     this.paintHistory();
     const ids = new Set();
@@ -479,19 +480,110 @@ const NativeSdkView = {
   },
 };
 
-function nativeSdkMessage(item) {
+// Pull the readable payload out of a native tool result wrapper. Kiro's
+// rawOutput wraps the useful text in `output`/`content`/`message` (plus an
+// exit code for commands); showing the whole envelope as JSON is the reported
+// "原 json" symptom. Return `{text, exitCode}`; keep unknown shapes as pretty
+// JSON so nothing is lost.
+function nativeToolResultText(result) {
+  if (result == null) return null;
+  if (typeof result === 'string') return {text: result};
+  if (typeof result !== 'object') return {text: String(result)};
+  const exit = [result.exitCode, result.exit_code, result.code]
+    .find(value => Number.isInteger(value));
+  const field = ['output', 'content', 'stdout', 'message', 'text']
+    .find(key => typeof result[key] === 'string' && result[key] !== '');
+  if (field) {
+    const parts = [result[field]];
+    // A failing command keeps its explanation in `message` alongside `output`.
+    if (field === 'output' && typeof result.message === 'string' && result.message.trim())
+      parts.push(result.message);
+    return {text: parts.join('\n').replace(/\n+$/, ''), exitCode: exit};
+  }
+  return {text: JSON.stringify(result, null, 2), exitCode: exit};
+}
+
+// Build a readable command/result presentation for a native tool item, the way
+// the Codex SDK view does per item type. Kiro reports a `kind` (execute/read/
+// edit) plus a human tool name; use it to show a one-line summary instead of
+// the raw argument JSON. Unknown tools keep the name header and JSON arguments.
+// Scoped to Kiro: the other native sources already deliver their own readable
+// summaries/results, and their browser suites pin that presentation.
+function nativeToolPresentation(item, summarize) {
+  const name = item.name || item.tool_name || 'tool';
+  const input = item.input ?? item.tool_input ?? item.arguments ?? null;
+  if (!summarize) {
+    return {name, summary: typeof item.summary === 'string' ? item.summary : '',
+      text: typeof input === 'string' ? input
+        : input != null ? JSON.stringify(input, null, 2) : ''};
+  }
+  const field = key => (input && typeof input === 'object' && typeof input[key] === 'string')
+    ? input[key] : '';
+  const kind = String(item.kind || '').toLowerCase();
+  const lname = name.toLowerCase();
+  const presentation = {name, summary: '', text: typeof input === 'string' ? input
+    : input != null ? JSON.stringify(input, null, 2) : ''};
+  const path = field('path') || field('file_path') || field('filename');
+  if (kind === 'execute' || /command|bash|shell|execute/.test(lname)) {
+    const command = field('command') || field('cmd') || presentation.text;
+    presentation.summary = `$ ${command}`;
+    presentation.text = command;
+  } else if (kind === 'read' || /(^|[_\s])read/.test(lname)) {
+    const range = (input && (input.offset != null || input.limit != null)
+      && (Number.isInteger(input.offset) || Number.isInteger(input.limit)))
+      ? `（${input.offset ? `第 ${input.offset} 行起` : '起始'}${input.limit ? `，${input.limit} 行` : ''}）` : '';
+    presentation.summary = path ? `读取 ${path}${range}` : name;
+    if (path) presentation.text = path;
+  } else if (kind === 'edit' || /(replace|write|edit|create|str_replace|append)/.test(lname)) {
+    const verb = /write|create/.test(lname) ? '写入' : '修改';
+    presentation.summary = path ? `${verb} ${path}` : name;
+    if (path) {
+      // Prefer a readable before/after (or content) preview over the full
+      // argument JSON; raw arguments remain available via the args toggle.
+      const old = field('oldStr') || field('old_str');
+      const next = field('newStr') || field('new_str');
+      const body = field('text') || field('content');
+      if (old || next) presentation.text = `- ${old}\n+ ${next}`;
+      else if (body) presentation.text = body;
+    }
+  } else if (kind === 'search' || /(grep|search|find)/.test(lname)) {
+    const query = field('query') || field('pattern') || field('q');
+    presentation.summary = query ? `搜索 ${query}` : name;
+  } else if (path) {
+    presentation.summary = `${name} · ${path}`;
+    presentation.text = path;
+  }
+  return presentation;
+}
+
+function nativeSdkMessage(item, source) {
   const message = {...item,text:item.text ?? item.content ?? ''};
   if (typeof message.text !== 'string') message.text = JSON.stringify(message.text,null,2);
   if (item.role === 'tool') {
-    message.name = item.name || item.tool_name || 'tool';
-    const input = item.input ?? item.tool_input ?? item.arguments;
-    if (input != null) message.text = typeof input === 'string' ? input : JSON.stringify(input,null,2);
+    // Kiro delivers raw argument/output envelopes; the other native sources
+    // already carry a readable result object. Only build summaries and unwrap
+    // the result envelope for Kiro so other suites' presentation is untouched.
+    const isKiro = source === 'kiro' || item.source === 'kiro';
+    const presentation = nativeToolPresentation(item, isKiro);
+    message.name = presentation.name;
+    message.summary = presentation.summary;
+    message.text = presentation.text;
     const result = item.result ?? item.tool_result;
-    if (result != null && !(typeof result === 'object' && result.role === 'tool_result')) {
-      message.result = {role:'tool_result',text:typeof result === 'string' ? result : JSON.stringify(result,null,2),
+    if (result != null && typeof result === 'object' && result.role === 'tool_result') {
+      message.result = result;
+    } else if (result != null) {
+      // Kiro: unwrap the raw rawOutput envelope to its readable text + exit
+      // code. Other sources keep the previous pretty-JSON of their result.
+      const parsed = isKiro ? nativeToolResultText(result) : null;
+      message.result = {role:'tool_result',
+        text: parsed ? parsed.text : (typeof result === 'string' ? result : JSON.stringify(result,null,2)),
+        exit_code: parsed?.exitCode,
         error:!!item.error || !!item.is_error || item.status === 'failed'};
-    } else if (result == null && (item.tool_content || item.status === 'failed')) {
-      message.result = {role:'tool_result',text:typeof item.content === 'string' ? item.content : JSON.stringify(item.tool_content),error:!!item.error};
+    } else if (item.tool_content || item.status === 'failed') {
+      const parsed = isKiro ? nativeToolResultText(item.tool_content) : null;
+      message.result = {role:'tool_result',
+        text: parsed ? parsed.text : (typeof item.content === 'string' ? item.content : JSON.stringify(item.tool_content)),
+        error:!!item.error};
     }
   }
   return message;

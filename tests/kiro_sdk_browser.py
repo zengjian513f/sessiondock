@@ -257,6 +257,13 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
         "window.__kiroSnapshot.items.some(i => i.role === 'assistant' && i.content?.includes('Kiro ACP V3 final answer'))"
     )
     expect(page.locator(".sdk-live")).to_contain_text("Kiro ACP V3 final answer for: Verify Kiro V3 streaming turn")
+    # The tool bubble shows a readable summary (`读取 README.md`) and the plain
+    # file content, not the raw rawInput/rawOutput JSON envelopes.
+    read_tool = page.locator(".sdk-live .tool-msg").filter(has_text="读取 README.md")
+    expect(read_tool).to_be_visible()
+    expect(read_tool.locator(".tool-out")).to_contain_text("# Kiro Workspace")
+    expect(read_tool.locator(".tool-out")).not_to_contain_text('"content"')
+    assert '{"path"' not in read_tool.inner_text(), read_tool.inner_text()
     snap = page.evaluate("window.__kiroSnapshot")
     assert snap["context_usage"]["percent"] == 18.5, snap["context_usage"]
 
@@ -274,6 +281,13 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
         "window.__kiroSnapshot.items.some(i => i.content?.includes('Permission granted and command executed.'))"
     )
     expect(page.locator(".sdk-live")).to_contain_text("Permission granted and command executed.")
+    # The execute tool bubble reads as a shell command with its exit code and
+    # plain stdout, not the `{"command": ...}` / `{"output": ...}` JSON.
+    exec_tool = page.locator(".sdk-live .tool-msg").filter(has_text="$ echo kiro-approved")
+    expect(exec_tool).to_be_visible()
+    expect(exec_tool.locator(".tool-status")).to_contain_text("exit 0")
+    expect(exec_tool.locator(".tool-out")).to_contain_text("kiro-approved")
+    assert '"output"' not in exec_tool.inner_text(), exec_tool.inner_text()
     try:
         expect(perm_card).to_have_count(0)
     except AssertionError:
