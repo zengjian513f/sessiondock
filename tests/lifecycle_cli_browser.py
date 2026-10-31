@@ -504,6 +504,7 @@ def main():
                         xterm_includes(page, argv_lines("CODEX", ["-c",
                             "suppress_unstable_features_warning=true", "--enable", "worktrees",
                             "--enable=transcript_v2", "-c", "check_for_update_on_startup=false",
+                            "-c", 'model_provider="openai"',
                             "--remote", f"unix://{app_socket}", "-C", str(root / "work/codex-area")]))
                         terminal.press_sequentially("new session works")
                         terminal.press("Enter")

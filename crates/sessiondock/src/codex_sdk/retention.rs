@@ -108,12 +108,20 @@ impl Inner {
             return;
         }
         // Recovery does not start a daemon, or load arbitrary historical threads.
-        let Ok(connection) = self.connection_mode(false).await else {
-            return;
-        };
+        for connection in self.observed_connections().await {
+            self.restore_on(&connection, &ids).await;
+        }
+    }
+
+    async fn restore_on(
+        self: &Arc<Self>,
+        connection: &Arc<super::Connection>,
+        ids: &HashSet<String>,
+    ) {
         let missing: Vec<_> = {
             let threads = self.threads.lock().expect("threads");
-            ids.into_iter()
+            ids.iter()
+                .cloned()
                 .filter(|id| {
                     !threads
                         .get(id)

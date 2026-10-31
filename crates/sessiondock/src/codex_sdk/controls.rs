@@ -14,7 +14,7 @@ impl CodexSdk {
         model_effort: (Option<String>, Option<String>),
     ) -> Result<Value, RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         let mut params = json!({"threadId":thread_id});
         if let Some(model) = model_effort.0 {
             params["model"] = json!(model);
@@ -53,7 +53,7 @@ impl CodexSdk {
     /// unsandboxed. Output arrives as ordinary commandExecution thread items.
     pub async fn controls_shell(&self, thread_id: &str, command: &str) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         connection
             .request(
                 "thread/shellCommand",

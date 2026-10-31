@@ -54,6 +54,7 @@ impl std::fmt::Display for RpcError {
 type Waiter = oneshot::Sender<Result<Value, RpcError>>;
 
 pub struct Connection {
+    pub socket: std::path::PathBuf,
     out: mpsc::UnboundedSender<String>,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, Waiter>>,
@@ -83,6 +84,7 @@ impl Connection {
                 .map_err(|error| RpcError::Unavailable(format!("握手失败：{error}")))?;
             let closed = CancellationToken::new();
             let connection = Arc::new(Self {
+                socket: endpoint.socket.clone(),
                 out: spawn_io(inner, socket, generation, closed.clone())?,
                 next_id: AtomicI64::new(1),
                 pending: Mutex::new(HashMap::new()),
@@ -211,6 +213,65 @@ async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStream, RpcError
         Err(_) => {}
     }
     let home = endpoint.autostart_home.as_ref().expect("autostart home");
+    if let Some(provider) = &endpoint.provider {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        let directory = endpoint.socket.parent().expect("provider socket directory");
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(directory)
+            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(endpoint.socket.with_extension("log"))
+            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
+        let mut command = tokio::process::Command::new("codex");
+        command
+            .args([
+                "-c",
+                &format!("model_provider={}", json!(provider)),
+                "app-server",
+                "--listen",
+                &format!("unix://{}", endpoint.socket.display()),
+            ])
+            .env("CODEX_HOME", home)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(log)
+            .kill_on_drop(false);
+        // Match detached native hosts: service restart must not kill a turn.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
+        for _ in 0..CONNECT_ATTEMPTS {
+            if let Ok(stream) = tokio::net::UnixStream::connect(&endpoint.socket).await {
+                return Ok(stream);
+            }
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| RpcError::Unavailable(e.to_string()))?
+            {
+                return Err(RpcError::Unavailable(format!(
+                    "provider {provider} 进程退出：{status}；日志：{}",
+                    endpoint.socket.with_extension("log").display()
+                )));
+            }
+            tokio::time::sleep(CONNECT_PAUSE).await;
+        }
+        return Err(RpcError::Unavailable(format!(
+            "provider {provider} 启动超时"
+        )));
+    }
     // The same daemon a default `codex` TUI starts; it outlives SessionDock.
     let started = tokio::process::Command::new("codex")
         .args(["app-server", "daemon", "start"])
@@ -315,7 +376,7 @@ fn dispatch(inner: &Inner, generation: u64, text: &str) {
                 inner.server_request(&connection, id, &method, params);
             }
         }
-        (Some(method), None) => inner.notify(&method, params),
+        (Some(method), None) => inner.notify(generation, &method, params),
         (None, Some(id)) => {
             let Some(connection) = current(generation) else {
                 return;

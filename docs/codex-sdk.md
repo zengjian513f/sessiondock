@@ -21,16 +21,26 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
                                        default `codex` TUI ─┘ (same daemon, same thread)
 ```
 
-- The node keeps **one** connection to the shared daemon
-  (`codex app-server --listen unix:// --managed-daemon`), the same server a
-  default `codex` TUI starts or reuses. The daemon owns model context, turns,
-  approvals and rollout writes; it outlives SessionDock restarts.
-- Endpoint: unset `SESSIONDOCK_CODEX_APP_SERVER` uses
-  `<parent of SESSIONDOCK_CODEX_ROOT>/app-server-control/app-server-control.sock`.
-  If that socket is not reachable, the node runs
-  `codex app-server daemon start` with that `CODEX_HOME` once per connect
-  attempt. An explicit socket path is never started; `off` disables the mode.
-  Non-Unix nodes report `codex_sdk: false`.
+- DELTA (provider routing): new sessions default to `openai`. Existing sessions
+  retain their native `modelProvider`; absent/empty metadata falls back to `openai`.
+  Codex 0.166.0 checks provider identity at process level, so the node keeps one
+  connection per native listener and routes all thread operations to its owner.
+- With `SESSIONDOCK_CODEX_APP_SERVER` unset, the node discovers the ordinary
+  `<CODEX_HOME>/app-server-control/app-server-control.sock` without replacing it.
+  Already-loaded threads stay on their owning process. Otherwise `config/read`
+  identifies whether the shared process matches the requested provider. A missing
+  provider listener starts on demand with `codex -c model_provider=… app-server
+  --listen unix://…`, using the same `CODEX_HOME`, native authentication and history.
+  Additional sockets and private logs live under `<CODEX_HOME>/sd-providers/`,
+  with UTF-8 provider IDs encoded as hexadecimal filenames (not hashes).
+  Detached listeners survive ordinary SessionDock restarts; observations and
+  subscription recovery discover them without starting historical sessions.
+  A connection failure resets only that connection's threads; generations are
+  unique across listeners. Model lists are cached per connection.
+- An explicit socket remains operator-managed: no extra processes are started,
+  and native provider mismatch errors remain visible. `off` disables SDK mode;
+  non-Unix nodes report `codex_sdk: false`. No global provider configuration,
+  credential files or existing conversation provider fields are changed.
 - A configured Codex launcher whose installation probe reports missing or
   non-executable (including wrappers returning 126/127) also reports
   `codex_sdk: false` and refuses SDK requests. The node and Hub new-session
@@ -43,14 +53,12 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
   connection; later pages reuse it. Before resuming, `thread/read` with
   `includeTurns: false` supplies the thread's native `modelProvider`, which is
-  passed explicitly to resume. Codex 0.166.0 additionally requires the native
-  process's current provider to match the stored provider: neither `modelProvider`
-  nor a per-request `config.model_provider` override bypasses that check.
-  Cross-provider histories can therefore still fail with `modelProviderMismatch`.
-  Missing/empty provider metadata leaves native defaults in effect; native read
-  and resume errors remain visible. This does not rewrite rollouts or global
-  configuration. The [synthetic provider suite](../tests/codex_sdk_provider_browser.py)
-  verifies parameter forwarding; it does not model the 0.166.0 process-level gate.
+  passed explicitly to resume on the selected provider process. Native read,
+  configuration and resume errors remain visible; no per-request override is
+  treated as a substitute for selecting the correct process. Coverage includes
+  [synthetic process routing](../tests/codex_sdk_provider_browser.py) and
+  [real Codex browser routing](../tests/codex_sdk_provider_routing_browser_real.py)
+  with isolated Luna/low sessions and no inference input.
   If it is already active without a local
   turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
   descending, full items) before publishing its snapshot. This restores
@@ -74,7 +82,7 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   period cannot guarantee runtime survival. Installations without this new record
   begin retaining threads when they next successfully open/create them; old create
   receipts are not ownership evidence and are not bulk-resumed on upgrade.
-  When the connection closes every attached page gets `bridge/reset` and reconnects.
+  When a connection closes its attached pages get `bridge/reset` and reconnects.
   A permanently closed browser EventSource also schedules a reconnect; closing
   or switching the view cancels that timer. Reconnection retains the unsent draft
   and recovers the server snapshot without submitting another turn.
@@ -91,6 +99,11 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   progress while detached and restores it without resume/unsubscribe/interrupt.
 
 ### Terminal coexistence
+
+Managed terminal creation uses the same provider selection: new sessions use
+`openai`, resumes select the native owner. The chosen socket is recorded in the
+internal launch receipt and passed as `--remote`; a provider-specific SDK thread
+therefore joins its own listener rather than the unrelated default daemon.
 
 DELTA (SDK → PTY): when this bridge has the exact thread loaded on a live
 connection, and the configured Codex CLI profile joins that same Unix socket,
@@ -208,7 +221,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); no implicit steering |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
-| GET `/api/codex-sdk/models?uid=` | `model/list` (cached 5 minutes per node) |
+| GET `/api/codex-sdk/models?uid=` | `model/list` on the selected provider connection (cached 5 minutes per connection) |
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
 | POST `/api/codex-sdk/turns` `{uid, cursor?}` | `thread/turns/list`, newest first, with summary items and native pagination |

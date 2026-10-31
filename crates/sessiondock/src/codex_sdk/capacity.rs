@@ -107,7 +107,11 @@ impl Inner {
                             live.capacity_error(&turn, error);
                         }
                     }
-                    let connection = inner.connection.lock().await.clone();
+                    let connection = inner
+                        .connected()
+                        .await
+                        .into_iter()
+                        .find(|c| live.loaded_on() == Some(c.generation()));
                     let Some(connection) = connection
                         .filter(|c| !c.is_closed() && live.loaded_on() == Some(c.generation()))
                     else {

@@ -476,9 +476,24 @@ pub async fn reset_credit(
     ))
 }
 
-pub async fn models(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+pub async fn models(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
     // Models are per daemon. The Hub accepts either uid or an explicit node.
-    let value = sdk.models().await.map_err(rpc)?;
+    let thread = if let Some(uid) = query.get("uid").filter(|s| !s.is_empty()) {
+        Some(
+            thread_id(
+                &state,
+                uid,
+                query.get("agent").map(String::as_str).unwrap_or(""),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let value = sdk.models(thread.as_deref()).await.map_err(rpc)?;
     Ok(Json(json!({"ok": true, "raw": value})))
 }

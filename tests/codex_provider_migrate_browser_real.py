@@ -50,19 +50,19 @@ def native(executable, home, cwd, provider, socket=None):
             proc.terminate(); proc.wait(timeout=15)
 
 
-def seed(executable, home, cwd):
-    folder = home/'sessions/2026/10/09'; folder.mkdir(parents=True)
+def seed(executable, home, cwd, provider="openai", label="provider migration history"):
+    folder = home/'sessions/2026/10/09'; folder.mkdir(parents=True, exist_ok=True)
     path = folder/f'rollout-2026-10-09T04-41-00-{SID}.jsonl'
     rows = [('session_meta', {'id': SID, 'timestamp': '2026-10-08T20:41:00.441Z', 'cwd': str(cwd),
-             'originator': 'codex_cli_rs', 'cli_version': '0.161.0', 'source': 'cli', 'model_provider': 'openai', 'history_mode': 'paginated'})]
+             'originator': 'codex_cli_rs', 'cli_version': '0.161.0', 'source': 'cli', 'model_provider': provider, 'history_mode': 'paginated'})]
     for i in range(2):
         turn = f'01a11d3f-7510-7d20-8f67-546a6975ebe{i}'
         rows += [('event_msg', {'type': 'task_started', 'turn_id': turn}),
-                 ('response_item', {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': f'provider migration history {i}'}]}),
+                 ('response_item', {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': f'{label} {i}'}]}),
                  ('response_item', {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': f'preserved answer {i}'}]}),
                  ('event_msg', {'type': 'task_complete', 'turn_id': turn, 'last_agent_message': f'preserved answer {i}'})]
     path.write_text(''.join(json.dumps({'timestamp': '2026-10-08T20:41:00.441Z', 'type': t, 'payload': p, 'ordinal': n}, ensure_ascii=False)+'\n' for n,(t,p) in enumerate(rows)))
-    with native(executable, home, cwd, 'openai') as proc:
+    with native(executable, home, cwd, provider) as proc:
         messages = queue.Queue()
         def reader():
             for line in proc.stdout:

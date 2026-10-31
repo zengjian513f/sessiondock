@@ -23,7 +23,7 @@ impl CodexSdk {
             }
         }
         self.inner
-            .connection()
+            .thread_connection(thread_id)
             .await?
             .request(&format!("thread/goal/{action}"), params)
             .await
@@ -33,7 +33,7 @@ impl CodexSdk {
         self.inner.ensure(thread_id).await?;
         let raw = self
             .inner
-            .connection()
+            .thread_connection(thread_id)
             .await?
             .request("thread/name/set", json!({"threadId":thread_id,"name":name}))
             .await?;
@@ -49,7 +49,7 @@ impl CodexSdk {
         last_turn_id: Option<&str>,
     ) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         let mut params = json!({"threadId":thread_id,"excludeTurns":true});
         if let Some(id) = last_turn_id.filter(|id| !id.is_empty()) {
             params["lastTurnId"] = json!(id);
@@ -65,7 +65,7 @@ impl CodexSdk {
         cursor: Option<&str>,
     ) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         let mut params = json!({"threadId":thread_id,"sortDirection":"desc","itemsView":"summary"});
         if let Some(cursor) = cursor {
             params["cursor"] = json!(cursor);
@@ -80,7 +80,7 @@ impl CodexSdk {
     ) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
         self.inner
-            .connection()
+            .thread_connection(thread_id)
             .await?
             .request(
                 "thread/revert",
@@ -92,7 +92,7 @@ impl CodexSdk {
     pub async fn compact_thread(&self, thread_id: &str) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
         self.inner
-            .connection()
+            .thread_connection(thread_id)
             .await?
             .request("thread/compact/start", json!({"threadId":thread_id}))
             .await
@@ -101,7 +101,7 @@ impl CodexSdk {
     pub async fn review_thread(&self, thread_id: &str, target: Value) -> Result<Value, RpcError> {
         self.inner.ensure(thread_id).await?;
         self.inner
-            .connection()
+            .thread_connection(thread_id)
             .await?
             .request(
                 "review/start",

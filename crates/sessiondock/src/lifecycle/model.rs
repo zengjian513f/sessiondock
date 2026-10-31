@@ -226,6 +226,9 @@ pub fn native_uid(source: Source, text: &str) -> bool {
 /// guessed native-session claim. Deliberately no Debug: cwd is private data.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchSpec {
+    /// Internal provider listener selected by the node, never supplied by HTTP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    codex_socket: Option<std::path::PathBuf>,
     source: Source,
     adapter_id: String,
     cwd: String,
@@ -293,6 +296,7 @@ impl LaunchSpec {
         }
         let cwd = cwd.to_str().ok_or(Error::InvalidSpec)?.to_owned();
         let spec = Self {
+            codex_socket: None,
             source,
             adapter_id,
             cwd,
@@ -315,6 +319,13 @@ impl LaunchSpec {
         self.effort = effort.filter(|value| !value.is_empty());
         self.validate()?;
         Ok(self)
+    }
+    pub(crate) fn with_codex_socket(mut self, socket: std::path::PathBuf) -> Self {
+        self.codex_socket = Some(socket);
+        self
+    }
+    pub(crate) fn codex_socket(&self) -> Option<&Path> {
+        self.codex_socket.as_deref()
     }
     pub fn with_continuation(mut self, edge: Option<crate::metadata::Predecessor>) -> Self {
         self.continuation = edge;
@@ -360,7 +371,7 @@ impl LaunchSpec {
         self.launch.validate(self.source)
     }
     pub(super) fn verify_directory(&self) -> Result<(), Error> {
-        let checked = Self::with_launch(
+        let mut checked = Self::with_launch(
             self.source,
             self.adapter_id.clone(),
             self.cwd(),
@@ -368,6 +379,7 @@ impl LaunchSpec {
         )?
         .with_choice(self.model.clone(), self.effort.clone())?
         .with_continuation(self.continuation.clone());
+        checked.codex_socket = self.codex_socket.clone();
         if checked == *self {
             Ok(())
         } else {

@@ -767,6 +767,12 @@ impl Launcher {
                 OsString::from("-c"),
                 OsString::from("check_for_update_on_startup=false"),
             ]);
+            if spec.codex_socket().is_some() && matches!(spec.launch(), Launch::NewPending) {
+                argv.extend([
+                    OsString::from("-c"),
+                    OsString::from("model_provider=\"openai\""),
+                ]);
+            }
             // Join the shared app-server (docs/codex-sdk.md). The thread then
             // lives in the daemon, which starts it in its own directory
             // unless told: `-C` keeps the session's launch directory.
@@ -774,7 +780,11 @@ impl Launcher {
                 argv = codex_shared_feature_args(argv);
                 argv.extend([
                     OsString::from("--remote"),
-                    OsString::from(&remote.arg),
+                    OsString::from(
+                        spec.codex_socket()
+                            .map(|path| format!("unix://{}", path.display()))
+                            .unwrap_or_else(|| remote.arg.clone()),
+                    ),
                     OsString::from("-C"),
                     spec.cwd().as_os_str().to_os_string(),
                 ]);
@@ -894,8 +904,18 @@ impl Launcher {
                 .as_ref()
                 .zip(self.profiles.get(record.spec().adapter_id()))
                 .is_some_and(|(remote, profile)| {
-                    current_executable(&profile.executable)
-                        .is_ok_and(|executable| remote.ensure(&executable))
+                    current_executable(&profile.executable).is_ok_and(|executable| {
+                        if let Some(socket) = record.spec().codex_socket() {
+                            let selected = crate::codex_sdk::TuiRemote {
+                                arg: format!("unix://{}", socket.display()),
+                                socket: socket.to_owned(),
+                                home: None,
+                            };
+                            selected.ensure(&executable)
+                        } else {
+                            remote.ensure(&executable)
+                        }
+                    })
                 });
         let argv = match self.argv(record, remote) {
             Ok(argv) => argv,

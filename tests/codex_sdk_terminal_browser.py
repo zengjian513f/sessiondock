@@ -8,18 +8,30 @@ import argparse
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
+from sdk_ui_fixtures import start_sdk
 from codex_sdk_browser import THREAD, build
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY, REPO, codex_row, codex_message, isolated_server
 from new_session_model_browser import argv_lines
 from private_hosts import private_hosts
 from spawned_by_fixtures import proc_pid
+
+
+class ProviderPeer(FakeAppServer):
+    async def _handle(self, writer, message):
+        method = message.get('method')
+        if method in ('config/read', 'thread/read', 'thread/loaded/list'):
+            result = {'config':{'model_provider':'openai'}} if method=='config/read' else ({'thread':{'id':THREAD,'modelProvider':'custom-provider'}} if method=='thread/read' else {'data':[]})
+            await self.send(writer, {'id':message['id'], 'result':result})
+            return
+        await super()._handle(writer,message)
 
 
 def main():
@@ -44,7 +56,10 @@ def main():
         proc_pid(proc, 500, 'codex', ['codex', 'resume', 'independent-cli-thread'], 1,
                  fds={3:corpus.paths['independent']})
         log = root / 'argv.jsonl'
-        socket = root / 'app.sock'
+        socket = root/'sd-providers'/('custom-provider'.encode().hex()+'.sock')
+        socket.parent.mkdir()
+        shared = root/'app-server-control/app-server-control.sock'
+        shared.parent.mkdir()
         config = root / 'launcher.json'
         config.write_text(json.dumps({'schema':2, 'host_binary':str(REPO/'target/debug/ptyhost'),
             'host_dir':str(root/'host'), 'profiles':[{'id':'codex-cli', 'source':'codex',
@@ -53,10 +68,13 @@ def main():
         config.chmod(0o600)
         subprocess.run([str(args.binary.resolve()), '--initialize-lifecycle', str(root/'ledger')],
                        check=True, capture_output=True)
-        with private_hosts(root), FakeAppServer(socket, corpus.paths['sdk'], THREAD) as fake:
-            with isolated_server(corpus, args.binary, state_dir=root/'state', host_dir=root/'host',
+        server_wrapper = root/'sessiondock'
+        server_wrapper.write_text('#!/bin/sh\nexport CODEX_HOME='+shlex.quote(str(root))+'\nexec '+shlex.quote(str(args.binary.resolve()))+' "$@"\n')
+        server_wrapper.chmod(0o700)
+        with private_hosts(root), ProviderPeer(shared, corpus.paths['sdk'], THREAD) as default_peer, ProviderPeer(socket, corpus.paths['sdk'], THREAD) as fake:
+            with isolated_server(corpus, server_wrapper, state_dir=root/'state', host_dir=root/'host',
                     lifecycle_dir=root/'ledger', launcher_config=config,
-                    extra_env={'SESSIONDOCK_PROC_ROOT':str(proc), 'SESSIONDOCK_CODEX_APP_SERVER':str(socket)}) as (base, _):
+                    extra_env={'SESSIONDOCK_PROC_ROOT':str(proc), 'SESSIONDOCK_CODEX_APP_SERVER':''}) as (base, _):
                 with sync_playwright() as pw:
                     browser = pw.chromium.launch(headless=True)
                     try:
@@ -67,6 +85,7 @@ def main():
                         page.wait_for_function('T.listLoaded')
                         uid = corpus.uid('sdk')
                         page.locator(f'#side .item[data-uid="{uid}"]').click()
+                        start_sdk(page)
                         expect(page.locator('#sdk-model')).to_have_value('fake-sol')
                         expect(page.locator('#sdk-effort')).to_have_value('high')
                         expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_have_class(re.compile(r'.*\blive\b.*'))
@@ -97,6 +116,7 @@ def main():
                         expect(page.locator('.sdk-request')).to_contain_text('需要批准执行命令')
                         page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
                         expect(page.locator('.sdk-history')).to_contain_text('All done after approval')
+                        assert not default_peer.methods('thread/resume'), 'terminal routed to default provider'
                         assert len(fake.methods('turn/start')) == 1
                         assert len(fake.methods('thread/resume')) == 1, fake.methods('thread/resume')
                         # The fleet snapshot misses the node, while CHECK/SSE
@@ -125,7 +145,7 @@ def main():
                         result = response.value.json()
                         assert result.get('needs_confirm') and result['pids'] == [500], result
                         popup = page.locator('dialog.app-popup[open]')
-                        expect(popup).to_contain_text('结束正在运行的实例')
+                        expect(popup).to_contain_text('接管会先停止外部运行')
                         popup.get_by_role('button', name='取消', exact=True).click()
                         assert len([argv for argv in argv_lines(log) if 'resume' in argv]) == 1
                         assert not errors, errors

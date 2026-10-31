@@ -76,7 +76,7 @@ def main():
                 page.locator('#sdk-send').click()
                 fake.wait_for(lambda: fake.methods('turn/start'))
                 page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
-                expect(page.locator('.sdk-live')).to_contain_text('All done after approval', timeout=15000)
+                expect(page.locator('#detail')).to_contain_text('All done after approval', timeout=15000)
                 page.close()
                 observer = context.new_page(); observer.goto(base + '/api/health')
                 advance(observer, marker, 70); advance(observer, marker, 3700)

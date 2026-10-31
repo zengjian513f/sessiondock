@@ -398,7 +398,7 @@ impl Inner {
         mut item: Input,
         steer: Option<String>,
     ) -> Result<(), RpcError> {
-        let connection = self.connection().await?;
+        let connection = self.thread_connection(live.id()).await?;
         // Queued inputs from older releases retain their published path text.
         item.input.retain(|part| part["type"] == "text");
         item.state = "sending".into();

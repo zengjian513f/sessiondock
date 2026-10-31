@@ -964,7 +964,13 @@ impl Core {
                         spec.effort().map(str::to_owned),
                     )
                 })
-                .map(|normalized| normalized.with_continuation(spec.continuation().cloned()))
+                .map(|normalized| {
+                    let normalized = normalized.with_continuation(spec.continuation().cloned());
+                    match spec.codex_socket() {
+                        Some(socket) => normalized.with_codex_socket(socket.to_owned()),
+                        None => normalized,
+                    }
+                })
                 .unwrap_or(spec);
                 if let Some(record) = store.lookup_request(&id, &spec).map_err(Error::Store)? {
                     return Ok(Created::Existing(record));

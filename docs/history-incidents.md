@@ -55,6 +55,21 @@ provider 为 cache 时，省略覆盖、modelProvider=openai、config 覆盖和 
 实际会话；实际页面重试仍待用户确认。其他会话、全局配置和共享 daemon 均未变。
 本轮只增加维护脚本、测试和文档，不发布运行产物或重启服务。
 
+
+2026-10-31：用户选择“新会话默认 openai，已有会话保留原 provider”。实现
+provider 进程路由，保留原共享 daemon，按需启动独立 listener；发送、控制、
+订阅恢复、停止与模型列表使用所属连接。连接代次全局唯一，断开只重置本连接。
+终端新建和接管使用同一选择，并在生命周期记录规范化时保留内部 socket 字段。
+子会话模型查询传递 agent，避免误用主会话的 provider。
+
+真实 Codex 0.166.0、临时 home、Luna/low 的 Chromium 验证通过：两种历史
+分别恢复，新建默认 openai，终止一个测试 provider 不影响另一个，单独重新启动，
+刷新及服务重启恢复且不重复创建进程；没有模型输入。合成 provider（节点/Hub）、
+订阅保留、控制操作、provider 终端接管、CLI 新建以及子会话节点/Hub 桌面/手机
+明暗组合通过。旧测试已跟随当前显式启动入口、回复落盘位置与接管文案更新。
+亲自检查双 provider、终端和 Hub 子会话整页截图，布局和可读性正常。编译、文档
+链接、AGENTS、品牌与 diff 检查通过。本轮不修改生产会话字段或全局 provider。
+
 ## BUG-20261029-235311-41269a：迁移后的停顿与浏览器离开
 
 本次只读核对报告 manifest、browser-state、相关 events、原生主会话 JSONL、

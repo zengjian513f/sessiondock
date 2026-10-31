@@ -4,14 +4,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::{CodexSdk, RpcError};
+use super::CodexSdk;
 
 const TTL: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(super) struct Sample {
     at: Option<Instant>,
-    generation: Option<u64>,
     ids: Vec<String>,
 }
 
@@ -29,44 +28,19 @@ impl CodexSdk {
     async fn observe_threads(&self, writers: bool) -> Vec<String> {
         // One small read per observer interval, shared by concurrent fleet reads.
         let mut sample = self.inner.observation.lock().await;
-        let generation = self
-            .inner
-            .connection
-            .lock()
-            .await
-            .as_ref()
-            .filter(|connection| !connection.is_closed())
-            .map(|connection| connection.generation());
-        if writers
-            || sample.at.is_none_or(|at| at.elapsed() >= TTL)
-            || sample.generation != generation
-        {
-            let result = tokio::time::timeout(TTL, async {
-                let connection = self.inner.connection_mode(false).await?;
-                // No limit means the daemon returns all loaded identities.
-                let result = connection.request("thread/loaded/list", json!({})).await?;
-                let ids = result["data"]
-                    .as_array()
-                    .ok_or(RpcError::Disconnected)?
-                    .iter()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect();
-                Ok::<_, RpcError>((connection.generation(), ids))
-            })
-            .await;
+        if writers || sample.at.is_none_or(|at| at.elapsed() >= TTL) {
             sample.ids.clear();
-            sample.generation = self
-                .inner
-                .connection
-                .lock()
-                .await
-                .as_ref()
-                .filter(|connection| !connection.is_closed())
-                .map(|connection| connection.generation());
-            if let Ok(Ok((generation, ids))) = result
-                && sample.generation == Some(generation)
-            {
-                sample.ids = ids;
+            for connection in self.inner.observed_connections().await {
+                let result =
+                    tokio::time::timeout(TTL, connection.request("thread/loaded/list", json!({})))
+                        .await;
+                if let Ok(Ok(result)) = result {
+                    if let Some(ids) = result["data"].as_array() {
+                        sample
+                            .ids
+                            .extend(ids.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                    }
+                }
             }
             sample.at = Some(Instant::now());
         }

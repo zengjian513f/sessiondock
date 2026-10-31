@@ -40,6 +40,7 @@ class SubagentServer(FakeAppServer):
         self.paths = {THREAD: corpus.paths['sdk'], **{child: corpus.paths[child] for child in (CHILD, NESTED, SIBLING)}}
         self.active = {}
         self.pending_replies = {}
+        self.loaded = set()
 
     async def emit(self, thread, method, **params):
         await self.notify(method, {'threadId': thread, **params})
@@ -87,8 +88,11 @@ class SubagentServer(FakeAppServer):
             assert 'error' not in message, message
             await self.emit(thread, 'serverRequest/resolved', requestId=mid)
             await self.finish(thread, 'Child completed response ' + thread)
+        elif method == 'thread/loaded/list':
+            await reply({'data':sorted(self.loaded)})
         elif method == 'thread/resume':
             thread = params['threadId']
+            self.loaded.add(thread)
             assert thread in self.paths, params
             await reply({'thread': {'id': thread, 'status': {'type': 'active' if thread in self.active else 'idle'}, 'turns': []},
                          'model': 'fake-sol', 'reasoningEffort': 'high'})
@@ -124,6 +128,13 @@ class SubagentServer(FakeAppServer):
         asyncio.run_coroutine_threadsafe(close(), self.loop).result(timeout=5)
 
 
+def start_sdk(page):
+    page.wait_for_function('SdkView.pane && !SdkView.historyReady')
+    if page.evaluate('SdkView.readOnly'):
+        page.locator('.sdk-pane .composer-run-action').click()
+    page.wait_for_function('SdkView.connected')
+
+
 def exercise(browser, base, fake, width, theme, screenshots, label):
     print(label + ': child history, live tools, replies, steer/stop, nested switching, reload/reconnect', flush=True)
     context = browser.new_context(viewport={'width': width, 'height': 844 if width < 500 else 900}, color_scheme=theme, service_workers='block')
@@ -138,6 +149,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
         pane = page.locator('.sdk-pane')
         expect(pane.locator('.sdk-history')).to_contain_text('Child history sentinel ' + agent if agent else 'earlier synthetic answer')
+        start_sdk(page)
         expect(pane.locator("#sdk-model")).to_have_value("fake-sol")
         assert page.evaluate('CodexSdkView.agent') == agent
         return pane
@@ -158,6 +170,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(pane).not_to_contain_text('Unrelated live sentinel')
     # A reload restores exactly the child's stream and outstanding request.
     page.reload(wait_until='domcontentloaded')
+    start_sdk(page)
     expect(pane.locator('.sdk-request')).to_contain_text('Child approval')
     expect(pane.locator('.sdk-live')).to_contain_text('Child live stream ' + CHILD)
     if screenshots:

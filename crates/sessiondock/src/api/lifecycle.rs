@@ -779,8 +779,33 @@ pub async fn create(
         spec
     };
     let spec = spec.with_continuation(continuation);
+    let spec = codex_provider_socket(&state, service, &entry, spec).await?;
     let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
+}
+
+async fn codex_provider_socket(
+    state: &AppState,
+    service: &crate::lifecycle::service::LifecycleService,
+    entry: &crate::lifecycle::launcher::Entry,
+    spec: crate::lifecycle::model::LaunchSpec,
+) -> Result<crate::lifecycle::model::LaunchSpec, ApiError> {
+    if entry.source != Source::Codex || service.codex_remote_socket(entry).is_none() {
+        return Ok(spec);
+    }
+    let Some(sdk) = state
+        .codex_sdk
+        .as_ref()
+        .filter(|_| state.codex_sdk_available())
+    else {
+        return Ok(spec);
+    };
+    let id = match spec.launch() {
+        crate::lifecycle::model::Launch::Resume { sid, .. } => Some(sid.as_str()),
+        _ => None,
+    };
+    let socket = sdk.launch_socket(id).await.map_err(super::codex_sdk::rpc)?;
+    Ok(spec.with_codex_socket(socket))
 }
 
 #[derive(Deserialize)]
@@ -943,6 +968,7 @@ pub async fn takeover(
         )
     })?;
     let spec = build_spec(&entry, &cwd, Some((scope.session_id, scope.uid)))?;
+    let spec = codex_provider_socket(&state, service, &entry, spec).await?;
     let record = service
         .create(request_id.clone(), spec)
         .await

@@ -207,7 +207,7 @@ const CodexSdkView = {
 
   async loadModels(generation) {
     try {
-      const response = await fetch(appUrl(`api/codex-sdk/models?${new URLSearchParams({uid: this.uid})}`));
+      const response = await fetch(appUrl(`api/codex-sdk/models?${new URLSearchParams({uid: this.uid, ...(this.agent ? {agent: this.agent} : {})})}`));
       const data = await response.json();
       if (!this.current(generation) || !data?.ok) return;
       this.models = (data.raw?.data || []).filter(model => !model.hidden);

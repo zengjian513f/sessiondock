@@ -21,9 +21,16 @@ from sdk_ui_fixtures import start_sdk
 class ProviderServer(QueueServer):
     provider = 'openai'
     default_provider = 'openai_catalog_cache'
+    process_provider = None
 
     async def _handle(self, writer, message):
         method, params = message.get('method'), message.get('params') or {}
+        if method == 'config/read':
+            await self.send(writer, {'id':message['id'], 'result':{'config':{'model_provider':self.process_provider or self.default_provider}}})
+            return
+        if method == 'thread/loaded/list':
+            await self.send(writer, {'id':message['id'], 'result':{'data':[]}})
+            return
         if method == 'thread/read':
             assert params == {'threadId': THREAD, 'includeTurns': False}, params
             await self.send(writer, {'id': message['id'], 'result': {
@@ -31,7 +38,7 @@ class ProviderServer(QueueServer):
             return
         if method == 'thread/resume':
             provider = params.get('modelProvider', self.default_provider)
-            if self.provider and provider != self.provider:
+            if self.provider and (provider != self.provider or (self.process_provider and self.process_provider != self.provider)):
                 await self.send(writer, {'id': message['id'], 'error': {'code': -32602,
                     'message': f'This chat uses {self.provider}, but your current provider is {provider}.'}})
                 return
@@ -99,6 +106,24 @@ def main():
                                     hub.stop()
                             else:
                                 exercise(browser, base, fake, args.screenshots, 'node-' + (provider or 'unspecified'))
+            # Automatic mode: the shared process and a provider-specific process
+            # enforce different process identities. Requests cannot fix a mismatch.
+            with tempfile.TemporaryDirectory(prefix='sd-provider-pool-') as tmp:
+                root = Path(tmp); corpus = build(root)
+                env = environment(root, args.binary)
+                shared_path = root/'app-server-control/app-server-control.sock'
+                shared_path.parent.mkdir()
+                provider = 'custom-provider'
+                provider_path = root/'sd-providers'/(provider.encode().hex()+'.sock')
+                provider_path.parent.mkdir()
+                env['SESSIONDOCK_CODEX_APP_SERVER'] = ''
+                with ProviderServer(shared_path, corpus.paths['sdk'], THREAD) as shared, ProviderServer(provider_path, corpus.paths['sdk'], THREAD) as custom:
+                    shared.provider = provider; shared.process_provider = 'openai'
+                    custom.provider = provider; custom.process_provider = provider
+                    with server(corpus, args.binary, shared_path, env) as base:
+                        exercise(browser, base, custom, args.screenshots, 'automatic-provider-process')
+                        assert not shared.methods('thread/resume'), 'wrong process resumed custom history'
+                        assert not shared.methods('turn/start'), 'input reached wrong provider process'
         finally:
             browser.close()
 

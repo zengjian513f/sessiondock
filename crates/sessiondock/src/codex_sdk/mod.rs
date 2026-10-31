@@ -1,6 +1,6 @@
-//! Codex SDK mode: one JSON-RPC connection from this node to the shared Codex
-//! app-server daemon (`codex app-server --listen unix://`, the same server a
-//! default `codex` TUI starts and reuses). Contract: docs/codex-sdk.md.
+//! Codex SDK mode: JSON-RPC connections to provider-specific native listeners,
+//! reusing the shared Codex daemon when it owns the requested thread/provider.
+//! Contract: docs/codex-sdk.md.
 //!
 //! The daemon owns model context, turns and approvals; this module only
 //! multiplexes it for browsers: it resumes a thread once per connection,
@@ -16,6 +16,7 @@ mod connection;
 mod controls;
 mod live;
 mod observation;
+mod providers;
 mod queue;
 mod receipts;
 mod retention;
@@ -46,6 +47,7 @@ pub struct Endpoint {
     pub autostart_home: Option<PathBuf>,
     /// The socket was named by `SESSIONDOCK_CODEX_APP_SERVER`.
     pub explicit: bool,
+    pub provider: Option<String>,
 }
 
 /// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
@@ -133,6 +135,7 @@ impl Endpoint {
                 socket: PathBuf::from(value.strip_prefix("unix://").unwrap_or(value)),
                 autostart_home: None,
                 explicit: true,
+                provider: None,
             }),
             None => {
                 let home = codex_root?.parent()?.to_path_buf();
@@ -142,6 +145,7 @@ impl Endpoint {
                         .join("app-server-control.sock"),
                     autostart_home: Some(home),
                     explicit: false,
+                    provider: None,
                 })
             }
         }
@@ -187,9 +191,11 @@ type CreateReceipt = watch::Receiver<Option<Result<Value, RpcError>>>;
 pub(crate) struct Inner {
     endpoint: Endpoint,
     connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
+    providers: tokio::sync::Mutex<HashMap<String, Arc<Connection>>>,
+    routes: Mutex<HashMap<String, String>>,
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
     stopped: Mutex<HashSet<String>>,
-    models: Mutex<Option<(Instant, Value)>>,
+    models: Mutex<HashMap<u64, (Instant, Value)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
     retention: retention::Retention,
@@ -219,35 +225,38 @@ impl Drop for SubscriberGuard {
 impl CodexSdk {
     /// A live subscription proves this exact thread belongs to our shared
     /// daemon. A terminal joining the same socket adds a client, not a writer.
-    pub async fn shares_thread(&self, thread_id: &str, socket: &std::path::Path) -> bool {
-        if self.inner.endpoint.socket != socket {
-            return false;
+    pub async fn shares_thread(&self, thread_id: &str, _socket: &std::path::Path) -> bool {
+        self.loaded_threads().await.iter().any(|id| id == thread_id)
+    }
+
+    /// Hand a managed terminal the exact listener selected for this identity.
+    pub async fn launch_socket(&self, thread_id: Option<&str>) -> Result<PathBuf, RpcError> {
+        if self.inner.endpoint.explicit {
+            return Ok(self.inner.endpoint.socket.clone());
         }
-        let slot = self.inner.connection.lock().await;
-        let Some(connection) = slot.as_ref().filter(|connection| !connection.is_closed()) else {
-            return false;
+        let connection = match thread_id {
+            Some(id) => self.inner.thread_connection(id).await?,
+            None => self.inner.provider_connection("openai", true).await?,
         };
-        self.inner
-            .threads
-            .lock()
-            .expect("threads")
-            .get(thread_id)
-            .is_some_and(|thread| thread.loaded_on() == Some(connection.generation()))
+        Ok(connection.socket.clone())
     }
 
     /// Threads actually loaded on this bridge's current live connection.
     /// Selecting an SDK view or a failed resume is not ownership evidence.
     pub async fn loaded_threads(&self) -> Vec<String> {
-        let slot = self.inner.connection.lock().await;
-        let Some(connection) = slot.as_ref().filter(|connection| !connection.is_closed()) else {
-            return Vec::new();
-        };
+        let generations: HashSet<_> = self
+            .inner
+            .connected()
+            .await
+            .iter()
+            .map(|c| c.generation())
+            .collect();
         self.inner
             .threads
             .lock()
             .expect("threads")
             .iter()
-            .filter(|(_, thread)| thread.loaded_on() == Some(connection.generation()))
+            .filter(|(_, thread)| thread.loaded_on().is_some_and(|g| generations.contains(&g)))
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -265,9 +274,11 @@ impl CodexSdk {
                 endpoint,
                 queue,
                 connection: tokio::sync::Mutex::new(None),
+                providers: tokio::sync::Mutex::new(HashMap::new()),
+                routes: Mutex::new(HashMap::new()),
                 threads: Mutex::new(HashMap::new()),
                 stopped: Mutex::new(HashSet::new()),
-                models: Mutex::new(None),
+                models: Mutex::new(HashMap::new()),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
                 retention,
@@ -353,7 +364,7 @@ impl CodexSdk {
         let lock = self.inner.queue.lock(&id);
         let _dispatch = lock.lock().await;
         self.inner.retention.set(&id, false)?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(&id).await?;
         connection
             .request("thread/unsubscribe", json!({"threadId":id}))
             .await?;
@@ -381,7 +392,7 @@ impl CodexSdk {
         self.inner.retention.set(thread_id, false)?;
         // Stopping must not resume or parse history. The latest rollout may
         // already be in trash while the daemon still reports the thread loaded.
-        let connection = self.inner.connection_mode(false).await?;
+        let connection = self.inner.writing_connection(thread_id).await?;
         // The native empty-turn interrupt cancels the exact loaded thread's
         // startup/current work without requiring a recovered turn or history.
         let interrupted = connection
@@ -433,7 +444,7 @@ impl CodexSdk {
             }
             return Err(RpcError::NoActiveTurn);
         };
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         connection
             .request(
                 "turn/interrupt",
@@ -447,7 +458,7 @@ impl CodexSdk {
     /// result. The key must still be open on the current connection.
     pub async fn respond(&self, thread_id: &str, key: &str, result: Value) -> Result<(), RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
+        let connection = self.inner.thread_connection(thread_id).await?;
         let id = thread
             .request_id(key, connection.generation())
             .ok_or(RpcError::UnknownRequest)?;
@@ -480,23 +491,51 @@ impl CodexSdk {
             .await
     }
 
-    pub async fn models(&self) -> Result<Value, RpcError> {
-        if let Some((at, value)) = self.inner.models.lock().expect("models").clone()
+    pub async fn models(&self, thread_id: Option<&str>) -> Result<Value, RpcError> {
+        let connection = if let Some(id) = thread_id {
+            self.inner.thread_connection(id).await?
+        } else {
+            self.inner.provider_connection("openai", true).await?
+        };
+        if let Some((at, value)) = self
+            .inner
+            .models
+            .lock()
+            .expect("models")
+            .get(&connection.generation())
+            .cloned()
             && at.elapsed() < MODEL_CACHE
         {
             return Ok(value);
         }
-        let connection = self.inner.connection().await?;
         let value = connection.request("model/list", json!({})).await?;
-        *self.inner.models.lock().expect("models") = Some((Instant::now(), value.clone()));
+        let mut cache = self.inner.models.lock().expect("models");
+        cache.retain(|_, (at, _)| at.elapsed() < MODEL_CACHE);
+        cache.insert(connection.generation(), (Instant::now(), value.clone()));
         Ok(value)
     }
 }
 
 impl Inner {
-    async fn start(self: &Arc<Self>, request_id: &str, params: Value) -> Result<Value, RpcError> {
-        let connection = self.connection().await?;
+    async fn start(
+        self: &Arc<Self>,
+        request_id: &str,
+        mut params: Value,
+    ) -> Result<Value, RpcError> {
+        let provider = params["modelProvider"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .unwrap_or("openai")
+            .to_owned();
+        params["modelProvider"] = json!(provider);
+        let connection = self.provider_connection(&provider, true).await?;
         let result = connection.request("thread/start", params).await?;
+        if let Some(id) = result["thread"]["id"].as_str() {
+            self.routes
+                .lock()
+                .expect("routes")
+                .insert(id.to_owned(), provider);
+        }
         self.adopt_result(connection.generation(), result, Some(request_id))
     }
 
@@ -535,7 +574,7 @@ impl Inner {
     }
 
     async fn connection(self: &Arc<Self>) -> Result<Arc<Connection>, RpcError> {
-        self.connection_mode(true).await
+        self.provider_connection("openai", true).await
     }
 
     async fn connection_mode(
@@ -548,7 +587,7 @@ impl Inner {
         {
             return Ok(connection.clone());
         }
-        let generation = slot.as_ref().map_or(1, |old| old.generation() + 1);
+        let generation = providers::next_generation();
         let mut endpoint = self.endpoint.clone();
         if !autostart {
             endpoint.autostart_home = None;
@@ -559,7 +598,7 @@ impl Inner {
     }
 
     async fn ensure(self: &Arc<Self>, thread_id: &str) -> Result<Arc<LiveThread>, RpcError> {
-        let connection = self.connection().await?;
+        let connection = self.thread_connection(thread_id).await?;
         self.ensure_on(&connection, thread_id).await
     }
 
@@ -710,7 +749,7 @@ impl Inner {
 
     /// A notification from the daemon: route by `threadId`, apply to the
     /// live state and fan out under the same lock.
-    pub(crate) fn notify(&self, method: &str, params: Value) {
+    pub(crate) fn notify(&self, generation: u64, method: &str, params: Value) {
         let Some(thread_id) = thread_of(&params) else {
             // Account-wide limit changes reach every attached page.
             if method == "account/rateLimits/updated" {
@@ -727,6 +766,16 @@ impl Inner {
             }
             return;
         };
+        if self
+            .threads
+            .lock()
+            .expect("threads")
+            .get(&thread_id)
+            .and_then(|t| t.loaded_on())
+            .is_some_and(|g| g != generation)
+        {
+            return;
+        }
         if matches!(
             method,
             "thread/closed" | "thread/archived" | "thread/deleted"
@@ -804,7 +853,7 @@ impl Inner {
             let mut threads = self.threads.lock().expect("threads");
             let gone: Vec<String> = threads
                 .iter()
-                .filter(|(_, thread)| thread.loaded_on().is_none_or(|g| g <= generation))
+                .filter(|(_, thread)| thread.loaded_on() == Some(generation))
                 .map(|(id, _)| id.clone())
                 .collect();
             gone.into_iter()
