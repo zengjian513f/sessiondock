@@ -282,9 +282,14 @@ const NativeSdkView = {
       const id = String(item.id); ids.add(id);
       const old = this.nodes.get(id);
       if (old?._updateMessage && old.dataset.role === item.role) { old._updateMessage(item); continue; }
+      // Every snapshot replays the whole item list. Rebuilding an unchanged
+      // tool would drop its async syntax colours until the worker repaints,
+      // so the live tail flickered between colour and plain text.
+      const shape = JSON.stringify(item);
+      if (old && old._sdkItemShape === shape) { old._sdkToolMessage = item; continue; }
       const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
-      node._sdkToolMessage = item;
+      node._sdkToolMessage = item; node._sdkItemShape = shape;
       if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
         // Keep partial stdout rendered, but never label a partial rawOutput as
         // completed just because it already contains a default exit_code:0.
@@ -523,11 +528,13 @@ function nativeToolPresentation(item, summarize) {
     ? input[key] : '';
   const kind = String(item.kind || '').toLowerCase();
   const lname = name.toLowerCase();
-  const presentation = {name, summary: '', text: typeof input === 'string' ? input
-    : input != null ? JSON.stringify(input, null, 2) : ''};
+  const presentation = {name, summary: typeof item.summary === 'string' ? item.summary : '',
+    text: typeof input === 'string' ? input
+      : input != null ? JSON.stringify(input, null, 2)
+      : typeof item.text === 'string' ? item.text : ''};
   const path = field('path') || field('file_path') || field('filename');
   if (kind === 'execute' || /command|bash|shell|execute/.test(lname)) {
-    const command = field('command') || field('cmd') || presentation.text;
+    const command = field('command') || field('cmd') || (typeof item.command === 'string' ? item.command : '') || presentation.text;
     presentation.summary = `$ ${command}`;
     presentation.text = command;
   } else if (kind === 'read' || /(^|[_\s])read/.test(lname)) {

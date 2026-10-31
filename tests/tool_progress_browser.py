@@ -22,7 +22,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         page.set_default_timeout(10000)
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
-        output = '\n'.join(f'输出第 {i} 行：检查工具分组与执行结果。' for i in range(18))
+        output = '# 工具输出报告\n' + '\n'.join(f'输出第 {i} 行：检查工具分组与执行结果。' for i in range(1, 18))
         commands = [
             "cat /tmp/tool-push.log; git status --short; rg -n 'lock|flock' deploy/deploy.py | head -15",
             'timeout 420 python3 deploy/deploy.py deploy --web-only --targets node-a,node-b,hub --test none',
@@ -36,6 +36,9 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
                           'text': commands[i],
                           'status': 'in_progress' if i == 5 else 'completed',
                           'result': {'role': 'tool_result', 'text': output}})
+        if source != 'codex':
+            items[-1].update(name='read_file', summary='读取 /tmp/report.md',
+                             input={'path': '/tmp/report.md'}, text='{"path":"/tmp/report.md"}')
         history = copy.deepcopy(items) if mode == 'chat' else []
         raw = {'items': items, 'running': True, 'requests': [], 'input_queue': [],
                'model': 'synthetic-model', 'capabilities': {'interrupt': True}}
@@ -93,6 +96,32 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
                 assert handle.evaluate('(node, selector) => node.isConnected && '
                     'document.querySelector(selector) === node', scope + ' .grp' + selector), \
                     'stream update replaced the group or an unchanged highlighted summary'
+
+        if mode == 'sdk' and source != 'codex':
+            tail = group.locator('.tool-active-tail .tool-out')
+            expect(tail).to_have_attribute('data-syntax-done', '1')
+            expect(tail.locator('.hljs-section')).to_have_count(1)
+            painted = tail.element_handle()
+            for tick in range(3):
+                raw['test_tick'] = tick
+                events.publish()
+                page.wait_for_function('tick => SdkView.raw.test_tick === tick', arg=tick)
+                assert painted.evaluate("node => node.isConnected && node.querySelector('.hljs-section') !== null"), \
+                    'unchanged snapshot replaced the highlighted tool output'
+            tail.locator('..').get_by_text('展开全文', exact=False).click()
+            expect(tail).to_contain_text('输出第 17 行')
+            expect(tail).to_have_attribute('data-syntax-done', '1')
+            expect(tail.locator('.hljs-section')).to_have_count(1)
+            raw['test_tick'] = 3
+            events.publish()
+            page.wait_for_function('SdkView.raw.test_tick === 3')
+            assert painted.evaluate("node => node.isConnected && node.querySelector('.hljs-section') !== null")
+            expect(tail).to_contain_text('输出第 17 行')
+            tail.locator('..').get_by_text('收起', exact=True).click()
+            expect(tail).to_have_attribute('data-syntax-done', '1')
+            expect(tail.locator('.hljs-section')).to_have_count(1)
+            painted.dispose()
+            capture('stable-highlight')
 
         # Completion must leave the last call outside the collapsed summary.
         if source == 'codex' and mode == 'sdk':
