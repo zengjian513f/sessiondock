@@ -693,6 +693,8 @@ pub async fn proxy(
                 | "/api/codex-sdk/open"
                 | "/api/codex-sdk/create"
                 | "/api/codex-sdk/models"
+                // Reports create and name a native SDK session before replying.
+                | "/api/bug-report"
         )
     {
         super::client::BULK_WRITE_TIMEOUT

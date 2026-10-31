@@ -34,6 +34,11 @@ failed without submitting a turn. Successful naming emits
 `bug_report.worker_named` before submission. Node and Hub coverage, including
 title persistence after reload, lives in `tests/feature_report_browser.py`.
 
+DELTA（BUG-20261031-145343-8da58e）：Hub 报告提交沿用原生 SDK 创建接口的
+50 秒等待窗口，覆盖创建、原生改名和提交；不再使用普通代理的 10 秒窗口，
+避免节点已经创建会话而页面收到 502。上述浏览器套件通过延迟 Agy 原生创建
+超过 10 秒，验证真实 Hub 转发、成功回执、打开会话及单次提交。
+
 ## Configuration
 
 | Setting | Meaning |

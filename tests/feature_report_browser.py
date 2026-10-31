@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
@@ -49,9 +50,19 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
             replays.extend([first.json(), second.json()])
             route.fulfill(response=second)
         page.route('**/api/bug-report', legacy_fields, times=1)
+    # Exercise Hub -> node past the ordinary 10 s proxy deadline while
+    # native creation is in flight (BUG-20261031-145343-8da58e).
+    slow_create = source == 'agy' and label == 'hub'
+    if slow_create:
+        (root/'init-delay').write_text('12')
+    started = time.monotonic()
     with page.expect_response(lambda r: r.url.endswith('/api/bug-report') and r.request.method=='POST') as response:
         page.locator('#bug-report-go').click()
     reply = response.value.json()
+    elapsed = time.monotonic() - started
+    if slow_create:
+        assert elapsed >= 12, (elapsed, reply)
+
     if reject:
         assert response.value.status == 500, reply
         assert 'Synthetic report rename rejected' in reply['error'], reply
@@ -80,7 +91,6 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     page.wait_for_function('SdkView.connected')
     # Wait for the node's durable SDK receipt, not a fabricated browser success.
     manifest=root/'reports'/reply['report_id']/'manifest.json'
-    import time
     deadline=time.monotonic()+20
     while time.monotonic()<deadline:
         data=json.loads(manifest.read_text())

@@ -117,6 +117,11 @@ control=ThreadingHTTPServer(('127.0.0.1',0),ControlHandler)
 threading.Thread(target=control.serve_forever,daemon=True).start()
 if option('--log-file'):
     Path(option('--log-file')).write_text(f'Starting language server process with pid {os.getpid()}\nLanguage server listening on random port at {control.server_port} for HTTP\n')
+delay_file=root/'init-delay'
+if delay_file.exists() and not option('--conversation'):
+    delay=float(delay_file.read_text())
+    delay_file.unlink()
+    threading.Event().wait(delay)
 init_sid='a7600000-0000-4000-8000-999999999999' if (root/'wrong-sid').exists() else sid
 init=dict(cwd=os.getcwd(),permission_mode='request-review',tools=['view_file','run_command'])
 model=option('--model') or ((root/'init-model').read_text() if (root/'init-model').exists() else None)
