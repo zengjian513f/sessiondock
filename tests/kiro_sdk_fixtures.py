@@ -525,6 +525,27 @@ class FakeKiroAcp:
             self.reply(message, {"stopReason": "cancelled"})
             return
 
+        if text.startswith("stream-bubbles"):
+            # A long agentic turn: new tool and message bubbles keep arriving
+            # while the projection (and so the history read model) is rewritten.
+            for step in range(int(os.environ.get("KIRO_SDK_FAKE_BUBBLES", "10"))):
+                if self.cancel.wait(0.35):
+                    break
+                tc_id = f"tc-bubble-{step}"
+                self.update("tool_call", toolCallId=tc_id, title=f"Run step {step}", kind="execute",
+                            status="in_progress", rawInput={"command": f"echo step-{step}"})
+                self.cancel.wait(float(os.environ.get("KIRO_SDK_FAKE_TOOL_SECONDS", "0")))
+                self.update("tool_call_update", toolCallId=tc_id, status="completed",
+                            rawOutput={"output": "\n".join(f"step-{step} line {n}" for n in range(12)), "exitCode": 0})
+                if step % 3 == 2:
+                    continue  # consecutive tool calls, as agents usually issue them
+                self.cancel.wait(float(os.environ.get("KIRO_SDK_FAKE_TOOL_SECONDS", "0")))
+                self.update("agent_message_chunk", content={"type": "text",
+                            "text": f"\n\nStep {step} finished. " + "Detailed progress text. " * 20})
+            self.append_v3_message("assistant", "stream-bubbles done")
+            self.reply(message, {"stopReason": "end_turn"})
+            return
+
         if text == "permission-test":
             tc_id = "tc-perm-1"
             self.update(

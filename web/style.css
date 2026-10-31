@@ -1248,6 +1248,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   padding: 14px 18px 24px; width: 100%;
 }
+/* 跟随进行中的回合时补上视口下方变矮的高度（app.js holdFollowSpace）。 */
+.msgs::after { content: ""; display: block; height: var(--follow-space, 0px); }
 .history-gap {
   display: flex; align-items: center; gap: 10px; width: 100%; margin: 10px 0 16px;
   color: var(--muted);

@@ -6342,13 +6342,75 @@ function observeMessageLayout(box, onLayout = () => {}) {
   }
 }
 
+// ---- 跟随中的底部留白 ----
+// 回合进行中，新气泡会让视口下方的内容变矮：末尾独立露出的工具并入摘要、
+// 运行中的输出被收起。贴底跟随时这会把整屏内容往下拽，紧接着新内容又把它
+// 推上去，看起来就是上下跳。视口顶端的内容没动时，用 .msgs::after 的留白
+// 补上变矮的高度，后续增长先吃掉留白；回合结束、离开底部或上方结构变化时释放。
+const FOLLOW_SPACE_MAX = .6;          // 留白最多占视口高度的比例
+
+function followAnchorAt(box) {
+  const r = box.getBoundingClientRect();
+  for (const y of [8, 40, 80]) for (const x of [40, r.width / 2, r.width - 40]) {
+    const hit = document.elementFromPoint(r.left + x, r.top + y);
+    if (!hit || hit === box || !box.contains(hit) || hit.matches('.sdk-history, .sdk-live, .sdk-queue')) continue;
+    return hit.closest('.msg, [data-sdk-item], .turn-process, .message-time-divider') || hit;
+  }
+  return null;
+}
+
+function followAnchorOffset(box, node) {
+  return node.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+}
+
+function setFollowSpace(box, scroll, space) {
+  if (space === (scroll.space || 0)) return;
+  scroll.space = space;
+  if (space) box.style.setProperty('--follow-space', `${space}px`);
+  else box.style.removeProperty('--follow-space');
+}
+
+/** 在贴底之前调用：按上一次贴底后的内容高度和视口顶端锚点决定留白。 */
+function holdFollowSpace(box) {
+  const scroll = messageScrollState(box);
+  const space = scroll.space || 0;
+  const natural = box.scrollHeight - space;
+  const live = scroll.stick && !!box._followLive?.();
+  // 刚回到底部时没有可比的基线：保留现有留白，从这里重新记。
+  let next = live ? space : 0;
+  if (live && scroll.natural != null) {
+    const change = natural - scroll.natural;
+    if (change >= 0) next = Math.max(0, space - change);
+    else {
+      const anchor = scroll.anchor;
+      const still = anchor?.isConnected && box.contains(anchor)
+        && Math.abs(followAnchorOffset(box, anchor) - scroll.anchorOffset) < 1;
+      next = still ? Math.min(space - change, Math.round(box.clientHeight * FOLLOW_SPACE_MAX)) : 0;
+    }
+  }
+  setFollowSpace(box, scroll, next);
+  scroll.natural = live ? natural : null;
+}
+
+function recordFollowAnchor(box) {
+  const scroll = messageScrollState(box);
+  scroll.anchor = scroll.natural == null ? null : followAnchorAt(box);
+  scroll.anchorOffset = scroll.anchor ? followAnchorOffset(box, scroll.anchor) : 0;
+}
+
 /** 布局要好几帧才稳: 窗口变窄会让消息重新折行, scrollHeight 一路涨,
  *  只修一次会差一截。补几帧, 直到不再变化。 */
 
 function settle(box) {
   const scroll = messageScrollState(box);
-  if (!scroll.stick) return;
+  if (!scroll.stick) {
+    scroll.natural = null;
+    if (!box._followLive?.()) setFollowSpace(box, scroll, 0);   // 回合结束后不留空白
+    return;
+  }
+  holdFollowSpace(box);
   stickBottom(box);
+  recordFollowAnchor(box);
   if (scroll.settleTick) return;                   // 已经有补偿在跑, 别叠加
   let n = 0, last = -1;
   const tick = () => {
@@ -6356,8 +6418,10 @@ function settle(box) {
     // 布局稳定(高度不再变)就收手 —— 一直空转的话 scroll.selfScroll 长期为真,
     // 用户主动往上翻会被当成程序自己滚的而忽略掉
     if (!scroll.stick || n++ > 10 || !box.isConnected || box.scrollHeight === last) return;
+    holdFollowSpace(box);
     last = box.scrollHeight;
     stickBottom(box);
+    recordFollowAnchor(box);
     scroll.settleTick = requestAnimationFrame(tick);
   };
   scroll.settleTick = requestAnimationFrame(tick);
@@ -6686,6 +6750,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   renderTimelinePinNotice(meta);
   const box = el('div', 'msgs');
   box.id = 'msgs';
+  box._followLive = () => cache.get(viewKey(uid, agent))?.activity?.state === 'working';
   d.appendChild(box);
   auditDetailRendered('render', {messages: msgs.length, seq});
   S.cur = -1; S.autoOpen = 0; S.markCapped = false;

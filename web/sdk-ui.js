@@ -82,6 +82,8 @@ const SdkUI = {
         </div>
       </div></div>`;
     view.box = pane.querySelector('.sdk-msgs');
+    // Same notion of an active turn as the send button (paintSend).
+    view.box._followLive = () => !!(view.uid?.startsWith('codex:') ? view.turn : view.running);
     watchBottom(view.box);
     view.history = pane.querySelector('.sdk-history');
     if (historyReady) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
