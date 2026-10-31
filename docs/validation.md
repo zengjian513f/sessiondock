@@ -631,4 +631,6 @@ Agy 原生子代理归属：`python3 tests/agy_nesting_browser.py --binary targe
 
 Kiro 原生引导：[kiro_steer_browser.py](../tests/kiro_steer_browser.py) 覆盖节点与 Hub 的普通排队、Ctrl+Enter／点击引导及失败草稿保留。
 
+Kiro 停止：[kiro_stop_browser.py](../tests/kiro_stop_browser.py) 在约 1 MB/s 限速下，对载入 3 MB 历史的会话流式输出时点击停止，节点与 Hub 均须 5 秒内收起停止键并显示已中断，实时帧小于 1 MB，历史回合各显示一次。
+
 Codex 直接引导：[codex_sdk_steer_browser.py](../tests/codex_sdk_steer_browser.py) 覆盖节点／Hub、键盘／点击入口、原生拒绝、回合结束竞争、草稿与丢回执去重。

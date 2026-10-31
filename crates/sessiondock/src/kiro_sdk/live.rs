@@ -1628,14 +1628,26 @@ impl LiveState {
     /// (`pages::WINDOW_TAIL_EVENTS` = 200 events, i.e. far more than this many
     /// turns) so that first live user turn is always present in `/api/messages`
     /// and the seam never gaps.
+    ///
+    /// Older turns are also dropped once the window passes `WIRE_BYTES`. A
+    /// loaded tool-heavy session can hold megabytes in a few turns, and every
+    /// frame carried all of them: the turn-end frame then queued behind stale
+    /// frames on the Hub link and the stop button stayed up. The newest user
+    /// turn is always sent whole; this bounds transfer, never content.
     fn windowed_items(&self) -> &[Value] {
         const MAX_TURNS: usize = 40;
+        const WIRE_BYTES: usize = 256 * 1024;
         // Walk backward counting user-turn starts; stop once we've included
-        // MAX_TURNS of them (or reach the beginning).
+        // MAX_TURNS of them, the byte budget is spent, or reach the beginning.
         let mut turns = 0usize;
+        let mut bytes = 0usize;
         let mut start = self.items.len();
         for (i, item) in self.items.iter().enumerate().rev() {
+            bytes += serialized_len(item);
             if item["role"].as_str() == Some("user") {
+                if turns > 0 && bytes > WIRE_BYTES {
+                    break;
+                }
                 turns += 1;
                 start = i;
                 if turns >= MAX_TURNS {
@@ -1760,6 +1772,23 @@ impl LiveState {
             "raw": raw,
         })
     }
+}
+
+/// JSON length of one wire item, counted without building the string.
+fn serialized_len(item: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    let _ = serde_json::to_writer(&mut count, item);
+    count.0
 }
 
 fn extract_question_options(obj: &Value) -> Vec<Value> {

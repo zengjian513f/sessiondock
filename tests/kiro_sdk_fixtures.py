@@ -516,6 +516,15 @@ class FakeKiroAcp:
             self.reply(message, {"stopReason": "cancelled"})
             return
 
+        if text == "stream-until-cancel":
+            # Real reasoning arrives as many small stdout frames until cancel.
+            for _ in range(1200):
+                if self.cancel.wait(0.05):
+                    break
+                self.update("agent_thought_chunk", content={"type": "text", "text": "streaming thought "})
+            self.reply(message, {"stopReason": "cancelled"})
+            return
+
         if text == "permission-test":
             tc_id = "tc-perm-1"
             self.update(

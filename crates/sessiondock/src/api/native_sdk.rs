@@ -144,6 +144,16 @@ async fn execute(
             }
         };
         json!({"source":body["source"],"cwd":cwd})
+    } else if method == "interrupt"
+        && body["agent"].as_str().unwrap_or_default().is_empty()
+        && let Some(entry) = body["uid"]
+            .as_str()
+            .and_then(|uid| state.native_sdks.kiro_identity(uid))
+    {
+        // Interrupt needs only the official identity. A streaming Kiro turn
+        // rewrites its history projection on every batch, so reading that
+        // projection here lost the race (503) and the stop click did nothing.
+        json!({"uid":entry.uid,"session_id":entry.sid,"cwd":entry.cwd,"source":"kiro","agent":""})
     } else {
         let uid = body["uid"].as_str().unwrap_or_default();
         let agent = body["agent"].as_str().unwrap_or_default();
