@@ -532,7 +532,6 @@ async function takeover(uid, btn, keepConversation = false, confirmed = false) {
   };
   setBtn('接管中…', true);
   try {
-    if (!await CodexProvider.confirm(uid)) return;
     // Takeover is an idempotent, server-resolved `resume` receipt; the
     // request ID keeps a retried click from starting a second CLI.
     const request_id = requestId();

@@ -282,11 +282,6 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/create", post(codex_sdk::create))
         .route("/codex-sdk/discard", post(codex_sdk::discard))
         .route("/codex-sdk/open", post(codex_sdk::open))
-        .route("/codex-sdk/provider", post(codex_sdk::provider))
-        .route(
-            "/codex-sdk/migrate-provider",
-            post(codex_sdk::migrate_provider),
-        )
         .route("/codex-sdk/events", get(codex_sdk::events))
         .route("/codex-sdk/turn", post(codex_sdk::turn))
         .route("/codex-sdk/queue", post(codex_sdk::queue_action))

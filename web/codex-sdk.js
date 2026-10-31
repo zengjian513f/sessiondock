@@ -4,35 +4,6 @@
 // 已落盘的历史仍由普通读模型给出，气泡与消息模式完全相同；进行中的回合、
 // 审批和提问来自节点与共享 Codex app-server 的连接（/api/codex-sdk/*）。
 // 这里只负责呈现与交互，不解析终端画面，也不另存历史。
-// A provider change requires an explicit answer for this exact session.
-const CodexProvider = {
-  pending: new Map(),
-  async confirm(uid, agent = null) {
-    if (!CodexSdkView.available(uid, agent)) return true;
-    const key = JSON.stringify([uid, agent]);
-    if (this.pending.has(key)) return this.pending.get(key);
-    const attempt = (async () => {
-      const request = (path, values = {}) => SdkUI.methods.request.call({agent}, path, {uid, ...values});
-      const check = await request('api/codex-sdk/provider');
-      if (!check.needs_confirmation) return true;
-      const accepted = await appConfirm(`该会话的 provider 是「${check.provider}」，与当前使用的 openai 不一致。\n\n是否将此会话改为 openai 后启动？`, {ok:'是，修改并启动', cancel:'否，不启动'});
-      if (!accepted) {
-        if (SdkView.uid === uid && SdkView.agent === agent) {
-          SdkView.awaitingRunning = false;
-          SdkView.readOnly = true;
-          SdkView.openFailed = false;
-          SdkView.setNotice('未运行', 'idle');
-        }
-        return false;
-      }
-      await request('api/codex-sdk/migrate-provider', {source_provider:check.provider, confirmed:true});
-      return true;
-    })();
-    this.pending.set(key, attempt);
-    try { return await attempt; } finally { this.pending.delete(key); }
-  },
-};
-
 const CodexSdkView = {
   ...SdkUI.methods,
   uid: '', agent: null, pane: null, es: null, generation: 0,
@@ -161,9 +132,9 @@ const CodexSdkView = {
     this.openRead = read;
     this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
     const uid = this.uid;
+    // Account reads do not depend on resuming this thread or recovering its turn.
+    this.loadLimits(generation);
     try {
-      if (!await CodexProvider.confirm(uid, this.agent) || !this.current(generation)) return;
-      this.loadLimits(generation);
       const opened = await this.request('api/codex-sdk/open', {uid}, read.signal);
       if (!this.current(generation)) return;
       // Stopping the conflicting CLI may mark this failed SDK pane stopped.

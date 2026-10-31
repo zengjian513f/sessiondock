@@ -7677,7 +7677,6 @@ async function runComposerSession(uid, agent, mode, takeoverExternal = false) {
     ConsoleUI.busy.add(uid);
     refreshSessionRunControls();
     try {
-      if (!await CodexProvider.confirm(uid, agent)) return;
       const target = mode === 'sdk' ? 'SDK' : 'CLI';
       if (!await appConfirm(`接管会停止当前外部 CLI，并由 SessionDock 以 ${target} 模式重新启动此会话。\n\n外部 CLI 未保存的输入和正在执行的任务会被中断；已保存的历史和网页草稿保留。\n\n是否继续？`)) return;
       if (S.sel !== uid || S.agent !== agent) return;
@@ -7719,7 +7718,6 @@ async function toggleSessionRun(row, button = null, intent = null, mode = null, 
       else await stopSession(row, button, mode);
       return;
     }
-    if (!await CodexProvider.confirm(row.uid, row.agent_id || null)) return;
     const other = mode === 'sdk' ? 'cli' : 'sdk';
     const replacing = sessionModesExclusive(row) && sessionModeActive(row, other);
     // External CLI ownership also always requires explicit takeover consent.

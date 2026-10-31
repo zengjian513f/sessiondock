@@ -33,7 +33,6 @@ impl Endpoint {
             autostart_home: Some(home.clone()),
             explicit: false,
             provider: Some(provider.to_owned()),
-            native_home: Some(home.clone()),
         })
     }
 }
@@ -51,9 +50,6 @@ impl Inner {
         provider: &str,
         autostart: bool,
     ) -> Result<Arc<Connection>, RpcError> {
-        if provider != "openai" {
-            return Err(RpcError::ProviderMismatch(provider.to_owned()));
-        }
         // Explicit integrations own their listener lifecycle; never silently
         // launch another process/home behind an operator-supplied endpoint.
         if self.endpoint.explicit {
@@ -174,7 +170,6 @@ impl Inner {
                         autostart_home: None,
                         explicit: false,
                         provider: Some(provider.clone()),
-                        native_home: Some(home.clone()),
                     };
                     if let Ok(c) =
                         Connection::open(self.clone(), &endpoint, next_generation()).await
