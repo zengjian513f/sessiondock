@@ -234,6 +234,8 @@ DELTA（2026-10-08）：服务启动后及每隔 3 小时重新统计，关闭�
 
 行菜单（`#item-menu`，`openItemMenu`）按固定顺序分三段：复制会话标识、多选；分组、附属到…、解除附属、移动/复制整组…、隐藏父会话；停止会话、删除会话。段间使用现有边框色的分隔线。不可用项保持可聚焦并带 `aria-disabled` 与原因，点击不发请求。复制标识成功后静默完成，不显示 toast，也不覆盖已有停止结果；失败仍显示错误。复制标识：[`tests/session_identity_browser.py`](../tests/session_identity_browser.py)。
 
+DELTA（BUG-20261031-074340-d55bcb）：第三段首项「停止会话树」只在有挂载子会话（`nest_parent` 附属，不含子代理）的行显示；按需模式收起的分支按 `child_count - agents` 判断。点击时读完整目录与运行状态，范围是此会话及全部挂载下级，不受筛选与折叠影响，复用多选停止的并发、确认（全部空闲时不确认）和复查规则；成功不提示，失败或未确认用「知道了」框列出原因，树中没有运行会话时说明并不发请求。分层或平铺下整树都没在运行时项目带原因置灰；停止或删除进行中也置灰。[`tests/session_tree_stop_browser.py`](../tests/session_tree_stop_browser.py)。
+
 ### 未读
 
 未选中的会话用未读摘要，不拉已缓存的消息正文。`POST api/sessions/unread`（Hub 为 `api/nodes/{id}/api/sessions/unread`），`fetchUnreadSummary` / `flushUnreadBatch`。只计代理产生的新内容。存 `unread`：`uid → {count, tmux}`，计数为 0 的项不写回。打开会话 `clearUnread`。

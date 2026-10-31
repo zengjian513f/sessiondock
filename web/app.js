@@ -2479,6 +2479,7 @@ function paintLive() {
   paintTreeDeleteAvailability($('#a-delete-tree'), selected);
   if (menuUid) {
     paintItemDeleteAction(sidebarSessions().find(row => row.uid === menuUid));
+    paintTreeStopAvailability($('#item-menu [data-act="stop-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
     paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
     paintTreeDeleteAvailability($('#item-menu [data-act="delete-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
   }
@@ -3842,6 +3843,73 @@ async function stopSessionTargets(targets, onProgress = () => {}) {
   }
 }
 
+/** 挂载子会话指附属关系（nest_parent）下的会话，不含会话内的子代理。
+ *  按需模式收起的分支没有子行：child_count 含子代理数（agents），扣掉后才是挂载数。 */
+function sessionHasMountedChildren(row) {
+  if (!row?.uid || row.pending || row.agent_id) return false;
+  if (nestDescendantUids(row.uid).size) return true;
+  return sidebarLazy() && (row.child_count || 0) - (row.agents || 0) > 0;
+}
+
+function treeStopUnavailable(row) {
+  if (!SessionDockCapabilities.allows('live')) return '运行状态未知，不能停止会话树。';
+  if (sessionStopBusy || sessionDeleteBusy) return '正在停止或删除会话，请稍候。';
+  // 按需模式可能有未加载的分支，点击时再读完整目录判断。
+  if (row && !sidebarLazy() && ![row.uid, ...nestDescendantUids(row.uid)].some(sessionStoppable))
+    return '会话树中没有运行中的会话。';
+  return '';
+}
+
+function paintTreeStopAvailability(button, row) {
+  if (!button) return;
+  button.hidden = !sessionHasMountedChildren(row);
+  setControlUnavailable(button, button.hidden ? '' : treeStopUnavailable(row));
+}
+
+/** 停止前读完整目录与运行状态：范围是此会话及所有挂载的下级会话，不受筛选和按需折叠影响。 */
+async function sessionTreeStopTargets(uid) {
+  const [response, live] = await Promise.all([
+    fetch(appUrl('api/sessions' + (HUB_MODE ? '?online_only=1' : '')), {signal: AbortSignal.timeout(15000)}),
+    refreshLive(true, true),
+  ]);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
+  applyNodeState(data, 'sessions');
+  if (!live || live.known === false) throw new Error('运行状态未知');
+  const rows = data.sessions.filter(row => !row.agent_id);
+  const byUid = new Map(rows.map(row => [row.uid, row]));
+  const listed = rows.filter(row => !row.pending_delete && !hiddenForkParent(row)
+    && !(row.continued_in && byUid.has(row.continued_in)));
+  const root = byUid.get(uid);
+  if (!root) throw new Error('会话已不在列表中');
+  const descendants = nestDescendantUids(uid, listed, rows);
+  return {root, mounted: descendants.size, targets: [root, ...listed.filter(row => descendants.has(row.uid))]
+    .filter(row => sessionStoppable(row.uid) && !sessionStopUnavailable(row))};
+}
+
+async function stopSessionTree(uid) {
+  if (sessionStopBusy || sessionDeleteBusy) return;
+  let tree;
+  try {
+    tree = await sessionTreeStopTargets(uid);
+  } catch (error) {
+    await appAlert(`停止会话树失败：${error.message || error}`);
+    return;
+  }
+  const {root, mounted, targets} = tree;
+  if (!mounted) { await appAlert(`「${root.title}」当前没有挂载的子会话。`); return; }
+  if (!targets.length) { await appAlert(`「${root.title}」及其 ${mounted} 个挂载子会话都没有在运行。`); return; }
+  // 与多选停止相同：全部停在输入框（空闲）时直接停；有在轮转、等回答或状态未知的才确认。
+  if (!targets.every(s => sessionTurn(s.uid) === 'idle')
+      && !await appConfirm(`停止会话树「${root.title}」?\n\n将停止此会话及其 ${mounted} 个挂载子会话中运行中的 ${targets.length} 个会话。会话记录和草稿会保留。`)) return;
+  let last = null;
+  await stopSessionTargets(targets, progress => { last = progress; });
+  if (last?.details.length) {
+    await appAlert(`停止会话树未全部确认\n\n已停止 ${last.stopped}/${last.total}，失败 ${last.failed}，未确认 ${last.uncertain}\n\n${last.details.join('\n')}`);
+  }
+}
+
 $('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPicking(false);
 $('#side-pick-all').onclick = pickAllVisible;
 $('#side-pick-delete').onclick = deletePickedSessions;
@@ -4091,6 +4159,7 @@ function openItemMenu(uid, x, y) {
   }
   paintItemDeleteAction(row);
   paintSessionRunMenu(row);
+  paintTreeStopAvailability(menu.querySelector('[data-act="stop-tree"]'), row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   placeFixedMenu(menu, x, y);
@@ -4244,6 +4313,7 @@ $('#item-menu').onclick = async e => {
     }
     return;
   }
+  if (button.dataset.act === 'stop-tree') { await stopSessionTree(uid); return; }
   if (button.dataset.act === 'delete-tree') { await deleteSessionTree(uid); return; }
   if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
@@ -4617,10 +4687,10 @@ function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
   return null;
 }
 
-function nestEdges(list) {
+function nestEdges(list, all = S.sessions) {
   const children = new Map(), nested = new Set();
   const byKey = new Map(list.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
-  const allByKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const allByKey = new Map(all.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
   const parentOf = new Map();
   for (const s of list) {
     const spec = nestSpecParent(s);
@@ -4649,8 +4719,8 @@ function nestTree(list) {
   return nestEdges(list);
 }
 
-function nestDescendantUids(uid, list = sidebarSessions()) {
-  const {children} = nestEdges(list);
+function nestDescendantUids(uid, list = sidebarSessions(), all = S.sessions) {
+  const {children} = nestEdges(list, all);
   const out = new Set();
   const walk = id => {
     for (const child of children.get(id) || []) {
