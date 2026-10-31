@@ -1,4 +1,4 @@
-"""SDK-only sources use the explicit footer start, never editor clicks."""
+"""Native SDK footer start and failed-open retry, never editor clicks."""
 import argparse
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,7 +16,7 @@ from session_start_fixtures import choose_mode
 
 @contextmanager
 def sdk_only(source, root, binary):
-    if source == 'kiro':
+    if source != 'codebuddy':
         with provider(source, root, binary) as data: yield data
     else:
         extra = node_env(root, free_port(), '127.0.0.0/8')
@@ -47,12 +47,20 @@ def exercise(browser, base, source, shots, label):
         editor.click();editor.fill('启动按钮保留草稿，不自动发送');editor.click()
         assert not starts,starts
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-idle.png'))
+        page.route('**/api/native-sdk/open', lambda route: route.fulfill(
+            status=503, json={'error':'Synthetic startup failure'}), times=1)
+        action.click()
+        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('无法打开')
+        expect(action).to_be_visible()
+        expect(page.locator('#sdk-send')).to_be_disabled()
+        page.wait_for_function('!ConsoleUI.busy.has(S.sel)')
+        page.screenshot(path=str(shots/f'{label}-{source}-{width}-failed.png'))
         action.click()
         page.wait_for_function('SdkView.connected && !ConsoleUI.busy.has(S.sel)')
         expect(editor).to_have_value('启动按钮保留草稿，不自动发送')
         expect(editor).to_be_focused();expect(action).to_be_hidden()
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed','true')
-        assert len(starts)==1 and starts[0].endswith('/api/native-sdk/open'),starts
+        assert len(starts)==2 and starts[0].endswith('/api/native-sdk/open'),starts
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-started.png'))
         assert not errors,errors
         result=page.request.post(base+'/api/native-sdk/stop',data={'uid':uid})
@@ -64,11 +72,12 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--screenshots',type=Path,default=Path(tempfile.gettempdir())/'sessiondock-sdk-footer-start')
+    parser.add_argument('--sources',default='kiro,codebuddy')
     args=parser.parse_args();args.screenshots.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-sdk-footer-') as tmp, sync_playwright() as pw:
         browser=pw.chromium.launch(headless=True)
         try:
-            for source in ('kiro','codebuddy'):
+            for source in args.sources.split(','):
                 root=Path(tmp)/source;root.mkdir()
                 with sdk_only(source,root,args.binary) as (base,peer,extra):
                     exercise(browser,base,source,args.screenshots,'node')
@@ -79,6 +88,6 @@ def main():
                     try:exercise(browser,f'http://127.0.0.1:{hub.port}',source,args.screenshots,'hub')
                     finally:hub.stop()
         finally:browser.close()
-    print('PASS Kiro/CodeBuddy explicit SDK footer: node/Hub, wide/light, narrow/dark, CLI preference ignored, draft retained')
+    print(f'PASS {args.sources} SDK footer: node/Hub, wide/light, narrow/dark, failed-open retry, draft retained')
 
 if __name__=='__main__':main()

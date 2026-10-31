@@ -265,7 +265,9 @@ const NativeSdkView = {
     if (model !== this.nativeModel || effort !== this.nativeEffort || observedModelChanged || effortCapabilityChanged) {
       this.nativeModel = model; this.nativeEffort = effort; this.paintPickers();
     }
-    this.openFailed = !!raw.error;
+    // A snapshot confirms the SDK is open; turn errors (including cancel)
+    // describe its last operation, not a failure to open the instance.
+    this.openFailed = false;
     this.capabilities = {...this.capabilities, ...raw.capabilities};
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const rawItems = Array.isArray(raw.items) ? raw.items : [];

@@ -43,7 +43,9 @@ def exercise(browser, base, root, shots, label):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
     page.set_default_timeout(30000)
-    errors = []
+    errors, opens = [], []
+    page.on("request", lambda request: opens.append(request.url)
+            if request.method == "POST" and request.url.endswith("/api/native-sdk/open") else None)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
@@ -96,10 +98,23 @@ def exercise(browser, base, root, shots, label):
                 else:
                     page.locator("#a-sdk").click()
             expect(box).to_be_visible()
+            expect(page.locator(".sdk-status-row > .sdk-status:visible")).to_have_attribute("title", re.compile("已中断"))
+            expect(page.locator("#sdk-composer .composer-run-action")).to_be_hidden()
             page.screenshot(path=str(shots / f"kiro-stop-{label}-{width}-{theme}.png"), full_page=True)
+    # A cancelled turn is not a failed SDK open. Keep the instance usable,
+    # including after background status refreshes, without showing Start.
+    action = page.locator("#sdk-composer .composer-run-action")
+    expect(action).to_be_hidden()
+    assert page.evaluate("NativeSdkView.connected && !NativeSdkView.openFailed")
+    open_count = len(opens)
+    box.fill("continue-after-interrupt")
+    page.locator("#sdk-send").click()
+    page.wait_for_function("NativeSdkView.raw?.last_turn?.status === 'completed'")
+    assert len(opens) == open_count, "sending after interrupt reopened the SDK"
+    expect(action).to_be_hidden()
     assert not errors, errors
     context.close()
-    print("PASS", label, "stop hides within 5 s on a throttled multi-MB session; history kept once", flush=True)
+    print("PASS", label, "stop hides within 5 s; history kept once; next turn sends without reopening SDK", flush=True)
 
 
 def main():
