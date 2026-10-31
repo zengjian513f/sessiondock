@@ -1375,6 +1375,16 @@ impl LiveState {
         self.items.push(item);
     }
 
+    /// Record an accepted native steer as a user item. It goes through
+    /// `push_item` so the checkpoint persists the row and its history length.
+    pub(super) fn push_steer(&mut self, id: &str, text: &str) -> bool {
+        if self.items.iter().any(|item| item["id"] == id) {
+            return false;
+        }
+        self.push_item(steer_item(id, text));
+        true
+    }
+
     /// O(1) mutable access to the item with `id`. Rebuilds `item_index` once if
     /// it is stale (after checkpoint load, a wholesale `items` replacement, or a
     /// new-turn user push that did not go through `push_item`), then looks up.
@@ -1839,6 +1849,10 @@ fn extract_question_options(obj: &Value) -> Vec<Value> {
 /// code rebuilt the whole accumulated string with `format!` on every chunk,
 /// which is O(text^2) across a streamed message; growing a `String` in place is
 /// amortized O(1) per chunk.
+pub(super) fn steer_item(id: &str, text: &str) -> Value {
+    json!({"id":id,"role":"user","text":text,"content":text,"steered":true})
+}
+
 fn append_text(item: &mut Value, chunk: &str) {
     if chunk.is_empty() {
         return;

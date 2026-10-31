@@ -113,16 +113,17 @@ pub(super) fn hydrate(state: &mut super::live::LiveState) -> Result<(), String> 
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| e.to_string())?;
     let mut query = db
-        .prepare("SELECT value FROM items WHERE owner=?1 ORDER BY ordinal")
+        .prepare("SELECT ordinal, value FROM items WHERE owner=?1 ORDER BY ordinal")
         .map_err(|e| e.to_string())?;
     let rows = query
         .query_map([&state.history_key], |r| {
-            r.get::<_, rusqlite::types::Value>(0)
+            Ok((r.get::<_, i64>(0)?, r.get::<_, rusqlite::types::Value>(1)?))
         })
         .map_err(|e| e.to_string())?;
-    let mut items = Vec::new();
+    let mut slots: Vec<Option<Value>> = vec![None; state.history_len];
     for row in rows {
-        let value = match row.map_err(|e| e.to_string())? {
+        let (ordinal, value) = row.map_err(|e| e.to_string())?;
+        let value = match value {
             rusqlite::types::Value::Text(text) => serde_json::from_str(&text),
             rusqlite::types::Value::Blob(bytes) => {
                 serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice()))
@@ -130,14 +131,59 @@ pub(super) fn hydrate(state: &mut super::live::LiveState) -> Result<(), String> 
             _ => return Err("Kiro history body has invalid storage type".into()),
         }
         .map_err(|e| e.to_string())?;
-        items.push(value);
+        let slot = usize::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| slots.get_mut(ordinal))
+            .ok_or("Kiro history checkpoint incomplete")?;
+        *slot = Some(value);
     }
-    if items.len() != state.history_len {
-        return Err("Kiro history checkpoint incomplete".into());
-    }
+    let repaired = restore_steers(state, &mut slots);
+    let items: Option<Vec<Value>> = slots.into_iter().collect();
+    let items = items.ok_or("Kiro history checkpoint incomplete")?;
     state.items = items;
     state.history_loaded = true;
+    if !repaired.is_empty() {
+        state.history_dirty.extend(repaired);
+        state.projection_dirty = true;
+        state.item_index.clear();
+    }
     Ok(())
+}
+
+/// Builds before BUG-20261031-100103-13d7b8 appended accepted steers without
+/// marking their rows dirty. Their text and native message ID remain in the
+/// steer journal, in delivery order, so the missing rows can be restored.
+fn restore_steers(state: &super::live::LiveState, slots: &mut [Option<Value>]) -> Vec<usize> {
+    let missing: Vec<usize> = (0..slots.len()).filter(|i| slots[*i].is_none()).collect();
+    if missing.is_empty() {
+        return missing;
+    }
+    let present: std::collections::HashSet<&str> = slots
+        .iter()
+        .flatten()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    let steers: Vec<Value> = state
+        .journal
+        .iter()
+        .filter(|rpc| rpc.frame["method"] == "_session/steer")
+        .filter_map(|rpc| {
+            let result = &rpc.response.as_ref()?["result"];
+            if result["queued"] != true {
+                return None;
+            }
+            let id = result["messageId"].as_str()?;
+            let text = rpc.frame["params"]["message"].as_str()?;
+            (!present.contains(id)).then(|| super::live::steer_item(id, text))
+        })
+        .collect();
+    if steers.len() != missing.len() {
+        return Vec::new();
+    }
+    for (index, item) in missing.iter().zip(steers) {
+        slots[*index] = Some(item);
+    }
+    missing
 }
 
 pub(super) fn save(path: &Path, state: &mut super::live::LiveState) -> Result<(), String> {

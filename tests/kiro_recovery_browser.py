@@ -206,6 +206,12 @@ def run(args):
                 assert len(answers) == 2, answers
                 send("RECOVERY_WAIT")
                 page.wait_for_function("window.__kiroSnapshot?.running && window.__kiroSnapshot.items.some(i => i.text?.includes('Durable partial before restart'))")
+                # BUG-20261031-100103-13d7b8: an accepted steer must survive restart.
+                page.locator("#sdk-input").fill("STEER_SURVIVES_RESTART")
+                with page.expect_response(lambda r: "/api/native-sdk/steer" in r.url):
+                    page.locator("#sdk-input").press("Control+Enter")
+                page.wait_for_function("window.__kiroSnapshot.items.some(i => i.steered && i.text === 'STEER_SURVIVES_RESTART')")
+                page.wait_for_function("window.__kiroSnapshot.items.some(i => i.text?.includes('continuing after steer'))")
                 before_prompts = len(fixture.received("session/prompt"))
 
                 # Exercise the real deployment guard against this running turn,
@@ -248,8 +254,27 @@ def run(args):
                 pending = next(r for rows in interrupted.values() for r in rows if r['draft'].get('text') == 'RECOVERY_WAIT')
                 pending.update(state='sending', result=None, runtime_state='')
                 legacy_inputs(journal_path, interrupted)
+                # The steer body is a committed checkpoint row. Removing it
+                # reproduces checkpoints written by builds that skipped the row.
+                import gzip
+                import sqlite3
+                steer_rows = []
+                for database in (root / "state/sdk-adapters/kiro").glob("*.sqlite"):
+                    with sqlite3.connect(database) as db:
+                        for owner, ordinal, value in db.execute("SELECT owner, ordinal, value FROM items"):
+                            body = json.loads(gzip.decompress(value) if isinstance(value, bytes) else value)
+                            if body.get("steered") and body.get("text") == "STEER_SURVIVES_RESTART":
+                                steer_rows.append((database, owner, ordinal))
+                assert len(steer_rows) == 1, steer_rows
+                database, owner, ordinal = steer_rows[0]
+                with sqlite3.connect(database) as db:
+                    db.execute("DELETE FROM items WHERE owner=? AND ordinal=?", (owner, ordinal))
                 restart()
                 page.wait_for_function("window.__kiroSnapshot?.running === true")
+                assert not page.evaluate("window.__kiroSnapshot.error"), page.evaluate("window.__kiroSnapshot.error")
+                expect(page.locator(".sdk-live")).to_contain_text("STEER_SURVIVES_RESTART")
+                steered = page.evaluate("window.__kiroSnapshot.items.filter(i => i.steered).map(i => i.text)")
+                assert steered == ["STEER_SURVIVES_RESTART"], steered
                 assert len(fixture.received("session/prompt")) == before_prompts
                 assert len(fixture.received("session/load")) == before_loads
                 items = page.evaluate("window.__kiroSnapshot.items")

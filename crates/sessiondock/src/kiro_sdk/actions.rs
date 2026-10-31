@@ -820,10 +820,7 @@ impl Bridge {
         let id = result["messageId"]
             .as_str()
             .ok_or("Kiro 引导回执缺少 messageId，请核对原生历史")?;
-        if !state.items.iter().any(|item| item["id"] == id) {
-            state
-                .items
-                .push(json!({"id":id,"role":"user","text":text,"content":text,"steered":true}));
+        if state.push_steer(id, &text) {
             // Keep the active assistant/thinking stream attached to its original item.
             state.publish();
         }
