@@ -48,9 +48,32 @@ def browser_check(fixture, base, screenshots):
         row = page.locator(f'#side .item[data-uid="{fixture.uid}"]')
         expect(row).to_be_visible()
         expect(row).to_contain_text("earlier synthetic CodeBuddy prompt")
+        # A CLI installed or repaired after the node started shows up in the live node capability
+        # (term/list) but never in the startup snapshot. SDK availability, the SDK model catalog
+        # and its effort choices must follow the live value.
+        page.evaluate("SessionDockCapabilities.config.native_sdks.codebuddy = false")
+        assert page.evaluate("SessionDockCapabilities.config.native_sdks.codebuddy") is False
+        assert page.evaluate("T.native_sdks.codebuddy") is True
+        catalog_requests = []
+        page.on("request", lambda r: catalog_requests.append(r.url) if "/api/native-sdk/models" in r.url or "/api/term/models" in r.url else None)
+        page.locator("#new-session:visible, #header-more-btn:visible").first.click()
+        if not page.locator("#new-session-dialog").is_visible():
+            page.locator("#new-session").click()
+        page.locator('#new-session-form label:has(input[name="new-source"][value="codebuddy"])').click()
+        page.wait_for_function("() => document.querySelector('#new-model-label')?.textContent?.trim() && !/读取模型/.test(document.querySelector('#new-model-label').textContent)")
+        assert any("/api/native-sdk/models" in url for url in catalog_requests), catalog_requests
+        assert not any("/api/term/models?source=codebuddy" in url for url in catalog_requests), catalog_requests
+        page.locator("#new-model").click()
+        page.locator("#new-model-options [role=option]", has_text="Synthetic Buddy 2").first.click()
+        expect(page.locator("#new-effort")).to_be_enabled()
+        assert "high" in page.locator("#new-effort option").all_inner_texts()
+        page.keyboard.press("Escape")
+        expect(page.locator("#new-session-dialog")).to_be_hidden()
+        # The SDK model catalog probe above may spawn its own short-lived CLI; only the session start is checked.
+        spawned = len(fixture.frames("spawn"))
         open_sdk(page, fixture, expect)
-        assert len(fixture.frames("spawn")) == 1
-        spawn = fixture.frames("spawn")[0]
+        assert len(fixture.frames("spawn")) == spawned + 1
+        spawn = fixture.frames("spawn")[-1]
         assert spawn["args"][spawn["args"].index("--resume") + 1] == fixture.sid, spawn
         # History shown from the read model; the replayed stdout history must not be projected live.
         expect(page.locator(".sdk-history")).to_contain_text("earlier synthetic CodeBuddy answer")
@@ -108,7 +131,7 @@ def browser_check(fixture, base, screenshots):
         page.goto(base, wait_until="networkidle")
         open_sdk(page, fixture, expect)
         assert snapshot(page, fixture.uid)["raw"]["running"] is True
-        assert len(fixture.frames("spawn")) == 1, "reload launched another independent runtime"
+        assert len(fixture.frames("spawn")) == spawned + 1, "reload launched another independent runtime"
         assert len(user_prompts(fixture, "hold")) == 1
         page.locator("#sdk-stop").click()
         expect(page.locator(".sdk-live")).to_contain_text("CodeBuddy interrupted")

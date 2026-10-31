@@ -1584,8 +1584,7 @@ function fetchModelCatalog(node, source) {
         const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
         const sdk = agentStartMode(source) === 'sdk' && source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
           && (!HUB_MODE || Nodes.capabilities[node]?.codex_sdk === true);
-        const native = agentStartMode(source) === 'sdk' && SessionDockCapabilities.config.native_sdks?.[source] === true
-          && (!HUB_MODE || Nodes.capabilities[node]?.native_sdks?.[source] === true);
+        const native = agentStartMode(source) === 'sdk' && nativeSdkAvailable(source, node);
         const response = native
           ? await fetch(appUrl('api/native-sdk/models'),{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({source,...(HUB_MODE?{_node:node}:{})}),cache:'no-store'})

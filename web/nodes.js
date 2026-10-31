@@ -33,9 +33,18 @@ function newNodeCapabilities() { return HUB_MODE ? Nodes.capabilities[newNodeId(
 function agentStartMode(source) {
   return store.get('agentStartMode.' + source, 'sdk') === 'cli' || source === 'shell' ? 'cli' : 'sdk';
 }
-function agentSdkAvailable(source, node = '') {
-  const cap = HUB_MODE ? Nodes.capabilities[node] || {}
+// 节点当前的 SDK 能力：Hub 用所属节点的周期探测结果，单机用 term/list。
+// 启动时一次性的 SessionDockCapabilities.config 只作加载前的回退：之后安装或修复 CLI
+// 并不会改写它，用它判断会让已可用的 SDK 一直显示为不可用。
+function nodeCapabilities(node = '') {
+  return HUB_MODE ? Nodes.capabilities[node] || {}
     : (typeof T !== 'undefined' && T.listLoaded && !T.listError ? T : SessionDockCapabilities.config);
+}
+function nativeSdkAvailable(source, node = '') {
+  return nodeCapabilities(node).native_sdks?.[source] === true;
+}
+function agentSdkAvailable(source, node = '') {
+  const cap = nodeCapabilities(node);
   return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
 }
 function agentStartUnavailable(source, node = '') {
