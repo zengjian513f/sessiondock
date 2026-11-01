@@ -76,7 +76,18 @@ def exercise(browser, base, root, shots, label):
     page.wait_for_timeout(3000)
     live_bytes = page.evaluate("JSON.stringify(NativeSdkView.raw.items).length")
     assert live_bytes < 1024 * 1024, f"{label}: live frame still carries {live_bytes} bytes"
+    # BUG-20261101-065421-ddbc1f: native Kiro received the cancel but did not
+    # end the prompt. The page must acknowledge the stop request meanwhile.
+    gate = root / "fake-native-store" / "cancel-delay"
+    gate.touch()
     page.locator("#sdk-stop").click()
+    status = page.locator(".sdk-status-row > .sdk-status:visible")
+    expect(status).to_have_attribute("title", re.compile("^正在停止：.*停止SDK模式"), timeout=5000)
+    expect(status).to_have_text("正在停止")
+    expect(page.locator("#sdk-stop")).to_be_visible()
+    if shots:
+        page.screenshot(path=str(shots / f"kiro-stopping-{label}-1280-light.png"), full_page=True)
+    gate.unlink()
     # The native fake ends the prompt within one 50 ms tick of the cancel.
     expect(page.locator("#sdk-stop")).to_be_hidden(timeout=5000)
     expect(page.locator(".sdk-status-row > .sdk-status:visible")).to_have_attribute("title", re.compile("已中断"), timeout=5000)

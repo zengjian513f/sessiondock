@@ -522,6 +522,11 @@ class FakeKiroAcp:
                 if self.cancel.wait(0.05):
                     break
                 self.update("agent_thought_chunk", content={"type": "text", "text": "streaming thought "})
+            # A busy native agent may read the cancel long before it ends the prompt.
+            gate = self.sessions_root / "cancel-delay"
+            until = time.monotonic() + 20
+            while gate.exists() and time.monotonic() < until:
+                time.sleep(0.02)
             self.reply(message, {"stopReason": "cancelled"})
             return
 

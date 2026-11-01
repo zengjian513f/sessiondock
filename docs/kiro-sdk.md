@@ -55,6 +55,9 @@ RPC/写入 ID、待发送 frame、原生响应、回合归属及 stdout/stderr �
   验收：[停止浏览器](../tests/kiro_stop_browser.py)（节点／Hub，限速链路）。
 - cancel 表示请求取消，保持 busy 至对应 prompt 最终结果或确认退出。取消写失败
   保留错误与归属，旧回合迟到响应不覆盖新回合。
+- DELTA（BUG-20261101-065421-ddbc1f）：快照 `cancel_requested` 期间状态显示
+  “正在停止”，说明在等原生结束回合；原生长时间不响应时用停止 SDK 模式结束宿主。
+  原生进程忙于其它工作时可能已读到 `session/cancel` 却不回应 prompt。
 - 权限／问题请求持久化后显示；回答先保存原 response frame，确认宿主写入后退卡。
   双页面重复回答使用原写入 ID。权限只呈现并接受原生提供的选项，空选项不合成允许。
 - stdout 最后一个无 LF 响应和 stderr 尾部读完后再确认退出。最后回合结果与实例

@@ -355,7 +355,7 @@ const NativeSdkView = {
     let text = scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
-      : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
+      : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
       : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成' : '就绪';
     if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
     this.setNotice(text, kind);
