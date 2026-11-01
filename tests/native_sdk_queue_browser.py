@@ -559,12 +559,15 @@ def restart_approval(browser, fixture):
             context.close()
 
 
-def stop_inherited_pipes(browser, fixture):
-    """Native parent exit must not make its still-open process group unstoppable."""
+def stop_inherited_pipes(browser, fixture, own_group=False):
+    """Native parent exit must not make its still-open process group unstoppable.
+
+    BUG-20261101-065421-ddbc1f: Kiro's worker leaves the native process group;
+    explicit stop must still end it through the native session."""
     with fixture.server() as base:
         context, page, _ = open_page(browser, base, fixture)
         try:
-            send(page, '__DESCENDANT_PIPE__')
+            send(page, '__DESCENDANT_GROUP_PIPE__' if own_group else '__DESCENDANT_PIPE__')
             deadline = time.monotonic() + 5
             observed = None
             while time.monotonic() < deadline:
@@ -587,6 +590,7 @@ def stop_inherited_pipes(browser, fixture):
             assert status['exit'] == {'code': 0, 'signal': None}, status
             assert not status['stdout_eof'] and not status['stderr_eof'], status
             assert fixture.alive(child['pid'])
+            assert (os.getpgid(child['pid']) == child['pid']) == own_group
             host_pid = int((path.parent / 'host.pid').read_text())
             expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
             page.locator('#a-session-toggle').click()
@@ -597,7 +601,9 @@ def stop_inherited_pipes(browser, fixture):
             if (path.parent / 'status.json').exists():
                 final = json.loads((path.parent / 'status.json').read_text())
                 assert final['stdout_eof'] and final['stderr_eof'], final
-            print('Agy: exited native parent retains pipe-owning descendant until explicit UI stop closes group and host', flush=True)
+            print('Agy: exited native parent retains pipe-owning descendant'
+                  + (' in its own process group' if own_group else '')
+                  + ' until explicit UI stop closes it and the host', flush=True)
         finally:
             context.close()
 
@@ -776,6 +782,7 @@ def main():
             restart_approval(browser, fixtures['claude'])
             restart_approval(browser, fixtures['grok'])
             stop_inherited_pipes(browser, fixtures['agy'])
+            stop_inherited_pipes(browser, fixtures['agy'], own_group=True)
             restart_idle_registry(browser, fixtures['claude'])
             restart_idle_registry(browser, fixtures['grok'])
             restart_idle_registry(browser, fixtures['agy'])

@@ -20,6 +20,45 @@ mod unix {
             tokio::sync::mpsc::UnboundedSender<(i32, tokio::sync::oneshot::Sender<io::Result<()>>)>,
     }
     type Shared = Arc<Mutex<State>>;
+    /// Signal the child's process group and every process in its session.
+    /// The unreaped child keeps both IDs reserved, so neither can be reused.
+    #[cfg(target_os = "linux")]
+    fn signal_session(leader: i32, signal: i32) -> io::Result<()> {
+        // Scan before signalling: once the child dies the host may exit, and the
+        // caller's acknowledgement must not wait behind a /proc walk.
+        let mut members = Vec::new();
+        for entry in std::fs::read_dir("/proc")?.flatten() {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<i32>().ok())
+            else {
+                continue;
+            };
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            // Fields after the parenthesised command: state ppid pgrp session.
+            let session = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().nth(3))
+                .and_then(|value| value.parse::<i32>().ok());
+            if session == Some(leader) && pid != leader {
+                members.push(pid);
+            }
+        }
+        let mut result = if unsafe { libc::kill(-leader, signal) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+        for pid in members {
+            if unsafe { libc::kill(pid, signal) } == 0 {
+                result = Ok(());
+            }
+        }
+        result
+    }
     fn persist(state: &State) -> io::Result<()> {
         let temp = state.dir.join("status.tmp");
         let mut f = std::fs::OpenOptions::new()
@@ -232,6 +271,18 @@ mod unix {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        // A new session also makes a new process group. Kiro moves its worker
+        // into another group; the session still holds it for explicit stop.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        #[cfg(not(target_os = "linux"))]
         command.process_group(0);
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().unwrap();
@@ -331,10 +382,7 @@ mod unix {
                 }
                 tokio::select! {
                     Some((signal, reply)) = signal_requests.recv() => {
-                        let result = if unsafe { libc::kill(-(child.id().unwrap() as i32), signal) } == 0 {
-                            Ok(())
-                        } else { Err(io::Error::last_os_error()) };
-                        let _ = reply.send(result);
+                        let _ = reply.send(signal_session(child.id().unwrap() as i32, signal));
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
                 }

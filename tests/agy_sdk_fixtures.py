@@ -144,8 +144,10 @@ for line in sys.stdin:
         native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] Native runtime restarted; background tasks have stopped.\n</SYSTEM_MESSAGE>')
         step('system_message',state='DONE');advance()
     first_input=False
-    if text=='__DESCENDANT_PIPE__':
-        descendant=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'])
+    if text in('__DESCENDANT_PIPE__','__DESCENDANT_GROUP_PIPE__'):
+        # The group variant leaves the native process group, as Kiro's worker does.
+        descendant=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'],
+            process_group=0 if text=='__DESCENDANT_GROUP_PIPE__' else None)
         record({'kind':'descendant','sid':sid,'pid':descendant.pid,'parent_pid':os.getpid()})
         os._exit(0)
     if text=='__CRASH__':os._exit(7)
