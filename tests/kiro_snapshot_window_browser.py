@@ -46,6 +46,7 @@ def run(args):
     from kiro_sdk_browser import api, api_raw, watch
     from sdkhost_fixtures import stop_private_sdkhosts
     from send_browser import initialize
+    from sdk_ui_fixtures import start_sdk
 
     with tempfile.TemporaryDirectory(prefix="sessiondock-kiro-window-") as temporary:
         root = Path(temporary)
@@ -81,7 +82,7 @@ def run(args):
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
                 page.locator("#a-sdk").click()
                 with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open") and r.request.method == "POST") as opened:
-                    page.locator("#sdk-input").click()
+                    start_sdk(page)
                 assert opened.value.ok, opened.value.text()
 
                 # (a) open HTTP response must NOT carry the transcript.

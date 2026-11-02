@@ -11,6 +11,51 @@ const NATIVE_SDK_SOURCES = Object.freeze({
   codebuddy: {source: 'codebuddy', title: 'CodeBuddy', emptyTitle: '新建 CodeBuddy 会话', busyCode: 'native_sdk_session_busy'},
 });
 
+// Copy JSON containers without copying immutable strings. UI-local queue or
+// setting updates must not mutate the wire baseline used by the next delta.
+function nativeSdkSnapshotCopy(value) {
+  if (Array.isArray(value)) return value.map(nativeSdkSnapshotCopy);
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, nativeSdkSnapshotCopy(child)]));
+  return value;
+}
+
+function nativeSdkSnapshotDelta(before, change) {
+  if (change === null) return before;
+  switch (change.kind) {
+    case 'value': return change.value;
+    case 'object': {
+      if (!before || typeof before !== 'object' || Array.isArray(before)) break;
+      const fields = new Map(Object.entries(before));
+      for (const key of change.remove) fields.delete(key);
+      for (const [key, patch] of change.fields) fields.set(key, nativeSdkSnapshotDelta(fields.get(key), patch));
+      return Object.fromEntries(fields);
+    }
+    case 'array': {
+      if (!Array.isArray(before)) break;
+      const values = before.slice();
+      for (const [index, patch] of change.fields) {
+        if (!Number.isInteger(index) || index < 0 || index >= values.length) throw Error('SDK delta index');
+        values[index] = nativeSdkSnapshotDelta(values[index], patch);
+      }
+      return values;
+    }
+    case 'splice':
+      if (Array.isArray(before) && Number.isInteger(change.start) && Number.isInteger(change.delete)
+          && change.start >= 0 && change.delete >= 0 && change.start + change.delete <= before.length) {
+        return before.slice(0, change.start).concat(change.values, before.slice(change.start + change.delete));
+      }
+      break;
+    case 'text':
+      if (typeof before === 'string' && Number.isInteger(change.start) && Number.isInteger(change.delete)
+          && change.start >= 0 && change.delete >= 0 && change.start + change.delete <= before.length) {
+        return before.slice(0, change.start) + change.text + before.slice(change.start + change.delete);
+      }
+      break;
+  }
+  throw Error('SDK delta baseline');
+}
+
 const NativeSdkView = {
   ...SdkUI.methods,
   sources: NATIVE_SDK_SOURCES,
@@ -135,7 +180,10 @@ const NativeSdkView = {
   },
 
   connectEvents(generation) {
-    const es = new EventSource(appUrl(`api/native-sdk/events?${new URLSearchParams({uid:this.uid,agent:this.agent || ''})}`));
+    const query = new URLSearchParams({uid:this.uid,agent:this.agent || ''});
+    if (this.uid.startsWith('kiro:')) query.set('snapshot_delta', '1');
+    const es = new EventSource(appUrl(`api/native-sdk/events?${query}`));
+    let snapshotRaw, snapshotVersion;
     this.es = es;
     es.addEventListener('sdk', event => {
       if (!this.current(generation) || this.es !== es) return;
@@ -150,6 +198,23 @@ const NativeSdkView = {
         this.paintStatus();
         if (stick) this.scrollBottom();
         return;
+      }
+      if (packet.type === 'snapshot_delta') {
+        try {
+          if (snapshotRaw === undefined || packet.snapshot_base !== snapshotVersion) throw Error('SDK delta version');
+          snapshotRaw = nativeSdkSnapshotDelta(snapshotRaw, packet.raw);
+          snapshotVersion = packet.snapshot_version;
+          packet.raw = nativeSdkSnapshotCopy(snapshotRaw);
+          packet.type = 'snapshot';
+        } catch {
+          this.reconnect();
+          return;
+        }
+      } else if (packet.type === 'snapshot') {
+        // Old nodes ignore the opt-in query and keep sending full snapshots.
+        snapshotRaw = packet.snapshot_version === undefined ? undefined : packet.raw;
+        snapshotVersion = packet.snapshot_version;
+        if (snapshotRaw !== undefined) packet.raw = nativeSdkSnapshotCopy(snapshotRaw);
       }
       if (packet.type === 'snapshot' || packet.method === 'snapshot') {
         this.seq = packet.seq ?? this.seq;

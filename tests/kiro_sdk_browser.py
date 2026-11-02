@@ -24,6 +24,7 @@ from kiro_sdk_fixtures import KiroFixture
 from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
+from sdk_ui_fixtures import start_sdk, reveal_sdk_tool
 
 
 def api_raw(page, method: str, body: dict):
@@ -185,7 +186,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     select_sdk(page, uid)
     assert not fixture.received("session/load"), "Choosing SDK silently loaded the existing session"
     with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open") and r.request.method == "POST") as opened_response:
-        page.locator("#sdk-input").click()
+        start_sdk(page)
     assert opened_response.value.ok, opened_response.value.text()
     opened = opened_response.value.json()
     assert opened["session_id"] == fixture.sid, opened
@@ -260,6 +261,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     # The tool bubble shows a readable summary (`读取 README.md`) and the plain
     # file content, not the raw rawInput/rawOutput JSON envelopes.
     read_tool = page.locator(".sdk-live .tool-msg").filter(has_text="读取 README.md")
+    reveal_sdk_tool(read_tool)
     expect(read_tool).to_be_visible()
     expect(read_tool.locator(".tool-out")).to_contain_text("# Kiro Workspace")
     expect(read_tool.locator(".tool-out")).not_to_contain_text('"content"')
@@ -284,6 +286,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     # The execute tool bubble reads as a shell command with its exit code and
     # plain stdout, not the `{"command": ...}` / `{"output": ...}` JSON.
     exec_tool = page.locator(".sdk-live .tool-msg").filter(has_text="$ echo kiro-approved")
+    reveal_sdk_tool(exec_tool)
     expect(exec_tool).to_be_visible()
     expect(exec_tool.locator(".tool-status")).to_contain_text("exit 0")
     expect(exec_tool.locator(".tool-out")).to_contain_text("kiro-approved")

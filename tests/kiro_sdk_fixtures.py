@@ -516,6 +516,37 @@ class FakeKiroAcp:
             self.reply(message, {"stopReason": "cancelled"})
             return
 
+        if text.startswith("delta-bandwidth "):
+            label = text.split(" ", 1)[1]
+            output = (self.sessions_root / "delta-output.txt").read_text()
+            call_id = "delta-" + label
+            self.update("tool_call", toolCallId=call_id, title="Read large synthetic log", kind="execute",
+                        status="in_progress", rawInput={"command": "read synthetic log"})
+            self.update("tool_call_update", toolCallId=call_id, status="completed",
+                        rawOutput={"output": output, "exitCode": 0})
+            for step in range(28):
+                until = time.monotonic() + 90
+                while time.monotonic() < until and not self.cancel.is_set():
+                    try:
+                        released = int((self.sessions_root / "delta-release").read_text())
+                    except (FileNotFoundError, ValueError):
+                        released = -1
+                    if released >= step:
+                        break
+                    time.sleep(.02)
+                if self.cancel.is_set():
+                    self.reply(message, {"stopReason": "cancelled"})
+                    return
+                if step in (5, 8):
+                    tail = "🙂待修订" if step == 5 else "🙃已修订"
+                    self.update("tool_call_update", toolCallId=call_id, status="completed",
+                                rawOutput={"output": output + tail, "exitCode": 0})
+                self.update("agent_message_chunk", content={"type": "text", "text": f" 增量{step:02d}界🙂"})
+            answer = "".join(f" 增量{step:02d}界🙂" for step in range(28))
+            self.append_v3_message("assistant", answer)
+            self.reply(message, {"stopReason": "end_turn"})
+            return
+
         if text == "stream-until-cancel":
             # Real reasoning arrives as many small stdout frames until cancel.
             for _ in range(1200):

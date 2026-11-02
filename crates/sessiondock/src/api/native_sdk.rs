@@ -1,4 +1,6 @@
 //! HTTP/SSE transport shared by native SDK providers.
+mod snapshot_delta;
+
 use crate::{error::ApiError, state::AppState};
 use axum::{
     Extension, Json,
@@ -422,6 +424,8 @@ pub struct Selected {
     uid: String,
     #[serde(default)]
     agent: String,
+    #[serde(default)]
+    snapshot_delta: Option<String>,
 }
 
 pub async fn events(
@@ -430,6 +434,9 @@ pub async fn events(
 ) -> Result<Response, ApiError> {
     let target = target(&state, &query.uid, &query.agent).await?;
     let source = target["source"].as_str().unwrap_or_default();
+    let mut encoder = snapshot_delta::Encoder::new(
+        source == "kiro" && query.snapshot_delta.as_deref() == Some("1"),
+    );
     let uid = target["uid"].as_str().unwrap_or(&query.uid);
     let key = if query.agent.is_empty() {
         uid.to_owned()
@@ -470,7 +477,7 @@ pub async fn events(
     let source = source.to_owned();
     let shutdown = state.shutdown.clone();
     let stream = async_stream::stream! {
-        yield Ok::<_,Infallible>(Event::default().event("sdk").data(snapshot.to_string()));
+        yield Ok::<_,Infallible>(Event::default().event("sdk").data(encoder.encode(snapshot).to_string()));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -479,7 +486,7 @@ pub async fn events(
                 _ = heartbeat.tick() => {
                     if events.is_none() && let Ok((snapshot,receiver))=sdks.subscribe(&source,&key) {
                         events=Some(receiver);
-                        yield Ok(Event::default().event("sdk").data(sdks.with_inputs(&target,snapshot).to_string()));
+                        yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot)).to_string()));
                     }
                     yield Ok(Event::default().event("heartbeat").data("{}"));
                 },
@@ -498,7 +505,7 @@ pub async fn events(
                 event = async { match events.as_mut() {Some(events)=>events.recv().await,None=>std::future::pending().await} } => match event {
                     Ok(event) => {
                         match serde_json::from_str::<Value>(&event) {
-                            Ok(snapshot)=>yield Ok(Event::default().event("sdk").data(sdks.with_inputs(&target,snapshot).to_string())),
+                            Ok(snapshot)=>yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot)).to_string())),
                             Err(_)=>yield Ok(Event::default().event("sdk").data(&*event)),
                         }
                     },

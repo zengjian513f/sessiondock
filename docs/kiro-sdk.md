@@ -55,6 +55,17 @@ RPC/写入 ID、待发送 frame、原生响应、回合归属及 stdout/stderr �
   验收：[停止浏览器](../tests/kiro_stop_browser.py)（节点／Hub，限速链路）。
 - cancel 表示请求取消，保持 busy 至对应 prompt 最终结果或确认退出。取消写失败
   保留错误与归属，旧回合迟到响应不覆盖新回合。
+- DELTA：网页订阅 Kiro 事件流时带 `snapshot_delta=1`。每条连接先接收完整快照，
+  后续按连接版本传递 `raw` 的字段变化、数组变化及 UTF-16 位置的文字增删；长工具输出
+  与已有回复不随每个新 chunk 重传。客户端恢复完整快照后交给原有渲染器，内容与历史窗口
+  不缩减。队列事件与网页本地状态不修改同步基线；版本缺失或跳跃时重新订阅，以完整快照
+  恢复，不重发 prompt 或重启原生任务。Hub 沿用原有 UID 转换和 `raw` 原样透传。
+  未选择该协议的旧页面仍收到完整快照，新页面也兼容旧节点的完整快照。
+  首帧仍为 `snapshot` 并带 `snapshot_version`；后续 `snapshot_delta` 带
+  `snapshot_base`、新版本及 `raw` 变化树。UID、原生序号和能力等外层字段保持完整，
+  文字位置按 JavaScript 的 UTF-16 单位计算。已打开的旧页面须刷新后才会选择增量协议。
+  验收：[增量流量浏览器](../tests/kiro_delta_browser.py)，覆盖节点／Hub、超过 1 MB 的
+  当前轮工具输出、Unicode 修订、窗口淘汰、刷新、丢帧恢复及新旧协议兼容，并记录实际事件字节。
 - DELTA（BUG-20261101-065421-ddbc1f）：快照 `cancel_requested` 期间状态显示
   “正在停止”，说明在等原生结束回合；原生长时间不响应时用停止 SDK 模式结束宿主。
   原生进程忙于其它工作时可能已读到 `session/cancel` 却不回应 prompt。
