@@ -712,18 +712,40 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         }
         let main = is_cli(&cmd);
         let argv0 = argv0_of(&cmd);
-        // A standalone or sdkhost-spawned `kiro-cli acp` / `acp-server.js` with
-        // no interactive `kiro-cli chat` CLI ancestor is an SDK process, never
-        // an external CLI session.
-        if !main
-            && (cli_family(argv0) == Some("kiro") || is_kiro_acp_cmd(&cmd))
-            && tree.cli_ancestor(pid).is_none()
-        {
-            if is_kiro_acp_cmd(&cmd) {
-                for sid in kiro::sessions(&tree, pid) {
+        // V3 chat (including first headless launches without --resume-id)
+        // delegates native execution to an ACP child. Its own open log names
+        // the session; attribute that evidence to the enclosing Kiro CLI only.
+        if is_kiro_acp_cmd(&cmd) {
+            let observed = kiro::sessions(&tree, pid);
+            let cli = tree.cli_ancestor(pid).filter(|owner| {
+                tree.cmdline(*owner)
+                    .is_some_and(|cmd| cli_family(argv0_of(&cmd)) == Some("kiro"))
+            });
+            if let Some(owner) = cli {
+                let explicit = tree
+                    .cmdline(owner)
+                    .map(|cmd| kiro_resume_sids(&cmd))
+                    .unwrap_or_default();
+                let identities = if explicit.is_empty() {
+                    observed
+                } else {
+                    explicit
+                };
+                if identities.len() == 1 {
+                    for sid in identities {
+                        sids.entry(format!("kiro:{sid}"))
+                            .or_default()
+                            .insert(i64::from(owner));
+                    }
+                }
+            } else {
+                for sid in observed {
                     kiro_acp.entry(sid).or_default().insert(pid);
                 }
             }
+            continue;
+        }
+        if !main && cli_family(argv0) == Some("kiro") && tree.cli_ancestor(pid).is_none() {
             continue;
         }
         stats.matched += 1;
@@ -732,7 +754,17 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         // mark both sessions live.
         let kiro = main && cli_family(argv0) == Some("kiro");
         let cmd_sids = if kiro {
-            kiro_resume_sids(&cmd)
+            let explicit = kiro_resume_sids(&cmd);
+            if explicit.is_empty() {
+                let observed = kiro::sessions(&tree, pid);
+                if observed.len() == 1 {
+                    observed
+                } else {
+                    BTreeSet::new()
+                }
+            } else {
+                explicit
+            }
         } else {
             command_sids(&cmd)
         };
@@ -908,6 +940,29 @@ pub struct ActiveProcesses {
 }
 
 impl Scan {
+    /// Accounting/launch evidence includes independently observed ACP owners.
+    /// Keep these out of pids_of: observation never grants CLI control rights.
+    pub fn attribution_processes(&self, sessions: &[SessionRow]) -> IndexMap<String, Vec<i64>> {
+        let mut owned = self.active_processes(sessions).owned;
+        let mut identities: BTreeMap<u32, BTreeSet<&str>> = BTreeMap::new();
+        for (sid, pids) in &self.kiro_acp {
+            for pid in pids {
+                identities.entry(*pid).or_default().insert(sid);
+            }
+        }
+        for session in sessions.iter().filter(|row| row.source == "kiro") {
+            let sid = session.sid.to_ascii_lowercase();
+            if let Some(pids) = self.kiro_acp.get(&sid) {
+                owned.entry(session.uid.clone()).or_default().extend(
+                    pids.iter()
+                        .filter(|pid| identities[pid].len() == 1)
+                        .map(|pid| i64::from(*pid)),
+                );
+            }
+        }
+        owned
+    }
+
     /// Holders of the session file and of any
     /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
     pub(crate) fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {

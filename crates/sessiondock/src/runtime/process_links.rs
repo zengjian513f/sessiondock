@@ -88,7 +88,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
     let sdk_owners = state.native_sdks.resource_process_owners(&rows).await;
     tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(&root);
-        let owned = scan.active_processes(&rows).owned;
+        let owned = scan.attribution_processes(&rows);
         let titles: HashMap<_, _> = document["sessions"]
             .as_array()
             .into_iter()
@@ -490,7 +490,7 @@ async fn agent_catalog(
             "进程采样失败",
         )
     })?;
-    let owned = scanned.scan.active_processes(&rows).owned;
+    let owned = scanned.scan.attribution_processes(&rows);
     let titles: HashMap<_, _> = document["sessions"]
         .as_array()
         .into_iter()

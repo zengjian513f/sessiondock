@@ -65,7 +65,7 @@ retain their native argv/file-descriptor scan path.
 | Codex | Native rollout identity; shared app-server excluded | `CODEX_THREAD_ID`, companion/session identity on tool processes |
 | Grok | Native resume/file identity; exact SDK host binding | `GROK_SESSION_ID` on native tool processes |
 | Agy | Native conversation DB descriptor; exact SDK runtime binding | Inherited verified process ancestry |
-| Kiro | Native CLI resume identity; catalog SDK host binding | Inherited verified process ancestry |
+| Kiro | Native CLI resume identity; unique live CLI/internal ACP log identity; catalog SDK host binding; independently observed ACP owner | Inherited verified process ancestry |
 | OpenCode | Exact CLI `--session`, `--session=`, or `-s` identity | Native `OPENCODE_SESSION_ID` on tool processes |
 
 DELTA: resource attribution includes dedicated SDK hosts and OpenCode's explicit
