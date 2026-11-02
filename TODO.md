@@ -92,14 +92,16 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  恢复 provider 路由 `47e22e3d` 已交付 lyra、cygnus、pavo、hub 且健康；
-  orion、cetus SSH 超时，vela 自动恢复旧文件后仍不健康，三者待补发。
-  报告在未跟踪的 `target/deploy/20261031-015331-47e22e3d/`。
-  当前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
+  Kiro SSE 增量推送 `4bb9919b` 已交付 lyra、cygnus、pavo、hub 且健康。
+  orion、cetus SSH 超时；vela 原服务拒绝连接，旧目录身份保全失败，网页发布尝试恢复旧文件后
+  服务仍不健康（`ROLLBACK_FAILED`），未升级后端。三者待恢复后补发；vela 后端升级前须成功保全身份。
+  报告在未跟踪的 `target/deploy/20261102-015352-4bb9919b/`（节点及 Hub）和
+  `target/deploy/20261102-015155-4bb9919b/`（vela 网页尝试）。
+  此前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
   已交付 lyra、cygnus、pavo、hub 且健康；
   orion、cetus 连接超时，vela 既有 `Store(Invalid)` 故障导致旧文件恢复后仍不健康，
   三者待补发。本轮报告在 `target/deploy/20261030-182455-6c1dad6c/`。
-  当前前端快照 `7e122589`（滚动漏画修复，含此前重连及外部 CLI 启动提示修复）
+  此前前端快照 `7e122589`（滚动漏画修复，含此前重连及外部 CLI 启动提示修复）
   待补发 orion、cetus、vela：前两者连接超时；vela 部署前即未正常运行，恢复旧文件后
   服务仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub 已部署且健康；
   cygnus 首次 45 秒健康检查超时并回滚，同快照以 90 秒窗口重试成功。
