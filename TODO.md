@@ -92,10 +92,12 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  进程同步游标及重同步原因修复 `f4652a8f`（含资源节点汇总 `deffc6d8`）已交付 lyra、cygnus、pavo、hub，重启且健康；
-  前端保留已交付的 Kiro SSE 增量推送 `4bb9919b`。orion、cetus 本轮正式发布仍 SSH 超时；
-  vela 原服务拒绝连接，升级前旧目录身份保全再次失败，本轮未替换后端。三者待恢复后补发；
-  vela 后端升级前须成功保全身份。最新报告在未跟踪的 `target/deploy/20261102-043212-f4652a8f/`。
+  Kiro 首次 headless／ACP 启动归属修复 `0a5dbf45`（包含 `f4652a8f`）已交付
+  lyra、cygnus、pavo、hub，重启且健康；前端保留已交付的 `c51a54b8`。
+  orion、cetus 正式发布尝试仍 SSH 超时；vela 在原生构建阶段停止发布，
+  旧服务拒绝连接导致身份保全失败，后端未替换。三者待恢复后补发，vela 必须先成功保全身份。
+  本轮逐目标日志及收尾记录在未跟踪的 `target/deploy/20261102-061906-0a5dbf45/`；
+  部署主进程在 vela 切换前终止，结果以 `completion.json` 和逐目标日志为准。
   此前 Kiro 发布报告在 `target/deploy/20261102-015352-4bb9919b/`，vela 网页尝试恢复旧文件后
   仍不健康（`ROLLBACK_FAILED`），见 `target/deploy/20261102-015155-4bb9919b/`。
   此前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
