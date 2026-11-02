@@ -37,8 +37,9 @@ def mixed_launcher(peer, root, extra):
 
 
 @contextmanager
-def provider(source, root, binary, *, cli=False, report=False):
+def provider(source, root, binary, *, cli=False, report=False, extra_env=None):
     extra = node_env(root, free_port(), '127.0.0.0/8')
+    extra.update(extra_env or {})
     if report:
         for name in ('reports', 'audit', 'report-work'):
             (root/name).mkdir()

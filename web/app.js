@@ -12275,6 +12275,11 @@ loadSessions(!!DEEP_SID).then(async ok => {
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
 function transferUnavailableReason(uid) {
+  // Native group transfer currently supports only these sources; readable
+  // catalogs/mirrors do not imply that their sessions can be moved or cloned.
+  if (!['claude', 'codex', 'grok'].includes(uid?.split(':')[0])) {
+    return '此来源尚不支持迁移会话树。';
+  }
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const running = sessionStoppable(uid)
@@ -12287,9 +12292,9 @@ function paintTransferAvailability(button, uid) {
     ? sidebarSessions().find(session => session.uid === uid) : null;
   const unavailable = button?.closest('#item-menu') && (!row || row.pending
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
-  const runningReason = transferUnavailableReason(uid);
-  const reason = unavailable ? '此会话当前不支持迁移会话树。' : runningReason;
-  button.hidden = !!runningReason;
+  const transferReason = transferUnavailableReason(uid);
+  const reason = unavailable ? '此会话当前不支持迁移会话树。' : transferReason;
+  button.hidden = !!transferReason;
   setControlUnavailable(button, reason);
 }
 function setupTransferTarget(dialog, machines, sourceId, selectedId) {

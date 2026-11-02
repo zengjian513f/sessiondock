@@ -3,6 +3,21 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261102-061042-0d35d5：未支持来源出现迁移入口
+
+报告的 manifest、browser-state 与 header.layout 事件确认 Kiro 的已停止 SDK 会话
+显示 `a-clone-group`；未发现该报告时间窗内的迁移请求。首个偏差在前端入口：只检查
+节点迁移能力和运行状态，没有检查来源。后端整组计划仅支持 Claude、Codex、Grok，
+其他来源返回阻碍项；Kiro、Agy、OpenCode、CodeBuddy 可读不等于可原生迁移。
+
+共用入口检查补上来源限制，覆盖顶栏、更多菜单、右键/长按和直接调用；后端整组
+检查不变。Chromium 先复现 Kiro 按钮错误可见，再通过七来源节点/Hub 的 1280 浅色、
+390 深色操作；`session_clone_browser` 与 `agy_history_browser` 通过，包括复杂组复制、
+重启恢复、失败回滚，以及支持来源挂靠 Agy 后整组拒绝。全部使用临时合成会话，无真实模型调用。
+执行者亲自查看 `target/transfer-source-before/` 与 `target/transfer-source-review/`
+整页截图：不支持的入口消失，Grok/Claude/Codex 的按钮和预览保留；菜单间距、对齐和
+移动端换行保持一致，没有引入新控件或空占位。
+
 ## BUG-20261030-013132-fb51f9：旧会话 provider 与 daemon 默认值不一致
 
 诊断包的 manifest、browser-state、environment、220 条 events 与附件已核对；

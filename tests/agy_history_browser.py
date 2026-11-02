@@ -999,7 +999,9 @@ def run(binary, ast_cache_mb=64, view_cache_mb=128):
                             expect(dialog.locator('.clone-confirm')).to_be_disabled()
                             dialog.locator('.clone-cancel').click()
 
-                        refuse_transfer()
+                        expect(page.locator('#a-clone-group')).to_be_hidden()
+                        refused = page.request.post(base + '/api/session/clone/plan', data={'uid': uid})
+                        assert refused.status == 409 and 'agy' in refused.text(), refused.text()
                         parent_uid = corpus.uid(mixed_sid)
                         attached = page.request.post(base + '/api/session/nest', data={'uid': uid, 'parent_uid': parent_uid})
                         assert attached.status == 200, attached.text()
