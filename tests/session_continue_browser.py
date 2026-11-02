@@ -24,6 +24,7 @@ from private_hosts import private_hosts
 from send_browser import SETTINGS, initialize, wait_history
 from session_global_actions_browser import click_action
 from hub_fixtures import FakeNode, Hub
+from session_start_fixtures import choose_mode
 
 SID = '019a29ee-d9b0-741c-a645-776a523e6b6d'
 TITLE = '接续长标题会话 / Continue the existing investigation without losing its reference'
@@ -35,6 +36,12 @@ REQUIREMENTS = {
     'takeover': TAKE_OVER_PROCESSES,
     'finish': '接收成果并完成验收与收尾。',
 }
+
+
+def cli_mode(page, source):
+    # This suite provisions fake PTYs only; the product default is SDK.
+    choose_mode(page, source, 'cli')
+    page.locator('#settings-dialog .modal-close').click()
 
 
 def check_requirements(prompt, **selection):
@@ -50,6 +57,8 @@ def open_continue(page):
     expect(page.locator('#continue-session-description')).to_be_focused()
     expect(page.locator('#continue-session-options')).to_be_visible()
     expect(page.locator('#continue-session-options input')).to_have_count(4)
+    expect(page.locator('#new-session-go')).to_be_hidden()
+    expect(page.locator('#new-session-dialog .modal-cancel')).to_be_hidden()
     for instruction in REQUIREMENTS.values():
         expect(page.get_by_role('checkbox', name=instruction[:-1], exact=True)).to_be_checked()
     expect(page.locator('[data-continue-session] use').first).to_have_attribute('href', '#i-continue')
@@ -71,6 +80,8 @@ def check_hub(browser, root):
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='networkidle')
         page.wait_for_function('S.sessions.length === 2 && T.listLoaded')
+        cli_mode(page, 'claude')
+        cli_mode(page, 'codex')
         page.locator('#side .item[data-uid^="claude:' + 'a' * 32 + '~"]').click()
         expect(page.locator('#msgs')).to_be_visible()
         origin = page.evaluate('S.sel')
@@ -114,6 +125,8 @@ def check_codex_names(browser, base, root, corpus, cases, screenshots):
                                       color_scheme='dark' if index % 2 else 'light')
         page = context.new_page()
         page.goto(base, wait_until='networkidle')
+        page.wait_for_function('T.listLoaded')
+        cli_mode(page, 'codex')
         page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
         expect(page.locator('.dtitle h2')).to_contain_text(original)
         click_action(page, '[data-continue-session]')
@@ -252,6 +265,7 @@ def main():
                         if request.url.endswith('/api/term/create') else None)
                 page.goto(base, wait_until='networkidle')
                 page.wait_for_function('T.listLoaded')
+                cli_mode(page, 'claude')
                 page.locator(f'#side .item[data-uid="{corpus.uid(SID)}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('已有调查结果')
                 open_continue(page)
@@ -351,6 +365,7 @@ def main():
                 expect(page.locator('#new-session-title')).to_have_text('新建会话')
                 expect(page.locator('#continue-session-composer')).to_be_hidden()
                 expect(page.locator('#continue-session-options')).to_be_hidden()
+                expect(page.locator('#new-session-go')).to_be_visible()
                 expect(page.locator('#new-session-form label:has(input[value="shell"])')).to_be_visible()
                 page.locator('#new-session-dialog .modal-cancel').click()
                 assert not errors, errors

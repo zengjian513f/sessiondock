@@ -123,8 +123,12 @@ const SdkUI = {
     if (!button || !view.steerSend) return;
     const active = view.uid.startsWith('codex:') ? !!view.turn : view.running;
     const steer = active && (view.steerSend.ctrl || view.steerSend.held);
-    button.textContent = steer ? '引导' : active ? '排队' : '发送';
-    button.title = steer ? '引导当前任务' : '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务';
+    const label = steer ? '引导' : active ? '排队' : '发送';
+    const title = steer ? '引导当前任务' : '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务';
+    // Keyboard events also arrive for ordinary typing. Replacing unchanged text
+    // invalidates ancestor :has() rules and needlessly restyles long histories.
+    if (button.textContent !== label) button.textContent = label;
+    if (button.title !== title) button.title = title;
   },
 
   bindSteerSend(view) {
