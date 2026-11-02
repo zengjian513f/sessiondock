@@ -521,6 +521,27 @@ The sidebar resource area is display-only. It has no separate click or keyboard
 action; clicking it selects the session row and never starts a diagnostic lease.
 Resource details and probing open only from the detail header’s resources tab.
 
+### Node-side resource aggregation
+
+DELTA: Hub resource reads use `GET /api/resources/compact` for sidebar metrics
+and `POST /api/resources/compact` with `{session, inclusive}` for one native
+session's execution-node row. Nodes apply the existing resource aggregation
+before transmission; process samples, bindings and device sets stay local.
+The GET envelope retains collector version, node/boot identity, sample time,
+the six direct-owner metrics and fleet-wide incomplete GPU attribution evidence.
+The POST returns the same detail metrics, diagnostic state and verified
+participation as the full-snapshot calculation, including inclusive process/device
+deduplication. Hub still merges nodes and preserves stale/unknown observations.
+
+Older nodes returning HTTP 404, 405 or 501 use the existing `/api/resources`
+read and Hub-side aggregation during a rolling upgrade. Timeouts and other
+failures do not trigger that larger fallback. Existing browser endpoints,
+refresh intervals and sleep behavior remain unchanged; no browser refresh is
+required for this transport change. Collector sampling and diagnostic leases
+are unchanged. `tests/resource_probe_browser.py` measures real Hub/node response
+sizes with multi-megabyte synthetic process samples and exercises browser
+scopes, GPU coverage, stale/failing contributors and mixed-version equivalence.
+
 ## Optional collector
 
 `SESSIONDOCK_RESOURCE_AGENT_MODE=auto` (default) connects to the configured local

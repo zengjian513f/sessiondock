@@ -14,7 +14,8 @@ from threading import Lock
 def counted_node(node):
     """Private forwarding fixture: observe Hub polls and fail one publication."""
     counts = SimpleNamespace(gets=0, posts=0, delivered=0, fail_posts=0, fail_gets=0,
-                             reports=[], legacy=False, corrupt_base=False)
+                             reports=[], legacy=False, corrupt_base=False,
+                             resources=[], legacy_resources=False, fail_resources=False)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -23,6 +24,17 @@ def counted_node(node):
         def forward(self):
             body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             tracked = self.path.split('?')[0] == '/api/process-links'
+            resource = self.path.split('?')[0] in ('/api/resources', '/api/resources/compact')
+            if self.path == '/api/resources/compact' and (counts.legacy_resources or counts.fail_resources):
+                status = 404 if counts.legacy_resources else 503
+                payload = b''
+                counts.resources.append((self.command, self.path, status, len(payload)))
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             if tracked and self.command == 'GET' and counts.fail_gets:
                 counts.fail_gets -= 1
                 self.send_response(503)
@@ -46,6 +58,8 @@ def counted_node(node):
                 response = upstream.getresponse()
                 streaming = 'text/event-stream' in response.getheader('Content-Type', '')
                 payload = None if streaming else response.read()
+                if resource:
+                    counts.resources.append((self.command, self.path, response.status, len(payload)))
                 observation = None
                 if tracked and self.command == 'GET' and response.status == 200:
                     value = json.loads(payload)

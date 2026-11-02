@@ -1,7 +1,7 @@
 //! Session resource views preserve execution nodes and incomplete observations.
 //! The UI UID is an opaque path identity: resolve its published native SID before
 //! joining the shared resource protocol, never infer SID from the UID's suffix.
-use super::{Client, Registry, namespace};
+use super::{Client, ClientError, Registry, Target, namespace};
 use futures_util::{StreamExt, stream};
 use process_links::{Session, agent::Resources};
 use serde_json::{Value, json};
@@ -179,18 +179,14 @@ pub async fn get(
                 };
                 let value = match tokio::time::timeout(
                     Duration::from_secs(3),
-                    client.json(
-                        &target,
-                        "GET",
-                        "/api/resources",
-                        None,
-                        Duration::from_secs(3),
-                    ),
+                    compact_session(client, &target, &node.id, &node.name, session, inclusive),
                 )
                 .await
                 {
-                    Ok(Ok((200, value))) => {
-                        node_row(&node.id, &node.name, value, session, inclusive)
+                    Ok(Ok((200, mut value))) => {
+                        value["node_id"] = json!(node.id);
+                        value["node_name"] = json!(node.name);
+                        value
                     }
                     Ok(Ok((404 | 501, _))) => {
                         missing("unsupported", "resource_endpoint_unavailable")
@@ -219,6 +215,113 @@ pub async fn get(
         result["totals"]["partial"] = json!(true);
     }
     Ok(result)
+}
+
+/// Inspect the status before parsing: older routers may return an empty or
+/// non-JSON 404/405 for this endpoint.
+async fn fetch_compact(
+    client: &Client,
+    target: &Target,
+    body: Option<&Value>,
+) -> Result<(u16, Value), ClientError> {
+    let encoded = body
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| ClientError::Invalid("invalid resource request"))?;
+    let response = client
+        .open(
+            target,
+            super::client::Request {
+                method: if body.is_some() { "POST" } else { "GET" },
+                target: "/api/resources/compact",
+                headers: &[("Content-Type", "application/json")],
+                body: encoded.as_deref(),
+                connect: Duration::from_secs(3),
+                idle: Duration::from_secs(3),
+            },
+        )
+        .await?;
+    let status = response.status;
+    if status != 200 {
+        return Ok((status, Value::Null));
+    }
+    let raw = response.into_body().read_to_end(super::JSON_LIMIT).await?;
+    let value = client
+        .work(move || {
+            serde_json::from_slice(&raw).map_err(|_| ClientError::Invalid("body is not JSON"))
+        })
+        .await??;
+    Ok((status, value))
+}
+
+/// Old nodes keep their read path during a rolling upgrade. A transient failure
+/// must not trigger another, much larger request.
+async fn compact_session(
+    client: &Client,
+    target: &Target,
+    node_id: &str,
+    node_name: &str,
+    session: &Session,
+    inclusive: bool,
+) -> Result<(u16, Value), ClientError> {
+    let body = json!({"session":session,"inclusive":inclusive});
+    let (status, value) = fetch_compact(client, target, Some(&body)).await?;
+    if matches!(status, 404 | 405 | 501) {
+        let (status, value) = client
+            .json(
+                target,
+                "GET",
+                "/api/resources",
+                None,
+                Duration::from_secs(3),
+            )
+            .await?;
+        return Ok((
+            status,
+            if status == 200 {
+                node_row(node_id, node_name, value, session, inclusive)
+            } else {
+                value
+            },
+        ));
+    }
+    Ok((status, value))
+}
+
+const SIDEBAR_FIELDS: &[&str] = &[
+    "cpu_cores",
+    "process_count",
+    "memory_pss_bytes",
+    "gpu_count",
+    "proc_storage_read_bytes_per_second",
+    "proc_storage_write_bytes_per_second",
+];
+
+fn sidebar_metrics(metrics: &Value) -> Value {
+    SIDEBAR_FIELDS
+        .iter()
+        .map(|key| ((*key).to_owned(), metrics[key].clone()))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// Preserve the original collector identity and timestamp, including stale
+/// observations. The Hub still applies the same freshness/coverage rules.
+pub fn list_document(document: Value) -> Value {
+    let Ok(resources) = serde_json::from_value::<Resources>(document) else {
+        return Value::Null;
+    };
+    let sessions: Vec<_> = process_links::resource_summary::sessions(&resources)
+        .into_iter()
+        .map(|mut row| {
+            row["metrics"] = sidebar_metrics(&row["metrics"]);
+            row
+        })
+        .collect();
+    json!({"version":resources.version,"node_id":resources.node_id,
+        "boot_id":resources.boot_id,"sampled_at":resources.sampled_at,
+        "gpu_attribution_incomplete":process_links::resource_summary::gpu_attribution_incomplete(&resources),
+        "sessions":sessions})
 }
 
 /// Only the owner and verified execution participants can be targeted by a session action.
@@ -255,22 +358,19 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
     let mut sessions: BTreeMap<(String, String, String), (Session, Vec<Value>)> = BTreeMap::new();
     let mut gpu_incomplete = false;
     for (node_id, document) in documents {
-        let Ok(resources) = serde_json::from_value::<Resources>(document) else {
-            partial = true;
-            continue;
-        };
-        let age = now() - resources.sampled_at;
-        if resources.version != 1
-            || resources.node_id != node_id
-            || resources.boot_id.is_empty()
+        let sampled_at = document["sampled_at"].as_f64().unwrap_or(f64::NAN);
+        let age = now() - sampled_at;
+        if document["version"] != 1
+            || document["node_id"] != node_id
+            || document["boot_id"].as_str().is_none_or(str::is_empty)
             || !age.is_finite()
             || !(-5.0..=15.0).contains(&age)
         {
             partial = true;
             continue;
         }
-        gpu_incomplete |= process_links::resource_summary::gpu_attribution_incomplete(&resources);
-        for row in process_links::resource_summary::sessions(&resources) {
+        gpu_incomplete |= document["gpu_attribution_incomplete"] == true;
+        for row in document["sessions"].as_array().into_iter().flatten() {
             let Ok(session) = serde_json::from_value::<Session>(row["session"].clone()) else {
                 continue;
             };
@@ -282,7 +382,7 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
                 ))
                 .or_insert_with(|| (session, Vec::new()))
                 .1
-                .push(row);
+                .push(row.clone());
         }
     }
     let rows: Vec<_> = sessions
@@ -292,17 +392,7 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
             if gpu_incomplete {
                 process_links::resource_summary::mark_gpu_attribution_incomplete(&mut all);
             }
-            let metrics: serde_json::Map<_, _> = [
-                "cpu_cores",
-                "process_count",
-                "memory_pss_bytes",
-                "gpu_count",
-                "proc_storage_read_bytes_per_second",
-                "proc_storage_write_bytes_per_second",
-            ]
-            .into_iter()
-            .map(|key| (key.to_owned(), all[key].clone()))
-            .collect();
+            let metrics = sidebar_metrics(&all);
             json!({"session":session,"metrics":metrics})
         })
         .collect();
@@ -316,16 +406,23 @@ pub async fn get_list_summary(registry: &Registry, client: &Client) -> Value {
                 return None;
             }
             let target = registry.target(&node).ok()?;
-            match tokio::time::timeout(
-                Duration::from_secs(3),
-                client.json(
-                    &target,
-                    "GET",
-                    "/api/resources",
-                    None,
-                    Duration::from_secs(3),
-                ),
-            )
+            match tokio::time::timeout(Duration::from_secs(3), async {
+                let (status, value) = fetch_compact(client, &target, None).await?;
+                if matches!(status, 404 | 405 | 501) {
+                    let (status, value) = client
+                        .json(
+                            &target,
+                            "GET",
+                            "/api/resources",
+                            None,
+                            Duration::from_secs(3),
+                        )
+                        .await?;
+                    Ok::<_, super::client::ClientError>((status, list_document(value)))
+                } else {
+                    Ok((status, value))
+                }
+            })
             .await
             {
                 Ok(Ok((200, value))) => Some((node.id.clone(), value)),

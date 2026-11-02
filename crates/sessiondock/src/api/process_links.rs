@@ -60,6 +60,34 @@ pub async fn resources(State(state): State<AppState>) -> Json<serde_json::Value>
     Json(crate::runtime::process_links::resources(&state).await)
 }
 
+/// Node-side aggregation keeps process samples on their execution machine.
+pub async fn compact_resources(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let value = crate::runtime::process_links::resources(&state).await;
+    Json(crate::hub::resources::list_document(value))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CompactSessionQuery {
+    session: process_links::Session,
+    #[serde(default)]
+    inclusive: bool,
+}
+
+pub async fn compact_session_resources(
+    State(state): State<AppState>,
+    Json(query): Json<CompactSessionQuery>,
+) -> Json<serde_json::Value> {
+    let value = crate::runtime::process_links::resources(&state).await;
+    let node_id = state.local_node_id.as_deref().unwrap_or_default();
+    Json(crate::hub::resources::node_row(
+        node_id,
+        &state.hostname,
+        value,
+        &query.session,
+        query.inclusive,
+    ))
+}
+
 #[derive(serde::Deserialize)]
 pub struct SessionResourcesQuery {
     uid: String,
@@ -155,7 +183,10 @@ pub async fn session_probe(
 pub async fn list_resources(State(state): State<AppState>) -> Json<serde_json::Value> {
     let value = crate::runtime::process_links::resources(&state).await;
     let node_id = value["node_id"].as_str().unwrap_or_default().to_owned();
-    let mut summary = crate::hub::resources::list_summary(vec![(node_id.clone(), value)], false);
+    let mut summary = crate::hub::resources::list_summary(
+        vec![(node_id.clone(), crate::hub::resources::list_document(value))],
+        false,
+    );
     summary["node_id"] = serde_json::json!(node_id);
     Json(summary)
 }
