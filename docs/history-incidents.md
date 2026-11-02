@@ -29,6 +29,13 @@ Chromium 合成验收在独立节点、Hub 及跨主机私有目录完成，无�
 Rust 构建、改动文件格式、Python 语法、品牌、文档链接和 AGENTS 检查通过。
 严格 Clippy 被未修改文件中的 41 项既有告警阻断，没有将该检查记为通过。
 
+实现提交 `cc040207` 已推送，使用该提交的后端及前端快照尝试全部七个节点/Hub；
+资源代理、ptyhost 与 sdkhost 不在改动范围。lyra、cygnus、pavo、hub 部署、重启及
+健康检查通过，原有 ptyhost 均保留。orion、cetus SSH 超时，未更新。
+vela 原生构建通过，但 launchd 仍未运行；工具恢复旧文件后服务依然不可用，结果为
+`ROLLBACK_FAILED`，保留原有十八个 ptyhost。三者待补发，见 TODO。
+工具报告在未跟踪的 `target/deploy/20261102-074719-cc040207/report-20261102-075206.json`。
+
 ## BUG-20261102-061042-0d35d5：未支持来源出现迁移入口
 
 报告的 manifest、browser-state 与 header.layout 事件确认 Kiro 的已停止 SDK 会话

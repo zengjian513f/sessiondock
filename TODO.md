@@ -92,7 +92,10 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  Kiro 首次 headless／ACP 启动归属修复 `0a5dbf45`（包含 `f4652a8f`）已交付
+  选择会话树并固定身份迁移 `cc040207` 已交付 lyra、cygnus、pavo、hub，重启且健康；
+  orion、cetus SSH 超时；vela 构建通过，恢复旧文件后服务仍不可用（`ROLLBACK_FAILED`），
+  三者待补发。完整报告在未跟踪的 `target/deploy/20261102-074719-cc040207/`。
+  此前 Kiro 首次 headless／ACP 启动归属修复 `0a5dbf45`（包含 `f4652a8f`）已交付
   lyra、cygnus、pavo、hub，重启且健康；前端保留已交付的 `c51a54b8`。
   orion、cetus 正式发布尝试仍 SSH 超时；vela 在原生构建阶段停止发布，
   旧服务拒绝连接导致身份保全失败，后端未替换。三者待恢复后补发，vela 必须先成功保全身份。
