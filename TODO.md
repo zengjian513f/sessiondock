@@ -92,11 +92,12 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  Kiro SSE 增量推送 `4bb9919b` 已交付 lyra、cygnus、pavo、hub 且健康。
-  orion、cetus SSH 超时；vela 原服务拒绝连接，旧目录身份保全失败，网页发布尝试恢复旧文件后
-  服务仍不健康（`ROLLBACK_FAILED`），未升级后端。三者待恢复后补发；vela 后端升级前须成功保全身份。
-  报告在未跟踪的 `target/deploy/20261102-015352-4bb9919b/`（节点及 Hub）和
-  `target/deploy/20261102-015155-4bb9919b/`（vela 网页尝试）。
+  资源节点汇总后端 `deffc6d8` 已交付 lyra、cygnus、pavo、hub，重启且健康；
+  前端保留已交付的 Kiro SSE 增量推送 `4bb9919b`。orion、cetus 本轮正式发布仍 SSH 超时；
+  vela 原服务拒绝连接，升级前旧目录身份保全再次失败，本轮未替换后端。三者待恢复后补发；
+  vela 后端升级前须成功保全身份。最新报告在未跟踪的 `target/deploy/20261102-023105-deffc6d8/`。
+  此前 Kiro 发布报告在 `target/deploy/20261102-015352-4bb9919b/`，vela 网页尝试恢复旧文件后
+  仍不健康（`ROLLBACK_FAILED`），见 `target/deploy/20261102-015155-4bb9919b/`。
   此前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
   已交付 lyra、cygnus、pavo、hub 且健康；
   orion、cetus 连接超时，vela 既有 `Store(Invalid)` 故障导致旧文件恢复后仍不健康，
