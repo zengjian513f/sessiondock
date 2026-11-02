@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Real transfer job held at private node proxy; tasks UI and withdrawal."""
 import argparse,json,tempfile,threading,http.client,time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -74,4 +76,5 @@ def main():
   other.screenshot(path=str(a.output/'tasks.png'))
  print('PASS remaining transfer task recovery',flush=True)
 
-if __name__=='__main__':run_with_evidence(main,'target/remaining-ui/tasks')
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

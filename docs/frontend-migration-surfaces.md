@@ -470,7 +470,7 @@ DELTA：四联视图之后按星标／过程折叠／搜索、运行控制（启
 - 星标、展开/折叠过程、搜索导航。
 - 冻结现场 / 恢复运行（`renderSessionFreeze`）。需要 `session_freeze`、已加载的终端列表、以及可验证的 `instance_id`。否则按钮在，但是不可用，原因分别是：正在读取、当前节点不支持、状态已失效、没有可验证实例。成功后会话区覆盖「会话已暂停」和恢复按钮，不放进全局浮层。`POST api/session/freeze`。[`tests/session_freeze_browser.py`](../tests/session_freeze_browser.py)。
 - 报告当前会话问题。
-- 迁移会话树（移动/复制整组）。顶栏需要 `session_clone_local_codex === true`。DELTA：顶栏、更多菜单及侧栏右键/长按菜单统一隐藏运行中会话和不支持来源的入口；当前仅 Claude、Codex、Grok 支持，Kiro、Agy、OpenCode、CodeBuddy 不显示。侧栏待落盘行或缺少能力时沿用不可用提示。来源检查只决定入口，整组仍由后端预检；支持来源挂靠了不支持的成员时显示阻碍项，不能部分迁移。
+- 迁移会话树。顶栏需要 `session_clone_local_codex === true`。DELTA：入口打开可勾选树，不支持来源或运行中会话也可作为树的上下文；其选框置灰，支持且停止的成员默认全选。跨机归属关系保留，原生依赖联动选择；没有复制或生成新 ID 的选项。待落盘行沿用不可用提示。
 - 停止和删除是独立动作；运行中的会话先停止，再删除。删除父会话会标记待删除并进入回收站，父会话链仍保留显示/隐藏入口。待删除、恢复和级联彻底删除遵守[回收站合同](trash.md)。尚未被对话占用的新建启动是删除这次启动。
 
 停止：`POST api/session/stop`。成功只更新运行状态；失败及结果不确定使用 `appAlert` 的「知道了」框，停止失败保留会话。
@@ -512,21 +512,25 @@ DELTA（BUG-20261015-153714-49d7c5）：最近目录的会话来源排除附属�
 
 丢失根目录时，其它来源和新建仍可用。[`tests/missing_roots_browser.py`](../tests/missing_roots_browser.py)。
 
-### 移动与复制
+### 迁移会话树
 
-对话框由 `cloneSessionGroup` 现建，标题「移动或复制会话组」。
+`cloneSessionGroup` 创建“迁移会话树”对话框。源机器只读，目标选择另一台在线机器。
+树按已有父子关系缩进，每行有复选框、来源和可迁移状态；支持且停止的源端成员默认全选，
+不支持来源、运行中和其他机器成员置灰并显示原因。全选框显示半选状态；父子可独立勾选，
+真正的原生历史依赖联动选择。选框和目标变化后重新预检，失败或尚未完成时不可确认。
+没有复制模式或新 ID 开关；按钮为“迁移所选会话”。
 
-- 源机器只读，目标机器下拉。离线或停用的目标标「不可用」且不可选（源机器自己除外）。
-- 操作：复制（默认）或移动。同机不能移动，提示「移动需要选择另一台机器。」跨机需要 `session_clone_remote` 或 `session_move_remote`，否则「跨机器传输尚未接入。」
-- 跨机才出现「生成新 UID」，复制默认勾选，移动默认不勾。两种操作各自记住这一勾。
-- 清单表：会话、来源、关联（所选会话 / 子代理 / 分支关联 / 关联历史）、历史文件数、大小。状态如「整组 N 个会话 · N 份历史 · 大小」。
-- 环境行：核对目标 CLI 是否安装、版本是否更旧、动态工具是否未核验。未核验会写出来，不伪装成已通过。
-- 按钮随状态变成「复制整组 / 移动整组 / 正在复制… / 重试同一次复制 / 撤回本次移动」。结果不确定时不能改目标、操作和 UID 选择。
-- 计划 `POST api/session/clone/plan`，执行同机 `api/session/clone`、跨机 `api/session/transfer/clone`，进度 `api/session/clone/progress` 或 `api/session/transfer/progress`，取消 `api/session/clone/cancel` 或 `api/session/transfer/cancel`。
-- 完成后关闭对话框并打开目标会话，不另弹成功通知。
-- 顶栏 `#transfer-tasks` 列出未完成任务，可继续。`GET api/session/transfers`，`refreshTransferTasks`。有未完成任务或任务面板打开时每 5 秒刷新；没有未完成任务且事件通道正常时只在 `sessiondock-ui-sessions`、本页操作、休眠恢复和约 60 秒一次的兜底读取时刷新；事件通道断开时仍每 5 秒；休眠或隐藏时不读。
+读取树 `POST api/session/transfer/tree` 不创建事务；选择预检 `api/session/clone/plan`
+只接受移动及保留 ID。执行、取消、进度和重启恢复沿用[迁移协议](session-move.md#当前接口)。
+计划只检查实际选择，灰色来源不阻止其他独立成员迁移。
 
-[`tests/session_clone_browser.py`](../tests/session_clone_browser.py)、[`tests/session_transfer_browser.py`](../tests/session_transfer_browser.py)、[`tests/session_transfer_cache_browser.py`](../tests/session_transfer_cache_browser.py)、[`tests/session_transfer_environment_browser.py`](../tests/session_transfer_environment_browser.py)、[`tests/session_transfer_isolation_browser.py`](../tests/session_transfer_isolation_browser.py)、[`tests/session_files_clone_browser.py`](../tests/session_files_clone_browser.py)、[`tests/session_mixed_clone_browser.py`](../tests/session_mixed_clone_browser.py)、[`tests/session_mixed_bundle_browser.py`](../tests/session_mixed_bundle_browser.py)、[`tests/session_local_recovery_browser.py`](../tests/session_local_recovery_browser.py)、[`tests/session_prefix_browser.py`](../tests/session_prefix_browser.py)、[`tests/session_files_browser.py`](../tests/session_files_browser.py)、[`tests/session_grok_checkpoint_browser.py`](../tests/session_grok_checkpoint_browser.py)、[`tests/session_goals_native_browser.py`](../tests/session_goals_native_browser.py)。
+部分迁移后保留跨机 `nest_parent`：父子一起迁移仍同机，留下的一端指向另一端的新位置。
+第三节点的父引用按持久迁移记录解析，详情、列表、搜索及实时元数据一致。
+任务面板显示“未完成的迁移”，恢复同一事务；执行结果不确定时不能改选择或另发新操作。
+
+[`tests/session_selected_move_browser.py`](../tests/session_selected_move_browser.py)、
+[`tests/session_transfer_sources_browser.py`](../tests/session_transfer_sources_browser.py)、
+[`tests/agy_history_browser.py`](../tests/agy_history_browser.py)。
 
 ### 回收站与删除
 

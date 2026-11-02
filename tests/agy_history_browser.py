@@ -988,35 +988,31 @@ def run(binary, ast_cache_mb=64, view_cache_mb=128):
                         refused = page.request.delete(base + '/api/session/' + uid + '?force=1')
                         assert refused.status == 409 and refused.json()['code'] == 'root_unconfigured', refused.text()
 
-                        def refuse_transfer():
+                        def check_transfer_tree():
                             if not page.locator('#a-clone-group').is_visible():
                                 page.locator('#a-more').click()
                             page.locator('#a-clone-group').click()
                             dialog = page.locator('#clone-group-dialog')
-                            expect(dialog.locator('.transfer-error')).to_contain_text('agy')
-                            expect(dialog.locator('.clone-confirm')).to_be_disabled()
-                            dialog.locator('input[name="transfer-mode"][value="move"]').check()
+                            expect(dialog.locator('.transfer-tree input[data-uid="'+uid+'"]')).to_be_disabled()
                             expect(dialog.locator('.clone-confirm')).to_be_disabled()
                             dialog.locator('.clone-cancel').click()
 
-                        expect(page.locator('#a-clone-group')).to_be_hidden()
-                        refused = page.request.post(base + '/api/session/clone/plan', data={'uid': uid})
-                        assert refused.status == 409 and 'agy' in refused.text(), refused.text()
+                        check_transfer_tree()
                         parent_uid = corpus.uid(mixed_sid)
                         attached = page.request.post(base + '/api/session/nest', data={'uid': uid, 'parent_uid': parent_uid})
                         assert attached.status == 200, attached.text()
                         page.reload(wait_until='domcontentloaded')
                         page.locator(f'#side .item[data-uid="{parent_uid}"]').click()
                         expect(page.locator('#msgs')).to_contain_text('混合组父会话')
-                        refuse_transfer()
+                        check_transfer_tree()
                         moved = page.request.post(base + '/api/session/clone/plan', data={
-                            'uid': parent_uid, 'mode': 'move', 'new_ids': False})
-                        assert moved.status == 409 and 'agy' in moved.text(), moved.text()
+                            'uid': parent_uid, 'mode': 'move', 'new_ids': False, 'target_node': 'b'*32, 'selected_uids': [uid]})
+                        assert moved.status == 409 and moved.json()['code'] == 'move_group_unsupported', moved.text()
                         detached = page.request.post(base + '/api/session/nest', data={'uid': uid, 'parent_uid': None})
                         assert detached.status == 200, detached.text()
                         assert mixed_path.read_bytes() == mixed_before
                         assert_native(native, expected_native, 'unsupported delete/clone/move')
-                        progress('native delete guidance and whole mixed-provider clone/move refusal preserve all sources')
+                        progress('native delete guidance and gray Agy selection preserve all sources during independent migration')
 
                         # Native deletion is performed by the fixture, never UI DELETE.
                         # Keep the transcript to prove the catalog is the authority.

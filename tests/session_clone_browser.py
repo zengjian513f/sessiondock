@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Click whole-group clone in the real page; synthetic native DBs and histories.
 Covers branch siblings, archived dependencies, revert generations, grandchildren,
 subagents, code-mode references, metadata, idempotent retry and process restart.
@@ -593,4 +595,5 @@ def main():
             browser.close()
             if hub:hub.stop()
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

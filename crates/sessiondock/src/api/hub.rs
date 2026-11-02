@@ -96,7 +96,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "session_relations": true, "conversation_send": true, "conversation_path_completion": true, "codex_sdk": true, "native_sdks": {"grok":true,"agy":true,"opencode":true,"claude":true,"kiro":true,"codebuddy":true}, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": false, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "session_relations": true, "conversation_send": true, "conversation_path_completion": true, "codex_sdk": true, "native_sdks": {"grok":true,"agy":true,"opencode":true,"claude":true,"kiro":true,"codebuddy":true}, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
@@ -708,6 +708,7 @@ async fn handle(
             "/api/session/transfer/clone"
                 | "/api/session/transfer/cancel"
                 | "/api/session/transfer/progress"
+                | "/api/session/transfer/tree"
         )
     {
         return Ok((
@@ -920,6 +921,7 @@ async fn handle(
         &node,
         state.shutdown.clone(),
         Forward {
+            nest_registry: state.registry.clone(),
             method: method.as_str(),
             path: &resolved.path,
             query: &resolved.query,
@@ -932,6 +934,62 @@ async fn handle(
         },
     )
     .await?;
+    if method == Method::POST
+        && resolved.path == "/api/session/transfer/tree"
+        && response.status().is_success()
+    {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .map_err(|_| Reply::Upstream)?;
+        let mut tree: Value = serde_json::from_slice(&bytes).map_err(|_| Reply::Upstream)?;
+        let inventory =
+            aggregate::sessions(registry, client, &[("force".into(), "1".into())]).await?;
+        crate::hub::nest::transfer_tree(&mut tree, &inventory);
+        loop {
+            let extra = tree["sessions"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["native_missing"] == true))
+                .and_then(|row| row["uid"].as_str())
+                .map(str::to_owned);
+            let Some(extra) = extra else {
+                break;
+            };
+            let (_, local) = namespace::split(&extra, true)
+                .map_err(|error| Reply::Invalid(error.to_string()))?;
+            let answer = client
+                .json(
+                    &target,
+                    "POST",
+                    "/api/session/transfer/tree",
+                    Some(&json!({"uid":local})),
+                    std::time::Duration::from_secs(300),
+                )
+                .await;
+            let members = tree["sessions"].as_array_mut().unwrap();
+            let mut found = false;
+            if let Ok((200, value)) = answer {
+                let value = namespace::public_payload(value, &node, "/api/session/transfer/tree");
+                for member in value["sessions"].as_array().into_iter().flatten() {
+                    found |= member["uid"] == extra;
+                    if let Some(existing) = members
+                        .iter_mut()
+                        .find(|existing| existing["uid"] == member["uid"])
+                    {
+                        *existing = member.clone();
+                    } else {
+                        members.push(member.clone());
+                    }
+                }
+            }
+            if !found && let Some(member) = members.iter_mut().find(|member| member["uid"] == extra)
+            {
+                member["native_missing"] = false.into();
+                member["disabled_reason"] = "原生记录当前不可迁移".into();
+            }
+            crate::hub::nest::transfer_tree(&mut tree, &inventory);
+        }
+        return ok(&tree);
+    }
     if method == Method::POST
         && response.status().is_success()
         && matches!(

@@ -36,6 +36,8 @@ use std::{
 /// readers use `IgnoredAny`; `save` accepts only the full operation type.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Operation<N = Native> {
+    #[serde(default)]
+    pub selection: Option<super::selection::Selection>,
     pub id: String,
     #[serde(default)]
     pub compacted: bool,
@@ -358,7 +360,7 @@ impl TransferService {
         id: &str,
     ) -> Result<Operation<N>, TransferError> {
         if id.len() != 36 || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
-            return Err(TransferError::new("move_plan_stale", "复制记录不存在"));
+            return Err(TransferError::new("move_plan_stale", "迁移记录不存在"));
         }
         let _work = self.progress.enter(id);
         let path = self.directory.join(id).join("operation.json");
@@ -447,13 +449,44 @@ impl TransferService {
         new_ids: bool,
         snapshot: &SessionSnapshot,
     ) -> Result<Operation, TransferError> {
-        if self.locked(selected)? {
+        let group = self.group_in(selected, snapshot)?;
+        self.plan_group(selected, new_ids, group, None)
+    }
+    pub fn plan_selection(
+        &self,
+        selected: &str,
+        snapshot: &SessionSnapshot,
+        selection: super::selection::Selection,
+    ) -> Result<Operation, TransferError> {
+        let group = self.selected_group(selected, &selection.uids, snapshot)?;
+        let expanded = group
+            .members
+            .iter()
+            .map(|member| member.uid.clone())
+            .collect::<BTreeSet<_>>();
+        if expanded != selection.uids {
             return Err(TransferError::new(
-                "move_recovery_required",
-                "会话组有尚未恢复的复制操作",
+                "move_plan_stale",
+                "原生历史依赖已变化，请重新读取迁移树",
             ));
         }
-        let group = self.group_in(selected, snapshot)?;
+        self.plan_group(selected, false, group, Some(selection))
+    }
+    fn plan_group(
+        &self,
+        selected: &str,
+        new_ids: bool,
+        group: group::Group,
+        selection: Option<super::selection::Selection>,
+    ) -> Result<Operation, TransferError> {
+        for member in &group.members {
+            if self.locked(&member.uid)? {
+                return Err(TransferError::new(
+                    "move_recovery_required",
+                    "会话组有尚未恢复的迁移操作",
+                ));
+            }
+        }
         if group.members.iter().any(|m| m.source == "kiro") {
             return Err(native::kiro_transfer_unsupported());
         }
@@ -510,7 +543,9 @@ impl TransferService {
         let directory = self.directory.join(&id);
         fs::create_dir(&directory)?;
         let mut planning = super::cleanup::PlanningDirectory(directory.clone(), false);
+        let moving = selection.is_some();
         let mut op = Operation {
+            selection,
             id,
             compacted: false,
             created_ms: crate::session_links::now_ms(),
@@ -535,7 +570,7 @@ impl TransferService {
             reused_files: BTreeSet::new(),
             replaced_files: BTreeMap::new(),
             native_before: None,
-            moving: false,
+            moving,
             storage_probes: BTreeMap::new(),
             reclaimed_by: BTreeMap::new(),
             ownership_sequence: 0,
@@ -544,7 +579,7 @@ impl TransferService {
             .group()
             .members
             .iter()
-            .find(|m| m.uid == selected)
+            .find(|m| m.uid == op.group().selected)
             .unwrap();
         op.target_uid = Some(self.planned_target_uid(&op, selected_file)?);
         if let Some(metadata) = &self.metadata {
@@ -569,6 +604,25 @@ impl TransferService {
                     }
                 }
                 if let Some(mut relation) = before.get("nest_parent").cloned() {
+                    if let Some(selection) = &op.selection {
+                        let parent_node = relation["node_id"]
+                            .as_str()
+                            .unwrap_or(&selection.source_node);
+                        let moved = parent_node == selection.source_node
+                            && members.iter().any(|parent| {
+                                parent.source == relation["source"] && parent.sid == relation["sid"]
+                            });
+                        let node = if moved {
+                            &selection.target_node
+                        } else {
+                            parent_node
+                        };
+                        if node == selection.target_node {
+                            relation.as_object_mut().unwrap().remove("node_id");
+                        } else {
+                            relation["node_id"] = node.to_owned().into();
+                        }
+                    }
                     if relation["node_id"].is_null()
                         && let Some(mapped) = relation["sid"].as_str().and_then(|id| {
                             op.mapped_session(relation["source"].as_str().unwrap_or(""), id)
@@ -583,6 +637,12 @@ impl TransferService {
                 }
                 op.metadata_after
                     .insert(self.planned_target_uid(&op, member)?, after.into());
+            }
+        }
+        if op.selection.is_some() {
+            for (provider, root) in self.bundle_roots(&op)? {
+                op.storage_probes
+                    .insert(provider, super::environment::StorageProbe::create(&root)?);
             }
         }
         self.save(&op)?;
@@ -658,7 +718,11 @@ impl TransferService {
         op: &Operation,
         snapshot: &SessionSnapshot,
     ) -> Result<(), TransferError> {
-        let current = self.group_in(&op.uid, snapshot)?;
+        let current = if let Some(selection) = &op.selection {
+            self.selected_group(&op.uid, &selection.uids, snapshot)?
+        } else {
+            self.group_in(&op.uid, snapshot)?
+        };
         let old: BTreeSet<_> = op
             .group()
             .members
@@ -669,14 +733,14 @@ impl TransferService {
         if old != now || !current.blockers.is_empty() || current.edges != op.group().edges {
             return Err(TransferError::new(
                 "move_plan_stale",
-                "会话组关联已变化，请重新查看复制清单",
+                "会话组关联已变化，请重新查看迁移清单",
             ));
         }
         for f in &op.plan.files {
             if hash(&f.source)? != f.sha256 {
                 return Err(TransferError::new(
                     "move_plan_stale",
-                    "会话历史已变化，请重新查看复制清单",
+                    "会话历史已变化，请重新查看迁移清单",
                 ));
             }
         }
@@ -688,7 +752,7 @@ impl TransferService {
                 if snapshot.row(uid) != *row {
                     return Err(TransferError::new(
                         "move_plan_stale",
-                        "源会话显示设置已变化，请重新查看复制清单",
+                        "源会话显示设置已变化，请重新查看迁移清单",
                     ));
                 }
             }
@@ -712,7 +776,7 @@ impl TransferService {
         if !op.plan.files.is_empty() && native::capture(&self.home, &op.plan)? != op.native {
             return Err(TransferError::new(
                 "move_plan_stale",
-                "原生会话元数据已变化，请重新查看复制清单",
+                "原生会话元数据已变化，请重新查看迁移清单",
             ));
         }
         if let Some(names) = &op.codex_names {
@@ -1045,7 +1109,7 @@ impl TransferService {
                 fs::create_dir_all(parent)?;
                 let staging = file.staging;
                 if hash(&staging)? != file.sha256 {
-                    return Err(TransferError::new("move_plan_stale", "复制暂存数据已变化"));
+                    return Err(TransferError::new("move_plan_stale", "迁移暂存数据已变化"));
                 }
                 // Copy to an unindexed sibling then link with no-replace semantics;
                 // publication is atomic even when state and CLI roots differ in FS.
@@ -1130,15 +1194,22 @@ impl TransferService {
                     .relationship_refresh
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                group::derive_published(
-                    &snapshot,
-                    op.target_uid.as_ref().unwrap(),
-                    &self.references,
-                    &target_uids,
-                )?
+                if op.selection.is_some() {
+                    group::derive_selected_published(&snapshot, &self.references, &target_uids)?
+                } else {
+                    group::derive_published(
+                        &snapshot,
+                        op.target_uid.as_ref().unwrap(),
+                        &self.references,
+                        &target_uids,
+                    )?
+                }
             };
             if !group.blockers.is_empty() || group.members.len() != op.group().members.len() {
-                return Err(TransferError::new("move_verify", "克隆后的历史关系不完整"));
+                return Err(TransferError::new(
+                    "move_verify",
+                    "迁移后的原生历史关系不完整",
+                ));
             }
             let wanted: BTreeSet<_> = op
                 .group()
@@ -1257,7 +1328,7 @@ impl TransferService {
             .collect()
     }
     pub fn public<N>(op: &Operation<N>) -> Value {
-        json!({"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"scp_transfer":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"selection":op.selection.is_some(),"target_node":op.selection.as_ref().map(|selection| &selection.target_node),"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"scp_transfer":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),

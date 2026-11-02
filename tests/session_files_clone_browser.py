@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Claude/Grok complex family copies through actual node/Hub Chromium controls."""
 
 from session_clone_browser import prepare_confirmed
@@ -266,4 +268,5 @@ def main():
         finally:browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

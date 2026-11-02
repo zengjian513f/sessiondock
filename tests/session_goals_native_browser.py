@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Native paused-goal forks, Chromium clone, then native goal/attachment isolation.
 No model turns, login material or active goals are created. Run explicitly.
 """
@@ -100,4 +102,5 @@ def main():
         print('PASS Chromium clones native fork goals; native reads preserve snapshots and clone-only updates leave source goals unchanged',flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

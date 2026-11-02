@@ -69,25 +69,19 @@ this routing; it does not establish mobile Edge device compatibility.
 
 ## Group cloning
 
-`session_clone_local_codex` is explicitly `true` only on configured Linux nodes,
-and on the Hub which forwards to the selected node. The menu checks strict `true`;
-a missing flag does not enable cloning. The historically named local flag now
-also covers the Claude/Grok file adapters. The source group is retained.
-The Hub separately declares `session_clone_remote` for cross-node copying with
-new or retained identities. Identical destination files/rows can be reused when retaining IDs;
-conflicting data is rejected, while a valid same-history prefix can be extended
-under the [transfer contract](session-move.md#工作目录一致性的验证范围).
-The receiver checks Linux, configured root paths, cwd path/existence, explicit
-external history dependencies and native schema before publication; it does not
-scan or compare the whole worktree. The Hub's `session_move_remote` enables cross-node
-moves with either identity choice, requiring source trash and independent session storage.
-Target publication stays fenced until the source records the handoff; source cleanup can be retried.
-The full `session_move` / `session_clone` flags
-are not enabled. See [the clone contract](session-clone.md#当前接口同节点-codex).
+历史能力名 `session_clone_local_codex` 表示节点具有原生迁移适配器，覆盖 Claude、Codex、Grok；
+缺失或 false 不启用入口。页面使用可选树，支持且停止的成员默认选中，不支持来源置灰。
+Hub 的 `session_move_remote` 表示跨机移动服务；`session_clone_remote` 为 false。
+新计划仅支持移动且保留原生 ID，不提供同机/跨机复制或新身份开关。
+
+源配置回收站，目标配置兼容的独立 CLI 存储，检查所选会话及其原生依赖、原生 schema、
+工作目录存在性和历史明确引用的外部文件，不扫描整个工作目录。
+目标发布保持执行围栏，源持久化交接后清理所选历史，再开放目标；失败按同一事务恢复。
+显示父子关系可跨节点，见[迁移合同](session-move.md)和[事务恢复](session-clone.md)。
 
 ## Unavailable controls
 
-Running sessions show a grey move/copy action in the title bar and sidebar menu.
+Running sessions are grey and unselected in the migration tree.
 Offline machine filters and agent-type filters with no sessions in the selected
 machines use the same treatment. They carry `aria-disabled=true` while remaining
 focusable. Available and unavailable controls both use native `title` tooltips;

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Operator-only Haiku file edit, Chromium copy and native cloned checkpoint rewind.
 Uses a private home/cwd and existing authentication without reading credentials.
 """
@@ -104,4 +106,5 @@ def main():
             assert digest(settings)==before,'daily Claude configuration changed'
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

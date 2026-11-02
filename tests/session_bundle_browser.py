@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Real Hub/two-node Chromium cross-node clone path with shared native storage.
 Each provider uses synthetic branches and agents; runtime state is node-private.
 """
@@ -751,4 +753,5 @@ def main():
             browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

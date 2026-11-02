@@ -86,6 +86,12 @@ impl TransferService {
             _ => return Err(TransferError::new("move_format", "未知的操作类型")),
         };
         let op = self.load(id)?;
+        if op.selection.is_some() && (!moving || new_ids) {
+            return Err(TransferError::new(
+                "move_format",
+                "迁移仅支持移动并保留原生 ID",
+            ));
+        }
         if op.uid != uid || op.new_ids() != new_ids || op.incoming_digest.is_some() {
             return Err(TransferError::new(
                 "move_plan_stale",
@@ -251,6 +257,23 @@ impl TransferService {
                 "目标历史尚未验证完成",
             ));
         }
+        if let (Some(selection), Some(metadata)) = (&op.selection, &self.metadata) {
+            let identities = op
+                .group()
+                .members
+                .iter()
+                .map(|member| (member.source.clone(), member.sid.clone()))
+                .collect();
+            metadata
+                .relocate_nest_parents(
+                    &selection.source_node,
+                    &selection.target_node,
+                    &selection.target_node,
+                    &identities,
+                    &BTreeSet::new(),
+                )
+                .map_err(|error| TransferError::new(error.code, error.message))?;
+        }
         op.phase = "complete".into();
         op.ownership_sequence = self.next_ownership_sequence()?;
         self.save(&op)?;
@@ -374,15 +397,16 @@ impl TransferService {
                 || e.owner
                     .as_ref()
                     .is_some_and(|owner| uids.contains(owner.as_str()))
-                || e.summary
-                    .continued_in_sid
-                    .as_ref()
-                    .is_some_and(|id| references(e.source, id))
+                || (op.selection.is_none()
+                    && e.summary
+                        .continued_in_sid
+                        .as_ref()
+                        .is_some_and(|id| references(e.source, id)))
             {
                 return Err(changed());
             }
             if let Some(c) = &e.summary.codex
-                && (references("codex", &c.forked_from_id)
+                && ((op.selection.is_none() && references("codex", &c.forked_from_id))
                     || references("codex", &c.parent_thread_id)
                     || c.history_base["thread_id"]
                         .as_str()
@@ -423,6 +447,7 @@ impl TransferService {
                 }
             }
             if e.source == "claude"
+                && op.selection.is_none()
                 && !e.is_agent()
                 && links.messages.iter().any(|id| {
                     op.file_plan
@@ -436,7 +461,12 @@ impl TransferService {
 
         // New sidebar children can appear after publication, including while
         // resuming a partially retired operation. Never leave them orphaned.
-        for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
+        for row in snapshot.list["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|_| op.selection.is_none())
+        {
             if !uids.contains(row["uid"].as_str().unwrap_or("")) {
                 let parent = &row["nest_parent"];
                 if parent["node_id"].is_null()
@@ -475,6 +505,23 @@ impl TransferService {
             self.recheck_in(&op, snapshot)?;
         }
         self.outside_references(&op, snapshot)?;
+        if let (Some(selection), Some(metadata)) = (&op.selection, &self.metadata) {
+            let identities = op
+                .group()
+                .members
+                .iter()
+                .map(|member| (member.source.clone(), member.sid.clone()))
+                .collect();
+            metadata
+                .relocate_nest_parents(
+                    &selection.source_node,
+                    &selection.target_node,
+                    &selection.source_node,
+                    &identities,
+                    &selection.uids,
+                )
+                .map_err(|error| TransferError::new(error.code, error.message))?;
+        }
         super::native::retire(&op.native, false)?;
         op.phase = "retiring".into();
         self.save(&op)?;

@@ -234,7 +234,10 @@ pub async fn sessions(
     query: &Params,
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
-    let answers = gather(registry, client, nodes, "/api/sessions", &upstream(query)).await;
+    let mut answers = gather(registry, client, nodes, "/api/sessions", &upstream(query)).await;
+    for answer in &mut answers {
+        registry.relocate_nesting(std::sync::Arc::make_mut(&mut answer.data), &answer.node.id);
+    }
     let nodes = registry.public();
     let known = first(query, "sig").unwrap_or("").to_owned();
     client
@@ -292,7 +295,10 @@ pub async fn search(
     query: &Params,
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
-    let answers = gather(registry, client, nodes, "/api/search", &upstream(query)).await;
+    let mut answers = gather(registry, client, nodes, "/api/search", &upstream(query)).await;
+    for answer in &mut answers {
+        registry.relocate_nesting(std::sync::Arc::make_mut(&mut answer.data), &answer.node.id);
+    }
     let nodes = registry.public();
     client
         .work(move || Value::Object(search_body(nodes, &answers)))

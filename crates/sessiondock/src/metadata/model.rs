@@ -154,10 +154,10 @@ pub(super) struct Row {
     continuation_initialized: Option<bool>,
     /// Sidebar parent initialized by a launch or chosen by the user.
     #[serde(skip_serializing_if = "Option::is_none")]
-    nest_parent: Option<NestParent>,
+    pub(super) nest_parent: Option<NestParent>,
     /// Private durable decision marker, including an explicit detach.
     #[serde(skip_serializing_if = "Option::is_none")]
-    nest_initialized: Option<bool>,
+    pub(super) nest_initialized: Option<bool>,
 }
 
 /// Manual display parent; an absent node keeps the historical local meaning.

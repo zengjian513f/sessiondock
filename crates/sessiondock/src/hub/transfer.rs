@@ -126,6 +126,7 @@ impl Transfers {
         client: Arc<Client>,
         shutdown: tokio_util::sync::CancellationToken,
     ) {
+        let _ = registry.transfer_links.set(self.links.clone());
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut workers = tokio::task::JoinSet::new();
@@ -871,6 +872,12 @@ impl Transfers {
         if source_state["uid"] != local_uid {
             return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
         }
+        if source_state["selection"] == true && source_state["target_node"] != request.target_node {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "目标机器与已确认的迁移选择不一致",
+            ));
+        }
         if request
             .mode
             .as_ref()
@@ -970,6 +977,12 @@ impl Transfers {
                         &live,
                     )
                     .await?;
+                if source_state["selection"] == true && checked.1["selected_move"] != true {
+                    return Err(TransferError::new(
+                        "move_group_unsupported",
+                        "目标版本尚不支持选择迁移，请更新节点",
+                    ));
+                }
                 if moving && checked.1["move_handoff"] != true {
                     return Err(TransferError::new(
                         "move_group_unsupported",
@@ -1064,7 +1077,7 @@ impl Transfers {
         if current.1["phase"] != "complete" {
             return Err(TransferError::new(
                 "move_recovery_required",
-                "目标复制尚未完成",
+                "目标迁移尚未完成",
             ));
         }
         let mut result = namespace::public_payload(current.1, &target, "/api/session/clone");

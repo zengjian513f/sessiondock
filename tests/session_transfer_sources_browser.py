@@ -39,13 +39,7 @@ def exercise(browser, base, source, shots, label):
             action = page.locator('#a-clone-group')
             page.locator('#a-more').click()
             page.screenshot(path=str(shots/f'{label}-{source}-{width}-header.png'), full_page=True)
-            if supported:
-                expect(action).not_to_have_attribute('hidden', '')
-            else:
-                expect(action).to_be_hidden()
-                # A late invocation must not bypass the same source gate.
-                page.evaluate('uid => cloneSessionGroup(uid)', uid)
-                expect(page.locator('#clone-group-dialog')).to_have_count(0)
+            expect(action).not_to_have_attribute('hidden', '')
             page.keyboard.press('Escape')
             if page.locator('#detail .mobile-back').is_visible():
                 page.locator('#detail .mobile-back').click()
@@ -61,17 +55,22 @@ def exercise(browser, base, source, shots, label):
                 row.click(button='right')
             menu_action = page.locator('#item-menu [data-act="clone"]')
             page.screenshot(path=str(shots/f'{label}-{source}-{width}-sidebar.png'), full_page=True)
+            expect(menu_action).to_be_visible()
+            expect(menu_action).not_to_have_attribute('aria-disabled', 'true')
+            menu_action.click()
+            dialog = page.locator('#clone-group-dialog')
+            expect(dialog).to_be_visible()
+            checkbox = dialog.locator(f'.transfer-tree input[data-uid="{uid}"]')
             if supported:
-                expect(menu_action).to_be_visible()
-                expect(menu_action).not_to_have_attribute('aria-disabled', 'true')
-                with page.expect_response(lambda response: response.url.endswith('/api/session/clone/plan')):
-                    menu_action.click()
-                expect(page.locator('#clone-group-dialog')).to_be_visible()
-                assert plans[-1]['uid'] == uid
-                page.locator('#clone-group-dialog .clone-cancel').click()
+                expect(checkbox).to_be_enabled()
+                expect(checkbox).to_be_checked()
             else:
-                expect(menu_action).to_be_hidden()
-                assert not plans, plans
+                expect(checkbox).to_be_disabled()
+                expect(checkbox).not_to_be_checked()
+            expect(dialog.locator('[name="transfer-mode"], #transfer-new-ids')).to_have_count(0)
+            page.screenshot(path=str(shots/f'{label}-{source}-{width}-tree.png'), full_page=True)
+            page.locator('#clone-group-dialog .clone-cancel').click()
+            assert not plans, plans
             assert not errors, errors
         finally:
             context.close()
@@ -110,7 +109,7 @@ def main():
                         hub.stop()
         finally:
             browser.close()
-    print('PASS transfer source gates: node/Hub, header/overflow/sidebar/long press, supported previews')
+    print('PASS migration source selection: node/Hub, header/overflow/sidebar/long press, unsupported gray, fixed IDs')
 
 
 if __name__ == '__main__':

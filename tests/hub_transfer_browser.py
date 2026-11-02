@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Hub unfinished-journal cache: Chromium execution, cancellation and recovery.
 
 Uses temporary synthetic sessions and Linux inotify IN_OPEN to detect actual
@@ -390,5 +392,5 @@ def main():
         print('PASS cancelled copy then stale move: durable reason retained, fresh confirmation succeeds', flush=True)
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

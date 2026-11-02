@@ -303,6 +303,13 @@ pub fn resolve(
             }
         }
         if let Some(map) = body.as_mut().filter(|map| !map.is_empty()) {
+            if path == "/api/session/clone/plan"
+                && let Some(Value::Array(uids)) = map.get_mut("selected_uids")
+            {
+                for uid in uids {
+                    *uid = Value::String(decode(&reference_text(uid), true)?);
+                }
+            }
             for key in ["uid", "name", "draft_uid", "parent_uid"] {
                 let scoped = map
                     .get(key)
@@ -625,14 +632,21 @@ pub fn upstream_headers(
 
 /// One SSE line as the browser sees it: `data:` payloads pass through the
 /// wire namespace, everything else (comments, blank lines, ids) is verbatim.
-pub fn rewrite_sse_line(line: Vec<u8>, node: &Node, path: &str) -> Result<Vec<u8>, ProxyError> {
+pub fn rewrite_sse_line(
+    line: Vec<u8>,
+    node: &Node,
+    path: &str,
+    registry: &super::Registry,
+) -> Result<Vec<u8>, ProxyError> {
     let Some(payload) = line.strip_prefix(b"data: ") else {
         return Ok(line);
     };
     let value: Value =
         serde_json::from_slice(payload).map_err(|error| ProxyError::invalid(error.to_string()))?;
     let mut out = b"data: ".to_vec();
-    out.extend(serde_json::to_vec(&public_payload(value, node, path)).expect("JSON serializes"));
+    let mut value = public_payload(value, node, path);
+    registry.relocate_nesting(&mut value, &node.id);
+    out.extend(serde_json::to_vec(&value).expect("JSON serializes"));
     out.push(b'\n');
     Ok(out)
 }
@@ -658,6 +672,7 @@ pub struct Upload {
 
 /// Everything `proxy` needs about the browser request.
 pub struct Forward<'a> {
+    pub nest_registry: std::sync::Arc<super::Registry>,
     pub method: &'a str,
     pub path: &'a str,
     pub query: &'a Query,
@@ -820,10 +835,9 @@ pub async fn proxy(
         let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
         let value: Value =
             serde_json::from_slice(&raw).map_err(|error| ProxyError::invalid(error.to_string()))?;
-        return Ok(json_response(
-            status,
-            &public_payload(value, node, forward.path),
-        ));
+        let mut value = public_payload(value, node, forward.path);
+        forward.nest_registry.relocate_nesting(&mut value, &node.id);
+        return Ok(json_response(status, &value));
     }
     // A node bouncing behind nginx answers HTML 502. Streaming that to the
     // browser made `response.json()` throw `Unexpected token '<'`.
@@ -850,7 +864,7 @@ pub async fn proxy(
                     line = body.read_line(SSE_LINE_LIMIT) => line,
                 };
                 let Ok(Some(line)) = line else { break };
-                match rewrite_sse_line(line, &node, &path) {
+                match rewrite_sse_line(line, &node, &path, &forward.nest_registry) {
                     Ok(line) => yield Ok::<Bytes, std::io::Error>(Bytes::from(line)),
                     Err(_) => break,
                 }

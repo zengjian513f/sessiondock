@@ -12272,19 +12272,9 @@ loadSessions(!!DEEP_SID).then(async ok => {
 });
 
 
-/** Whole-group transfer preview. A confirmed local clone keeps its operation ID
- * across uncertain responses; unsupported selections never use the local API. */
+/** Migration selects native histories; display parents may remain on other nodes. */
 function transferUnavailableReason(uid) {
-  // Native group transfer currently supports only these sources; readable
-  // catalogs/mirrors do not imply that their sessions can be moved or cloned.
-  if (!['claude', 'codex', 'grok'].includes(uid?.split(':')[0])) {
-    return '此来源尚不支持迁移会话树。';
-  }
-  const draft = typeof composerDrafts !== 'undefined'
-    ? composerDrafts.get(composerDraftOwner(uid)) : null;
-  const running = sessionStoppable(uid)
-    || (draft?.cli?.instance?.running === true && !!takenOver(uid));
-  return uid && running ? '会话正在运行，请先停止后再迁移会话树。' : '';
+  return !uid || uid.startsWith('tmux:') ? '此会话尚无可迁移的原生记录。' : '';
 }
 function paintTransferAvailability(button, uid) {
   if (!button) return;
@@ -12408,6 +12398,25 @@ function renderSessionGroupMembers(dialog, data, uid) {
     status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
 }
 
+function migrationMembers(rows) {
+  const visible = new Set(sidebarSessions().map(row => row.uid));
+  const groups = new Map();
+  for (const member of rows) {
+    const key = `${nodeOf(member.uid)}:${member.source}:${member.sid || member.uid}`;
+    const group = groups.get(key) || {member, aliases:new Set(), required:new Set(), parents:[], selectable:true};
+    if (member.uid === S.sel || (visible.has(member.uid) && !visible.has(group.member.uid))) group.member = member;
+    for (const uid of member.member_uids || [member.uid]) group.aliases.add(uid);
+    for (const uid of member.required_uids || [member.uid]) group.required.add(uid);
+    if (member.parent_uid) group.parents.push(member.parent_uid);
+    group.selectable &&= member.selectable !== false;
+    groups.set(key, group);
+  }
+  const owners = new Map([...groups.values()].flatMap(group => [...group.aliases].map(uid => [uid, group.member.uid])));
+  return [...groups.values()].map(group => ({...group.member,
+    selectable:group.selectable, member_uids:[...group.aliases], required_uids:[...group.required],
+    parent_uid:group.parents.map(uid => owners.get(uid) || uid).find(uid => uid !== group.member.uid) || null,
+  }));
+}
 async function cloneSessionGroup(uid, resumed = null) {
   const reason = resumed ? '' : transferUnavailableReason(uid);
   if (reason) {
@@ -12433,13 +12442,6 @@ async function cloneSessionGroup(uid, resumed = null) {
       <div class="transfer-controls">
         <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
         <div class="transfer-field"><span id="transfer-target-label">目标机器</span><button id="transfer-target" class="new-pick" type="button" popovertarget="transfer-target-menu" aria-haspopup="listbox" aria-expanded="false" aria-controls="transfer-target-options" aria-labelledby="transfer-target-label transfer-target-value"><span id="transfer-target-value"></span><i aria-hidden="true">▾</i></button></div>
-        <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
-          <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
-          <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
-        </div></fieldset>
-      </div>
-      <div class="transfer-identity" hidden>
-        <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
       </div>
       <p class="transfer-notice" role="status" hidden></p>
       <p class="transfer-environment" role="status" hidden></p>
@@ -12448,20 +12450,20 @@ async function cloneSessionGroup(uid, resumed = null) {
         <p class="transfer-progress-detail"></p>
         <div class="search-progress-track transfer-progress-track" role="progressbar" aria-labelledby="transfer-progress-label" aria-valuemin="0" aria-valuemax="100"><i></i></div>
       </div>
-      <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
+      <div class="transfer-section-head"><h3>选择要迁移的会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
       <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
-        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
-          <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
+        <table class="clone-members transfer-tree"><thead><tr><th scope="col"><label class="transfer-check"><input type="checkbox" id="transfer-select-all" checked aria-label="全选可迁移会话"><span>会话</span></label></th><th scope="col">来源</th><th scope="col">状态</th></tr></thead>
+          <tbody><tr><td colspan="3" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
       </div>
+      <p class="transfer-selection-note">原生 ID 保持不变；迁移后保留跨机器的会话归属关系。原生历史依赖会联动选择。</p>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
-    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>迁移所选会话</button></div>
     <div id="transfer-target-menu" class="new-model-menu transfer-target-menu" popover="auto"><div id="transfer-target-options" class="new-model-options" role="listbox" aria-labelledby="transfer-target-label"></div></div>`;
   const $d = selector => dialog.querySelector(selector);
-  const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
+  const target = $d('#transfer-target');
   const confirm = $d('.clone-confirm'), status = $d('.clone-status');
   const notice = $d('.transfer-notice'), error = $d('.transfer-error');
-  const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
   const closeTarget = setupTransferTarget(dialog, machines, sourceId, resumed?.request.target_node || sourceId);
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
@@ -12471,17 +12473,17 @@ async function cloneSessionGroup(uid, resumed = null) {
   let overallProgress = 0;
   let environmentSequence = 0;
   const environmentClients = new Map();
-  const identityChoices = {clone:true, move:false};
-  if (resumed) {
-    radios.forEach(r => r.checked = r.value === plan.mode);
-    identityChoices[plan.mode] = plan.new_ids;
-  }
-  const mode = () => radios.find(r => r.checked).value;
+  const selectedUids = new Set(resumed?.plan?.sessions?.map(member => member.uid) || []);
+  let tree = resumed ? {sessions:migrationMembers(plan.sessions.map(member => ({...member, selectable:true, required_uids:[member.uid]})))} : null;
+  let selectionVersion = 0, plannedVersion = -1;
+  if (resumed) plan.target_node = resumed.request.target_node;
+  const mode = () => resumed?.plan.mode || 'move';
   const crossMachine = () => target.value !== sourceId;
   const blockedReason = () => {
     const destination = machines.get(target.value);
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
     if (machines.get(sourceId)?.online === false) return '源机器已离线。';
+    if (resumed) return '';
     if (crossMachine()) {
       if (SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
       return '';
@@ -12490,19 +12492,15 @@ async function cloneSessionGroup(uid, resumed = null) {
     return '';
   };
   const renderSelection = () => {
-    const cross = crossMachine(), moving = mode() === 'move';
-    $d('.transfer-identity').hidden = !cross;
-    newIds.checked = identityChoices[mode()];
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
-    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
-    confirm.disabled = busy || planning || aborting || !plan || !!reason;
+    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? '正在迁移…' : uncertain ? '重试同一次迁移' : '迁移所选会话';
+    confirm.disabled = busy || planning || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || aborting || uncertain;
     if (target.disabled) closeTarget();
-    for (const radio of radios) radio.disabled = busy || aborting || uncertain;
-    newIds.disabled = busy || aborting || uncertain;
+    for (const input of dialog.querySelectorAll('.transfer-tree input')) input.disabled = busy || aborting || uncertain || input.dataset.unavailable === 'true';
     $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
-    $d('.transfer-abort').textContent = moving ? '撤回本次移动' : '取消本次复制';
+    $d('.transfer-abort').textContent = '撤回本次迁移';
     $d('.clone-cancel').disabled = aborting;
     $d('.transfer-close').disabled = aborting;
     $d('.transfer-abort').disabled = aborting;
@@ -12512,12 +12510,10 @@ async function cloneSessionGroup(uid, resumed = null) {
     renderSelection();
     // A rejected move can discard its preview during progress reconciliation.
     // Recover it when the user chooses a supported destination/mode again.
-    if (!plan && !busy && !planning && !uncertain) void refreshPlan();
+    if (!busy && !planning && !uncertain) void refreshPlan();
     else refreshEnvironment();
   };
   target.onchange = selectionChanged;
-  radios.forEach(r => r.onchange = selectionChanged);
-  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; selectionChanged();};
   const close = (refresh = true) => {
     clearInterval(progressTimer); closeTarget(); dialog.close(); dialog.remove(); refreshTransferTasks();
     if (refresh) resumeTransferSidebar();
@@ -12568,7 +12564,86 @@ async function cloneSessionGroup(uid, resumed = null) {
     } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
   }
   $d('.transfer-abort').onclick = () => cancelTransfer();
-  const renderMembers = data => renderSessionGroupMembers(dialog, data, uid);
+  const renderMembers = data => {
+    if (!tree) return renderSessionGroupMembers(dialog, data, uid);
+    const body = $d('.clone-members tbody'); body.replaceChildren();
+    const members = new Map(tree.sessions.map(member => [member.uid, member]));
+    const physical = new Map(tree.sessions.flatMap(member => member.member_uids.map(uid => [uid, member])));
+    const children = new Map();
+    for (const member of members.values()) {
+      const parent = members.has(member.parent_uid) ? member.parent_uid : '';
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(member);
+    }
+    const seen = new Set();
+    const append = (member, depth) => {
+      if (seen.has(member.uid)) return;
+      seen.add(member.uid);
+      const row = document.createElement('tr'); row.dataset.uid = member.uid;
+      const title = document.createElement('td');
+      const label = document.createElement('label'); label.className = 'transfer-check';
+      label.style.paddingInlineStart = `${depth * 18}px`;
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = member.member_uids.every(uid => selectedUids.has(uid));
+      input.dataset.uid = member.uid; input.dataset.unavailable = String(!member.selectable);
+      input.disabled = !member.selectable || busy || uncertain;
+      const shortId = (member.sid || '').slice(-8);
+      input.setAttribute('aria-label', `${member.title || member.sid}${shortId ? ' · '+shortId : ''}`);
+      input.onchange = () => {
+        const ids = member.required_uids || [member.uid];
+        for (const id of ids) if (physical.get(id)?.selectable) input.checked ? selectedUids.add(id) : selectedUids.delete(id);
+        ++selectionVersion; renderMembers(plan); void refreshPlan();
+      };
+      const text = document.createElement('span'); text.className = 'transfer-tree-title';
+      const name = document.createElement('span'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid;
+      name.title = member.title || member.sid;
+      const detail = document.createElement('span'); detail.className = 'transfer-session-detail';
+      detail.textContent = [shortId, member.cwd].filter(Boolean).join(' · '); detail.title = member.sid;
+      text.append(name, detail); label.append(input, text); title.append(label);
+      const source = document.createElement('td'); source.textContent = SOURCES[member.source]?.name || member.source;
+      if (nodeOf(member.uid) !== sourceId) {
+        const machine = document.createElement('div'); machine.className = 'transfer-session-detail';
+        machine.textContent = member.node_name || machines.get(nodeOf(member.uid))?.name || '其他机器';
+        source.append(machine);
+      }
+      const linked = new Set(member.required_uids.map(uid => physical.get(uid)?.uid).filter(Boolean)).size > 1;
+      const state = document.createElement('td'); state.textContent = member.disabled_reason || (linked ? '原生依赖联动' : selectedUids.has(member.uid) ? '将迁移' : '留在原机器');
+      if (!member.selectable) row.classList.add('transfer-unavailable');
+      row.append(title, source, state); body.append(row);
+      for (const child of children.get(member.uid) || []) append(child, depth + 1);
+    };
+    for (const member of children.get('') || []) append(member, 0);
+    for (const member of members.values()) append(member, 0);
+    const count = tree.sessions.filter(member => member.selectable).length;
+    const selectedCount = tree.sessions.filter(member => member.member_uids.some(uid => selectedUids.has(uid))).length;
+    const all = $d('#transfer-select-all'); all.checked = count > 0 && selectedCount === count;
+    all.indeterminate = selectedCount > 0 && selectedCount < count;
+    all.dataset.unavailable = String(!count);
+    all.onchange = () => {
+      selectedUids.clear();
+      if (all.checked) for (const member of tree.sessions) if (member.selectable) for (const uid of member.member_uids) selectedUids.add(uid);
+      ++selectionVersion; renderMembers(plan); void refreshPlan();
+    };
+    status.textContent = `已选 ${selectedCount} / ${tree.sessions.length} 个会话${data?.file_count != null && plannedVersion === selectionVersion ? ` · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}` : ''}`;
+    renderSelection();
+  };
+  async function loadTree() {
+    tree = await request('api/session/transfer/tree', {uid});
+    if (tree.selection !== true) throw new Error('源机器尚不支持选择迁移会话，请更新节点');
+    tree.sessions = migrationMembers(tree.sessions);
+    for (const member of tree.sessions) {
+      if (member.selectable && member.member_uids.some(uid => sessionStoppable(uid))) {
+        member.selectable = false; member.disabled_reason = '会话正在运行，请先停止';
+      }
+    }
+    // An inseparable native unit must be stopped and supported as a whole.
+    const unavailable = new Set(tree.sessions.filter(member => !member.selectable).flatMap(member => member.member_uids));
+    for (const member of tree.sessions) if (member.selectable && member.required_uids?.some(id => unavailable.has(id))) {
+      member.selectable = false; member.disabled_reason = '原生历史依赖当前不可迁移';
+    }
+    selectedUids.clear();
+    for (const member of tree.sessions) if (member.selectable) for (const uid of member.member_uids) selectedUids.add(uid);
+    renderMembers(null);
+  }
   async function refreshEnvironment() {
     const sequence = ++environmentSequence;
     const note = $d('.transfer-environment');
@@ -12612,24 +12687,28 @@ async function cloneSessionGroup(uid, resumed = null) {
   }
   async function refreshPlan(executing = false) {
     if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
-    const fresh = !crossMachine() || identityChoices[mode()];
-    const selectedMode = mode();
-    if (plan && plan.new_ids === fresh) {
-      if (plan.mode === selectedMode) return true;
-      if (executing && plan.confirm_mode && (!HUB_MODE || SessionDockCapabilities.config.transfer_confirm_mode)) return true;
+    const fresh = false, selectedMode = 'move', version = selectionVersion, destination = target.value;
+    if (!selectedUids.size) {
+      const previous = plan;
+      planning = true; renderSelection();
+      try {await discardPreview(previous); plan = null;}
+      catch (failure) {error.textContent = failure.message; error.hidden = false;}
+      finally {planning = false; renderSelection(); if (selectedUids.size) void refreshPlan();}
+      return false;
     }
+    if (plan && plannedVersion === version && plan.target_node === target.value) return true;
     const previous = plan;
     planning = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
     paintProgress({phase:'planning'});
     try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode,
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode, selected_uids:[...selectedUids], target_node:destination,
         ...(previous ? {previous_operation_id:previous.operation_id} : {})});
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
       if (!dialog.isConnected) {await discardPreview(next); return false;}
-      plan = next;
+      plan = next; plan.target_node = destination; plannedVersion = version;
       if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
       return true;
     } catch (failure) {
@@ -12641,7 +12720,8 @@ async function cloneSessionGroup(uid, resumed = null) {
       return false;
     } finally {
       planning = false;
-      if (dialog.isConnected) {$d('.transfer-progress').hidden = true; renderSelection();}
+      if (dialog.isConnected) {$d('.transfer-progress').hidden = true; renderSelection();
+        if (version !== selectionVersion || destination !== target.value) void refreshPlan();}
     }
   }
   const paintProgress = data => {
@@ -12702,10 +12782,13 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
   progressTimer = setInterval(pollProgress, 250);
   if (resumed) {
-    renderMembers(plan); paintProgress(resumed); renderSelection();
+    plannedVersion = selectionVersion; renderMembers(plan); paintProgress(resumed); renderSelection();
     refreshEnvironment();
     if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
-  } else await refreshPlan();
+  } else {
+    try {await loadTree(); await refreshPlan();}
+    catch (failure) {error.textContent = failure.message; error.hidden = false;}
+  }
 
   confirm.onclick = async () => {
     if (busy || planning || aborting || !plan || blockedReason()) return;
@@ -12723,11 +12806,20 @@ async function cloneSessionGroup(uid, resumed = null) {
         ...executionOptions,
       });
       if (execution !== executionSequence) return;
-      if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
+      if (result.phase !== 'complete' || !result.target_uid) throw new Error('迁移未完成，请重试检查结果');
       await finishTransfer(result);
     } catch (failure) {
       if (execution !== executionSequence) return;
-      uncertain = failure.code !== 'move_cancelled';
+      let aborted = failure.code === 'move_cancelled';
+      if (!aborted && plan && HUB_MODE) {
+        try {
+          const progress = await request('api/session/transfer/progress', {uid, operation_id:plan.operation_id, target_node:target.value}, AbortSignal.timeout(10000));
+          if (execution !== executionSequence) return;
+          if (progress.phase === 'complete') {await finishTransfer(progress.result || progress); return;}
+          aborted = progress.phase === 'aborted';
+        } catch {}
+      }
+      uncertain = !aborted;
       if (!uncertain) {operationStarted = false; plan = null; busy = false; overallProgress = 0; $d('.transfer-progress').hidden = true; await refreshPlan();}
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
     } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
@@ -12788,7 +12880,7 @@ function transferOverallProgress(data, {cross, moving, executing}) {
 
 function transferPhaseLabel(task) {
   const labels = {planning:'正在读取会话清单…', reconnecting:'连接中断，正在重新确认操作结果…', planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', rechecking:'复核源会话', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
-    failed:'复制失败，可重试', rollback_required:'恢复待处理',
+    failed:'迁移失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
   let label = labels[task.phase] || '等待继续';
@@ -12852,7 +12944,7 @@ $('#transfer-tasks').onclick = () => {
   $('#transfer-tasks-dialog')?.remove();
   const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
   panel.setAttribute('aria-labelledby','transfer-tasks-title');
-  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭">×</button></div>
+  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的迁移</h2><button class="transfer-close" aria-label="关闭">×</button></div>
     <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
   const close = () => {panel.close(); panel.remove();};
   panel.querySelector('.transfer-close').onclick = close;
@@ -12897,7 +12989,7 @@ async function deleteSessionTree(uid) {
   dialog.setAttribute('aria-labelledby', 'delete-tree-title');
   dialog.innerHTML = `<div class="transfer-head"><h2 id="delete-tree-title">删除会话树</h2><button class="transfer-close" type="button" aria-label="关闭">×</button></div>
     <div class="transfer-body">
-      <p class="transfer-notice">范围与复制整组一致：包含关联祖先、兄弟分支、下级会话和子代理。确认后整组移入一个回收站条目，可整体恢复。</p>
+      <p class="transfer-notice">删除整个关联组：包含关联祖先、兄弟分支、下级会话和子代理。确认后整组移入一个回收站条目，可整体恢复。</p>
       <div class="transfer-progress" hidden>
         <p id="delete-tree-progress-label" class="transfer-progress-label" role="status" aria-live="polite"></p>
         <p class="transfer-progress-detail"></p>

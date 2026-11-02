@@ -380,6 +380,8 @@ struct Inner {
 }
 
 pub struct Registry {
+    pub(crate) transfer_links:
+        OnceLock<Arc<Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>>,
     path: PathBuf,
     snapshot_dir: PathBuf,
     networks: Vec<Network>,
@@ -404,6 +406,7 @@ impl Registry {
             Err(error) => return Err(error),
         };
         let registry = Self {
+            transfer_links: OnceLock::new(),
             path: path.to_path_buf(),
             snapshot_dir: cache_dir.to_path_buf(),
             networks,

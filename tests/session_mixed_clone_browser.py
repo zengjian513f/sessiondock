@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Reject stale staging, then clone a cross-provider family after restart."""
 import argparse
 from contextlib import ExitStack
@@ -145,4 +147,5 @@ def main():
         finally:browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

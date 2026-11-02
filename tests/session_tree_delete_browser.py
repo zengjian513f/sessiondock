@@ -124,7 +124,7 @@ def main():
                         if context_menu:
                             page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")
                             actions=page.locator('#item-menu button[data-act]').evaluate_all('(buttons) => buttons.map(b => b.dataset.act)')
-                            assert all(action in actions for action in ('stop','clone','delete-tree')),actions
+                            assert all(action in actions for action in ('start-sdk','start-cli','clone','delete-tree')),actions
                             expect(page.locator('#item-menu [data-act="clone"]')).to_have_text('迁移会话树…')
                             page.locator('#item-menu [data-act="delete-tree"]').click()
                         button=page.locator('#a-delete-tree')
@@ -135,6 +135,8 @@ def main():
                         expect(dialog.locator('.tree-confirm')).to_be_enabled(timeout=20000)
                         expect(dialog.locator('.clone-status')).to_contain_text('14 个会话')
                         expect(dialog.locator('tbody')).to_contain_text(title)
+                        shots=Path('target/tree-delete-review');shots.mkdir(parents=True,exist_ok=True)
+                        page.screenshot(path=str(shots/('mobile.png' if restart else 'desktop.png')),full_page=True)
                         return dialog
                     if restart:
                         # A completed ID remains complete after restart and restoration.
@@ -151,7 +153,7 @@ def main():
                     if not restart:
                         # Compare the copy inventory without staging native files.
                         if not page.locator('#a-clone-group').is_visible():page.locator('#a-more').click()
-                        with page.expect_response('**/api/session/clone/plan') as response:page.locator('#a-clone-group').click()
+                        with page.expect_response('**/api/session/transfer/tree') as response:page.locator('#a-clone-group').click()
                         copied=response.value.json()
                         page.locator('#clone-group-dialog .clone-cancel').click()
                         expect(page.locator('#clone-group-dialog')).to_have_count(0)
@@ -165,7 +167,7 @@ def main():
                         expect(dialog.locator('.transfer-error')).to_contain_text('成员已变化',timeout=20000)
                         assert all(Path(p).read_bytes()==b for p,b in before.items())
                         dialog.locator('.tree-close').click();added.unlink()
-                        print('PASS copy scope parity and changed-membership refusal before any deletion',flush=True)
+                        print('PASS migration discovery parity and changed-membership refusal before any deletion',flush=True)
                     dialog=open_tree()
                     if not restart:
                         proc=corpus.root/'proc';(proc/'stat').write_text('btime 1700000000\n')

@@ -51,11 +51,12 @@ def main():
         native.write_text(old.read_text().replace(SDK_THREAD,THREAD).replace('/synthetic/sdk',str(root)))
         old.unlink();corpus.paths['sdk']=native
         (root / 'state').mkdir()
+        (root / 'trash').mkdir()
         library = root / 'clock.so'
         subprocess.run(['cc', '-shared', '-fPIC', '-O2', str(Path(__file__).with_name('grok_sdk_idle_clock.c')),
                         '-o', str(library), '-ldl'], check=True, timeout=30)
         marker = root / 'clock'; marker.write_text('0')
-        env = {'SESSIONDOCK_STATE_DIR': str(root / 'state'), 'LD_PRELOAD': str(library),
+        env = {'SESSIONDOCK_STATE_DIR': str(root / 'state'), 'SESSIONDOCK_TRASH_DIR': str(root/'trash'), 'LD_PRELOAD': str(library),
                'SESSIONDOCK_TEST_CLOCK_FILE': str(marker)}
         socket = root / 'app.sock'
         with RetainedPeer(socket, corpus.paths['sdk'], THREAD) as fake, sync_playwright() as pw:
@@ -104,23 +105,30 @@ def main():
                 # native last-subscriber grace. Display stop is not quiescence.
                 page.locator('#a-clone-group').click()
                 dialog=page.locator('#clone-group-dialog')
-                expect(dialog.locator('.transfer-error')).to_be_visible()
-                if args.screenshots:
-                    for width, theme in [(1280, 'light'), (390, 'dark')]:
-                        page.set_viewport_size({'width': width, 'height': 900})
-                        page.emulate_media(color_scheme=theme)
-                        page.screenshot(path=str(args.screenshots / f'writer-{width}-{theme}.png'))
-                    page.set_viewport_size({'width': 1280, 'height': 900})
-                expect(dialog.locator('.transfer-error')).to_contain_text('Codex 原生线程尚未卸载')
-                expect(dialog.locator('.transfer-error')).to_contain_text('不代表原生线程已卸载')
+                expect(dialog.locator('.transfer-tree input[data-uid]')).to_be_attached()
+                # A standalone node cannot select a remote Hub target. Exercise
+                # the same selected-plan HTTP boundary from the Chromium page.
+                def migration_plan():
+                    return page.evaluate("""async uid => {
+                      const response=await fetch('/api/session/clone/plan', {method:'POST',
+                        headers:{'Content-Type':'application/json'},body:JSON.stringify({uid,
+                          selected_uids:[uid],mode:'move',new_ids:false,target_node:'b'.repeat(32)})});
+                      return {status:response.status,body:await response.json()};
+                    }""",corpus.uid('sdk'))
+                refused=migration_plan()
+                assert refused['status']==409 and refused['body']['code']=='move_session_running',refused
+                assert 'Codex 原生线程尚未卸载' in refused['body']['error'],refused
+                assert '不代表原生线程已卸载' in refused['body']['error'],refused
                 expect(dialog.locator('.clone-confirm')).to_be_disabled()
                 dialog.locator('.clone-cancel').click()
                 fake.loaded=False
-                page.locator('#a-clone-group').click()
-                expect(page.locator('#clone-group-dialog .clone-confirm')).to_be_enabled(timeout=10000)
-                page.locator('#clone-group-dialog .clone-cancel').click()
+                accepted=migration_plan()
+                assert accepted['status']==200 and accepted['body']['new_ids'] is False,accepted
+                cancelled=page.request.post(base+'/api/session/clone/cancel',data={
+                    'uid':corpus.uid('sdk'),'operation_id':accepted['body']['operation_id']})
+                assert cancelled.ok,cancelled.text()
                 fake.loaded=True
-                print('PASS Chromium migration blocks stopped-but-loaded native writer until actual unload',flush=True)
+                print('PASS Chromium selected-plan boundary blocks stopped-but-loaded writer until native unload',flush=True)
                 page.close()
             n = len(fake.methods('thread/resume'))
             with server(corpus, args.binary, socket, env) as base:

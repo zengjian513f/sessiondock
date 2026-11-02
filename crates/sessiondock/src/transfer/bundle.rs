@@ -352,6 +352,22 @@ impl TransferService {
             ));
         }
         let op = &manifest.operation;
+        if let Some(selection) = &op.selection
+            && (!op.moving
+                || op.new_ids()
+                || selection.uids
+                    != op
+                        .group()
+                        .members
+                        .iter()
+                        .map(|member| member.uid.clone())
+                        .collect()
+                || !crate::hub::identity::is_node_id(&selection.source_node)
+                || !crate::hub::identity::is_node_id(&selection.target_node)
+                || selection.source_node == selection.target_node)
+        {
+            return Err(invalid("迁移选择与原生清单不一致"));
+        }
         if manifest.version != 1
             || !id_valid(&op.id)
             || op.phase != "planned"

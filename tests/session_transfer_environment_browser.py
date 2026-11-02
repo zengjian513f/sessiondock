@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Complex-family transfer: CLI advice and persisted dynamic-tool dependencies."""
 
 import argparse
@@ -156,4 +158,5 @@ def main():
         print('PASS Chromium nonblocking CLI advice and fleet refresh, stale replies, fourteen-session copy, and same-identity preview reuse with execution checks',flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

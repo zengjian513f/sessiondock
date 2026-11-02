@@ -108,6 +108,10 @@ Validation: `python3 tests/rewind_cli_browser.py`.
 Absent `node_id` means the child's own node. `{uid, parent_uid}` attaches to a listed
 session; `{uid, parent_uid: null}` clears the relation. There is no independent flag,
 startup-source fallback or restore action. Native subagent relationships remain in the CLI history.
+选择迁移保留原生 ID 和已有显示父关系。父子只迁移一端时把本机父描述转换为明确的
+跨机描述；一起迁移时仍为本机关系。源端留下的子会话（包括不支持迁移的来源）指向目标父会话。
+Hub 按持久化的已完成移动记录解析第三节点的父位置；离线回归、详情和实时元数据使用同一规则。
+
 Local process evidence initializes `nest_parent` once for a newly created CLI
 session: its owned process identifies the child, and inherited session identity
 or an owning CLI ancestor identifies the parent. A detached dispatcher retains

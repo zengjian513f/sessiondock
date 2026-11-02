@@ -14,13 +14,14 @@ use super::identity::is_node_id;
 use super::registry::Node;
 
 /// Keys whose string value is a scoped session reference.
-const REFERENCE_KEYS: [&str; 6] = [
+const REFERENCE_KEYS: [&str; 7] = [
     "uid",
     "from_uid",
     "to_uid",
     "continued_in",
     "current_uid",
     "target_uid",
+    "parent_uid",
 ];
 /// Subtrees copied verbatim: message payloads, tool input, file contents and
 /// resolved paths may legitimately contain a key called `uid` or `src`.
@@ -247,6 +248,21 @@ fn walk(value: Value, nid: &str, strict: bool) -> Result<Value, NamespaceError> 
             let mut result = Map::with_capacity(map.len());
             for (key, value) in map {
                 let value = match (&key[..], &value) {
+                    ("required_uids", Value::Array(items)) => Value::Array(
+                        items
+                            .iter()
+                            .map(|item| {
+                                item.as_str()
+                                    .map(|uid| {
+                                        Value::String(
+                                            qualify(nid, uid, true)
+                                                .unwrap_or_else(|_| uid.to_owned()),
+                                        )
+                                    })
+                                    .unwrap_or_else(|| item.clone())
+                            })
+                            .collect(),
+                    ),
                     (key, Value::String(text))
                         if REFERENCE_KEYS.contains(&key) && !text.is_empty() =>
                     {

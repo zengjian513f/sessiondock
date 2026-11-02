@@ -75,6 +75,24 @@ pub(super) fn derive_published(
     build(snapshot, cache, Some(uids))?.select(selected)
 }
 
+pub(super) fn derive_selected_published(
+    snapshot: &SessionSnapshot,
+    cache: &super::references::Cache,
+    uids: &BTreeSet<String>,
+) -> Result<Group, TransferError> {
+    let graph = build(snapshot, cache, Some(uids))?;
+    Ok(Group {
+        selected: uids.first().cloned().unwrap_or_default(),
+        members: graph.members.into_values().collect(),
+        edges: graph.edges.into_iter().collect(),
+        blockers: graph
+            .blockers
+            .into_iter()
+            .filter(|blocker| !super::selection::display_blocker(blocker))
+            .collect(),
+    })
+}
+
 fn build(
     snapshot: &SessionSnapshot,
     cache: &super::references::Cache,

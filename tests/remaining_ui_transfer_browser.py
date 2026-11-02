@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Real Hub/two nodes: transfer controls, lost reply retry and durable clone."""
 import argparse,json,tempfile
 from pathlib import Path
@@ -75,4 +77,5 @@ def main():
    page.screenshot(path=str(a.output/f'copy-{width}.png'));context.close()
  print('PASS remaining transfer UI',flush=True)
 
-if __name__=='__main__':run_with_evidence(main,'target/remaining-ui/transfer')
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

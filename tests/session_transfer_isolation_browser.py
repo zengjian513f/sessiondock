@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """A stalled transfer must not serialize other groups or its own cancellation."""
 import argparse
 from transfer_ui import select_target
@@ -266,4 +268,5 @@ def main():
         finally:receiving.close()
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Configured SCP routing, relay fallback and cancellation through Chromium.
 Synthetic native sessions and a deterministic fake scp; no production SSH/data.
 """
@@ -205,4 +207,5 @@ if mode=='corrupt':
         print('PASS browser cannot invoke private SCP routes',flush=True)
 
 
-if __name__=='__main__': main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

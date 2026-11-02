@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Chromium transfers a group whose native database makes the manifest exceed 64 MiB."""
 import argparse
 from transfer_ui import select_target, seed_names
@@ -158,4 +160,5 @@ def main():
         print(f'PASS Chromium {"move" if peer else "copy"}: native before/after {native_bytes/1024/1024:.1f} MiB, target history and exact native payload intact, {time.monotonic()-started:.2f}s',flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

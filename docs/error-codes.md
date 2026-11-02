@@ -616,20 +616,20 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 源会话已变化，本次移动已撤回，请重新查看清单
 - 操作已取消，源会话保留
 - 节点正在停止，迁移已中断
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L758
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L874, L1048
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L751
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L867, L1042
 - [`transfer/coordination.rs`](../crates/sessiondock/src/transfer/coordination.rs) `check` L80
 - [`transfer/transport.rs`](../crates/sessiondock/src/transfer/transport.rs) `drop` L255
 
 ### `move_cleanup`
 
-- (dynamic) — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L391, L398, L423, L439, L452 → `POST /api/session/transfer/retire`
+- (dynamic) — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L445, L452, L477, L493, L506 → `POST /api/session/transfer/retire`
 
 ### `move_cleanup_pending`
 
 - 移动已提交，服务端正在重试源端清理：{}
 - 目标已可继续；源端清理待重试：{}
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L1068, L1108
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L1062, L1102
 
 ### `move_conflict`
 
@@ -654,20 +654,20 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 目标会话显示设置不同且历史没有延长
 - 目标会话附属关系不同
 - [`api/transfer/scp.rs`](../crates/sessiondock/src/api/transfer/scp.rs) `receive` L57
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L489
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L741
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L371
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L792, L906, L944
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L482
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L733
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L372
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L785, L905, L943
 - [`hub/transfer/transport.rs`](../crates/sessiondock/src/hub/transfer/transport.rs) `transport` L114
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle_for` L595
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle_for` L617
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L201
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L461
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L923
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L740, L763
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L515, L532
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L574, L595
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L822, L845
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L522, L539
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L656, L677
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `conflict` L20
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L852, L900, L909, L948, L956
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L972, L1021, L1030, L1069, L1077
 
 ### `move_cwd_mismatch`
 
@@ -683,12 +683,12 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 会话的工作目录不存在
 - [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `capture` L99, L105
 - [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `recheck` L201
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L447
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_group` L524
 
 ### `move_format`
 
 - 迁移包不属于此节点
-- 未知的操作类型
+- 迁移仅支持移动并保留原生 ID
 - 未知的撤回步骤
 - 确认选项缺少会话或身份选择
 - 源端迁移包与操作不符
@@ -705,14 +705,15 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 父历史 ordinal 与字节边界不一致
 - 缺少原生记录
 - 身份替换意外改变了原生 JSON 结构
+- 未知的操作类型
 - SCP 连接地址、用户或端口无效
 - SCP 迁移包与操作不符
 - SCP 迁移包长度不符
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L266 → `POST /api/session/transfer/abort`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L482
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L137 → `POST /api/session/clone/plan`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L320 → `POST /api/session/transfer/abort`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L536
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L169 → `POST /api/session/clone/plan`
 - [`api/transfer/scp.rs`](../crates/sessiondock/src/api/transfer/scp.rs) `release` L143
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `stream` L1160, L1164
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `stream` L1154, L1158
 - [`hub/transfer/transport.rs`](../crates/sessiondock/src/hub/transfer/transport.rs) `transport` L45
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `invalid` L39
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L222, L237, L241
@@ -721,8 +722,8 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L446, L502, L512
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `rewrite` L800
 - [`transfer/json_bytes.rs`](../crates/sessiondock/src/transfer/json_bytes.rs) `shape` L36
-- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L54
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `confirm_mode` L86
+- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L55
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `confirm_mode` L86, L90
 - [`transfer/transport.rs`](../crates/sessiondock/src/transfer/transport.rs) `drop` L272
 - [`transfer/transport.rs`](../crates/sessiondock/src/transfer/transport.rs) `validate` L67, L143
 
@@ -748,26 +749,30 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L498, L571
 - [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `thread` L9
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L549
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L209, L245
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `mapped` L274
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L396, L420
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L213, L249
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `mapped` L278
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L403, L427
 
 ### `move_group_unsupported`
 
-- 此节点未启用会话整组复制
+- 此节点未启用会话迁移
 - 源机器未配置回收站
+- 目标版本尚不支持选择迁移，请更新节点
 - 目标版本不支持迁移归属交接
 - 目标未配置本组所需的会话来源
 - 此暂存适配器只处理 Codex；未发布移动或克隆能力
 - 文件适配器仅处理 Claude 和 Grok
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L476
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L140 → `POST /api/session/clone/plan`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L348 → `POST /api/session/transfer/retire`
+- 所选会话来源尚不支持迁移
+- 原生历史依赖包含不支持迁移的来源
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L530
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L187 → `POST /api/session/clone/plan`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L402 → `POST /api/session/transfer/retire`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `service` L40
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L993
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_roots` L135
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L981, L987
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_roots` L141
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L181
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L572
+- [`transfer/selection.rs`](../crates/sessiondock/src/transfer/selection.rs) `subset` L55, L69
 
 ### `move_identity`
 
@@ -778,14 +783,14 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L189, L255
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `uuid` L95
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `validate` L612
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `member_target_uid` L689
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `planned_target_uid` L597
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `member_target_uid` L798
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `planned_target_uid` L702
 
 ### `move_inventory`
 
 - (dynamic)
-- [`bin/sessiondock-transfer.rs`](../crates/sessiondock/src/bin/sessiondock-transfer.rs) `derive` L87
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `inventory_snapshot` L359
+- [`bin/sessiondock-transfer.rs`](../crates/sessiondock/src/bin/sessiondock-transfer.rs) `derive` L91
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `inventory_snapshot` L402
 
 ### `move_native_unsupported`
 
@@ -799,28 +804,30 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 目标表不存在
 - 源端原生表不存在
 - 回滚所需表缺失
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `boundary` L334
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L262
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `extend_identities` L982
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L717
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L504
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L558
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `boundary` L341
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L266
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `extend_identities` L1064
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L799
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L511
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L640
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `read` L106
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L651
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L440, L450
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L862
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L733
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L447, L457
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L944
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `value` L48, L51
 
 ### `move_node_unavailable`
 
+- 请选择另一台目标机器
 - 源机器不可用
 - 迁移节点不可用
 - 目标机器不可用
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L598, L601
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `network` L1215
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L391, L394
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L563, L566
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L820, L823, L826, L829
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L181 → `POST /api/session/clone/plan`
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L590, L593
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `network` L1209
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L384, L387
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L555, L558
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L813, L816, L819, L822
 
 ### `move_path`
 
@@ -845,9 +852,10 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 
 ### `move_plan_stale`
 
-- 复制清单与所选会话不一致
+- 迁移清单与所选会话不一致
 - 迁移标识无效
 - 操作与源会话不符
+- 目标机器与已确认的迁移选择不一致
 - 源节点未接受确认选项，请重新查看清单
 - 迁移操作与所选会话不符
 - 暂存文件已变化
@@ -875,28 +883,30 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 源端原生记录已变化，保留清理现场
 - 目标原生数据在发布前发生变化
 - 目标前缀在备份时发生变化
-- 复制记录不存在
+- 所选会话不在当前迁移树中
+- 迁移记录不存在
 - 迁移操作不存在
-- 会话组关联已变化，请重新查看复制清单
-- 会话历史已变化，请重新查看复制清单
-- 源会话显示设置已变化，请重新查看复制清单
+- 原生历史依赖已变化，请重新读取迁移树
+- 会话组关联已变化，请重新查看迁移清单
+- 会话历史已变化，请重新查看迁移清单
+- 源会话显示设置已变化，请重新查看迁移清单
 - 会话附属文件已变化
-- 原生会话元数据已变化，请重新查看复制清单
+- 原生会话元数据已变化，请重新查看迁移清单
 - 目标复用文件已变化
-- 复制暂存数据已变化
+- 迁移暂存数据已变化
 - 目标前缀在发布前发生变化
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `cancel_clone` L209 → `POST /api/session/clone/cancel`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `clone_progress` L189 → `POST /api/session/clone/progress`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L524 → `POST /api/session/clone`
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L594, L616
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L521
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `path` L162
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L388, L411
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L560
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L817, L880, L890, L962
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `cancel_clone` L263 → `POST /api/session/clone/cancel`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `clone_progress` L243 → `POST /api/session/clone/progress`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L578 → `POST /api/session/clone`
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L586, L608
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L513
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `path` L163
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L381, L404
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L552
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L810, L873, L876, L889, L961
 - [`hub/transfer/transport.rs`](../crates/sessiondock/src/hub/transfer/transport.rs) `transport` L22
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L226
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `export_bundle` L290
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L232
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `export_bundle` L296
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L224
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rows` L111
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stable_read` L145, L154
@@ -904,42 +914,44 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `stale` L81
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `rewrite` L711
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L908, L1007
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_local` L193
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L237
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_local` L201
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L246
 - [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `changed` L20
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `confirm_mode` L90, L99
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `retire_source` L429
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `switch_source` L219, L225
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `confirm_mode` L96, L105
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `retire_source` L496
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `switch_source` L228, L234
 - [`transfer/names.rs`](../crates/sessiondock/src/transfer/names.rs) `publish` L136
 - [`transfer/names.rs`](../crates/sessiondock/src/transfer/names.rs) `recheck` L79
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L719, L730
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L506
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L560
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L655
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_with_prefix` L801, L812
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L513
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L642
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L737
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `prepare` L176
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L982, L991, L1028
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `load` L322
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `progress_status` L347
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `recheck_in` L625, L632, L644, L664, L668
+- [`transfer/selection.rs`](../crates/sessiondock/src/transfer/selection.rs) `subset` L53
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1103, L1112, L1149
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `load_journal` L363
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_selection` L468
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `progress_status` L390
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `recheck_in` L734, L741, L753, L773, L777
 
 ### `move_platform`
 
 - 跨机器迁移目前只支持 Linux
 - 迁移链接要求 Unix
 - 此平台不支持迁移符号链接
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L152
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `publish_noreplace` L735
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle_for` L685
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L343
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L158
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `publish_noreplace` L757
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle_for` L707
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L349
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L975
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1000
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1121
 
 ### `move_recovery_required`
 
 - 目标接收结果尚未确认
 - 迁移结果缺失
 - 本机复制结果尚未确认
-- 目标复制尚未完成
+- 目标迁移尚未完成
 - 存储核对文件已变化，保留现场
 - 执行归属已交接，不能撤回；请继续完成移动
 - 源端尚未记录撤回决定
@@ -954,27 +966,27 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 目标原文件备份发生变化
 - 合并后的目标文件已变化，保留现场
 - 目标恢复文件已变化
-- 会话组有尚未恢复的复制操作
+- 会话组有尚未恢复的迁移操作
 - 目标合并临时文件已变化，保留现场
 - 克隆文件已变化或不属于本次操作，保留现场等待恢复
 - 复制操作需要恢复或重新发起
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L173 → `POST /api/session/conversation/send`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L457
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L814, L923, L1084
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L459
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L807, L922, L1078
 - [`hub/transfer/transport.rs`](../crates/sessiondock/src/hub/transfer/transport.rs) `received` L151
 - [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `remove` L285
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_source` L127, L137
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_target` L167
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L246
-- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `next_ownership_sequence` L300
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_source` L133, L143
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_target` L174
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L255
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `next_ownership_sequence` L360
 - [`transfer/names.rs`](../crates/sessiondock/src/transfer/names.rs) `rollback` L162
-- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L832, L843, L878, L893, L899
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L914, L925, L960, L975, L981
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `check_restore` L199, L213
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `restore` L230
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `cleanup_markers` L765
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L844
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L410
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `rollback` L799
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `cleanup_publications` L885
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L964
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_group` L484
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `rollback` L919
 
 ### `move_reference_unsupported`
 
@@ -987,25 +999,29 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`transfer/code_mode.rs`](../crates/sessiondock/src/transfer/code_mode.rs) `failure` L79
 - [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `output` L75, L84
 - [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `rewrite` L42, L48
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L434
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_group` L511
 
 ### `move_root_mismatch`
 
-- 两端 CLI 根目录路径不同 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L367
+- 两端 CLI 根目录路径不同 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L389
+
+### `move_selection_empty`
+
+- 请至少选择一个会话 — [`transfer/selection.rs`](../crates/sessiondock/src/transfer/selection.rs) `subset` L42
 
 ### `move_session_locked`
 
 - 会话正在复制或等待恢复
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L175 → `POST /api/session/conversation/send`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L459
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L461
 
 ### `move_session_running`
 
-- 会话仍在运行：{title} — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `stopped` L99
+- (dynamic) — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `stopped` L114
 
 ### `move_shared_storage`
 
-- 两台机器共享会话存储，不能移动文件 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L380
+- 两台机器共享会话存储，不能移动文件 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L402
 
 ### `move_transport_unavailable`
 
@@ -1014,10 +1030,10 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 ### `move_verify`
 
 - 目标历史引用了迁移清单以外的会话
-- 克隆后的历史关系不完整
+- 迁移后的原生历史关系不完整
 - 克隆仍引用源组身份
-- [`transfer/group.rs`](../crates/sessiondock/src/transfer/group.rs) `build_links` L326
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1084, L1100
+- [`transfer/group.rs`](../crates/sessiondock/src/transfer/group.rs) `build_links` L344
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1209, L1228
 
 ### `nest_parent_cycle`
 
@@ -1232,25 +1248,26 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 ### `move_io`
 
 - (dynamic)
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L276 → `POST /api/session/transfer/abort`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `activate_target` L336 → `POST /api/session/transfer/activate`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `bundle_manifest` L876, L898 → `POST /api/session/transfer/manifest`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `cancel_clone` L234 → `POST /api/session/clone/cancel`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `check_bundle` L938 → `POST /api/session/transfer/check`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L495
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L551 → `POST /api/session/clone`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L165 → `POST /api/session/clone/plan`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `prepare_archive` L590, L624
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `receive_bundle` L761 → `POST /api/session/transfer/receive`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `release_export` L784 → `POST /api/session/transfer/release`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `reserve_export` L811 → `POST /api/session/transfer/reserve`
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L379, L438, L451, L461 → `POST /api/session/transfer/retire`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L330 → `POST /api/session/transfer/abort`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `activate_target` L390 → `POST /api/session/transfer/activate`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `bundle_manifest` L930, L952 → `POST /api/session/transfer/manifest`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `cancel_clone` L288 → `POST /api/session/clone/cancel`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `check_bundle` L993 → `POST /api/session/transfer/check`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L549
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L605 → `POST /api/session/clone`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L219 → `POST /api/session/clone/plan`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `prepare_archive` L644, L678
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `receive_bundle` L815 → `POST /api/session/transfer/receive`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `release_export` L838 → `POST /api/session/transfer/release`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `reserve_export` L865 → `POST /api/session/transfer/reserve`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L433, L492, L505, L515 → `POST /api/session/transfer/retire`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `stopped` L59
-- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `switch_source` L313 → `POST /api/session/transfer/switch`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `switch_source` L367 → `POST /api/session/transfer/switch`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `tree` L148 → `POST /api/session/transfer/tree`
 - [`api/transfer/scp.rs`](../crates/sessiondock/src/api/transfer/scp.rs) `prepare` L17
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `call_work` L1259
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `save` L216
-- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L48
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `call_work` L1253
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `save` L217
+- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L49
 
 ### `move_native_database`
 

@@ -16,6 +16,7 @@ mod json_bytes;
 pub mod moving;
 pub mod native;
 pub mod progress;
+pub mod selection;
 pub mod service;
 pub mod transport;
 

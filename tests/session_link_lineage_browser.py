@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Real Chromium links survive copy chains, deletion and restarts; private histories."""
 import argparse
 from transfer_ui import select_target
@@ -150,4 +152,5 @@ def main():
         print('PASS cycles terminate, aborted edges ignored, deleted chain and offline origin distinguished',flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

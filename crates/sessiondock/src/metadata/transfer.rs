@@ -5,6 +5,33 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
 impl MetadataStore {
+    pub(crate) fn relocate_nest_parents(
+        &self,
+        source: &str,
+        target: &str,
+        local_node: &str,
+        moved: &std::collections::BTreeSet<(String, String)>,
+        excluded: &std::collections::BTreeSet<String>,
+    ) -> Result<(), MetadataError> {
+        self.update(|snapshot| {
+            snapshot.change(|rows| {
+                for (uid, row) in rows {
+                    if excluded.contains(uid) {
+                        continue;
+                    }
+                    if let Some(parent) = &mut row.nest_parent
+                        && parent.node_id.as_deref().unwrap_or(local_node) == source
+                        && moved.contains(&(parent.source.clone(), parent.sid.clone()))
+                    {
+                        parent.node_id = (target != local_node).then(|| target.to_owned());
+                        row.nest_initialized = Some(true);
+                    }
+                }
+                Ok(())
+            })
+        })?;
+        Ok(())
+    }
     pub(crate) fn transfer_prefix_rows(
         &self,
         incoming: &BTreeMap<String, Value>,

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Operator-only Grok compaction, browser clone and native checkpoint replay.
 Private GROK_HOME/cwd; existing authentication is linked, never read or copied.
 """
@@ -145,4 +147,5 @@ def main():
             assert digest(config)==before,'Daily Grok configuration changed'
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")

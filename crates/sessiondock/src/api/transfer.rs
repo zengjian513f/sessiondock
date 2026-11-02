@@ -39,7 +39,7 @@ fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
     state.transfer.clone().ok_or_else(|| {
         Box::new(failure(TransferError::new(
             "move_group_unsupported",
-            "此节点未启用会话整组复制",
+            "此节点未启用会话迁移",
         )))
     })
 }
@@ -100,7 +100,9 @@ async fn stopped(
             let message = if evidence == "sdk_thread"
                 && row.is_some_and(|row| row["source"] == "codex")
             {
-                format!("Codex 原生线程尚未卸载，仍可能写入历史：{title}。停止 SDK 模式只会中断当前工作并取消本连接的订阅，不代表原生线程已卸载。请等待卸载，或关闭仍连接此会话的其他客户端后重试。")
+                format!(
+                    "Codex 原生线程尚未卸载，仍可能写入历史：{title}。停止 SDK 模式只会中断当前工作并取消本连接的订阅，不代表原生线程已卸载。请等待卸载，或关闭仍连接此会话的其他客户端后重试。"
+                )
             } else {
                 format!("会话仍在运行：{title}")
             };
@@ -121,11 +123,30 @@ async fn stopped(
 pub struct PlanRequest {
     uid: String,
     #[serde(default)]
+    selected_uids: Option<std::collections::BTreeSet<String>>,
+    #[serde(default)]
+    target_node: Option<String>,
+    #[serde(default)]
     new_ids: Option<bool>,
     #[serde(default)]
     mode: Option<String>,
-    #[serde(default)]
-    previous_operation_id: Option<String>,
+}
+pub async fn tree(State(state): State<AppState>, Json(body): Json<PlanRequest>) -> Response {
+    let service = match service(&state) {
+        Ok(service) => service,
+        Err(error) => return *error,
+    };
+    match tokio::task::spawn_blocking(move || {
+        let snapshot = service.inventory_snapshot()?;
+        let group = service.group_in(&body.uid, &snapshot)?;
+        Ok::<_, TransferError>(service.selection_tree(&group, &snapshot))
+    })
+    .await
+    {
+        Ok(Ok(tree)) => Json(tree).into_response(),
+        Ok(Err(error)) => failure(error),
+        Err(error) => failure(TransferError::new("move_io", error.to_string())),
+    }
 }
 #[derive(Deserialize)]
 pub struct ExecuteRequest {
@@ -144,31 +165,51 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     let _guard = service.session_guard(&body.uid).await;
     let copy = service.clone();
     let selected = body.uid;
-    let moving = match body.mode.as_deref().unwrap_or("clone") {
-        "clone" => false,
-        "move" => true,
-        _ => return failure(TransferError::new("move_format", "未知的操作类型")),
-    };
-    if moving && state.trash.is_none() {
+    if body.mode.as_deref().is_some_and(|mode| mode != "move") || body.new_ids == Some(true) {
+        return failure(TransferError::new(
+            "move_format",
+            "迁移仅支持移动并保留原生 ID",
+        ));
+    }
+    let source_node = state
+        .local_node_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_owned();
+    let target_node = body.target_node.clone().unwrap_or_default();
+    if !crate::hub::identity::is_node_id(&target_node) || target_node == source_node {
+        return failure(TransferError::new(
+            "move_node_unavailable",
+            "请选择另一台目标机器",
+        ));
+    }
+    if state.trash.is_none() {
         return failure(TransferError::new(
             "move_group_unsupported",
             "源机器未配置回收站",
         ));
     }
-    let new_ids = body.new_ids.unwrap_or(!moving);
     let (op, snapshot) = match tokio::task::spawn_blocking(move || {
         let _work = copy.progress.enter(&format!("planning:{selected}"));
         let snapshot = copy.inventory_snapshot()?;
-        if let Some(id) = body.previous_operation_id
-            && let Some(op) = copy.reuse_preview(&selected, &id, new_ids, moving)?
-        {
-            return Ok((op, snapshot));
-        }
-        let op = if moving {
-            copy.plan_move(&selected, new_ids, &snapshot)?
-        } else {
-            copy.plan_copy(&selected, new_ids, &snapshot)?
-        };
+        let group = copy.group_in(&selected, &snapshot)?;
+        let uids = body.selected_uids.unwrap_or_else(|| {
+            group
+                .members
+                .iter()
+                .filter(|member| crate::transfer::selection::supported(member))
+                .map(|member| member.uid.clone())
+                .collect()
+        });
+        let op = copy.plan_selection(
+            &selected,
+            &snapshot,
+            crate::transfer::selection::Selection {
+                uids,
+                source_node,
+                target_node,
+            },
+        )?;
         Ok((op, snapshot))
     })
     .await
@@ -201,7 +242,7 @@ pub async fn clone_progress(
         }
         Ok(_) => failure(TransferError::new(
             "move_plan_stale",
-            "复制清单与所选会话不一致",
+            "迁移清单与所选会话不一致",
         )),
         Err(e) => failure(e),
     }
@@ -221,7 +262,7 @@ pub async fn cancel_clone(
         Ok(_) => {
             return failure(TransferError::new(
                 "move_plan_stale",
-                "复制清单与所选会话不一致",
+                "迁移清单与所选会话不一致",
             ));
         }
         Err(e) => return failure(e),
@@ -536,7 +577,7 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
         Ok(_) => {
             return failure(TransferError::new(
                 "move_plan_stale",
-                "复制清单与所选会话不一致",
+                "迁移清单与所选会话不一致",
             ));
         }
         Err(e) => return failure(e),
@@ -945,7 +986,8 @@ pub async fn check_bundle(
     .await;
     match result {
         Ok(Ok(())) => {
-            Json(json!({"ready":true,"move_handoff":true,"scp_transfer":true})).into_response()
+            Json(json!({"ready":true,"move_handoff":true,"scp_transfer":true,"selected_move":true}))
+                .into_response()
         }
         Ok(Err(e)) => failure(e),
         Err(e) => failure(TransferError::new("move_io", e.to_string())),

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# run_validation: skip
+# Retired copy/new-ID UI acceptance; current coverage: session_selected_move_browser.py.
 """Two private nodes: existing complex history prefixes, merge and recovery."""
 # run_validation: skip
 # Explicit SSH peer required; invoked directly as documented.
@@ -223,4 +225,5 @@ def main():
         finally:browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    raise SystemExit("Retired copy/new-ID UI suite; run tests/session_selected_move_browser.py")
