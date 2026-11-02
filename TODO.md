@@ -12,6 +12,13 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261102-104958-712bf3：搜索修复 `6c6aa872` 已上线 Lyra、Cygnus、Pavo、Hub。
+  Orion、Cetus 正式部署连接超时，待补发；Vela 构建通过但启动报 `Store(Invalid)`，
+  自动恢复旧版本后同样启动失败，目前服务不可用，18 个独立 ptyhost 保留。
+  需只读定位持久状态校验失败并按恢复合同处理，不能清空或手改账本绕过。
+  现场首次搜索的完整耗时无法由旧日志还原；已补搜索全程回执并合并进度流，
+  若仍慢，以新增 trace 的响应头、扫描进度、完成及可见数定位。
+
 - [ ] 更新 `codex_sdk_browser.py` 与 `codex_sdk_status_browser.py` 的旧自动启动假设：
   选择只读会话后需按当前显式启动流程操作；两套件当前分别停在历史额度和外部状态断言。
   外部额度、普通对话与显式启动后的额度写回由 `external_quota_browser.py` 覆盖。
