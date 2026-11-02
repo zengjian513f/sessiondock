@@ -159,9 +159,30 @@ async fn fetch(
                             && update.revision.len() == 32
                             && update.revision.bytes().all(|b| b.is_ascii_hexdigit()) =>
                     {
-                        sync::Remote::apply(&mut baseline, update)
+                        let full = update.base.is_none();
+                        let had_baseline = baseline.is_some();
+                        let reason = update.reset_reason.clone();
+                        let report = sync::Remote::apply(&mut baseline, update);
+                        if full && report.is_some() {
+                            crate::log::transition(
+                                "info",
+                                "hub.process_links.resync",
+                                serde_json::json!({"node_id":id,"reason":reason,
+                                    "had_baseline":had_baseline,"bytes":raw.len()}),
+                            );
+                        } else if report.is_none() {
+                            crate::log::warn(
+                                "hub.process_links.invalid_delta",
+                                serde_json::json!({"node_id":id}),
+                            );
+                        }
+                        report
                     }
                     _ => {
+                        crate::log::warn(
+                            "hub.process_links.invalid_update",
+                            serde_json::json!({"node_id":id}),
+                        );
                         baseline = None;
                         None
                     }

@@ -87,6 +87,7 @@ def main():
                 wait(page, lambda: len(counts.reports) >= 3)
                 first, *steady = counts.reports
                 assert first['sync'] and first['base'] is None and first['connections'] == COUNT, first
+                assert first['reset_reason'] == 'initial', first
                 # Boot-long snapshots already exceed the ordinary 64 MiB
                 # JSON API limit in production; they must establish a baseline.
                 assert first['bytes'] > 64 * 1024 * 1024, first
@@ -229,8 +230,19 @@ def main():
                 recovered = wait(page, lambda: next((r for r in counts.reports[before:]
                     if r['sync'] and r['base'] is None), None))
                 assert recovered['connections'] == COUNT
+                assert recovered['reset_reason'] == 'initial', recovered
+                # Receiving the large response at the forwarding fixture is
+                # earlier than Hub decoding/accepting it. Wait for its next
+                # cursor-bearing poll before checking the acceptance log.
+                wait(page, lambda: counts.reports[-1]['base'])
                 before = len(counts.reports)
                 hub.stop()
+                _, stderr = hub.process.communicate(timeout=10)
+                events = [json.loads(line) for line in stderr.splitlines() if line.startswith('{')]
+                resyncs = [e for e in events if e.get('event') == 'hub.process_links.resync']
+                assert len(resyncs) == 2 and all(e['reason'] == 'initial' and not e['had_baseline'] for e in resyncs), resyncs
+                assert any(e.get('event') == 'hub.process_links.invalid_delta' for e in events), events
+                print('Resync metadata distinguishes initial sync from invalid delta recovery', flush=True)
                 hub.start()
                 restarted = wait(page, lambda: next(iter(counts.reports[before:]), None))
                 assert restarted['base'] is None and restarted['connections'] == COUNT, restarted
@@ -241,6 +253,7 @@ def main():
                 node_restart = wait(page, lambda: next((r for r in counts.reports[before:]
                     if r['sync'] and r['base'] is None), None))
                 assert node_restart['connections'] == COUNT
+                assert node_restart['reset_reason'] == 'journal_changed', node_restart
                 wait(page, lambda: counts.reports[-1]['base'])
                 before = len(counts.reports)
                 stop_node()

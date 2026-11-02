@@ -39,6 +39,8 @@ pub fn key(record: &ConnectionRecord) -> Key {
 pub struct Update {
     pub revision: String,
     pub base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_reason: Option<String>,
     pub report: Report,
     pub remove: Vec<Key>,
 }
@@ -145,6 +147,14 @@ impl Store {
         Ok(Update {
             revision: format!("{}{:016x}", journal.epoch, journal.sequence),
             base: baseline.and(since.map(str::to_owned)),
+            reset_reason: baseline.is_none().then(|| {
+                match since {
+                    None => "initial",
+                    Some(cursor) if !cursor.starts_with(&journal.epoch) => "journal_changed",
+                    _ => "unknown_cursor",
+                }
+                .to_owned()
+            }),
             report,
             remove,
         })
@@ -163,6 +173,7 @@ impl Remote {
         let Update {
             revision,
             base,
+            reset_reason: _,
             mut report,
             remove,
         } = update;

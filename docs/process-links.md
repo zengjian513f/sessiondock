@@ -299,6 +299,11 @@ an invalid delta clears its baseline and the next poll resynchronizes. Both node
 diff/serialization and Hub typed decoding/reconstruction run on blocking workers
 (Hub uses its existing bounded pool), without expanding a generic JSON tree.
 The two-second polling interval and collector persistence are unchanged.
+Full envelopes include `reset_reason` (`initial`, `journal_changed` or
+`unknown_cursor`). After accepting one, Hub logs `hub.process_links.resync`
+with that reason, response size and whether it previously held a baseline;
+invalid updates/deltas have separate metadata-only log events. This distinguishes
+a delayed first successful collector sync from loss of an established cursor.
 The opt-in bulk response is read completely even when the initial boot history
 exceeds the ordinary JSON API's 64 MiB limit. Old-node replies retain that limit;
 authenticated targets, idle timeouts and typed decoding are unchanged.

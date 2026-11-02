@@ -74,6 +74,7 @@ def counted_node(node):
                     report = value['report'] if sync else value
                     observation = dict(bytes=len(payload), sync=sync,
                         revision=value.get('revision'), base=value.get('base'),
+                        reset_reason=value.get('reset_reason'),
                         connections=len(report.get('connections', [])), path=self.path,
                         sampled_at=report['sampled_at'], boot=report['boot_id'])
                     if counts.drop_gets:
