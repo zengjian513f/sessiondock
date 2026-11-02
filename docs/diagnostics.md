@@ -397,3 +397,10 @@ atomic replacement/removal failure, verifies recovery and protected fixtures,
 and reconnects after node restart before checking exited-host maintenance.
 
 特定事故的调查经过见[历史事故与验收记录](history-incidents.md)。
+
+## Fulltext search receipts
+
+`browser.search.started`, `headers`, `progress`, `completed` and `cancelled` share
+a trace ID with the HTTP request. Progress is sampled every five seconds; completion
+records elapsed time, returned and visible counts, truncation and partial status.
+Only query length and options are logged, never the query or result text.

@@ -7,7 +7,7 @@ globalThis.SessionDockSearch = Object.freeze({
   create({state: S, select: $, capabilities: SessionDockCapabilities, store,
     hub: HUB_MODE, sources: SOURCES, nodes: Nodes, appUrl, esc,
     resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount, refreshSearchHighlights,
-    renderNodes, selectedNodeIds, applyNodeState}) {
+    renderNodes, selectedNodeIds, applyNodeState, selectSessionScope, visible, audit, requestId, requestHeaders}) {
     $('#q').oninput = e => {
       cancelSearch();
       S.term = e.target.value.trim();
@@ -24,11 +24,18 @@ globalThis.SessionDockSearch = Object.freeze({
 
     let searchSeq = 0, searchRun = 0, searchAbort = null, searchInputTimer = null;
 
+    let searchTrace = null;
+
     function cancelSearch(clearQuery = false) {
       clearTimeout(searchInputTimer);
       searchInputTimer = null;
       resetRegexSearch();
       ++searchRun;
+      if (searchAbort && searchTrace) audit('search.cancelled', {
+        duration_ms: Math.round(performance.now() - searchTrace.started),
+        returned: S.results?.length || 0,
+      }, {traceId: searchTrace.id});
+      searchTrace = null;
       searchAbort?.abort();
       searchAbort = null;
       searchProgressDone();
@@ -80,15 +87,16 @@ globalThis.SessionDockSearch = Object.freeze({
       renderSide();
     }
 
-    async function fetchSearch(params, signal) {
+    async function fetchSearch(params, signal, trace) {
       if (!SessionDockCapabilities.allows('search')) {
         return {ok: false, data: {error: 'Rust 后端尚未实现全文搜索；当前只能筛选标题和目录。'}};
       }
       params.set('progress', '1');
-      const r = await fetch(appUrl('api/search?' + params), { signal });
+      const r = await fetch(appUrl('api/search?' + params), { signal, headers: requestHeaders(trace.id) });
       if (!r.ok || !r.headers.get('Content-Type')?.includes('application/x-ndjson')) {
         return { ok: r.ok, data: await r.json() };
       }
+      audit('search.headers', {status: r.status, duration_ms: Math.round(performance.now() - trace.started)}, {traceId: trace.id});
       const reader = r.body.getReader(), dec = new TextDecoder();
       let buf = '', result = null, error = null;
       let pendingRows = [], progress = null, paintTimer = null;
@@ -110,7 +118,7 @@ globalThis.SessionDockSearch = Object.freeze({
         // the accumulated results once, not the entire sidebar for every record.
         if (paintTimer === null) paintTimer = setTimeout(paint, 50);
       };
-      let sliceStart = performance.now();
+      let sliceStart = performance.now(), lastProgress = 0;
       try {
         for (;;) {
           const { done, value } = await reader.read();
@@ -128,7 +136,14 @@ globalThis.SessionDockSearch = Object.freeze({
             if (signal.aborted) return { ok: false, data: {} };
             if (!line) continue;
             const event = JSON.parse(line);
-            if (event.type === 'progress') { progress = event; schedulePaint(); }
+            if (event.type === 'progress') {
+              progress = event; schedulePaint();
+              if (performance.now() - lastProgress >= 5000 || !lastProgress) {
+                lastProgress = performance.now();
+                audit('search.progress', {done: event.done, total: event.total, nodes: event.nodes,
+                  duration_ms: Math.round(lastProgress - trace.started)}, {traceId: trace.id});
+              }
+            }
             else if (event.type === 'matches') {
               for (const row of event.results || []) pendingRows.push(row);
               schedulePaint();
@@ -173,6 +188,12 @@ globalThis.SessionDockSearch = Object.freeze({
       if (!S.opts.regex) p.set('mode', S.opts.mode === 'any' ? 'any' : 'all');
       if (HUB_MODE) p.set('source', Object.keys(SOURCES).filter(x => !S.off.has(x)).join(','));
       for (const k of ['case', 'word', 'regex']) if (S.opts[k]) p.set(k, '1');
+      // Fulltext finds historical sessions too; do not discard them through
+      // the main list's previously selected live-only scope.
+      selectSessionScope(false);
+      const trace = searchTrace = {id: requestId(), started: performance.now()};
+      audit('search.started', {sources: p.get('source'), nodes: selectedNodeIds(),
+        query_length: q.length, mode: p.get('mode'), regex: !!S.opts.regex}, {traceId: trace.id});
       const ac = searchAbort = new AbortController();
       S.results = [];
       $('#stat').textContent = ' 正在搜索…';
@@ -185,13 +206,14 @@ globalThis.SessionDockSearch = Object.freeze({
       searchProgress(0, null, searchNodes, false);
       let response;
       try {
-        response = await fetchSearch(p, ac.signal);
+        response = await fetchSearch(p, ac.signal, trace);
       } catch (e) {
         if (e.name === 'AbortError') return;
         response = { ok: false, data: { error: e.message || '搜索失败' } };
       }
       if (run !== searchRun) return;
       searchAbort = null;
+      searchTrace = null;
       searchProgressDone();
       const { ok, data: d } = response;
       applyNodeState(d, 'search');
@@ -213,6 +235,10 @@ globalThis.SessionDockSearch = Object.freeze({
       }
       renderSide();
       // 全文搜索只筛左侧列表；右侧会话的内容、滚动位置和展开状态保持原样。
+      audit('search.completed', {ok, returned: S.results?.length || 0,
+        visible: sidebarMatchCount(visible()), truncated: !!d.truncated, partial: !!d.partial,
+        total: d.total_pool, duration_ms: Math.round(performance.now() - trace.started)},
+        {traceId: trace.id, severity: ok ? 'info' : 'error'});
       $('#stat').dataset.seq = ++searchSeq;              // 供测试判定"这一轮搜索已结束"
     }
 

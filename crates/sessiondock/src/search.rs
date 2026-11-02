@@ -33,8 +33,9 @@
 //! Each term uses the literal/whole-word matcher, retaining discovery across
 //! chunks, without a synthesized backtracking regex or a whole-body read.
 //!
-//! Wire compatibility: `q`, `mode`, comma-separated `source`, `limit` (default 60,
-//! optional), and `word/case/regex/progress` enabled by the value 1. Public session views
+//! Wire compatibility: `q`, `mode`, comma-separated `source`, optional `limit`
+//! (no default truncation), and `word/case/regex/progress` enabled by the value 1.
+//! Public session views
 //! are the search pool; attached agent transcripts
 //! are not silently merged into their owner's text. Unsupported views produce
 //! `errors`, `partial` and `incomplete`, while readable results are retained.
@@ -325,7 +326,7 @@ impl SearchQuery {
         let case = flag(&self.case);
         let regex = flag(&self.regex);
         let progress = flag(&self.progress);
-        let limit = self.limit.parse::<usize>().unwrap_or(60);
+        let limit = self.limit.parse::<usize>().unwrap_or(usize::MAX);
         let sources: BTreeSet<_> = self
             .source
             .split(',')
@@ -767,6 +768,7 @@ pub fn execute(
     emit(json!({"type": "progress", "done": 0, "total": pool.len()}))?;
     let (mut hits, mut errors, mut scanned) = (Vec::new(), Vec::new(), 0);
     let mut truncated = false;
+    let mut last_progress = std::time::Instant::now();
     let stop = AtomicBool::new(false);
     let next = AtomicUsize::new(0);
     let workers = workers.clamp(1, pool.len().max(1));
@@ -857,7 +859,10 @@ pub fn execute(
                 }
                 scanned += 1;
                 wanted += 1;
-                emit(json!({"type": "progress", "done": scanned, "total": pool.len()}))?;
+                if last_progress.elapsed() >= std::time::Duration::from_millis(100) {
+                    emit(json!({"type": "progress", "done": scanned, "total": pool.len()}))?;
+                    last_progress = std::time::Instant::now();
+                }
             }
             Ok(())
         })();
@@ -866,6 +871,7 @@ pub fn execute(
         result
     });
     outcome?;
+    emit(json!({"type": "progress", "done": scanned, "total": pool.len()}))?;
     hits.sort_by(|left, right| {
         right["updated"]
             .as_str()

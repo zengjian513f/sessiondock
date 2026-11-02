@@ -298,7 +298,7 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 - 正则：整段输入当一个表达式，不拆词，AND/OR 按钮禁用。本地先 `reTerm`，无效则「正则无效」，不发全盘请求。正则匹配在 worker（[`web/regex-worker.js`](../web/regex-worker.js)）里，可取消。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。
 - 改选项：若已经在全文结果里，立刻重搜；否则只刷新本地筛选。
 
-Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-progress` 显示已扫描会话数、百分比、每台机器的准备中/扫描中/离线跳过/搜索失败/达到上限/已完成，以及「取消」。结果边到边画进左栏（约 50ms 合并一次），并给键盘一个任务间隙，使 Backspace/Esc 能中止。完成后左栏是命中列表，带「退出搜索 ×」。截断时提示细化条件。部分节点离线或失败会写进 `#stat`，不把不完整结果说成完整。
+Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-progress` 显示已扫描会话数、百分比、每台机器的准备中/扫描中/离线跳过/搜索失败/达到上限/已完成，以及「取消」。结果边到边画进左栏（约 50ms 合并一次），并给键盘一个任务间隙，使 Backspace/Esc 能中止。完成后左栏是命中列表，带「退出搜索 ×」。全文搜索切到全部会话，避免活跃筛选隐藏历史命中；默认返回全部命中，显式请求上限时仍提示截断。部分节点离线或失败会写进 `#stat`，不把不完整结果说成完整。
 
 `search` 能力为 false 时不发 NDJSON，状态是「当前只能筛选标题和目录。」
 

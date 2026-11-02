@@ -11224,7 +11224,9 @@ const searchController = SessionDockSearch.create({
   state: S, select: $, capabilities: SessionDockCapabilities, store,
   hub: HUB_MODE, sources: SOURCES, nodes: Nodes, appUrl, esc,
   resetRegexSearch, reTerm, renderSide, showSessionCount, sidebarMatchCount, refreshSearchHighlights,
-  renderNodes, selectedNodeIds, applyNodeState,
+  renderNodes, selectedNodeIds, applyNodeState, selectSessionScope, visible,
+  audit: browserAuditEvent, requestId,
+  requestHeaders: trace => ({'X-SessionDock-Trace': trace, 'X-SessionDock-Page': AUDIT_PAGE_ID}),
 });
 // Existing sidebar and terminal callers use the same public actions.
 function cancelSearch(clearQuery = false) { return searchController.cancel(clearQuery); }
