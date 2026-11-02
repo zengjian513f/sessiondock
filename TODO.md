@@ -12,6 +12,11 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261102-162048-b98299：长消息列表输入修复 `5b03e212` 已以 web-only
+  上线 Lyra、Cygnus、Pavo、Hub、Cetus 并完成重启和健康检查。Orion 连接超时待补发；
+  Vela 部署前服务已不可用，本次发布和自动回滚后的健康检查均失败，待恢复后补发。
+  本次未替换后端或 ptyhost，资源代理不在发布范围。
+
 - [ ] BUG-20261102-104958-712bf3：搜索修复 `6c6aa872` 已上线 Lyra、Cygnus、Pavo、Hub。
   Orion、Cetus 正式部署连接超时，待补发；Vela 构建通过但启动报 `Store(Invalid)`，
   自动恢复旧版本后同样启动失败，目前服务不可用，18 个独立 ptyhost 保留。
