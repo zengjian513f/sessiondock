@@ -2,7 +2,7 @@
 use process_links::{Connection, Process, Report, connections::ConnectionRecord};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
@@ -43,81 +43,108 @@ pub struct Update {
     pub remove: Vec<Key>,
 }
 
-struct Snapshot {
-    revision: String,
-    node_id: String,
-    boot_id: String,
-    records: BTreeMap<Key, Arc<ConnectionRecord>>,
+struct Record {
+    changed_at: u64,
+    value: Arc<ConnectionRecord>,
 }
 
 #[derive(Default)]
-pub struct Store(Mutex<VecDeque<Snapshot>>);
+struct Journal {
+    epoch: String,
+    sequence: u64,
+    node_id: String,
+    boot_id: String,
+    records: BTreeMap<Key, Record>,
+    removed: BTreeMap<Key, u64>,
+}
+
+#[derive(Default)]
+pub struct Store(Mutex<Journal>);
 
 impl Store {
-    /// Only collector reports participate. A temporary polling fallback must
-    /// not evict the retained collector baseline and retransmit it on recovery.
+    /// Only collector reports participate. Keep each record's last change and
+    /// deletion sequence until this listener/boot ends, so lost replies and
+    /// other readers cannot evict an acknowledged cursor.
     pub fn update(&self, mut report: Report, since: Option<&str>) -> Result<Update, Box<Report>> {
         if report.collector.is_none() {
             return Err(Box::new(report));
         }
-        let mut snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        snapshots.retain(|s| s.node_id == report.node_id && s.boot_id == report.boot_id);
-        let previous = snapshots.back();
-        let mut records = BTreeMap::new();
-        for record in &report.connections {
-            let id = key(record);
-            let shared = previous
-                .and_then(|s| s.records.get(&id))
-                .filter(|old| old.as_ref() == record)
-                .cloned()
-                .unwrap_or_else(|| Arc::new(record.clone()));
-            // Malformed/older collector duplicates still receive the original
-            // full report; transport must never silently discard evidence.
-            if records.insert(id, shared).is_some() {
-                return Err(Box::new(report));
-            }
-        }
-        let unchanged = previous.is_some_and(|s| s.records == records);
-        let revision = if unchanged {
-            previous.unwrap().revision.clone()
-        } else {
-            let mut random = [0u8; 16];
+        let mut journal = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if journal.epoch.is_empty()
+            || journal.node_id != report.node_id
+            || journal.boot_id != report.boot_id
+        {
+            let mut random = [0u8; 8];
             if getrandom::fill(&mut random).is_err() {
                 return Err(Box::new(report));
             }
-            random.iter().map(|byte| format!("{byte:02x}")).collect()
-        };
-        let baseline = since.and_then(|revision| snapshots.iter().find(|s| s.revision == revision));
-        let base = baseline.map(|s| s.revision.clone());
-        let mut remove = Vec::new();
-        if let Some(baseline) = baseline {
-            report.connections.retain(|record| {
-                baseline.records.get(&key(record)).map(Arc::as_ref) != Some(record)
-            });
-            remove.extend(
-                baseline
-                    .records
-                    .keys()
-                    .filter(|id| !records.contains_key(*id))
-                    .cloned(),
-            );
-        }
-        if !unchanged {
-            snapshots.push_back(Snapshot {
-                revision: revision.clone(),
+            *journal = Journal {
+                epoch: random.iter().map(|byte| format!("{byte:02x}")).collect(),
                 node_id: report.node_id.clone(),
                 boot_id: report.boot_id.clone(),
-                records,
-            });
-            // Shared unchanged records keep two revisions cheap. Eviction only
-            // causes a full snapshot; no history is removed from the collector.
-            while snapshots.len() > 2 {
-                snapshots.pop_front();
+                ..Journal::default()
+            };
+        }
+        // The wire cursor remains 32 hexadecimal characters for existing Hubs.
+        // It names this journal and a sequence, not an evictable full snapshot.
+        let baseline = since.and_then(|cursor| {
+            cursor
+                .strip_prefix(&journal.epoch)
+                .filter(|sequence| sequence.len() == 16)
+                .and_then(|sequence| u64::from_str_radix(sequence, 16).ok())
+                .filter(|sequence| *sequence <= journal.sequence)
+        });
+        let next = journal.sequence + 1;
+        let mut records = BTreeMap::new();
+        let mut changed = false;
+        for record in &report.connections {
+            let id = key(record);
+            let (changed_at, value) = match journal.records.get(&id) {
+                Some(old) if old.value.as_ref() == record => (old.changed_at, old.value.clone()),
+                _ => {
+                    changed = true;
+                    (next, Arc::new(record.clone()))
+                }
+            };
+            // Preserve the ordinary full report for duplicate native identities;
+            // never partially advance the journal or discard evidence.
+            if records.insert(id, Record { changed_at, value }).is_some() {
+                return Err(Box::new(report));
             }
         }
+        let removed: Vec<_> = journal
+            .records
+            .keys()
+            .filter(|id| !records.contains_key(*id))
+            .cloned()
+            .collect();
+        changed |= !removed.is_empty();
+        if changed {
+            for id in removed {
+                journal.removed.insert(id, next);
+            }
+            // A reappearing identity is covered by its new record; it no longer
+            // needs a tombstone, even for readers that missed the deletion.
+            journal.removed.retain(|id, _| !records.contains_key(id));
+            journal.sequence = next;
+            journal.records = records;
+        }
+        let mut remove = Vec::new();
+        if let Some(baseline) = baseline {
+            report
+                .connections
+                .retain(|record| journal.records[&key(record)].changed_at > baseline);
+            remove.extend(
+                journal
+                    .removed
+                    .iter()
+                    .filter(|(_, sequence)| **sequence > baseline)
+                    .map(|(id, _)| id.clone()),
+            );
+        }
         Ok(Update {
-            revision,
-            base,
+            revision: format!("{}{:016x}", journal.epoch, journal.sequence),
+            base: baseline.and(since.map(str::to_owned)),
             report,
             remove,
         })

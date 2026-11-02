@@ -15,6 +15,7 @@ def counted_node(node):
     """Private forwarding fixture: observe Hub polls and fail one publication."""
     counts = SimpleNamespace(gets=0, posts=0, delivered=0, fail_posts=0, fail_gets=0,
                              reports=[], legacy=False, corrupt_base=False,
+                             before_get=None, drop_gets=0,
                              resources=[], legacy_resources=False, fail_resources=False)
 
     class Handler(BaseHTTPRequestHandler):
@@ -51,6 +52,8 @@ def counted_node(node):
                     return
             upstream = HTTPConnection('127.0.0.1', node.port, timeout=5)
             try:
+                if tracked and self.command == 'GET' and counts.before_get:
+                    counts.before_get()
                 path = self.path.split('?')[0] if tracked and counts.legacy else self.path
                 upstream.request(self.command, path, body=body,
                     headers={key: value for key, value in self.headers.items()
@@ -73,6 +76,14 @@ def counted_node(node):
                         revision=value.get('revision'), base=value.get('base'),
                         connections=len(report.get('connections', [])), path=self.path,
                         sampled_at=report['sampled_at'], boot=report['boot_id'])
+                    if counts.drop_gets:
+                        # The node has advanced its journal but the Hub never
+                        # receives this response, as with a connection timeout.
+                        counts.drop_gets -= 1
+                        counts.gets += 1
+                        counts.reports.append(dict(observation, dropped=True))
+                        self.close_connection = True
+                        return
                 self.send_response(response.status)
                 for key, value in response.getheaders():
                     if key.lower() not in ('connection', 'transfer-encoding', 'content-length'):

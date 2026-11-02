@@ -283,9 +283,14 @@ The Hub reconstructs the complete connection set before correlation; late
 closures, shared-socket observations and session/launch-chain changes are updates,
 not append-only history. Record ordering has no attribution meaning.
 
-Each node listener keeps two connection revisions in memory, sharing unchanged
-records. Node/boot changes, cache eviction, unknown revisions and service restarts
-return a full snapshot. Ordinary callers and old Hubs continue to receive the
+Each node listener keeps the current connection records with their last-change
+sequence and retained deletion sequences. The 32-character hexadecimal cursor
+identifies the listener's journal and a sequence; any issued cursor remains
+usable for that journal's lifetime, regardless of missed responses or intervening
+readers. Only current records changed since that sequence and still-relevant
+deletions cross the wire. Reappearing identities replace their deletion markers.
+The journal stores no series of full historical snapshots. Node/boot changes,
+unknown cursors and service restarts return a full snapshot. Ordinary callers and old Hubs continue to receive the
 original report; old nodes ignore the opt-in query. A temporary collector failure
 returns the ordinary polling report without replacing the transport baseline.
 Recovery can therefore resume incrementally, while failed polls never use cached
@@ -301,8 +306,9 @@ authenticated targets, idle timeouts and typed decoding are unchanged.
 [`process_links_sync_browser.py`](../tests/process_links_sync_browser.py) opens
 history through Chromium with a real node and Hub and a large private collector.
 It measures full/delta bytes with 140,000 records (initial snapshot over 64 MiB)
-and covers updates, removals, reordering, collector
-outages, failed polls, old nodes, invalid baselines, Hub/node restarts and boot changes.
+and covers updates, removals, reordering, long-lived cursors, deletion/reappearance,
+three consecutive lost Hub replies, collector outages, failed polls, old nodes,
+invalid baselines, Hub/node restarts and boot changes.
 The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py);
 `--legacy-collector` covers collectors that ignore the projection. The real-agent
 [`process_links_browser.py`](../tests/process_links_browser.py) suite with

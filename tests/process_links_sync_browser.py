@@ -32,6 +32,7 @@ def wait(page, condition):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='process-sync-') as temporary, ExitStack() as stack:
         root = Path(temporary)
@@ -131,6 +132,72 @@ def main():
                                        for r in counts.reports))
                 print(f'Close/late attribution/add/remove/reorder: {delta["bytes"]} bytes', flush=True)
 
+                # A client that misses replies keeps its last acknowledged
+                # cursor. Other readers/new collector observations must not
+                # evict it after just two revisions and retransmit all history.
+                for revision in range(4):
+                    changed['sampled_at'] = 10. + revision
+                    changed['connections'][0]['closed_at'] = 1700000100. + revision
+                    collector.replace(changed)
+                    missed = page.evaluate("""async () => {
+                        const r=await fetch('api/process-links?connection_sync=1&since='+window.syncRevision);
+                        const text=await r.text(), v=JSON.parse(text);
+                        return {bytes:text.length, base:v.base, connections:v.report.connections.length,
+                            remove:v.remove.length};
+                    }""")
+                    assert missed['base'] and missed['bytes'] < 6000, (revision, missed)
+                print('Repeated lost acknowledgements and intervening readers remain incremental', flush=True)
+
+                # Keep a deletion while an older reader is disconnected, then
+                # reinsert the same identity. Both old and deletion-time cursors
+                # must reconstruct the same current set without a full snapshot.
+                restored = changed['connections'].pop(1)
+                collector.replace(changed)
+                removed = page.evaluate("""async () => {
+                    const v=await (await fetch('api/process-links?connection_sync=1&since='+window.syncRevision)).json();
+                    window.deletedRevision=v.revision;
+                    return {base:v.base, remove:v.remove.map(k=>k[0].pid)};
+                }""")
+                assert removed['base'] and restored['process']['pid'] in removed['remove'], removed
+                changed['connections'].append(restored)
+                collector.replace(changed)
+                restored_delta = page.evaluate("""async () => {
+                    const r=await fetch('api/process-links?connection_sync=1&since='+window.deletedRevision);
+                    const text=await r.text(), v=JSON.parse(text);
+                    return {base:v.base, bytes:text.length, rows:v.report.connections, remove:v.remove};
+                }""")
+                assert restored_delta['base'] and restored_delta['bytes'] < 2000, restored_delta
+                assert len(restored_delta['rows']) == 1 and not restored_delta['remove'], restored_delta
+                assert restored_delta['rows'][0]['process'] == restored['process']
+                print('Deletion and same-identity reappearance recovered across independent cursors', flush=True)
+
+                # Exercise the real coordinator retaining its cursor after
+                # several server-completed responses vanish in transit.
+                wait(page, lambda: counts.reports[-1]['base'] and counts.reports[-1]['connections'] == 0)
+                before = len(counts.reports)
+                step = [0]
+                def advance():
+                    step[0] += 1
+                    changed['sampled_at'] = 20. + step[0]
+                    changed['connections'][0]['closed_at'] = 1700000200. + step[0]
+                    collector.replace(changed)
+                    if step[0] == 4:
+                        counts.before_get = None
+                counts.before_get = advance
+                counts.drop_gets = 3
+                wait(page, lambda: counts.drop_gets == 0 and step[0] == 4
+                     and counts.reports[-1]['sampled_at'] == 24 and not counts.reports[-1].get('dropped'))
+                recovery = counts.reports[before:]
+                assert sum(bool(r.get('dropped')) for r in recovery) == 3, recovery
+                assert all(r['base'] and r['bytes'] < 2000 for r in recovery), recovery
+                page.goto(f'http://127.0.0.1:{hub.port}', wait_until='domcontentloaded')
+                page.locator('#side .item').first.click()
+                expect(page.locator('#msgs')).to_contain_text('Connection history answer')
+                print('Three dropped Hub replies recovered with a small delta and usable browser history', flush=True)
+                if args.screenshots:
+                    args.screenshots.mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(args.screenshots / 'sync-hub-recovered.png'))
+
                 before = len(counts.reports)
                 collector.fail = True
                 wait(page, lambda: any(not r['sync'] for r in counts.reports[before:]))
@@ -189,6 +256,8 @@ def main():
                 page.locator('#side .item').first.click()
                 expect(page.locator('#msgs')).to_contain_text('Connection history answer')
                 assert not errors, errors
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots / 'sync-node-recovered.png'))
                 print('Invalid baseline, Hub/node restart and boot change safely resynchronized', flush=True)
             finally:
                 browser.close()
