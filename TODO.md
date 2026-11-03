@@ -19,7 +19,7 @@
 - [ ] 跟进 Kiro 重试浏览器一次窄屏刷新中的 `takenOver is not defined`。
   后续完整节点／Hub 重跑通过，已增强页面错误堆栈采集；原失败无堆栈，原因尚未确认。
 
-- [ ] BUG-20261103-112752-cb1c9d：`09b6409e` 已部署并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。
+- [ ] BUG-20261103-112752-cb1c9d：错误分类及临时错误退避续跑 `b20fdfed` 已部署并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。
   Orion 正式 SSH 尝试超时，待补发；Vela 原生构建成功但启动失败，恢复旧文件仍不健康
   （`ROLLBACK_FAILED`），18 个独立 ptyhost 保留，待恢复服务后补发。
 

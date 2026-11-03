@@ -1005,3 +1005,10 @@ stdout 游标仍为 47157950，没有重发输入。
 仍报告原有 41 项警告。执行者查看两种错误各四组最终整页、续跑气泡与普通错误截图
 （验收机 `sessiondock-transient-final`、`sessiondock-model-retry-final`）：
 等待状态和停止按钮清楚，原因完整可读，长中文续跑气泡在手机正确换行，底栏和弹层协调。
+
+续跑修复 `b20fdfed` 已提交推送，生产 release 构建通过。按 dry-run 对全部七个节点／Hub
+运行 bin-only 发布，使用上述独立浏览器验收结果（部署门 `--test none`）。
+Lyra、Cygnus、Pavo、Hub、Cetus 均已重启并健康，后端版本 `20261103T122253502641Z`。
+Orion SSH 超时跳过；Vela 原生构建通过，但 launchd 与健康检查失败，恢复旧文件后仍不可用
+（`ROLLBACK_FAILED`），18 个独立 ptyhost 保留。未更新前端、ptyhost 或资源代理。
+报告：`target/deploy/20261103-122253-b20fdfed/report-20261103-122735.json`。
