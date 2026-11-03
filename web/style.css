@@ -2765,6 +2765,13 @@ header .btn[data-session-docked] { display: none; }
    composer and Goal must not pan the entire pane on narrow screens. */
 #right:has(> #session-content-view.sdk-pane:not(.native-sdk-pane)) { overflow: clip; }
 /* Goal uses the existing upward toolbar popover and compact form controls. */
+#sdk-goal { color: var(--muted); }
+#sdk-goal[data-goal-state="active"] { color: var(--accent); }
+#sdk-goal[data-goal-state="paused"] { color: var(--star); }
+#sdk-goal:is([data-goal-state="blocked"], [data-goal-state="error"]) { color: var(--diff-del-fg); }
+#sdk-goal[data-goal-state="usageLimited"] { color: var(--syntax-title); }
+#sdk-goal[data-goal-state="budgetLimited"] { color: var(--syntax-attr); }
+#sdk-goal[data-goal-state="complete"] { color: var(--diff-add-fg); }
 .sdk-goal-menu { padding: 12px; }
 .sdk-goal-form { display: grid; gap: 10px; min-width: 0; }
 .sdk-goal-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

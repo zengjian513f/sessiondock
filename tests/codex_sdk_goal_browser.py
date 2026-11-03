@@ -27,6 +27,7 @@ class GoalServer(FakeAppServer):
     def __init__(self, socket_path, rollout):
         super().__init__(socket_path, rollout, THREAD)
         self.reject = None
+        self.reject_get = False
         self.hold = False
         self.release = threading.Event()
         self.goal = {'threadId': THREAD, 'objective': 'Finish the existing synthetic research',
@@ -40,6 +41,9 @@ class GoalServer(FakeAppServer):
         assert params['threadId'] == THREAD, params
         if method == 'thread/goal/get':
             assert params == {'threadId': THREAD}
+            if self.reject_get:
+                await self.send(writer, {'id': mid, 'error': {'code': -32603, 'message': 'Synthetic goal read failure'}})
+                return
             await self.send(writer, {'id': mid, 'result': {'goal': self.goal}})
             return
         assert params['origin'] == 'user', params
@@ -79,6 +83,44 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_be_visible()
     expect(send).to_be_enabled()
     before = fake.goal.copy()
+    goal_button = pane.locator('#sdk-goal')
+
+    def icon_state(status, label, variable):
+        expect(goal_button).to_have_attribute('data-goal-state', status)
+        expect(goal_button).to_have_attribute('aria-label', 'Goal 目标 · ' + label)
+        expect(goal_button).to_have_attribute('title', 'Goal 目标 · ' + label)
+        assert goal_button.evaluate("""(e, variable) => {
+            const probe = document.createElement('span');
+            probe.style.color = `var(${variable})`; e.append(probe);
+            const expected = getComputedStyle(probe).color; probe.remove();
+            return getComputedStyle(e).color === expected;
+        }""", variable)
+        return goal_button.evaluate('e => getComputedStyle(e).color')
+
+    # The closed toolbar must show the native state on first attachment.
+    icon_state('blocked', '受阻', '--diff-del-fg')
+    colors = []
+    for status, state_label, variable in [
+        ('active', '进行中', '--accent'), ('paused', '已暂停', '--star'),
+        ('usageLimited', '用量受限', '--syntax-title'),
+        ('budgetLimited', '预算用尽', '--syntax-attr'),
+        ('complete', '已完成', '--diff-add-fg'), ('blocked', '受阻', '--diff-del-fg')]:
+        fake.goal['status'] = status
+        asyncio.run_coroutine_threadsafe(fake.notify('thread/goal/updated', {'goal': fake.goal.copy()}), fake.loop).result(5)
+        colors.append(icon_state(status, state_label, variable))
+        expect(pane.locator('#sdk-goal-menu')).to_be_hidden()
+        if screenshots:
+            page.screenshot(path=str(screenshots / (f'{mode}-{width}-{theme}' + '-icon-' + status + '.png')))
+    assert len(set(colors)) == 6, colors
+    fake.reject_get = True
+    goal_button.click()
+    icon_state('error', '读取失败', '--diff-del-fg')
+    expect(pane.locator('#sdk-goal-menu')).to_contain_text('Synthetic goal read failure')
+    page.keyboard.press('Escape')
+    fake.reject_get = False
+    goal_button.click()
+    icon_state('blocked', '受阻', '--diff-del-fg')
+    page.keyboard.press('Escape')
 
     def command(text):
         box.fill(text)
@@ -162,6 +204,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         page.screenshot(path=str(screenshots / (label + '-panel.png')))
     panel.get_by_role('button', name='暂停', exact=True).click()
     expect(panel.locator('#sdk-goal-state')).to_have_text('已暂停')
+    icon_state('paused', '已暂停', '--star')
     assert fake.methods('thread/goal/set')[-1]['params'] == {'threadId': THREAD, 'status': 'paused', 'origin': 'user'}
     panel.get_by_role('button', name='恢复', exact=True).click()
     expect(panel.locator('#sdk-goal-state')).to_have_text('进行中')
@@ -188,6 +231,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     assert fake.goal['status'] == 'blocked' and fake.goal['tokensUsed'] == before['tokensUsed']
     panel.get_by_role('button', name='清除', exact=True).click()
     expect(panel.locator('#sdk-goal-state')).to_have_text('未设置')
+    icon_state('unset', '未设置', '--muted')
     expect(objective).to_have_value('')
     expect(budget).to_have_value('')
     if screenshots:
@@ -207,6 +251,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     command('/goal')
     expect(panel).to_be_visible()
     expect(panel.locator('#sdk-goal-state')).to_have_text('已暂停')
+    icon_state('paused', '已暂停', '--star')
     page.keyboard.press('Escape')
     command('/goal clear')
     expect(box).to_have_value('')
@@ -216,6 +261,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(goal_button).to_be_visible()
     goal_button.click()
     expect(panel.locator('#sdk-goal-state')).to_have_text('未设置')
+    icon_state('unset', '未设置', '--muted')
     page.keyboard.press('Escape')
     command('/help')
     expect(pane.locator('#sdk-status-menu')).to_contain_text('/goal resume')
@@ -237,7 +283,7 @@ def main():
         browser = p.chromium.launch(headless=True)
         try:
             for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'),
-                                       ('node', 1280, 'dark'), ('node', 390, 'light'), ('node', 320, 'dark'), ('hub', 1280, 'light')]:
+                                       ('node', 1280, 'dark'), ('node', 390, 'light'), ('node', 320, 'dark'), ('hub', 1280, 'light'), ('hub', 390, 'dark')]:
                 root = Path(temporary) / f'{mode}-{width}-{theme}'
                 root.mkdir()
                 corpus = build(root)

@@ -537,6 +537,7 @@ const CodexSdkView = {
     // Reconcile ownership on this connection's snapshot as well.
     queueUiChange({live: true});
     this.summary = raw.summary || {};
+    void CodexSdkGoal.load(this);
     this.seedGauges();
     this.turn = raw.turn || null;
     this.items = new Map((raw.items || []).map(item => [item.id, item]));

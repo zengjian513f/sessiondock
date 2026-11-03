@@ -66,7 +66,12 @@ const CodexSdkGoal = {
     if (!state) return;
     state.button.disabled = view.readOnly || !view.summary;
     const {panel, goal} = state;
-    panel.querySelector('#sdk-goal-state').textContent = state.loaded ? (goal ? this.names[goal.status] || goal.status : '未设置') : state.loadError ? '读取失败' : '读取中…';
+    const status = state.loaded ? goal?.status || 'unset' : state.loadError ? 'error' : 'loading';
+    const label = state.loaded ? (goal ? this.names[goal.status] || goal.status : '未设置') : state.loadError ? '读取失败' : '读取中…';
+    state.button.dataset.goalState = status;
+    state.button.title = `Goal 目标 · ${label}`;
+    state.button.setAttribute('aria-label', state.button.title);
+    panel.querySelector('#sdk-goal-state').textContent = label;
     panel.querySelector('#sdk-goal-usage').textContent = goal
       ? `已用 ${Number(goal.tokensUsed || 0).toLocaleString()} tokens · ${Math.floor((goal.timeUsedSeconds || 0) / 60)} 分钟`
       : '设置目标后，Codex 会在可继续时自动推进。';
@@ -81,7 +86,7 @@ const CodexSdkGoal = {
   },
   accept(view, state, goal, reset = false) {
     if (!this.current(view, state)) return;
-    state.goal = goal; state.loaded = true;
+    state.goal = goal; state.loaded = true; state.loadError = false;
     if (reset) state.dirty = false;
     if (!state.dirty) {
       state.panel.querySelector('#sdk-goal-objective').value = goal?.objective || '';
@@ -98,7 +103,7 @@ const CodexSdkGoal = {
       const data = await view.request('api/codex-sdk/goal/get', {uid:state.uid});
       if (this.current(view, state) && revision === state.revision) this.accept(view, state, data.raw.goal);
     } catch (error) {
-      if (this.current(view, state)) {
+      if (this.current(view, state) && revision === state.revision) {
         state.loaded = false; state.loadError = true;
         this.result(state, `读取 Goal 失败：${error.message}`, true);
       }

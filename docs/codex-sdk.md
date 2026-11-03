@@ -648,6 +648,12 @@ updates retained live snapshots and attached views. Covered by
 DELTA (BUG-20261021-050110-ff6a79): the Goal icon stays immediately to the
 right of compact. Its upward popover reads the native objective, lifecycle,
 token budget and usage, and offers create/edit, resume, pause and clear.
+DELTA (BUG-20261103-045123-b36072): the icon reads Goal on SDK attachment
+and reconnection, and follows native updates even with the panel closed.
+Active is blue, paused amber, blocked red, usage-limited purple,
+budget-limited orange/brown, and complete green, using the existing theme colors.
+Unset/loading uses the neutral color; read failure uses red. Tooltip and accessible
+label name the state, so color is not the only indication.
 Empty budget means no limit. External Goal updates refresh state and usage
 without overwriting unsaved form edits; reopening reads current native state.
 `/goal` and `/goal status` open this panel; `/goal resume`, `/goal pause` and
