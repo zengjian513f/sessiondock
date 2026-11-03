@@ -5,12 +5,20 @@
 
 ## Kiro integration
 
+- [ ] BUG-20261103-112752-cb1c9d：原生上游三次返回 `ServerConnectionResetError`
+  的具体服务端／网络原因缺少日志，仍待定位。SessionDock 错误误记为取消已修复；
+  不通过自动重发已执行过工作的消息绕过连接故障。
+
 - [ ] 补真实非空分页历史、审批／问答、取消、fork/delete/compact、设置回读与消费
   对账证据。当前能力来自已认证 initialize，相关恢复路径有合成 Chromium 验证；
   不能以合成事件替代原生高级能力验收。普通历史暂只读自有缓存，显式 SDK load
   同步 replay；默认 history 空响应不作为完整历史证明。见 [Kiro](docs/kiro.md)。
 
 ## Runtime and platform coverage
+
+- [ ] BUG-20261103-112752-cb1c9d：`09b6409e` 已部署并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。
+  Orion 正式 SSH 尝试超时，待补发；Vela 原生构建成功但启动失败，恢复旧文件仍不健康
+  （`ROLLBACK_FAILED`），18 个独立 ptyhost 保留，待恢复服务后补发。
 
 - [ ] BUG-20261103-104023-0c1a1a：SDK 停止状态修复 `12e0d6d3` 已上线
   Lyra、Cygnus、Pavo、Hub、Cetus 并重启、健康。Orion SSH 超时待补发；

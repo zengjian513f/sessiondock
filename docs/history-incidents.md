@@ -978,3 +978,14 @@ Orion SSH 超时跳过。Vela 原生构建成功，但 launchd 与健康检查�
 默认 clippy 通过并报告未修改区域既有 41 项警告。没有调用真实付费 CLI。
 执行者亲自查看旧版及最终四组整页截图（验收机临时目录 `sessiondock-cb1c9d-final`）：
 状态改为红色“错误”，原始原因完整可读，宽窄屏提示框、正文、草稿与底栏协调，无新增布局。
+
+`09b6409e` 已提交推送（首次 GitHub TLS 握手失败后重试成功），生产 release 构建通过。
+按 dry-run 的全部七个节点／Hub 目标执行 bin-only 发布，复用上述 Chromium 验证
+（部署门 `--test none`）。Lyra、Cygnus、Pavo、Cetus 成功重启并健康；Orion SSH 超时跳过。
+Hub 首次替换期间 SSH 超时，回滚也未完成；随后用官方 `push --stage` 重试同一产物，
+成功重启并健康。Vela 原生构建成功，launchd 及健康检查失败，自动恢复旧文件后仍不可用
+（`ROLLBACK_FAILED`），18 个独立 ptyhost 保留。资源代理、前端与 ptyhost 产物未更新。
+首轮及 Hub 重试报告分别为 `target/deploy/20261103-113427-09b6409e/report-20261103-113910.json`
+和 `report-20261103-113929.json`，未交付目标记入 TODO。
+发布后只读核对报告会话：原 RPC 40 已恢复为 `failed` 并保存完整原生错误，
+stdout 游标仍为 47157950，没有重发输入。
