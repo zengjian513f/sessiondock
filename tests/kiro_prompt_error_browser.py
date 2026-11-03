@@ -6,6 +6,7 @@ import argparse
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import tempfile
@@ -99,15 +100,22 @@ def main():
                     page.locator('#sdk-send').click()
                 page.wait_for_function('!NativeSdkView.running && NativeSdkView.raw?.error')
                 status = page.locator('.sdk-status-row > .sdk-status:visible')
-                expect(status).to_have_attribute('title', '错误：' + ERROR['message'])
+                if send:
+                    expect(status).to_have_attribute('title', re.compile('^正在重试：.*' + re.escape(ERROR['message'])))
+                else:
+                    expect(status).to_have_attribute('title', '错误：' + ERROR['message'])
                 raw = page.evaluate('NativeSdkView.raw')
                 assert raw['last_turn']['status'] == 'failed', raw['last_turn']
                 assert raw['last_turn']['native_error'] == ERROR, raw['last_turn']
                 assert raw['last_turn']['turn_id'] is not None
                 assert 'stopReason' not in raw['last_turn']
-                assert raw['error_kind'] == 'turn' and not raw['retry'] and not raw['cancel_requested']
+                assert raw['error_kind'] == 'turn' and not raw['cancel_requested']
+                assert (raw.get('retry') or {}).get('delay_seconds') == (15 if send else None)
                 expect(page.locator('.sdk-live')).to_contain_text('Partial reply before connection reset')
-                expect(page.locator('#sdk-stop')).to_be_hidden()
+                if send:
+                    expect(page.locator('#sdk-stop')).to_be_visible()
+                else:
+                    expect(page.locator('#sdk-stop')).to_be_hidden()
                 expect(page.locator('.sdk-queue [data-queue-id]')).to_have_count(0)
                 expect(page.locator('#sdk-send')).to_be_enabled()
                 if send:

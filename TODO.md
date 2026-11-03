@@ -7,7 +7,7 @@
 
 - [ ] BUG-20261103-112752-cb1c9d：原生上游三次返回 `ServerConnectionResetError`
   的具体服务端／网络原因缺少日志，仍待定位。SessionDock 错误误记为取消已修复；
-  不通过自动重发已执行过工作的消息绕过连接故障。
+  原生 `TRANSIENT` 错误接入退避续跑，保留已完成工作，不重放原始消息。
 
 - [ ] 补真实非空分页历史、审批／问答、取消、fork/delete/compact、设置回读与消费
   对账证据。当前能力来自已认证 initialize，相关恢复路径有合成 Chromium 验证；
@@ -15,6 +15,9 @@
   同步 replay；默认 history 空响应不作为完整历史证明。见 [Kiro](docs/kiro.md)。
 
 ## Runtime and platform coverage
+
+- [ ] 跟进 Kiro 重试浏览器一次窄屏刷新中的 `takenOver is not defined`。
+  后续完整节点／Hub 重跑通过，已增强页面错误堆栈采集；原失败无堆栈，原因尚未确认。
 
 - [ ] BUG-20261103-112752-cb1c9d：`09b6409e` 已部署并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。
   Orion 正式 SSH 尝试超时，待补发；Vela 原生构建成功但启动失败，恢复旧文件仍不健康

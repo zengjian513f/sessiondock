@@ -1,9 +1,10 @@
-//! Retry only confirmed model-selection failures; never replay consumed input.
+//! Retry confirmed model-selection and transient failures; never replay consumed input.
 use super::{Bridge, transport::Session};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
-pub(super) const CONTINUE: &str = "重试：继续上次因模型不可用而中断的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。";
+pub(super) const CONTINUE: &str =
+    "重试：继续上次未完成的任务。保留已完成的工作，从未完成处继续，不要重复执行已完成的操作。";
 
 #[derive(Default)]
 pub(super) struct Retry {
@@ -15,7 +16,8 @@ pub(super) struct Retry {
 impl super::live::LiveState {
     pub(super) fn schedule_model_retry(&mut self, error: &Value) {
         let message = error["message"].as_str().unwrap_or_default();
-        let confirmed = error["data"]["errorType"] == "InvalidModelError"
+        let confirmed = error["data"]["retryErrorType"] == "TRANSIENT"
+            || error["data"]["errorType"] == "InvalidModelError"
             || ((message.starts_with("The model '") || message.starts_with("The selected model "))
                 && message
                     .contains("is not available. Please select a different model and try again."));
