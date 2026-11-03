@@ -424,6 +424,12 @@ thread, pauses its queued inputs and notifies attached pages to stop reconnectin
 The existing guarded stop also closes that session's TUI, when present. Other
 threads and the daemon remain running. Native unload grace periods do not
 keep a stopped bridge thread marked live; explicitly reopening SDK resumes it.
+DELTA (BUG-20261103-104023-0c1a1a): process discovery recognizes the shared
+Codex daemon with config/feature options before `app-server`, including provider
+listeners. Its retained rollout descriptors do not become external CLI evidence
+after SDK stop. Actual TUI processes still count, and destructive operations
+still wait for native writer release. Stop does not wait for the unload grace
+period or change the daemon's configuration.
 Stop never calls `thread/resume` or reads native history. It uses the native
 empty-turn interrupt to cancel that exact thread's startup/current work, then
 unsubscribes; `notLoaded` confirms an already-unloaded thread. Other interrupt

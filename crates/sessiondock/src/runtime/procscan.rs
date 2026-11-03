@@ -304,6 +304,7 @@ struct Memo {
     parents: HashMap<u32, Option<Parent>>,
     spawn_env: HashMap<u32, Arc<BTreeMap<String, String>>>,
     cmdlines: HashMap<u32, Option<Arc<str>>>,
+    codex_app_servers: HashMap<u32, bool>,
     starts: HashMap<u32, Option<f64>>,
 }
 
@@ -368,6 +369,43 @@ impl ProcTree {
             .map(|bytes| Arc::from(cmdline_text(&bytes)));
         lock(&self.memo).cmdlines.insert(pid, value.clone());
         value
+    }
+
+    /// A shared daemon is not an independently stoppable CLI. Preserve argv
+    /// boundaries: config values and ordinary TUI prompts can contain spaces
+    /// or the literal `app-server` without naming that subcommand.
+    fn is_codex_app_server(&self, pid: u32) -> bool {
+        if let Some(known) = lock(&self.memo).codex_app_servers.get(&pid) {
+            return *known;
+        }
+        let daemon = std::fs::read(self.pid_dir(pid).join("cmdline"))
+            .ok()
+            .is_some_and(|bytes| {
+                let mut args = bytes.split(|byte| *byte == 0);
+                if !args
+                    .next()
+                    .is_some_and(|exe| cli_family(&String::from_utf8_lossy(exe)) == Some("codex"))
+                {
+                    return false;
+                }
+                while let Some(arg) = args.next() {
+                    match arg {
+                        b"-c" | b"--config" | b"--enable" | b"--disable" => {
+                            if args.next().is_none() {
+                                return false;
+                            }
+                        }
+                        _ if arg.starts_with(b"--config=")
+                            || arg.starts_with(b"--enable=")
+                            || arg.starts_with(b"--disable=")
+                            || (arg.starts_with(b"-c") && arg.len() > 2) => {}
+                        _ => return arg == b"app-server",
+                    }
+                }
+                false
+            });
+        lock(&self.memo).codex_app_servers.insert(pid, daemon);
+        daemon
     }
 
     /// `(comm, ppid)`; `None` when the stat line is unreadable or malformed.
@@ -1021,17 +1059,7 @@ impl Scan {
         if session.source == "codex" {
             // One app-server can hold many independent threads. Its file
             // descriptors never grant permission to terminate that daemon.
-            found.retain(|pid| {
-                !self
-                    .tree
-                    .cmdline(pid.unsigned_abs() as u32)
-                    .is_some_and(|cmd| {
-                        let mut args = cmd.split_ascii_whitespace();
-                        args.next()
-                            .is_some_and(|exe| cli_family(exe) == Some("codex"))
-                            && args.next() == Some("app-server")
-                    })
-            });
+            found.retain(|pid| !self.tree.is_codex_app_server(pid.unsigned_abs() as u32));
         }
         found
     }

@@ -1,15 +1,15 @@
 //! Work that outlives a turn, including detached commands carrying a native
 //! session identity. This is display evidence only, never PID control or CLI
 //! liveness. Reuse the scan's identity/ancestry reads; do not inspect CPU usage.
-use super::{ProcTree, SPAWN_ENV, SessionRow, argv0_of, cli_name};
+use super::{ProcTree, SPAWN_ENV, SessionRow, argv0_of, cli_family, cli_name};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-fn infrastructure(cmd: &str) -> bool {
+fn infrastructure(tree: &ProcTree, pid: u32, cmd: &str) -> bool {
     let name = cli_name(argv0_of(cmd));
     let args: Vec<_> = cmd.split_ascii_whitespace().collect();
     name == "ptyhost"
         || name == "codex-code-mode-host"
-        || (name == "codex" && args.get(1) == Some(&"app-server"))
+        || (cli_family(argv0_of(cmd)) == Some("codex") && tree.is_codex_app_server(pid))
         || (name == "opencode" && args.get(1) == Some(&"serve"))
         || args.windows(2).any(|pair| pair == ["mcp", "serve"])
         || name.starts_with("mcp-server-")
@@ -46,7 +46,7 @@ impl ProcTree {
         let Some(cmd) = self.cmdline(pid).filter(|cmd| !cmd.trim().is_empty()) else {
             return false;
         };
-        if infrastructure(&cmd) {
+        if infrastructure(self, pid, &cmd) {
             return false;
         }
         let mut current = pid;
@@ -58,7 +58,8 @@ impl ProcTree {
             }
             current = info.ppid;
             if self.cmdline(current).is_some_and(|cmd| {
-                infrastructure(&cmd) && cli_name(argv0_of(&cmd)) != "codex-code-mode-host"
+                infrastructure(self, current, &cmd)
+                    && cli_name(argv0_of(&cmd)) != "codex-code-mode-host"
             }) {
                 return false;
             }
@@ -79,7 +80,11 @@ impl ProcTree {
                     .filter(|pid| **pid > 0)
                     .map(move |pid| (*pid as u32, uid.as_str()))
             })
-            .filter(|(pid, _)| !self.cmdline(*pid).is_some_and(|cmd| infrastructure(&cmd)))
+            .filter(|(pid, _)| {
+                !self
+                    .cmdline(*pid)
+                    .is_some_and(|cmd| infrastructure(self, *pid, &cmd))
+            })
             .collect();
         let by_sid: HashMap<_, _> = sessions
             .iter()
@@ -110,7 +115,7 @@ impl ProcTree {
             let Some(cmd) = self.cmdline(pid).filter(|cmd| !cmd.trim().is_empty()) else {
                 continue; // Includes zombies, whose command line is empty.
             };
-            if infrastructure(&cmd) {
+            if infrastructure(self, pid, &cmd) {
                 continue;
             }
             let mut current = pid;
@@ -128,7 +133,9 @@ impl ProcTree {
                     break;
                 }
                 if let Some(cmd) = self.cmdline(current) {
-                    if infrastructure(&cmd) && cli_name(argv0_of(&cmd)) != "codex-code-mode-host" {
+                    if infrastructure(self, current, &cmd)
+                        && cli_name(argv0_of(&cmd)) != "codex-code-mode-host"
+                    {
                         transport = true;
                         break;
                     }

@@ -24,7 +24,7 @@ from node_auth_fixtures import node_env, TOKEN, free_port
 from spawned_by_fixtures import START, proc_pid
 
 WORKING = re.compile(r"\bturn-working\b")
-START.update({702: 70_200, 703: 70_300})
+START.update({702: 70_200, 703: 70_300, 704: 70_400, 705: 70_500})
 
 
 def main(binary):
@@ -71,6 +71,12 @@ def main(binary):
         proc_pid(proc, 702, "ptyhost", ["/synthetic/ptyhost", "--dir", "/synthetic/hosts", "run"], 1,
                  env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
         proc_pid(proc, 703, "python", ["python", "fake_claude_cli.py"], 702,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        # Provider-specific shared daemons remain infrastructure even when
+        # launched by a CLI and carrying its inherited session identity.
+        proc_pid(proc, 704, "codex", ["codex", "-c", 'model_provider="openai"', "app-server"], 601,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        proc_pid(proc, 705, "python", ["python", "transport.py"], 704,
                  env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
         # A separately identified CLI inside a terminal still owns its work.
         stat = proc / "100/stat"

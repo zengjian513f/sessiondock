@@ -929,3 +929,26 @@ BUG-20261006-041817-f7cf23：原生最后一条回复已 DONE、宿主仍 runnin
 保留宿主会话；orion SSH 超时跳过，vela 既有启动异常在恢复旧文件后仍未恢复，
 结果 `ROLLBACK_FAILED`。三个资源代理因组件无关排除。部署报告在
 `target/deploy/20261103-045429-d5c13fc2/`，待补发项记入 TODO。
+
+## BUG-20261103-104023-0c1a1a：SDK 停止后被误报为外部 CLI
+
+历史记录：诊断浏览器在点击“停止SDK模式”后约 0.18 秒已撤下 SDK 标记，
+约 0.62 秒又显示外部运行。来源原生记录已是 `turn_aborted`，没有对应 CLI
+生命周期绑定。现场 provider listener 使用 `codex -c model_provider=… app-server`；
+进程扫描仅识别紧跟可执行文件的 `app-server`，把卸载宽限期仍打开的 rollout
+误当作独立 CLI。修复按原始 argv 边界跳过配置／功能选项，统一 CLI 归属与
+后台活动对共享 daemon 的识别；不调整原生卸载期限，不结束共享进程。
+
+旧二进制在扩展的 Chromium 停止回归中复现：停止成功后 UID 仍留在 `uids`。
+最终 `codex_sdk_stop_browser.py` 九组节点／Hub、宽屏浅色／窄屏深色场景通过；
+六组计时为 0.09–0.16 秒，假 daemon 始终保持 loaded。覆盖历史不可读、
+原生已卸载、停止失败、父／分支及并存 CLI、不同参数形式与含 app-server 的
+普通提示词。`process_activity_browser.py`、`codex_sdk_retention_browser.py`
+通过，确认独立任务、共享基础进程、停止后写入保护与订阅恢复语义未退化。
+未运行真实付费 CLI。执行者查看最终整页截图：未运行状态、侧栏活跃点与菜单
+一致，其他线程仍标记运行；宽窄屏标题、草稿、底栏和菜单可读且无新增布局。
+截图保留在验收机临时目录 `sessiondock-sdk-stop-final`。
+
+开发构建、修改文件 rustfmt、默认 clippy、文档链接及 AGENTS 检查通过。
+严格 clippy 因未修改区域既有 41 项警告失败；全仓 fmt 检查还报告既有
+`quotas.rs` 格式问题，本次未扩改这些文件。

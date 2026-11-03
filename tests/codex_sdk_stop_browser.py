@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
@@ -18,7 +19,9 @@ from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 from private_hosts import private_hosts
 from popups import on_popup
-from spawned_by_fixtures import proc_pid
+from spawned_by_fixtures import START, proc_pid
+
+START.update({401: 40100, 402: 40200})
 
 OTHER = '01a1adc0-0000-7000-8000-000000000098'
 LATER = '分支点之后的第三轮 Later question'
@@ -190,7 +193,7 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     print('PASS ' + label + ': middle fork excludes later messages; separate parent SDK and CLI stops; independent branch stop; daemon retained', flush=True)
 
 
-def unreadable_history(browser, base, fake, screenshots, label, case):
+def unreadable_history(browser, base, fake, proc, screenshots, label, case):
     context = browser.new_context(viewport={'width': 390 if 'narrow' in label else 1280, 'height': 900},
                                   color_scheme='dark' if 'dark' in label else 'light', service_workers='block')
     context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
@@ -222,6 +225,7 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
         assert source in live['sdk_uids'], live
         assert any('synthetic interrupt failure' in message for message in popups), popups
         fake.fail_interrupt = False
+    started = time.monotonic()
     stopped = stop()
     assert stopped.status == 200 and stopped.json()['stopped'], stopped.text()
     assert len(fake.methods('thread/resume')) == resumes, fake.received
@@ -230,6 +234,23 @@ def unreadable_history(browser, base, fake, screenshots, label, case):
     assert THREAD not in fake.active
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and other in live['sdk_uids'], live
+    elapsed = time.monotonic() - started
+    assert elapsed < 5, f'SDK stop waited {elapsed:.2f}s for native unload'
+    print(f'{label}: stopped and absent from live in {elapsed:.2f}s; daemon still loaded', flush=True)
+    # A real TUI holding the same rollout still counts. Neither a config
+    # value nor a prompt mentioning app-server names the daemon subcommand.
+    import shutil
+    for argv in [
+        ['codex', '-c', 'model_provider="openai"', 'resume', THREAD, 'app-server'],
+        ['codex', '--config', 'model_provider="app-server"', 'Explain app-server'],
+        ['codex', '--', 'app-server'],
+    ]:
+        proc_pid(proc, 500, 'codex', argv, 1, fds={3: fake.source_path})
+        observed = page.request.get(base + '/api/live?force=1').json()
+        assert source in observed['uids'] and source not in observed['sdk_uids'], (argv, observed)
+        shutil.rmtree(proc / '500')
+    page.evaluate('refreshLive(true)')
+    page.wait_for_function('uid => !S.live.has(uid)', arg=source)
     if 'narrow' in label:
         # Returning to the mobile list closes the SDK view. Its sidebar action
         # must offer start after a stop, without reopening unreadable history.
@@ -295,7 +316,16 @@ def main():
                 config.write_text(json.dumps(settings))
                 proc = root / 'proc'
                 (proc / 'stat').write_text('btime 1700000000\n')
-                proc_pid(proc, 400, 'codex', ['codex', 'app-server'], 1, fds={3: path})
+                daemon_args = {
+                    'normal': ['codex', '-c', 'model_provider="openai"', 'app-server'],
+                    'unreadable': ['codex', '--config', 'model_provider = "openai"',
+                                   '--enable', 'example', 'app-server'],
+                    'unloaded': ['codex', '--config=model_provider="openai"', 'app-server'],
+                }[case]
+                proc_pid(proc, 400, 'codex', daemon_args, 1, fds={3: path})
+                proc_pid(proc, 401, 'codex', ['codex', 'app-server'], 1, fds={3: path})
+                proc_pid(proc, 402, 'codex', ['codex', '-cmodel_provider="openai"',
+                         '--disable=example', 'app-server'], 1, fds={3: path})
                 port = free_port()
                 env.update(node_env(root, port, '127.0.0.0/8'))
                 with private_hosts(root), StopServer(root / 'app.sock', path, retained, other, case) as fake, server(corpus, args.binary, root / 'app.sock', env) as base:
@@ -307,10 +337,10 @@ def main():
                         hub.start()
                         try:
                             if case == 'normal': exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, proc, args.screenshots, label)
-                            else: unreadable_history(browser, f'http://127.0.0.1:{hub.port}', fake, args.screenshots, label, case)
+                            else: unreadable_history(browser, f'http://127.0.0.1:{hub.port}', fake, proc, args.screenshots, label, case)
                         finally: hub.stop()
                     elif case == 'normal': exercise(browser, base, corpus, fake, proc, args.screenshots, label)
-                    else: unreadable_history(browser, base, fake, args.screenshots, label, case)
+                    else: unreadable_history(browser, base, fake, proc, args.screenshots, label, case)
         finally: browser.close()
 
 
