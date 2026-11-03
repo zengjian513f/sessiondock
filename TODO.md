@@ -104,6 +104,9 @@
 
 - [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
   连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
+  Goal 状态图标前端 `d5c13fc2` 待补发 orion、vela；orion 正式尝试连接超时，
+  vela 发布前已不健康，恢复旧文件后仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub、
+  cetus 已发布、重启且健康；报告在 `target/deploy/20261103-045429-d5c13fc2/`。
   选择会话树并固定身份迁移 `cc040207` 已交付 lyra、cygnus、pavo、hub，重启且健康；
   orion、cetus SSH 超时；vela 构建通过，恢复旧文件后服务仍不可用（`ROLLBACK_FAILED`），
   三者待补发。完整报告在未跟踪的 `target/deploy/20261102-074719-cc040207/`。
