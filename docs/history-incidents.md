@@ -952,3 +952,11 @@ BUG-20261006-041817-f7cf23：原生最后一条回复已 DONE、宿主仍 runnin
 开发构建、修改文件 rustfmt、默认 clippy、文档链接及 AGENTS 检查通过。
 严格 clippy 因未修改区域既有 41 项警告失败；全仓 fmt 检查还报告既有
 `quotas.rs` 格式问题，本次未扩改这些文件。
+
+`12e0d6d3` 已提交推送，生产 release 构建通过。全部七个节点／Hub 目标
+按 bin-only 尝试，复用上述独立验证（部署门 `--test none`）：Lyra、Cygnus、
+Pavo、Hub、Cetus 成功重启并健康，后端版本为 `20261103T104648488947Z`；
+Orion SSH 超时跳过。Vela 原生构建成功，但 launchd 与健康检查失败，恢复旧文件后
+仍不可用，结果 `ROLLBACK_FAILED`，18 个独立 ptyhost 保留；待办记入 TODO。
+三个资源代理按组件范围排除，没有更新 ptyhost 或前端。部署报告位于
+`target/deploy/20261103-104648-12e0d6d3/report-20261103-105140.json`。

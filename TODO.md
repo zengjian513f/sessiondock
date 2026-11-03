@@ -12,6 +12,11 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261103-104023-0c1a1a：SDK 停止状态修复 `12e0d6d3` 已上线
+  Lyra、Cygnus、Pavo、Hub、Cetus 并重启、健康。Orion SSH 超时待补发；
+  Vela 已尝试发布并恢复旧文件，但既有启动异常仍在，结果 `ROLLBACK_FAILED`，
+  18 个独立 ptyhost 保留；恢复服务后补发。
+
 - [ ] BUG-20261102-162048-b98299：长消息列表输入修复 `5b03e212` 已以 web-only
   上线 Lyra、Cygnus、Pavo、Hub、Cetus 并完成重启和健康检查。Orion 连接超时待补发；
   Vela 部署前服务已不可用，本次发布和自动回滚后的健康检查均失败，待恢复后补发。
