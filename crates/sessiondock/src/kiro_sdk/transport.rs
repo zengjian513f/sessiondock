@@ -210,6 +210,7 @@ impl Session {
         let stdout = dir.join(sanitize_host_key(key)).join("stdout");
         let mut state = tokio::task::spawn_blocking(move || {
             state.upgrade_transcript(&stdout)?;
+            state.repair_prompt_error();
             Ok::<_, String>(state)
         })
         .await
@@ -483,6 +484,9 @@ impl Session {
                                                 && st.active_prompt == Some(id)
                                             {
                                                 st.fail_turn(&error);
+                                                if let Some(turn) = st.last_turn.as_mut() {
+                                                    turn["native_error"] = value["error"].clone();
+                                                }
                                                 st.schedule_model_retry(&value["error"]);
                                                 st.active_prompt = None;
                                                 st.requests.clear();

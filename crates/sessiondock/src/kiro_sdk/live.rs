@@ -718,22 +718,48 @@ impl LiveState {
         self.running = false;
         self.error = Some(err.to_string());
         self.error_kind = Some("turn".into());
-        if err.contains("cancelled") || err.contains("interrupted") || err.contains("Canceled") {
-            self.error_kind = Some("interrupted".into());
-            self.last_turn = Some(json!({
-                "status": "interrupted",
-                "stopReason": "cancelled",
-            }));
-        } else {
-            self.last_turn = Some(json!({
-                "status": "failed",
-                "error": err,
-                "turn_id": self.active_prompt,
-            }));
-        }
+        // Error prose can describe an interrupted upstream connection. Only a
+        // native stopReason (finish_turn) establishes a cancelled prompt.
+        self.last_turn = Some(json!({
+            "status": "failed",
+            "error": err,
+            "turn_id": self.active_prompt,
+        }));
         self.current_assistant_id = None;
         self.current_thinking_id = None;
         self.publish();
+    }
+
+    pub(super) fn repair_prompt_error(&mut self) {
+        if self.running
+            || self.active_prompt.is_some()
+            || !self.last_turn.as_ref().is_some_and(|turn| {
+                turn["status"] == "interrupted"
+                    && turn["stopReason"] == "cancelled"
+                    && turn["turn_id"].is_null()
+            })
+        {
+            return;
+        }
+        let Some(rpc) = self
+            .journal
+            .iter()
+            .rev()
+            .find(|rpc| rpc.frame["method"] == "session/prompt")
+        else {
+            return;
+        };
+        let Some(error) = rpc.response.as_ref().and_then(|reply| reply.get("error")) else {
+            return;
+        };
+        if error["message"].as_str() != self.error.as_deref() {
+            return;
+        }
+        self.error_kind = Some("turn".into());
+        self.last_turn = Some(json!({
+            "status": "failed", "error": self.error,
+            "turn_id": rpc.id, "native_error": error,
+        }));
     }
 
     fn interrupt_subtasks(&mut self) {

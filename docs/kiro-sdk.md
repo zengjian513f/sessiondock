@@ -55,6 +55,12 @@ RPC/写入 ID、待发送 frame、原生响应、回合归属及 stdout/stderr �
   验收：[停止浏览器](../tests/kiro_stop_browser.py)（节点／Hub，限速链路）。
 - cancel 表示请求取消，保持 busy 至对应 prompt 最终结果或确认退出。取消写失败
   保留错误与归属，旧回合迟到响应不覆盖新回合。
+- DELTA（BUG-20261103-112752-cb1c9d）：只有原生 prompt 结果的 `stopReason`
+  为 `cancelled`／`interrupted` 才记录中断。JSON-RPC 错误保留为失败，连同原始
+  `code/message/data` 和回合 ID 保存，不因文案含 `interrupted` 推断用户取消。
+  例如 `ServerConnectionResetError` 表示原生上游连接失败；保留已执行内容，
+  不自动重发。重附着时用最后一个 prompt 的原 RPC 错误纠正旧检查点的误分类，
+  不改变投递、读取游标或原生历史。验收：[错误浏览器](../tests/kiro_prompt_error_browser.py)。
 - DELTA：网页订阅 Kiro 事件流时带 `snapshot_delta=1`。每条连接先接收完整快照，
   后续按连接版本传递 `raw` 的字段变化、数组变化及 UTF-16 位置的文字增删；长工具输出
   与已有回复不随每个新 chunk 重传。客户端恢复完整快照后交给原有渲染器，内容与历史窗口

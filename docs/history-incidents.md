@@ -960,3 +960,21 @@ Orion SSH 超时跳过。Vela 原生构建成功，但 launchd 与健康检查�
 仍不可用，结果 `ROLLBACK_FAILED`，18 个独立 ptyhost 保留；待办记入 TODO。
 三个资源代理按组件范围排除，没有更新 ptyhost 或前端。部署报告位于
 `target/deploy/20261103-104648-12e0d6d3/report-20261103-105140.json`。
+
+## BUG-20261103-112752-cb1c9d：Kiro 连接错误误记为取消
+
+历史证据：报告窗口没有停止请求；原 sdkhost 的 prompt RPC 36、39、40 均返回
+`ServerConnectionResetError`，错误文案为 `Your connection was interrupted. Please try again in a moment.`，
+`retryErrorType=TRANSIENT`，没有对应 `session/cancel`。宿主仍在运行。
+最早可见的异常是 Kiro 上游连接重置；具体网络／服务端原因不在现存证据中。
+桥接随后按文案含 `interrupted` 将失败错误写成 `stopReason=cancelled`，导致误报中断。
+修复依据原生结果区分取消与失败，保存完整 RPC 错误及回合 ID，重附着时用原账本纠正旧误分类，
+不重发原消息或修改原生记录。原账本另有四个明确取消结果及对应取消请求，不能把它们归于连接故障。
+
+旧二进制在新增的 `kiro_prompt_error_browser.py` 中复现“已中断”误报。
+最终 Chromium 四组节点／Hub、宽窄屏与明暗主题通过，覆盖已执行工作、部分回复、草稿、刷新、
+旧检查点恢复及不重发。`kiro_recovery_browser.py` 通过，覆盖取消 FIFO、旧响应隔离、审批、
+宿主恢复及退出尾部。开发构建、修改文件 Rust 2024 rustfmt、文档链接与 AGENTS 检查通过；
+默认 clippy 通过并报告未修改区域既有 41 项警告。没有调用真实付费 CLI。
+执行者亲自查看旧版及最终四组整页截图（验收机临时目录 `sessiondock-cb1c9d-final`）：
+状态改为红色“错误”，原始原因完整可读，宽窄屏提示框、正文、草稿与底栏协调，无新增布局。
