@@ -16,6 +16,11 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261104-102740-283f30：SDK 查看入口修复 `f2c178bc` 已以 web-only
+  部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。Orion SSH 超时待补发；
+  Vela 仍报 `Store(Invalid)`，发布和恢复旧文件后的健康检查均失败（`ROLLBACK_FAILED`），
+  18 个独立 ptyhost 保留，待恢复服务后补发。
+
 - [ ] 跟进 Kiro 重试浏览器一次窄屏刷新中的 `takenOver is not defined`。
   后续完整节点／Hub 重跑通过，已增强页面错误堆栈采集；原失败无堆栈，原因尚未确认。
 
