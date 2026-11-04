@@ -19,7 +19,7 @@ const CodexSdkView = {
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true
-      && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.codex_sdk === true)
+      && (!HUB_MODE || hubSdkViewAvailable('codex', nodeOf(uid)))
       && String(uid || '').startsWith('codex:') && !String(uid).startsWith('tmux:');
   },
 

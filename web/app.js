@@ -7660,7 +7660,9 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
 function sessionStartUnavailable(row, mode) {
   if (!row || row.pending) return sessionRunUnavailable(row);
   if (ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
-  if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null) ? '' : '此会话没有可用的 SDK 启动方式。';
+  if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null)
+    && (!HUB_MODE || agentSdkAvailable(sessionSourceOf(row.uid), nodeOf(row.uid)))
+    ? '' : '此会话没有可用的 SDK 启动方式。';
   return consoleUnavailableReason(row.uid, row.agent_id || null, false, true);
 }
 function sessionRunRow(uid) {

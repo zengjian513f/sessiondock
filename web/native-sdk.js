@@ -73,7 +73,7 @@ const NativeSdkView = {
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
     return !(agent && ['claude', 'kiro', 'codebuddy'].includes(source))
-      && nativeSdkAvailable(source, HUB_MODE ? nodeOf(uid) : '');
+      && (HUB_MODE ? hubSdkViewAvailable(source, nodeOf(uid)) : nativeSdkAvailable(source));
   },
   layoutToolbar() { NativeSdkControls.layout(this); },
 

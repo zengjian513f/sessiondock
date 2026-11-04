@@ -6,6 +6,9 @@ const STORAGE_PREFIX = SessionDockCapabilities.namespace
 // list 只有启用的机器，别处都按它；machines 是设置页用的完整名单（含停用的），
 // 顺序就是注册表顺序，只由用户在设置页拖动决定，不随启用状态变
 const Nodes = {list: [], machines: [], off: new Set(), capabilities: {}, errors: new Map()};
+// Last successful SDK capability observations are for viewing only. Failed
+// terminal probes still disable launch controls through Nodes.capabilities.
+const sdkViewCapabilities = new Map();
 try { Nodes.off = new Set(JSON.parse(SessionDockCapabilities.stored('nodesOff', STORAGE_PREFIX)) || []); } catch {}
 
 function nodeOf(uid) {
@@ -45,6 +48,10 @@ function nativeSdkAvailable(source, node = '') {
 }
 function agentSdkAvailable(source, node = '') {
   const cap = nodeCapabilities(node);
+  return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
+}
+function hubSdkViewAvailable(source, node) {
+  const cap = sdkViewCapabilities.get(node) || Nodes.capabilities[node] || {};
   return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
 }
 function agentStartUnavailable(source, node = '') {
@@ -381,7 +388,13 @@ function applyNodeState(data, context = 'nodes') {
   if (!HUB_MODE || !data) return;
   if (Array.isArray(data.nodes)) Nodes.list = data.nodes;
   if (Array.isArray(data.machines)) Nodes.machines = data.machines;
-  if (data.capabilities) Nodes.capabilities = data.capabilities;
+  if (data.capabilities) {
+    const failed = new Set((data.errors || []).map(error => error.node_id));
+    for (const [node, cap] of Object.entries(data.capabilities)) {
+      if (!failed.has(node)) sdkViewCapabilities.set(node, cap);
+    }
+    Nodes.capabilities = data.capabilities;
+  }
   if (Array.isArray(data.errors)) Nodes.errors.set(context, data.errors);
   renderNodes();
 }
