@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Middle-message fork and exact thread/PTY stop on one shared daemon."""
+"""Middle-message fork and native spawned-tree/PTY stop on one shared daemon."""
 from __future__ import annotations
 
 import argparse
@@ -24,6 +24,9 @@ from spawned_by_fixtures import START, proc_pid
 START.update({401: 40100, 402: 40200})
 
 OTHER = '01a1adc0-0000-7000-8000-000000000098'
+CHILD = '01a1adc0-0000-7000-8000-000000000090'
+GRANDCHILD = '01a1adc0-0000-7000-8000-000000000091'
+LATE_CHILD = '01a1adc0-0000-7000-8000-000000000092'
 LATER = '分支点之后的第三轮 Later question'
 
 
@@ -37,9 +40,27 @@ class StopServer(MessageServer):
         self.unloaded = {THREAD} if case == 'unloaded' else set()
         self.active = {THREAD} if case == 'unreadable' else set()
         self.fail_interrupt = False
+        self.fail_thread = None
+        self.parents = {CHILD: THREAD, GRANDCHILD: CHILD} if case == 'unreadable' else {}
+        self.loaded.update(self.parents)
+        self.active.update(self.parents)
+        self.subscribed = set(self.loaded)
 
     async def _handle(self, writer, message):
         method, params = message.get('method'), message.get('params') or {}
+        if method == 'thread/list':
+            assert params['useStateDbOnly'] is True
+            assert params['sourceKinds'] == ['subAgent']
+            # Return out-of-order, paginated native relations and an unrelated
+            # thread/fork, as if an older peer ignored ancestorThreadId.
+            rows = [{'id': id, 'parentThreadId': parent} for id, parent in reversed(list(self.parents.items()))]
+            rows += [{'id': OTHER, 'parentThreadId': None},
+                     {'id': FORK, 'parentThreadId': None, 'forkedFromId': THREAD}]
+            rows = [row for row in rows if (row['id'] == GRANDCHILD) == bool(params.get('archived'))]
+            start = int(params.get('cursor') or 0)
+            await self.send(writer, {'id': message['id'], 'result': {
+                'data': rows[start:start+2], 'nextCursor': str(start+2) if start+2 < len(rows) else None}})
+            return
         if method == 'thread/loaded/list':
             await self.send(writer, {'id': message['id'], 'result': {'data': sorted(self.loaded)}})
             return
@@ -51,14 +72,22 @@ class StopServer(MessageServer):
             self.loaded.add(params['threadId'])
         if method == 'turn/interrupt':
             assert params['turnId'] == '', params
-            if params['threadId'] in self.unloaded or self.fail_interrupt:
+            if params['threadId'] in self.unloaded or self.fail_interrupt or params['threadId'] == self.fail_thread:
                 await self.send(writer, {'id': message['id'], 'error': {'code': -32602,
                     'message': 'thread not loaded' if params['threadId'] in self.unloaded else 'synthetic interrupt failure'}})
             else:
                 self.active.discard(params['threadId'])
+                if params['threadId'] == CHILD and LATE_CHILD not in self.parents:
+                    # A native spawn already in flight when the stop arrived.
+                    self.parents[LATE_CHILD] = CHILD
+                    self.loaded.add(LATE_CHILD); self.active.add(LATE_CHILD)
+                if params['threadId'] in self.parents:
+                    # Child completion can auto-attach the root again.
+                    self.subscribed.add(THREAD)
                 await self.send(writer, {'id': message['id'], 'result': {}})
             return
         if method == 'thread/unsubscribe':
+            self.subscribed.discard(params['threadId'])
             # Keep loaded/list deliberately stale: a native daemon may retain
             # an unsubscribed thread during its unload grace period.
             await self.send(writer, {'id': message['id'], 'result': {'status': 'notLoaded' if params['threadId'] in self.unloaded else 'unsubscribed'}})
@@ -206,6 +235,12 @@ def unreadable_history(browser, base, fake, proc, screenshots, label, case):
     assert opened.value.status != 200 and 'missing source rollout' in opened.value.text()
     page.wait_for_function('!CodexSdkView.connected')
     expect(page.locator('.sdk-history')).to_contain_text('retained answer')
+    if case == 'unreadable':
+        for child in (CHILD, GRANDCHILD):
+            opened_child = page.request.post(base+'/api/codex-sdk/open', data={'uid':source, 'agent':child})
+            assert opened_child.ok, opened_child.text()
+        retained = json.loads((proc.parent/'state/codex-sdk-subscriptions.json').read_text())['threads']
+        assert {CHILD, GRANDCHILD} <= set(retained), retained
     resumes = len(fake.methods('thread/resume'))
     def stop():
         # Exercise the same sidebar menu as the reported failure.
@@ -224,6 +259,13 @@ def unreadable_history(browser, base, fake, proc, screenshots, label, case):
         assert source in live['sdk_uids'], live
         assert any('synthetic interrupt failure' in message for message in popups), popups
         fake.fail_interrupt = False
+        fake.fail_thread = CHILD
+        fake.active.update({THREAD, CHILD, GRANDCHILD})
+        partial = stop()
+        assert partial.status != 200 and CHILD in partial.text(), partial.text()
+        assert GRANDCHILD not in fake.active and CHILD in fake.active
+        assert OTHER in fake.subscribed
+        fake.fail_thread = None
     started = time.monotonic()
     stopped = stop()
     assert stopped.status == 200 and stopped.json()['stopped'], stopped.text()
@@ -231,6 +273,16 @@ def unreadable_history(browser, base, fake, proc, screenshots, label, case):
     assert fake.methods('turn/interrupt')[-1]['params'] == {'threadId': THREAD, 'turnId': ''}
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
     assert THREAD not in fake.active
+    if case == 'unreadable':
+        assert not ({THREAD, CHILD, GRANDCHILD, LATE_CHILD} & fake.active), fake.active
+        assert not ({THREAD, CHILD, GRANDCHILD, LATE_CHILD} & fake.subscribed), fake.subscribed
+        assert OTHER in fake.subscribed
+        assert not any(m.get('method') in ('turn/interrupt','thread/unsubscribe') and
+                       m.get('params',{}).get('threadId') == FORK for m in fake.received)
+        subscriptions = proc.parent / 'state/codex-sdk-subscriptions.json'
+        retained = json.loads(subscriptions.read_text())['threads']
+        assert not ({THREAD, CHILD, GRANDCHILD, LATE_CHILD} & set(retained)), retained
+        print(f'PASS {label}: paginated native descendants, late spawn, partial failure/retry, independent fork retained', flush=True)
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and other in live['sdk_uids'], live
     elapsed = time.monotonic() - started
@@ -258,6 +310,15 @@ def unreadable_history(browser, base, fake, proc, screenshots, label, case):
     else:
         expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
         expect(page.locator('.sdk-pane #sdk-send')).to_be_disabled()
+    if case == 'unreadable':
+        fake.loaded.discard(THREAD)
+        fake.unloaded.add(THREAD)
+        fake.active.add(CHILD)
+        fake.subscribed.add(CHILD)
+        retried = page.request.post(base+'/api/codex-sdk/stop', data={'uid':source})
+        assert retried.ok and CHILD not in fake.active, retried.text()
+        assert len(fake.methods('thread/resume')) == resumes, fake.received
+        fake.loaded.add(THREAD); fake.unloaded.discard(THREAD)
     assert not any(m.get('method') in ('turn/interrupt','thread/unsubscribe') and
                    m.get('params',{}).get('threadId') == OTHER for m in fake.received)
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-stopped.png'))
@@ -307,6 +368,13 @@ def main():
                 if case != 'normal':
                     other = corpus.put('other', 'codex', [codex_row('session_meta', {'id': OTHER}),
                         codex_message('user', 'Unrelated loaded thread')], [])
+                children = {}
+                if case == 'unreadable':
+                    for child, parent in ((CHILD, THREAD), (GRANDCHILD, CHILD)):
+                        children[child] = corpus.put(child, 'codex', [codex_row('session_meta', {
+                            'id':child, 'cwd':str(root/'work'),
+                            'source':{'subagent':{'thread_spawn':{'parent_thread_id':parent}}}}),
+                            codex_message('user', '原生子代理停止回归')], [])
                 env = environment(root, args.binary)
                 config = root / 'launcher.json'
                 settings = json.loads(config.read_text())
@@ -328,6 +396,7 @@ def main():
                 port = free_port()
                 env.update(node_env(root, port, '127.0.0.0/8'))
                 with private_hosts(root), StopServer(root / 'app.sock', path, retained, other, case) as fake, server(corpus, args.binary, root / 'app.sock', env) as base:
+                    fake.paths.update(children)
                     if mode == 'hub':
                         hub_root = root / 'hub'
                         hub_root.mkdir()

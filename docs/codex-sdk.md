@@ -82,8 +82,18 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   five-second worker reconnects without starting a daemon, checks
   `thread/loaded/list`, and restores only recorded, still-loaded threads. It does
   not submit input, adopt unrelated daemon threads, or restart historical sessions.
-  Explicit stop/discard removes the record before native requests; recovery is
-  serialized with those operations. A service outage beyond the native grace
+  Explicit stop removes retention and interrupts/unsubscribes the selected thread
+  and its native spawned descendants, including multiple generations. Native
+  `thread/list` ancestry is paginated across active and archived metadata with
+  `useStateDbOnly`, so unreadable history
+  cannot block stopping. Independent forks and display nesting are excluded.
+  The root is interrupted first; descendant discovery repeats to include late
+  spawns, then the root is unsubscribed again after child events. If the root has
+  already unloaded, loaded descendants locate their existing listener without
+  resuming the parent. Every discovered
+  member is attempted; partial failures remain visible and retryable. Discard
+  removes the pending thread's record before its native request. Recovery is
+  serialized with each member's stop/discard operation. A service outage beyond the native grace
   period cannot guarantee runtime survival. Installations without this new record
   begin retaining threads when they next successfully open/create them; old create
   receipts are not ownership evidence and are not bulk-resumed on upgrade.

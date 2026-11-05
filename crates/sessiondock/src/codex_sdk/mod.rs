@@ -20,6 +20,7 @@ mod providers;
 mod queue;
 mod receipts;
 mod retention;
+mod stopping;
 pub(crate) mod usage;
 
 use std::{
@@ -383,42 +384,6 @@ impl CodexSdk {
             .expect("stopped")
             .remove(thread_id);
         Ok(thread.summary())
-    }
-
-    /// Stop just this thread, preserving the shared daemon and other threads.
-    pub async fn stop_thread(&self, thread_id: &str) -> Result<(), RpcError> {
-        let lock = self.inner.queue.lock(thread_id);
-        let _dispatch = lock.lock().await;
-        self.inner.retention.set(thread_id, false)?;
-        // Stopping must not resume or parse history. The latest rollout may
-        // already be in trash while the daemon still reports the thread loaded.
-        let connection = self.inner.writing_connection(thread_id).await?;
-        // The native empty-turn interrupt cancels the exact loaded thread's
-        // startup/current work without requiring a recovered turn or history.
-        let interrupted = connection
-            .request("turn/interrupt", json!({"threadId":thread_id,"turnId":""}))
-            .await;
-        let result = connection
-            .request("thread/unsubscribe", json!({"threadId":thread_id}))
-            .await?;
-        if result["status"] != "notLoaded" {
-            interrupted?;
-        }
-        self.inner
-            .stopped
-            .lock()
-            .expect("stopped")
-            .insert(thread_id.to_owned());
-        if let Some(thread) = self
-            .inner
-            .threads
-            .lock()
-            .expect("threads")
-            .remove(thread_id)
-        {
-            thread.apply("bridge/stopped", json!({}));
-        }
-        Ok(())
     }
 
     /// Snapshot plus the event stream from the same instant: no gap, no
