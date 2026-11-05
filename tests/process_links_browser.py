@@ -558,6 +558,34 @@ def main():
                         assert saved['started_at'] == 123.
                         assert saved['device_models']['GPU-old'] == 'Synthetic retained model'
                 print('PASS private usage persistence with umask 022, existing ledger and leftover temp file', flush=True)
+                # New boot: the retained pre-migration JSON must never be reimported
+                # over SQLite history. Use a separate proc root and socket so the
+                # current fixture collectors remain unaffected.
+                nextproc=root/'next-boot-proc';shutil.copytree(procs[0],nextproc,symlinks=True)
+                (nextproc/'sys/kernel/random/boot_id').write_text('next-boot')
+                nextstate=root/'next-state.json';nextdb=nextstate.with_suffix('.sqlite3')
+                with sqlite3.connect(corpora[0].root/'agent-state.sqlite3') as source, sqlite3.connect(nextdb) as dest:
+                    source.backup(dest)
+                    retained=dest.execute('select count(*) from evidence').fetchone()[0]
+                nextstate.write_text('not a current state: migration backup must be ignored')
+                command=list(agent_processes[0][1]);command[command.index('--state')+1]=str(nextstate)
+                command[command.index('--socket')+1]=str(root/'next-agent.sock');command[command.index('--proc-root')+1]=str(nextproc)
+                nextagent=subprocess.Popen(command)
+                try:
+                    def healthy():
+                        try:
+                            with socket.socket(socket.AF_UNIX) as sock:
+                                sock.settimeout(2);sock.connect(str(root/'next-agent.sock'));sock.sendall(b'{"op":"report"}\n')
+                                return json.loads(sock.makefile('rb').readline())['result']['boot_id']=='next-boot'
+                        except (OSError,ValueError,KeyError):return False
+                    wait_for(healthy)
+                finally:
+                    nextagent.terminate();nextagent.wait(timeout=20)
+                with sqlite3.connect(nextdb) as db:
+                    assert db.execute('select count(*) from snapshots').fetchone()[0]>=2
+                    assert db.execute('select count(*) from evidence').fetchone()[0]>=retained
+                print('PASS new boot preserves prior SQLite evidence and does not reimport JSON backup',flush=True)
+
         finally:
             browser.close()
             if hub:

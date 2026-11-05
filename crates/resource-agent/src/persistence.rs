@@ -95,6 +95,15 @@ impl Store {
             }
             value["connections"] = connections;
             Some(serde_json::from_value::<Saved>(value).map_err(error)?)
+        } else if db
+            .query_row("SELECT EXISTS(SELECT 1 FROM snapshots)", [], |r| {
+                r.get::<_, bool>(0)
+            })
+            .map_err(error)?
+        {
+            // A new boot starts fresh live attribution. Never replay an older
+            // JSON backup over evidence already migrated and updated in SQLite.
+            None
         } else {
             match fs::File::open(path) {
                 Ok(file) => {
