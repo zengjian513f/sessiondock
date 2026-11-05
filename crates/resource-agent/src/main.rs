@@ -8,6 +8,8 @@ mod gpu;
 mod io_events;
 #[cfg(target_os = "linux")]
 mod memory;
+#[cfg(target_os = "linux")]
+mod persistence;
 #[path = "../../runtime_log.rs"]
 mod runtime_log;
 #[cfg(target_os = "linux")]

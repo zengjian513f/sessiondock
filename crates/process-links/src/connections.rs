@@ -16,7 +16,7 @@ pub struct ConnectionRecord {
     pub launch_chain: Vec<Launch>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Origin {
     pub connection: Connection,
     pub at: f64,

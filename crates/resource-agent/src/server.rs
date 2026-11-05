@@ -6,7 +6,7 @@ use crate::{
 use process_links::{
     Process, Report,
     agent::{CollectorStatus, Request, Resources, Sample},
-    engine::{Engine, Saved},
+    engine::Engine,
     linux::{self, Snapshot},
 };
 use serde_json::{Value, json};
@@ -1044,22 +1044,6 @@ fn rate(current: Option<f64>, previous: Option<f64>, elapsed: Option<f64>, reaso
     metric(json!((current - previous) / elapsed), "ok", reason)
 }
 
-fn save(path: &Path, saved: &Saved) -> io::Result<()> {
-    let temp = path.with_extension("new");
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temp)?;
-    let mut writer = BufWriter::new(&mut file);
-    serde_json::to_writer(&mut writer, saved)?;
-    writer.flush()?;
-    drop(writer);
-    file.sync_all()?;
-    fs::rename(temp, path)
-}
 fn serve(
     mut stream: UnixStream,
     state: Arc<Mutex<State>>,
@@ -1191,9 +1175,9 @@ pub fn run() -> io::Result<()> {
     if snapshot.boot_id.is_empty() {
         return Err(io::Error::other("cannot read Linux boot identity"));
     }
-    let saved = fs::File::open(&config.state)
-        .ok()
-        .and_then(|file| serde_json::from_reader::<_, Saved>(BufReader::new(file)).ok());
+    let (store, saved) =
+        crate::persistence::Store::open(&config.state, &config.node_id, &snapshot.boot_id)?;
+    let store = Arc::new(Mutex::new(store));
     let mut engine = Engine::new(config.node_id.clone(), snapshot.boot_id.clone(), saved);
     let status = CollectorStatus {
         service: "resource-agent".into(),
@@ -1405,6 +1389,7 @@ pub fn run() -> io::Result<()> {
     };
     let worker_state = state.clone();
     let worker_config = config.clone();
+    let worker_store = store.clone();
     let worker = std::thread::spawn(move || {
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
@@ -1493,13 +1478,17 @@ pub fn run() -> io::Result<()> {
                 usage.observe(&resources, &report);
                 sampled = Instant::now();
             }
-            if saved_at.elapsed() >= Duration::from_secs(2) {
+            if saved_at.elapsed() >= Duration::from_secs(30) {
                 let saved = worker_state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .engine
                     .saved();
-                if let Err(error) = save(&worker_config.state, &saved) {
+                if let Err(error) = worker_store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .save(saved)
+                {
                     crate::runtime_log::emit(
                         "error",
                         "resource.attribution_save_failed",
@@ -1588,9 +1577,8 @@ pub fn run() -> io::Result<()> {
     if let Some(worker) = gpu_worker {
         let _ = worker.join();
     }
-    save(
-        &config.state,
-        &state
+    store.lock().unwrap_or_else(|e| e.into_inner()).save(
+        state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .engine

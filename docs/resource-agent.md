@@ -125,8 +125,14 @@ not grant privileges to SessionDock or its frontend.
 
 Boot-scoped connection evidence survives collector restarts and is not truncated.
 The supplied unit therefore has no fixed memory ceiling: a ceiling smaller than
-the retained state can cause an OOM restart loop. State loading and saving use
-buffered streaming to avoid additional whole-file buffers. CPU pacing and the
+the retained state can cause an OOM restart loop. Attribution is persisted in a private SQLite database beside the configured
+state path (`state.sqlite3` for `state.json`). Existing JSON is imported atomically
+on first use and retained as the pre-migration backup; subsequent starts read
+SQLite. Every 30 seconds only changed records are committed, with a final flush
+on graceful shutdown. An abrupt crash can lose the last uncommitted interval.
+Historical connection evidence and prior boot scopes remain stored; live process
+bindings still use the current boot. Rolling back to an older JSON-only binary
+reads the pre-migration backup, so it cannot recover later SQLite-only changes. CPU pacing and the
 unit's CPU quota still apply; this setting does not change monitored workloads.
 
 The supplied unit starts with I/O probes off and memory-bandwidth monitoring on.

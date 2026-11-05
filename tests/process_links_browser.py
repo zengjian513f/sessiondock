@@ -2,6 +2,7 @@
 """Shared SSH attribution: isolated node pair/Hub, process consumers and Chromium."""
 
 import argparse
+import sqlite3
 from contextlib import ExitStack, contextmanager
 import json
 from threading import Thread
@@ -232,6 +233,7 @@ def main():
             corpora.append(corpus)
             procs.append(proc)
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
+        agent_processes=[]
         if args.with_agent:
             for index, (corpus, proc) in enumerate(zip(corpora, procs)):
                 ledger = corpus.root / 'agent-state.usage.json'
@@ -243,14 +245,28 @@ def main():
                     ledger.chmod(0o644)
                     ledger.with_suffix('.tmp').touch(mode=0o644)
                     ledger.with_suffix('.tmp').chmod(0o644)
+                legacy={'node_id':nodes[index].nid,'boot_id':'test-boot-'+('a' if index==0 else 'b'),'catalog':{'node_id':nodes[index].nid,'boot_id':'test-boot-'+('a' if index==0 else 'b'),'owners':[],'sessions':[]},'links':[],'bindings':[],'forked_from':[],
+                    'connections':{'records':[], 'parents':[[{'pid':800000+i,'start':i},{'pid':799999,'start':1}] for i in range(2000)],'origins':[],'shared':[]}}
+                old_state=corpus.root/'agent-state.json'
+                old_state.write_text(json.dumps(legacy))
+                old_mtime=old_state.stat().st_mtime_ns
                 (corpus.root / 'gpu.csv').write_text('601, GPU-local, 32\n930, GPU-local, 64\n300, GPU-independent, 16\n'
                                                    if index == 0 else '800, GPU-remote, 32\n')
                 agent = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
                     '--uid', str(os.getuid()), '--node-id-file', str(corpus.root / 'ids/node-id'),
                     '--socket', str(corpus.root / 'agent.sock'), '--state', str(corpus.root / 'agent-state.json'),
                     '--proc-root', str(proc), '--events', 'off'], umask=0o022)
+                agent_processes.append((agent,agent.args,old_mtime))
                 agents.callback(lambda p=agent: (p.terminate(), p.wait(timeout=10)))
                 wait_for(lambda: (corpus.root / 'agent.sock').exists())
+                database=corpus.root/'agent-state.sqlite3'
+                def migrated():
+                    if not database.exists():return False
+                    with sqlite3.connect(database) as db:
+                        return db.execute("SELECT count(*) FROM evidence WHERE section='parents'").fetchone()[0]>=2000
+                wait_for(migrated)
+                with sqlite3.connect(database) as db:
+                    db.executescript("CREATE TABLE fixture_updates(n INTEGER); CREATE TRIGGER unchanged_history_update AFTER UPDATE ON evidence WHEN new.section='parents' AND json_extract(new.key,'$.pid')>=800000 BEGIN INSERT INTO fixture_updates VALUES(1); END;")
                 if index == 1:
                     wait_for(lambda: ledger.stat().st_mode & 0o777 == 0o600)
                 agents.enter_context(gpu_collector(corpus.root, receives_links=index == 1))
@@ -261,6 +277,20 @@ def main():
         try:
             standalone_resources(browser, args.binary, corpora[0], procs[0], args.with_agent, args.screenshots)
             for restarted in (False, True):
+                if restarted and args.with_agent:
+                    for index,(agent,command,mtime) in enumerate(agent_processes):
+                        agent.terminate();agent.wait(timeout=20)
+                        dbpath=corpora[index].root/'agent-state.sqlite3'
+                        with sqlite3.connect(dbpath) as db:
+                            assert db.execute("select count(*) from evidence where section='parents'").fetchone()[0]>=2000
+                        with sqlite3.connect(dbpath) as db:
+                            assert db.execute('SELECT count(*) FROM fixture_updates').fetchone()[0]==0, 'unchanged historical rows must not be rewritten'
+                        assert dbpath.stat().st_mode & 0o777 == 0o600
+                        assert (corpora[index].root/'agent-state.json').stat().st_mtime_ns==mtime
+                        replacement=subprocess.Popen(command,umask=0o022)
+                        agents.callback(lambda p=replacement:(p.terminate(),p.wait(timeout=20)))
+                        wait_for(lambda:(corpora[index].root/'agent.sock').exists())
+                    print('PASS legacy JSON migration, private SQLite, retained evidence and collector restart',flush=True)
                 with ExitStack() as stack:
                     local = []
                     for corpus, node, proc in zip(corpora, nodes, procs):
