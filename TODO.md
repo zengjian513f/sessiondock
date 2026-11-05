@@ -16,7 +16,7 @@
 
 ## Runtime and platform coverage
 
-- [ ] BUG-20261105-075749-d52ddc：消息日期与顶部操作 `621a8303` 已以 web-only
+- [ ] BUG-20261105-075749-d52ddc：外置图标与时间衔接修复 `af4e0619` 已以 web-only
   部署、重启并健康于 Lyra、Cygnus、Pavo、Vela、Hub。Orion、Cetus 正式 SSH
   尝试超时，待恢复连接后补发；三个资源代理按组件范围排除。
 
