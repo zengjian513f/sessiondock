@@ -9742,6 +9742,10 @@ function renderFormulae(root) {
 function msgNode(m) {
   const node = messageBodyNode(m);
   if (!node.classList.contains('msg') || node.hidden) return node;
+  const bubble = el('div', 'message-bubble');
+  bubble.append(...node.childNodes);
+  node.append(bubble);
+  node.classList.add('message-with-header');
   const updateHeader = ConversationUI.messageHeader(node, m);
   const updateBody = node._updateMessage;
   if (updateBody) node._updateMessage = next => { updateHeader(next); updateBody(next); };

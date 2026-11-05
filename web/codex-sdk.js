@@ -465,6 +465,7 @@ const CodexSdkView = {
     const crossesGap = firstTailItem
       && !(firstTailItem.role === 'user' && String(firstTailItem.text || '').trim() === userText);
     this.replayOmitted = new Set();
+    this.messageTimeReplayStart = null;
     if (crossesGap) {
       // A turn can span hours and the omitted middle. Turn identity alone does
       // not locate its replay relative to the history gap. Join at an actual
@@ -476,6 +477,7 @@ const CodexSdkView = {
         const message = messages[i], index = indices.get(message.native_item_id);
         if (message.turn_id !== this.turn.id || index == null || !itemMessage(items[index])) continue;
         this.replayOmitted = new Set(items.slice(0, index).map(item => item.id));
+        this.messageTimeReplayStart = i;
         messages = messages.slice(0, i);
         joined = true;
         break;
@@ -486,12 +488,14 @@ const CodexSdkView = {
       if (!joined) this.replayOmitted = new Set(items.map(item => item.id));
       tailComplete = false;
     } else if (nativeStart >= 0) {
+      this.messageTimeReplayStart = nativeStart;
       messages = messages.slice(0, nativeStart);
       tailComplete = true;
     } else if (userText) {
       // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
+          this.messageTimeReplayStart = i;
           messages = messages.slice(0, i);
           tailComplete = true;
           break;
@@ -500,6 +504,7 @@ const CodexSdkView = {
     }
     SdkUI.paintHistory(this, messages, {tailComplete,
       decorate: (node, message) => CodexSdkActions.decorate(this, node, message)});
+    SdkUI.refreshMessageTimes(this);
     SdkUI.ungroupTools(this);
     CodexSdkQuestions.paint(this);
     // 已经落盘的回合从实时区移除，避免同一回合出现两次。
@@ -711,10 +716,10 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 渲染
   paintItem(item) {
-    const message = this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
+    let message = this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
-    message.ts = item.ts || item.timestamp;
+    message = SdkUI.messageTime(this, {...message, id: item.id, turn_id: this.turn?.id, ts: item.ts || item.timestamp});
     if (old?._updateMessage && old.dataset.role === message.role) {
       old._updateMessage(message);
       return;

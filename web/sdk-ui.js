@@ -186,6 +186,61 @@ const SdkUI = {
     view.closeToolbarMenus();
   },
 
+  messageTime(view, message) {
+    const scope = JSON.stringify([view.uid, view.agent]);
+    if (view.messageTimeScope !== scope) {
+      view.messageTimeScope = scope; view.messageTimes = new Map(); view.messageTimeHistory = null;
+    }
+    const keys = row => {
+      const ids = [row.native_item_id, row.native_id, row.message_id, row.id].filter(Boolean);
+      if (row.role === 'user' && !String(view.uid).startsWith('codex:'))
+        ids.push(NativeSdkControls.messageIdentity(view, row));
+      return ids.filter(Boolean).map(id => `${row.role}:${id}`);
+    };
+    const validTime = row => {
+      const value = row.ts || row.timestamp;
+      return value && Number.isFinite(new Date(value).getTime()) ? value : null;
+    };
+    const remember = row => {
+      const time = validTime(row);
+      if (time) for (const key of keys(row)) view.messageTimes.set(key, time);
+    };
+    const history = view.historyData?.messages || [];
+    const replay = JSON.stringify([view.turn?.id, view.messageTimeReplayStart]);
+    if (view.messageTimeHistory !== history || view.messageTimeReplay !== replay) {
+      view.messageTimeHistory = history;
+      view.messageTimeReplay = replay;
+      view.messageTextTimes = new Map();
+      for (const [index, row] of history.entries()) {
+        remember(row);
+        const time = validTime(row);
+        // The existing replay join also establishes a turn boundary for older
+        // Codex records that omit both item and turn IDs. It does not authorize actions.
+        const turn = row.turn_id || (view.messageTimeReplayStart != null
+          && index >= view.messageTimeReplayStart ? view.turn?.id : null);
+        if (time && turn && row.text) {
+          const key = JSON.stringify([turn, row.role, row.text]);
+          view.messageTextTimes.set(key, view.messageTextTimes.has(key) ? null : time);
+        }
+      }
+    }
+    let time = validTime(message) || keys(message).map(key => view.messageTimes.get(key)).find(Boolean);
+    // Older Codex rollouts omit item IDs. Only reuse an unambiguous matching
+    // message inside the same native turn; equal prose in other turns is unrelated.
+    if (!time && message.turn_id && message.text) {
+      time = view.messageTextTimes.get(JSON.stringify([message.turn_id, message.role, message.text]));
+    }
+    const result = time ? {...message, ts: time} : message;
+    remember(result);
+    return result;
+  },
+
+  refreshMessageTimes(view) {
+    for (const node of view.nodes?.values() || []) {
+      if (node._messageData) node._updateMessageHeader?.(this.messageTime(view, node._messageData));
+    }
+  },
+
   decorateUserBubble(view, node, items) {
     if (!items.length || node.querySelector('.sdk-bubble-menu')) return;
     node.classList.add('sdk-user-actions');
@@ -193,7 +248,8 @@ const SdkUI = {
     menu.setAttribute('role', 'group');
     menu.setAttribute('aria-label', '消息操作');
     for (const [label, handler] of items) {
-      const button = el('button', 'message-action', label.includes('回退') ? '回退' : '分支');
+      const button = el('button', 'message-action');
+      button.innerHTML = uiIcon(label.includes('回退') ? 'undo' : 'fork');
       button.type = 'button';
       button.title = label; button.setAttribute('aria-label', label);
       button.onclick = async () => {

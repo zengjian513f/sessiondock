@@ -54,7 +54,8 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
         print('REPRODUCED: message branch is offered but backend rejects its position', flush=True)
         context.close()
         return
-    expect(menu.get_by_role('button')).to_have_text(['回退', '分支'])
+    expect(menu.get_by_role('button', name='回退', exact=True)).to_be_visible()
+    expect(menu.get_by_role('button', name='分支', exact=True)).to_be_visible()
     action = '回退' if width == 390 else '分支'
     if action == '回退':
         page.route('**/api/native-sdk/fork', lambda route: route.fulfill(status=503, json={'error': 'synthetic fork failure'}))

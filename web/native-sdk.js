@@ -339,7 +339,7 @@ const NativeSdkView = {
     const source = String(this.uid).split(':')[0];
     this.items = (this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
-      : rawItems).map(item => nativeSdkMessage(item, source));
+      : rawItems).map(item => SdkUI.messageTime(this, nativeSdkMessage(item, source)));
     this.setConnected(true);
     this.paintHistory();
     const ids = new Set();
@@ -428,6 +428,7 @@ const NativeSdkView = {
 
   paintHistory() {
     if (!this.history || !this.historyData) return;
+    SdkUI.refreshMessageTimes(this);
     let messages = this.historyData.messages || [];
     let cut = messages.length;
     const first = this.items?.find(item => item.role === 'user');

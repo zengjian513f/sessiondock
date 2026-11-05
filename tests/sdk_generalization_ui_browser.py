@@ -109,7 +109,7 @@ def exercise(browser,base,source,events,screenshots):
         expect(page.locator('.sdk-history')).to_contain_text('历史答复 11')
         expect(page.locator('.sdk-history')).not_to_contain_text('历史答复 12')
         if source!='agy':
-            expect(page.locator('.sdk-bubble-menu').first).to_contain_text('分支')
+            expect(page.locator('.sdk-bubble-menu').first.get_by_role('button', name='从此处之前分支', exact=True)).to_be_visible()
             actions=[]
             def action(route):
                 actions.append(route.request.post_data_json)
@@ -121,13 +121,13 @@ def exercise(browser,base,source,events,screenshots):
             context.route('**/api/native-sdk/fork',action)
             context.route('**/api/native-sdk/rewind',action)
             context.route('**/api/native-sdk/revert',action)
-            page.locator('.sdk-history .sdk-bubble-menu button').filter(has_text='分支').click()
+            page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-fork"]')).click()
             expect(page.locator('#sdk-input')).to_have_value('重复输入内容')
             assert actions[-1].get('prompt_index' if source=='grok' else 'before') == (11 if source=='grok' else 'native-user-11'),actions
             assert 'restore_text' not in actions[-1],actions
             if source in ('grok','opencode'):
                 page.locator('#sdk-input').fill('保留草稿')
-                page.locator('.sdk-history .sdk-bubble-menu button').filter(has_text='回退').click()
+                page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-undo"]')).click()
                 expect(page.locator('#sdk-input')).to_have_value('保留草稿\n\n重复输入内容')
                 assert actions[-1].get('prompt_index' if source=='grok' else 'message_id') == (11 if source=='grok' else 'native-user-11'),actions
     for width,theme in ((1440,'light'),(390,'dark')):

@@ -109,7 +109,7 @@ def exercise(browser, base, source, root, screenshots):
         if source in ('claude','opencode'):
             toggles=page.locator('.sdk-pane .sdk-bubble-menu')
             expect(toggles.first).to_be_visible()
-            expect(page.locator('.sdk-bubble-menu').first).to_contain_text('分支')
+            expect(page.locator('.sdk-bubble-menu').first.get_by_role('button', name='从此处之前分支', exact=True)).to_be_visible()
             page.keyboard.press('Escape')
     if source in ('grok','claude'):
         send(page,'generalize-error-exit')

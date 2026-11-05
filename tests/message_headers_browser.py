@@ -27,9 +27,16 @@ def exercise(browser, base, source, events, screenshots, mode):
             timezone_id='Asia/Shanghai', permissions=['clipboard-read', 'clipboard-write'], service_workers='block')
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
-        history = [dict(role='user', text=TEXT, ts=STAMP, turn_id='header-turn'),
-                   dict(role='assistant', text=ANSWER, ts=STAMP, phase='final', turn_id='header-turn'),
+        history = [dict(role='user', text=TEXT, ts=STAMP, turn_id='header-turn', id='header-user',
+                        native_item_id='header-user', native_id='header-user', message_id='header-user', prompt_index=0, native={'step_index': 0}),
+                   dict(role='assistant', text=ANSWER, ts=STAMP, phase='final', turn_id='header-turn',
+                        id='header-answer', native_item_id='header-answer', native_id='header-answer'),
                    dict(role='user', text='没有原始时间的消息，不能伪造发送时间。', ts='invalid')]
+        if source == 'codex':
+            # Older real rollouts lack item IDs: retain dates through an exact,
+            # unambiguous match within the native turn, never across turns.
+            for row in history:
+                for key in ('id', 'native_id', 'native_item_id', 'message_id', 'turn_id'): row.pop(key, None)
         def messages(route):
             response = route.fetch(); data = response.json()
             current = parse_qs(urlsplit(route.request.url).query).get("start", [""])[0] == str(len(history))
@@ -57,6 +64,10 @@ def exercise(browser, base, source, events, screenshots, mode):
         def check(scope, entry):
             user = scope.locator('.msg[data-role="user"]').filter(has_text='检查 报告').first
             user.get_by_role('button', name='复制消息原文').hover()
+            header = user.locator('.message-header'); bubble = user.locator('.message-bubble')
+            assert not bubble.locator('.message-header').count()
+            assert header.bounding_box()['y'] + header.bounding_box()['height'] <= bubble.bounding_box()['y']
+            expect(header.get_by_role('button').first.locator('svg')).to_be_visible()
             expect(user.locator('time')).to_have_text('2026-11-05 15:57:49')
             expect(user.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
             user.get_by_role('button', name='复制消息原文').click()
@@ -80,18 +91,40 @@ def exercise(browser, base, source, events, screenshots, mode):
             check(page.locator('#detail'), 'conversation')
             page.locator('#a-sdk').click()
         start_sdk(page)
+        # The actual regression: dated disk history is replaced a few seconds
+        # later by the native replay, whose items contain no timestamp.
+        user = {key: value for key, value in history[0].items() if key != 'ts'}
+        answer = {key: value for key, value in history[1].items() if key != 'ts'}
+        if source == 'codex':
+            user = {'id': 'header-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': TEXT}]}
+            answer = {'id': 'header-answer', 'type': 'agentMessage', 'text': ANSWER}
+        raw.update(items=[user, answer], running=True, turn={'id': 'header-turn', 'status': 'inProgress'})
+        events.publish()
+        replay = page.locator('.sdk-live .msg').filter(has_text='已检查').first
+        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
+        # Cross the regular history polling interval, then replay another bare snapshot.
+        page.wait_for_timeout(3500)
+        events.publish()
+        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
+        if screenshots: page.screenshot(path=str(screenshots / f'{name}-replayed.png'), full_page=True)
         live_text = '实时回复 [原始链接](https://example.test/live?a=1#stream)'
-        item = {'id': 'header-live', 'text': live_text, 'ts': STAMP,
+        item = {'id': 'header-live', 'text': live_text,
                 **({'type': 'agentMessage'} if source == 'codex' else {'role': 'assistant'})}
         raw.update(items=[item], running=True, turn={'id': 'header-live-turn', 'status': 'inProgress'})
         events.publish()
         live = page.locator('.sdk-live .msg[data-role="assistant"]').filter(has_text='实时回复')
-        expect(live.locator('time')).to_have_text('2026-11-05 15:57:49')
+        expect(live.locator('time')).to_have_text('时间未提供')
+        # Real SDK items can arrive before their timestamped native record.
+        # The history poll alone must fill in the date without another SDK event.
+        history.append(dict(role='assistant', text=live_text, ts=STAMP, turn_id='header-live-turn',
+                            id='header-live', native_item_id='header-live', native_id='header-live'))
+        expect(live.locator('time')).to_have_text('2026-11-05 15:57:49', timeout=15000)
         live.get_by_role('button', name='复制消息原文').click()
         assert page.evaluate('navigator.clipboard.readText()') == live_text
         item['text'] += '\n\n后续增量必须完整复制。'
         events.publish()
         expect(live).to_contain_text('后续增量')
+        expect(live.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
         live.get_by_role('button', name='复制消息原文').click()
         assert page.evaluate('navigator.clipboard.readText()') == item['text']
         # Clipboard API rejection falls back to the browser's native copy command.
@@ -100,10 +133,10 @@ def exercise(browser, base, source, events, screenshots, mode):
         assert page.evaluate('navigator.clipboard.readText()') == item['text']
         page.evaluate("window.originalCopyCommand = document.execCommand.bind(document); document.execCommand = () => false")
         live.get_by_role('button', name='复制消息原文').click()
-        expect(live.get_by_role('button', name='复制消息原文')).to_have_text('复制失败')
+        expect(live.get_by_role('button', name='复制消息原文')).to_have_attribute('data-copy-state', 'failed')
         page.evaluate('() => { document.execCommand = window.originalCopyCommand; }')
         live.get_by_role('button', name='复制消息原文').click()
-        expect(live.get_by_role('button', name='复制消息原文')).to_have_text('已复制')
+        expect(live.get_by_role('button', name='复制消息原文')).to_have_attribute('data-copy-state', 'copied')
         if screenshots: page.screenshot(path=str(screenshots / f'{name}-live.png'), full_page=True)
         if source == 'codex' and mode == 'node' and width == 390:
             settings = page.locator('#a-global-settings')

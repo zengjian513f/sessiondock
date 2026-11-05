@@ -510,7 +510,7 @@ behavior; they do not require other sources to expose unsupported controls.
   [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers
   acceptance before consumption, interruption, reload and restart without replay.
 - User bubbles with a native turn identity show 回退 and 分支 directly in the
-  message header, beside the timestamp and raw-text copy action. 回退
+  header outside the bubble, as icons beside the timestamp and raw-text copy action. 回退
   reverts before that turn; 分支 forks through that turn and reverts only the new
   child before it. Both restore the selected message text into the composer,
   preserving an existing draft by appending it, and never send it automatically.

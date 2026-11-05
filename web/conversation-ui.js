@@ -9,26 +9,35 @@ const ConversationUI = {
     const actions = el('div', 'message-actions');
     actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', '消息操作');
-    const copy = el('button', 'message-action', '复制');
+    const copy = el('button', 'message-action');
+    copy.innerHTML = uiIcon('copy');
     copy.type = 'button'; copy.title = '复制原文（保留链接地址）';
     copy.setAttribute('aria-label', '复制消息原文');
     copy.onclick = async () => {
       copy.disabled = true;
-      try { await copyFileText(String(message.text || '')); copy.textContent = '已复制'; }
-      catch (error) { copy.textContent = '复制失败'; copy.title = error.message; }
+      try {
+        await copyFileText(String(message.text || ''));
+        copy.innerHTML = uiIcon('check'); copy.title = '已复制原文'; copy.dataset.copyState = 'copied';
+      }
+      catch (error) { copy.innerHTML = uiIcon('info'); copy.title = `复制失败：${error.message}`; copy.dataset.copyState = 'failed'; }
       finally { copy.disabled = false; }
     };
     actions.append(copy); header.append(time, actions); node.prepend(header);
+    let knownTime = '';
     const update = next => {
       message = next;
-      const date = new Date(message.ts || message.timestamp || '');
+      node._messageData = next;
+      const stamp = message.ts || message.timestamp || '';
+      if (Number.isFinite(new Date(stamp).getTime())) knownTime = stamp;
+      const date = new Date(knownTime);
       const valid = Number.isFinite(date.getTime());
       const value = valid ? date.toLocaleString('sv-SE', {hour12: false}) : '时间未提供';
       if (time.textContent !== value) time.textContent = value;
-      if (valid) { time.dateTime = date.toISOString(); time.title = `本地时间 · ${message.ts || message.timestamp}`; }
+      if (valid) { time.dateTime = date.toISOString(); time.title = `本地时间 · ${knownTime}`; }
       else { time.removeAttribute('datetime'); time.title = '原始消息未提供有效时间'; }
     };
     update(message);
+    node._updateMessageHeader = update;
     return update;
   },
 
