@@ -16,6 +16,11 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261105-075749-d52ddc：消息日期与顶部操作 `621a8303` 已以 web-only
+  部署、重启并健康于 Lyra、Cygnus、Pavo、Vela、Hub。Orion、Cetus 正式 SSH
+  尝试超时，待恢复连接后补发；三个资源代理按组件范围排除。
+
+
 - [ ] BUG-20261104-102740-283f30：SDK 查看入口修复 `f2c178bc` 已以 web-only
   部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。Orion SSH 超时待补发；
   Vela 仍报 `Store(Invalid)`，发布和恢复旧文件后的健康检查均失败（`ROLLBACK_FAILED`），

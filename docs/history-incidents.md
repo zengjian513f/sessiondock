@@ -14,13 +14,19 @@
 覆盖 SDK、支持的普通会话、历史与实时消息、完整 Markdown 复制、剪贴板备用方式和
 失败重试；Codex 另验 150% 缩放。Codex 消息动作五组覆盖长消息展开、回退取消／确认、
 中间分支、源历史与草稿保留、刷新与实时消息；Kiro 八组覆盖历史／实时原生分支与回退，
-另验能力缺失。多来源动作、六来源过程折叠、流式长气泡、Codex 停止及 OpenCode
+另验能力缺失。多来源动作、六来源过程折叠、流式长气泡、Codex 停止及 Claude／OpenCode
 原生操作套件通过。测试仅使用临时夹具和假 CLI。
 
 执行者亲自查看七来源完整页面及原生动作截图，宽窄屏、明暗主题、150% 缩放中
 时间与操作对齐、长链接换行正常；窄屏放大时操作换到下一行，不覆盖正文。
 证据目录为测试机 `/tmp/sessiondock-message-before`、`/tmp/sessiondock-message-after`、
 `/tmp/sessiondock-headers`、`/tmp/sessiondock-native-actions`、`/tmp/sessiondock-kiro-actions`。
+
+前端提交 `621a8303` 已推送。web-only 正式尝试 Lyra、Cygnus、Pavo、Orion、Vela、
+Cetus 与 Hub；Lyra、Cygnus、Pavo、Vela、Hub 成功重启且健康，保留原后端与 ptyhost。
+Orion、Cetus SSH 超时，待补发已登记 TODO；三个资源代理没有受影响前端，按范围排除。
+部署版本为 `20261105T081437422037Z`，保留自动回滚备份。
+
 
 ## BUG-20261102-162048-b98299：长消息列表中的输入延迟
 
