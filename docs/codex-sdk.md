@@ -519,7 +519,9 @@ behavior; they do not require other sources to expose unsupported controls.
   reverts before that turn; 分支 forks through that turn and reverts only the new
   child before it. Both restore the selected message text into the composer,
   preserving an existing draft by appending it, and never send it automatically.
-  Revert uses the existing confirmation; cancelling it preserves history and draft.
+  Fork and revert require confirmation before dispatch, including toolbar and
+  slash-command entry points. The revert turn picker itself confirms that action;
+  cancelling any dialog preserves history and draft without a mutation request.
   DELTA (BUG-20261025-054101-4f35bf): revert resolves a rotated rollout in the refreshed inventory before restoring
   text and focusing its destination composer. Background inventory following
   waits for this handoff, so a later poll cannot replace an editor already

@@ -9,13 +9,11 @@ from history_fixtures import BINARY
 from sdk_start_stop_fixtures import provider
 from sdk_selection_fixtures import snapshots
 from sdk_ui_fixtures import start_sdk
-from popups import on_popup
 
 
 def exercise(browser,base,source,events,screenshots):
     context=browser.new_context(viewport={'width':1440,'height':900},service_workers='block')
     page=context.new_page()
-    on_popup(page,lambda dialog:dialog.accept())
     errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
     api='codex-sdk' if source=='codex' else 'native-sdk'
@@ -121,13 +119,41 @@ def exercise(browser,base,source,events,screenshots):
             context.route('**/api/native-sdk/fork',action)
             context.route('**/api/native-sdk/rewind',action)
             context.route('**/api/native-sdk/revert',action)
-            page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-fork"]')).click()
+            confirmation=page.locator('dialog.app-popup[open]')
+            branch=page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-fork"]'))
+            page.locator('#sdk-input').fill('取消时保留草稿')
+            branch.click()
+            expect(confirmation).to_contain_text('原会话保持不变')
+            assert not actions
+            page.screenshot(path=str(screenshots/f'{source}-fork-confirm.png'),full_page=True)
+            confirmation.get_by_role('button',name='取消',exact=True).click()
+            expect(page.locator('#sdk-input')).to_have_value('取消时保留草稿')
+            assert not actions and page.evaluate('S.sel')==uid
+            toolbar=page.locator('[data-sdk-action="fork"]')
+            if not toolbar.is_visible():page.locator('#sdk-more').click()
+            toolbar.click()
+            confirmation.get_by_role('button',name='取消',exact=True).click()
+            expect(page.locator('#sdk-input')).to_have_value('取消时保留草稿')
+            page.locator('#sdk-input').fill('/fork')
+            page.locator('#sdk-send').click()
+            confirmation.get_by_role('button',name='取消',exact=True).click()
+            expect(page.locator('#sdk-input')).to_have_value('/fork')
+            assert not actions
+            page.locator('#sdk-input').fill('')
+            branch.click()
+            confirmation.get_by_role('button',name='分支',exact=True).click()
             expect(page.locator('#sdk-input')).to_have_value('重复输入内容')
             assert actions[-1].get('prompt_index' if source=='grok' else 'before') == (11 if source=='grok' else 'native-user-11'),actions
             assert 'restore_text' not in actions[-1],actions
             if source in ('grok','opencode'):
                 page.locator('#sdk-input').fill('保留草稿')
                 page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-undo"]')).click()
+                before=len(actions)
+                confirmation.get_by_role('button',name='取消',exact=True).click()
+                expect(page.locator('#sdk-input')).to_have_value('保留草稿')
+                assert len(actions)==before and page.evaluate('S.sel')==uid
+                page.locator('.sdk-history .sdk-bubble-menu button').filter(has=page.locator('use[href="#i-undo"]')).click()
+                confirmation.get_by_role('button',name='回退',exact=True).click()
                 expect(page.locator('#sdk-input')).to_have_value('保留草稿\n\n重复输入内容')
                 assert actions[-1].get('prompt_index' if source=='grok' else 'message_id') == (11 if source=='grok' else 'native-user-11'),actions
     for width,theme in ((1440,'light'),(390,'dark')):

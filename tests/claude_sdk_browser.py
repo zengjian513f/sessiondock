@@ -288,6 +288,7 @@ def browser_check(fixture, base, screenshots):
         fork = reveal(page, '[data-sdk-action=fork]')
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
             fork.click()
+            page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
         full = receipt(forked.value.json())
         full_request = forked.value.request.post_data_json
         full_path = fixture.path.with_name(full['session_id'] + '.jsonl')
@@ -310,6 +311,7 @@ def browser_check(fixture, base, screenshots):
         bubble = page.locator(f'.sdk-live [data-sdk-item="{first_user["uuid"]}"]')
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
             bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+            page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
         partial = receipt(forked.value.json())
         assert partial['session']['sdk_fork']['resume_at'] == first_user['parentUuid'], partial
         page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=partial['uid'])
@@ -343,6 +345,7 @@ def browser_check(fixture, base, screenshots):
         bubble = page.locator(f'.sdk-live [data-sdk-item="{first["id"]}"]')
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
             bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+            page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
         empty = receipt(forked.value.json())
         assert empty['session']['sdk_fork']['empty'] is True, empty
         page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=empty['uid'])
@@ -469,6 +472,7 @@ def fork_restart_check(fixture, binary):
             fork = reveal(page, '[data-sdk-action=fork]')
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as failed:
                 fork.click()
+                page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
             assert not failed.value.ok
             count = len(fixture.frames('spawn'))
             retried = post(page, 'fork', failed.value.request.post_data_json, ok=False)
@@ -478,6 +482,7 @@ def fork_restart_check(fixture, binary):
             fork = reveal(page, '[data-sdk-action=fork]')
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
                 fork.click()
+                page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
             assert forked.value.ok, forked.value.text()
             created = receipt(forked.value.json())
             request = forked.value.request.post_data_json

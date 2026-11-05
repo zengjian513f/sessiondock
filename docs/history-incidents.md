@@ -3,6 +3,25 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261105-075749-d52ddc 后续：分支与回退确认
+
+分支原先直接发送请求，Kiro 的消息回退复用 fork 接口，也没有确认。
+`web/codex-sdk-actions.js` 为消息、工具栏与命令分支增加现有确认弹窗；
+`web/native-sdk-controls.js` 在动作入口统一确认分支和带消息位置的回退，
+移除原消息按钮外层的重复确认。回退轮次选择弹窗本身继续作为确认。
+Kiro 文案明确保留选中整轮、打开新会话及回退成功后隐藏原分支；
+取消不发送变更请求，保留草稿、原历史和分支可见性。
+
+Chromium 通过 `codex_sdk_message_actions_browser`、`codex_sdk_actions_browser`、
+`kiro_fork_browser`、`sdk_generalization_ui_browser` 与 `claude_sdk_browser`。
+覆盖节点／Hub、消息／工具栏／命令的取消及确认、草稿保留、原生参数、分支边界、
+回退后刷新和源会话保留。OpenCode 完整套件走完节点操作，但在 Hub 分支入口
+因夹具缺少显式启动而超时，不计整套通过；补齐 `start_sdk` 后，用独立临时后端
+重跑其 `exercise_hub_fork`，确认、Hub 身份、发送、源会话隔离和回执重试通过。
+执行者亲自查看 Codex、Kiro、Grok、Claude、OpenCode 弹窗整页，宽窄明暗均沿用
+现有居中弹窗，文字与按钮完整可读；截图在测试机 `/tmp/sessiondock-confirm-*`。
+文档链接、AGENTS、品牌及差异空白检查通过；没有调用真实模型或操作生产测试数据。
+
 ## BUG-20261105-075749-d52ddc 后续：移除旧分块时间条
 
 逐条时间上线后，旧的 5 分钟空档／20 分钟周期分隔条仍由公共渲染器插入，

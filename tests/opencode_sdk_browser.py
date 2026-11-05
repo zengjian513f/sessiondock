@@ -48,10 +48,12 @@ def exercise_hub_fork(browser, native, node_port, binary, root, screenshot):
         parent = page.evaluate('sid => S.sessions.find(row => row.sid === sid).uid', SID)
         assert parent.startswith('opencode:') and '~' in parent, parent
         page.locator(f'#side .item[data-uid="{parent}"]').click()
+        start_sdk(page)
         expect(page.locator('#sdk-input')).to_be_visible()
         fork = reveal(page, '[data-sdk-action="fork"]')
         with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as forked:
             fork.click()
+            page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
         assert forked.value.ok, forked.value.text()
         receipt = forked.value.json()
         uid = receipt['uid']
@@ -341,6 +343,7 @@ def main():
                     # Native full-history and per-message forks receive their
                     # own identity and must not steal the source SID.
                     action('fork')
+                    page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
                     assert native.forks == 1
                     return_to_seed()
@@ -348,6 +351,7 @@ def main():
                     snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: fork before this message')")
                     bubble = page.locator('.sdk-live .msg').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-menu')).last
                     bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+                    page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
                     assert native.forks == 2
                     forks = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/fork')]
@@ -385,6 +389,7 @@ def main():
                     native.lose_ack = 'fork'
                     with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as lost:
                         action('fork')
+                        page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     assert not lost.value.ok
                     forks_before_retry = native.forks
                     fork_retry = lost.value.request.post_data_json

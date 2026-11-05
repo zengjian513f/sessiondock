@@ -57,15 +57,40 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
     expect(menu.get_by_role('button', name='回退', exact=True)).to_be_visible()
     expect(menu.get_by_role('button', name='分支', exact=True)).to_be_visible()
     action = '回退' if width == 390 else '分支'
+    requests = []
+    page.on('request', lambda request: requests.append(request.post_data_json)
+            if request.url.endswith('/api/native-sdk/fork') else None)
+    native_count = len(fixture.received('session/fork'))
+    native_before = (fixture.v3_dir / 'messages.jsonl').read_bytes()
+    page.locator('#sdk-input').fill('取消时保留草稿')
+    menu.get_by_role('button', name=action, exact=True).click()
+    confirmation = page.locator('dialog.app-popup[open]')
+    expect(confirmation).to_contain_text('新会话保留该轮及回复')
+    if action == '回退': expect(confirmation).to_contain_text('原会话会隐藏')
+    assert not requests
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-confirm.png'), full_page=True)
+    confirmation.get_by_role('button', name='取消', exact=True).click()
+    expect(page.locator('#sdk-input')).to_have_value('取消时保留草稿')
+    assert page.evaluate('uid => S.sel===uid && !sessionHidden(S.sessions.find(s=>s.uid===uid))', uid)
+    assert len(fixture.received('session/fork')) == native_count and not requests
+    assert (fixture.v3_dir / 'messages.jsonl').read_bytes() == native_before
+    page.locator('#sdk-input').fill('/fork user-04')
+    page.locator('#sdk-send').click()
+    confirmation.get_by_role('button', name='取消', exact=True).click()
+    expect(page.locator('#sdk-input')).to_have_value('/fork user-04')
+    assert not requests
+    page.locator('#sdk-input').fill('')
     if action == '回退':
         page.route('**/api/native-sdk/fork', lambda route: route.fulfill(status=503, json={'error': 'synthetic fork failure'}))
         menu.get_by_role('button', name=action, exact=True).click()
+        confirmation.get_by_role('button', name=action, exact=True).click()
         page.wait_for_function("document.querySelector('#sdk-status-menu').textContent.includes('synthetic fork failure')")
         assert page.evaluate('uid => S.sel===uid && !sessionHidden(S.sessions.find(s=>s.uid===uid))', uid)
         page.unroute('**/api/native-sdk/fork')
     native_before = (fixture.v3_dir / 'messages.jsonl').read_bytes()
     with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/fork')) as fork:
         menu.get_by_role('button', name=action, exact=True).click()
+        confirmation.get_by_role('button', name=action, exact=True).click()
     assert fork.value.ok, fork.value.text()
     result = fork.value.json()
     new_uid = result['uid']

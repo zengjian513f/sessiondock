@@ -130,8 +130,22 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     popup = menu()
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-menu.png'))
     original = fake.source_path.read_bytes()
+    requests = []
+    page.on('request', lambda request: requests.append(request.url)
+            if request.url.endswith(('/api/codex-sdk/fork', '/api/codex-sdk/revert')) else None)
+    page.locator('#sdk-input').fill('取消分支时保留的草稿')
+    popup.get_by_role('button', name='分支', exact=True).click()
+    confirmation = page.locator('dialog.app-popup[open]')
+    expect(confirmation).to_contain_text('原会话保持不变')
+    assert not requests and fake.source_path.read_bytes() == original
+    if screenshots: page.screenshot(path=str(screenshots/f'{label}-fork-confirm.png'))
+    confirmation.get_by_role('button', name='取消', exact=True).click()
+    expect(page.locator('#sdk-input')).to_have_value('取消分支时保留的草稿')
+    assert page.evaluate('S.sel') == source and not requests
+    page.locator('#sdk-input').fill('')
     with page.expect_response(lambda response: response.url.endswith('/api/codex-sdk/fork')) as fork_response:
         popup.get_by_role('button', name='分支', exact=True).click()
+        confirmation.get_by_role('button', name='分支', exact=True).click()
     fork_result = fork_response.value.json()
     assert fork_result['raw']['thread']['path'] == str(fake.paths[FORK]), fork_result
     page.wait_for_function('uid => S.sel !== uid', arg=source)
@@ -163,10 +177,12 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(page.locator('.sdk-history')).to_contain_text(LATER_QUESTION)
     expect(page.locator('.sdk-history')).to_contain_text(LATER_ANSWER)
     page.locator('#sdk-input').fill('原本尚未发送的草稿')
+    before_cancel = len(requests)
     popup = menu(); popup.get_by_role('button', name='回退', exact=True).click()
     page.locator('dialog[open]').get_by_role('button', name='取消', exact=True).click()
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿')
     expect(bubble()).to_be_visible()
+    assert len(requests) == before_cancel and fake.source_path.read_bytes() == original
     popup = menu(); popup.get_by_role('button', name='回退', exact=True).click()
     page.locator('dialog[open]').get_by_role('button', name='回退', exact=True).click()
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT)

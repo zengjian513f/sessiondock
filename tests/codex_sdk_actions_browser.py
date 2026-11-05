@@ -155,6 +155,15 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
             assert button.evaluate('n => n.getBoundingClientRect().width')==24
         button.click()
 
+    box.fill('工具栏分支取消后保留草稿')
+    choose_action('fork')
+    confirmation = page.locator('dialog.app-popup[open]')
+    expect(confirmation).to_contain_text('原会话保持不变')
+    assert not fake.methods('thread/fork')
+    confirmation.get_by_role('button', name='取消', exact=True).click()
+    expect(box).to_have_value('工具栏分支取消后保留草稿')
+    assert page.evaluate('S.sel') == source_uid and not fake.methods('thread/fork')
+    box.fill('')
     # The menu selects actual native turn IDs, including additional pages.
     choose_action("revert")
     dialog = page.locator("#sdk-action-dialog")
@@ -273,12 +282,18 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     # A rejected native operation preserves the user's command and session.
     box.fill("/fork reject-this-turn")
     send.click()
+    confirmation.get_by_role('button', name='取消', exact=True).click()
+    expect(box).to_have_value('/fork reject-this-turn')
+    assert not fake.methods('thread/fork')
+    send.click()
+    confirmation.get_by_role('button', name='分支', exact=True).click()
     expect(pane.locator("#sdk-status-menu")).to_contain_text("turn not found")
     expect(box).to_have_value("/fork reject-this-turn")
     assert page.evaluate("S.sel") == source_uid
 
     box.fill("/fork " + TURN1)
     send.click()
+    confirmation.get_by_role('button', name='分支', exact=True).click()
     page.wait_for_function("uid => S.sel !== uid", arg=source_uid)
     expect(page.locator(".sdk-history")).to_contain_text("fork retained answer")
     expect(page.locator("#sdk-model")).to_have_value("fake-sol")

@@ -322,6 +322,20 @@ const NativeSdkControls = {
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
     if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
     try{
+      if(method==='fork'){
+        const kiro=view.uid.startsWith('kiro:') && body.messageId;
+        const text=kiro ? body.hide_source
+          ? '回退并从所选轮次继续？新会话保留该轮及回复，原会话会隐藏。原会话内容和工作区文件保持不变。'
+          : '从所选轮次创建分支？新会话保留该轮及回复，原会话保持不变。'
+          : body.before!=null || body.prompt_index!=null
+            ? '从这条消息之前创建分支？原会话保持不变。'
+            : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
+        if(!await appConfirm(text,{ok:kiro && body.hide_source?'回退':'分支'}))return false;
+      }
+      if((method==='revert' && body.message_id) || (method==='rewind' && body.prompt_index!=null)){
+        if(!await appConfirm('回退到这条消息之前？消息内容将追加回输入框，工作区文件保持原样。',{ok:'回退'}))return false;
+      }
+      if(!view.current(generation))return false;
       if(method==='steer'){
         const modal=CodexSdkActions.form('引导当前任务','原生会在可插入时处理；临近任务结束时可能另开一轮。普通发送仍进入队列。','发送引导');
         const input=document.createElement('textarea');input.setAttribute('aria-label','引导内容');modal.fields.append(input);
@@ -475,9 +489,6 @@ const NativeSdkControls = {
     for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
       if(!view.capabilities[method])continue;
       items.push([label,async()=>{
-        const generation=view.generation;
-        if(method!=='fork' && !await appConfirm('回退到这条消息之前？消息内容将追加回输入框，工作区文件保持原样。',{ok:'回退'}))return;
-        if(!view.current(generation))return;
         await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork'?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
       }]);
     }

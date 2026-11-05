@@ -59,6 +59,8 @@ const CodexSdkActions = {
     renameAudit('invoked',{dialog:!argument});
     try {
       if (action === 'fork') {
+        if (!await appConfirm(argument ? '从指定轮次创建分支？原会话保持不变。' : '创建当前会话的分支？将在新会话中继续，原会话保持不变。', {ok:'分支'})) return true;
+        if (!current()) return true;
         const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id: argument || null});
         if (!current()) return true;
         // Clear the source command before opening the new session (draft hooks).
@@ -208,6 +210,8 @@ const CodexSdkActions = {
         if (await this.finishRevert(view, generation, operation))
           await this.restoreInput(view, String(message.text || ''));
       } else {
+        if (!await appConfirm('从这条消息之前创建分支？原会话保持不变，消息内容将追加到新分支的输入框。', {ok:'分支'})) return;
+        if (!current()) return;
         const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id:message.turn_id, before_turn_id:message.turn_id});
         if (!current()) return;
         await this.openFork(view, response);
