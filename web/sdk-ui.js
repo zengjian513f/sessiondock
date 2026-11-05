@@ -351,7 +351,6 @@ const SdkUI = {
     place(view.live, ordered);
     for (const [key, node] of previous) if (groups.get(key) !== node) node.remove();
     view.liveTurns = groups;
-    refreshMessageTimeDividers(view.live);
   },
 
   paintHistory(view, messages, {tailComplete = true, decorate} = {}) {
@@ -373,7 +372,6 @@ const SdkUI = {
       if (folds.has(node.dataset.turnId))
         folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
     }
-    refreshMessageTimeDividers(view.history);
     markMatches(view.history);
     updateMatchNav();
     // History is only part of a snapshot: live tools may still be unpacked.

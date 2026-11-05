@@ -377,7 +377,9 @@ DELTA（BUG-20261012-054602-f0bb43）：Markdown 同类列表条目之间的空�
 沿用现有列表样式。宽窄屏、明暗主题及重载回归见
 [`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。
 
-时间：相邻消息间隔 ≥5 分钟，或距上一条分隔 ≥20 分钟，插入时间分隔（`messageTimeDivider`）。折叠过程会重算分隔。
+DELTA（BUG-20261105-075749-d52ddc）：时间统一显示在每条消息上方，
+移除原先按 5 分钟空档／20 分钟周期插入的分块时间条，包括展开的过程内部。
+时间来源与操作见 [SDK 界面合同](sdk-ui.md#消息顶部信息与操作)。
 
 活动行 `renderActivity`：`working` / `waiting`。旧进程的 working 在 CLI 已不在时不显示。等待回答参与侧栏 `?`。
 

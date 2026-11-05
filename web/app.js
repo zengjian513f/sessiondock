@@ -6354,7 +6354,7 @@ function followAnchorAt(box) {
   for (const y of [8, 40, 80]) for (const x of [40, r.width / 2, r.width - 40]) {
     const hit = document.elementFromPoint(r.left + x, r.top + y);
     if (!hit || hit === box || !box.contains(hit) || hit.matches('.sdk-history, .sdk-live, .sdk-queue')) continue;
-    return hit.closest('.msg, [data-sdk-item], .turn-process, .message-time-divider') || hit;
+    return hit.closest('.msg, [data-sdk-item], .turn-process') || hit;
   }
   return null;
 }
@@ -7416,7 +7416,6 @@ function head(m, total) {
     for (const box of boxes) {
       box?.querySelectorAll(':scope > .turn-process').forEach(
         node => S.compactTurns ? node._fold?.() : node._open?.());
-      refreshMessageTimeDividers(box);
     }
     if (SessionContentView.kind !== 'sdk') settle(boxes[0]);
   };
@@ -8081,8 +8080,6 @@ const SEARCH_ROLES = new Set(['user', 'assistant', 'user·subagent', 'assistant�
                               'thinking', 'question', 'answer', 'command']);
 const TURN_START_ROLES = new Set(['user', 'user·subagent']);
 const GROUP_MIN = 1;
-const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
-const MESSAGE_TIME_CADENCE_MS = 20 * 60 * 1000;
 
 const isGroupableTool = m => TOOL_ROLES.has(m?.role) && !m.changes?.length;
 
@@ -8319,91 +8316,6 @@ function planTurns(msgs, {
   return out;
 }
 
-/** 一个工具卡可能同时包含调用和结果，工具组又包含多张卡。
- *  分隔线用这个视觉单元的最早/最晚时间，不会把一次长时间工具调用
- *  误判成与下一条消息的空档。 */
-function messageTimeRange(messages) {
-  const values = [];
-  for (const message of messages || []) {
-    for (const item of [message, message?.result]) {
-      const value = Date.parse(item?.ts || '');
-      if (Number.isFinite(value)) values.push(value);
-    }
-  }
-  return values.length ? {start: Math.min(...values), end: Math.max(...values)} : null;
-}
-
-function stampMessageTime(node, messages) {
-  if (!node?.matches('.msg')) return node;
-  const range = messageTimeRange(messages);
-  if (range) {
-    node.dataset.timeStart = range.start;
-    node.dataset.timeEnd = range.end;
-  }
-  return node;
-}
-
-function formatMessageDateTime(value) {
-  const date = new Date(value);
-  const pad = number => String(number).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-    + ` ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function messageTimeDivider(value) {
-  const node = el('div', 'message-time-divider');
-  const time = document.createElement('time');
-  time.dateTime = new Date(value).toISOString();
-  time.textContent = formatMessageDateTime(value);
-  node.appendChild(time);
-  return node;
-}
-
-/** 相邻气泡空档超过 5 分钟时显示时间；对连续的密集对话，也每超过
- *  20 分钟补一条。历史缺口会重新起算；任务事件和 Working 状态行只中断
- *  “相邻”判断，不中断 20 分钟周期；隐藏的协议消息不参与。 */
-function refreshMessageTimeDividers(box = $('#msgs')) {
-  if (!box) return;
-  const saved = box._timeDividerTail;
-  const resume = saved?.node?.parentElement === box;
-  let previousEnd = resume ? saved.previousEnd : null;
-  let lastShownAt = resume ? saved.lastShownAt : null;
-  let first = resume ? saved.node : box.firstElementChild;
-  if (resume && first.previousElementSibling?.classList.contains('message-time-divider')) {
-    first.previousElementSibling.remove();
-  }
-  if (!resume) box._timeDividerTail = null;
-  const nodes = [];
-  for (let node = first; node; node = node.nextElementSibling) nodes.push(node);
-  for (const node of nodes) {
-    if (node.matches('.message-time-divider')) { node.remove(); continue; }
-    if (node.matches('.silent-tool-result, .question-live-shadowed') || node.hidden) continue;
-    if (!node.matches('.msg')) {
-      previousEnd = null;
-      if (node.matches('.history-gap')) lastShownAt = null;
-      continue;
-    }
-    const start = Number(node.dataset.timeStart);
-    const end = Number(node.dataset.timeEnd);
-    if (!node.matches('.live-question')) {
-      box._timeDividerTail = {node, previousEnd, lastShownAt};
-    }
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      previousEnd = null;
-      lastShownAt = null;
-      continue;
-    }
-    if (lastShownAt === null) lastShownAt = start;
-    const afterGap = previousEnd !== null && start - previousEnd > MESSAGE_TIME_GAP_MS;
-    const afterCadence = start - lastShownAt > MESSAGE_TIME_CADENCE_MS;
-    if (afterGap || afterCadence) {
-      box.insertBefore(messageTimeDivider(start), node);
-      lastShownAt = start;
-    }
-    previousEnd = Math.max(start, end);
-  }
-}
-
 function buildPlan(box, plan, before) {
   const built = [];
   for (let i = 0; i < plan.length; i++) {
@@ -8417,7 +8329,6 @@ function buildPlan(box, plan, before) {
       n._turnSealed = true;
     }
     if (p.m?.turn_id != null) n.dataset.turnId = String(p.m.turn_id);
-    stampMessageTime(n, p.turn?.items || p.g || (p.m ? [p.m] : []));
     before ? box.insertBefore(n, before) : box.appendChild(n);
     built.push(n);
   }
@@ -8471,7 +8382,6 @@ function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
     const grp = trailing.length === 1 && trailing[0].matches('.grp') ? trailing[0] : null;
     if (grp && planned.length === 1 && planned[0].g) {
       syncGroupNode(grp, planned[0].g);
-      stampMessageTime(grp, planned[0].g);
       if (userOpened) grp._open?.();
       if (userOpened) grp._userOpened = true;
       built.push(grp);
@@ -8520,8 +8430,7 @@ function lastRenderedTurnStart(box) {
     let head = node, j = i;
     const turnId = node.dataset.turnId;
     while (turnId && j > 0) {
-      let k = j - 1;
-      while (k >= 0 && children[k].classList?.contains('message-time-divider')) k--;
+      const k = j - 1;
       const previous = children[k];
       if (!previous?.matches?.('.msg')
           || !TURN_START_ROLES.has(previous.dataset.role)
@@ -8575,7 +8484,6 @@ function sealTurnTail(box, entry, {defer = true} = {}) {
   built.forEach(markMatches);
   if (S.term) updateMatchNav();
   box._turnSealPending = false;
-  refreshMessageTimeDividers(box);
   settle(box);
   return true;
 }
@@ -9110,7 +9018,6 @@ function turnProcessNode(turn, initiallyOpen = false) {
         buildPlan(fragment, [plan[offset++]], null);
       }
       body.appendChild(fragment);
-      refreshMessageTimeDividers(body);
       if (S.term && n.isConnected) { markMatches(body); updateMatchNav(); }
       if (offset < plan.length) setTimeout(paint, 0);
     };
@@ -10361,7 +10268,7 @@ function renderConversationQuestion(uid = S.sel) {
     action: (uid, index) => answerComposerScreenMenu(uid, id, 'action', index),
     textAnswer: (uid, value) => answerComposerScreenMenu(uid, id, 'text', value),
   } : {};
-  const next = prompt ? stampMessageTime(questionNode(liveQuestion, controls), [liveQuestion])
+  const next = prompt ? questionNode(liveQuestion, controls)
     : el('div', 'hidden');
   next.id = 'conversation-question';
   next.setAttribute('aria-label', 'CLI 选择题');
@@ -10376,7 +10283,6 @@ function renderConversationQuestion(uid = S.sel) {
       input.setSelectionRange(restore.start, restore.end);
     }
   }
-  refreshMessageTimeDividers(box);
   settle(box);
 }
 
@@ -10388,7 +10294,6 @@ function renderConversationTail(activity, uid = S.sel) {
   renderActivity($('#conversation-question.live-question') ? {state: 'waiting'} : activity);
   renderTerminalThreadNotice(uid);
   if (typeof syncComposerSendState === 'function') syncComposerSendState();
-  refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');
 }
 

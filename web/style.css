@@ -1266,11 +1266,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .history-gap-load:hover { border-color: var(--accent); color: var(--text); background: var(--hover); }
 .history-gap-load:disabled { cursor: wait; opacity: .7; }
-.message-time-divider {
-  width: 100%; margin: 2px 0 10px; color: var(--muted);
-  font-size: 11px; line-height: 1.4; text-align: center;
-  font-variant-numeric: tabular-nums; user-select: none;
-}
 .msg {
   --bubble: var(--bubble-assistant);
   position: relative; width: fit-content; max-width: 100%; min-width: 0;

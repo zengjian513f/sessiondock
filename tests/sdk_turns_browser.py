@@ -2,6 +2,7 @@
 """Six SDKs fold completed history/replay while the current turn keeps streaming."""
 import argparse
 import copy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -41,6 +42,9 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
                             'text': f'第 {turn + 1} 轮最终结论：检查已完成。', 'phase': 'final'})
         # One historical round precedes the native snapshot; the snapshot itself
         # replays two completed rounds and an unfinished tail (as Kiro does).
+        for index, item in enumerate(history):
+            item['ts'] = (datetime(2026, 11, 5, tzinfo=timezone.utc)
+                          + timedelta(minutes=6 * index)).isoformat()
         native = copy.deepcopy(history[18:-1])
         if source == 'kiro':
             # ACP replay has item IDs rather than history's normalized turn IDs.
@@ -90,6 +94,8 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         name = f'{label}-{source}-{width}-{theme}'
 
         def capture(state):
+            if not baseline:
+                expect(page.locator('.message-time-divider')).to_have_count(0)
             if screenshots: page.screenshot(path=str(screenshots / f'{name}-{state}.png'), full_page=True)
 
         def toggle():

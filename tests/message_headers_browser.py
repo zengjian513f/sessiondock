@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Seven-source message dates/raw copy through SDK and conversation on node/Hub."""
 import argparse
+from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from sdk_selection_fixtures import snapshots
 from sdk_ui_fixtures import start_sdk
 
 STAMP = '2026-11-05T07:57:49Z'
+ANSWER_STAMP = '2026-11-05T08:03:49Z'
 TEXT = ('检查 [报告](https://example.test/report?x=1&y=2#details) 与 '
         '[源码](/synthetic/project/main.rs:42)。\n\n'
         '```sh\nprintf "保留代码与链接"\n```\n\n'
@@ -29,9 +31,15 @@ def exercise(browser, base, source, events, screenshots, mode):
         page.on('pageerror', lambda error: errors.append(str(error)))
         history = [dict(role='user', text=TEXT, ts=STAMP, turn_id='header-turn', id='header-user',
                         native_item_id='header-user', native_id='header-user', message_id='header-user', prompt_index=0, native={'step_index': 0}),
-                   dict(role='assistant', text=ANSWER, ts=STAMP, phase='final', turn_id='header-turn',
+                   dict(role='assistant', text=ANSWER, ts=ANSWER_STAMP, phase='final', turn_id='header-turn',
                         id='header-answer', native_item_id='header-answer', native_id='header-answer'),
                    dict(role='user', text='没有原始时间的消息，不能伪造发送时间。', ts='invalid')]
+        # Exercise both former divider triggers: a six-minute gap, then
+        # continuous four-minute messages spanning more than twenty minutes.
+        history[2:2] = [dict(role='user', text=f'连续消息 {index + 1}', id=f'spacing-{index}',
+                            ts=(datetime.fromisoformat(ANSWER_STAMP.replace('Z', '+00:00'))
+                                + timedelta(minutes=4 * (index + 1))).isoformat())
+                        for index in range(6)]
         if source == 'codex':
             # Older real rollouts lack item IDs: retain dates through an exact,
             # unambiguous match within the native turn, never across turns.
@@ -62,6 +70,7 @@ def exercise(browser, base, source, events, screenshots, mode):
         expect(page.locator('.sdk-history')).to_contain_text(ANSWER.split('[')[0])
         name = f'{mode}-{source}-{width}-{theme}'
         def check(scope, entry):
+            expect(scope.locator('.message-time-divider')).to_have_count(0)
             user = scope.locator('.msg[data-role="user"]').filter(has_text='检查 报告').first
             user.get_by_role('button', name='复制消息原文').hover()
             header = user.locator('.message-header'); bubble = user.locator('.message-bubble')
@@ -78,6 +87,7 @@ def exercise(browser, base, source, events, screenshots, mode):
             assert page.evaluate('navigator.clipboard.readText()') == TEXT
             user.get_by_role('button', name='收起', exact=True).click()
             answer = scope.locator('.msg[data-role="assistant"]').filter(has_text='已检查').first
+            expect(answer.locator('.message-header time')).to_have_text('2026-11-05 16:03:49')
             answer.get_by_role('button', name='复制消息原文').click()
             assert page.evaluate('navigator.clipboard.readText()') == ANSWER
             missing = scope.locator('.msg[data-role="user"]').filter(has_text='没有原始时间')
@@ -102,11 +112,11 @@ def exercise(browser, base, source, events, screenshots, mode):
         raw.update(items=[user, answer], running=True, turn={'id': 'header-turn', 'status': 'inProgress'})
         events.publish()
         replay = page.locator('.sdk-live .msg').filter(has_text='已检查').first
-        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
+        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T08:03:49.000Z')
         # Cross the regular history polling interval, then replay another bare snapshot.
         page.wait_for_timeout(3500)
         events.publish()
-        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T07:57:49.000Z')
+        expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T08:03:49.000Z')
         if screenshots: page.screenshot(path=str(screenshots / f'{name}-replayed.png'), full_page=True)
         live_text = '实时回复 [原始链接](https://example.test/live?a=1#stream)'
         item = {'id': 'header-live', 'text': live_text,
@@ -160,6 +170,7 @@ def exercise(browser, base, source, events, screenshots, mode):
             user.get_by_role('button', name='复制消息原文').hover()
             if screenshots: page.screenshot(path=str(screenshots / f'{name}-zoom150.png'), full_page=True)
 
+        expect(page.locator('.message-time-divider')).to_have_count(0)
         assert not errors, errors
         context.unroute_all(behavior='wait'); context.close()
         print('PASS', name, 'history/conversation/live, dates, full raw copy, clipboard fallback/retry', flush=True)
