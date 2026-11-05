@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""User-bubble revert/fork menus and restored drafts through node/Hub Chromium."""
+"""Message headers, raw copy and user-bubble revert/fork actions and restored drafts through node/Hub Chromium."""
 from __future__ import annotations
 import argparse
 import asyncio
@@ -20,19 +20,23 @@ TURN3 = '01a1a000-0000-7000-8000-000000000003'
 LATER_QUESTION = '第三轮：这是分支点之后的对话，不能进入新分支'
 LATER_ANSWER = '第三轮回答 Later conversation must remain only in the source'
 
-TEXT = ('第二轮 remove this question · 请检查真实长度的项目路径 /workspace/projects/sessiondock/long-project-name\n保留中文、换行及 `quoted code`，重新编辑后发送。'
-        + '\n\n'.join(f'\n第 {i} 段：检查多行绿气泡的消息操作按钮在展开和收起后仍然居中。' for i in range(16)))
+TEXT = ('[报告链接](https://example.test/report?x=1&y=2#section) · [源码](/synthetic/project/main.rs:42)\n'
+        '第二轮 remove this question · 请检查真实长度的项目路径 /workspace/projects/sessiondock/long-project-name\n保留中文、换行及 `quoted code`，重新编辑后发送。'
+        + '\n\n'.join(f'\n第 {i} 段：检查多行绿气泡的消息顶部操作在展开和收起后仍然可用。' for i in range(16)))
 FORK = '01a1adc0-0000-7000-8000-000000000099'
 ROLLOUT = '01a1adc0-0000-7000-8000-000000000100'
 
 
 def aligned(bubble):
-    toggle = bubble.get_by_role('button', name='消息操作', exact=True)
-    toggle.scroll_into_view_if_needed()
-    button_box, bubble_box = toggle.bounding_box(), bubble.bounding_box()
-    assert abs(button_box['y'] + button_box['height']/2 - bubble_box['y'] - bubble_box['height']/2) <= 1, (button_box, bubble_box)
-    assert button_box['x'] >= 0 and button_box['x'] + button_box['width'] <= bubble_box['x'], (button_box, bubble_box)
-    assert toggle.evaluate('(n) => { const r = n.getBoundingClientRect(); return n.contains(document.elementFromPoint(r.x + r.width/2, r.y + r.height/2)); }')
+    header = bubble.locator('.message-header')
+    header.get_by_role('button', name='复制消息原文').hover()
+    expect(header).to_be_visible()
+    header_box, body_box = header.bounding_box(), bubble.locator('.mb').bounding_box()
+    assert header_box['y'] + header_box['height'] <= body_box['y'] + 1
+    assert header_box['x'] >= 0
+    for button in header.get_by_role('button').all():
+        bounds = button.bounding_box()
+        assert bounds['x'] >= header_box['x'] and bounds['x'] + bounds['width'] <= header_box['x'] + header_box['width'] + 1
 
 
 class MessageServer(ActionsServer):
@@ -108,16 +112,13 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         return page.locator('.sdk-history .msg[data-role="user"]').filter(has_text='第二轮 remove this question')
     def menu():
         aligned(bubble())
-        bubble().get_by_role('button', name='消息操作', exact=True).click()
-        popup = bubble().locator('.sdk-bubble-menu')
-        expect(popup).to_be_visible()
-        button_box = bubble().locator('.sdk-bubble-toggle').bounding_box()
-        bubble_box = bubble().bounding_box()
-        assert button_box['x'] >= 0 and button_box['x'] + button_box['width'] <= bubble_box['x'], (button_box, bubble_box)
-        bounds = popup.bounding_box()
-        assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= width + 1
-        assert bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 845
-        return popup
+        actions = bubble().locator('.sdk-bubble-menu')
+        expect(actions).to_be_visible()
+        return actions
+    context.grant_permissions(['clipboard-read', 'clipboard-write'])
+    bubble().get_by_role('button', name='复制消息原文').click()
+    assert page.evaluate('navigator.clipboard.readText()') == TEXT
+    expect(bubble().locator('time')).to_have_attribute('datetime', '2026-09-11T10:00:00.000Z')
     aligned(page.locator('.sdk-history .msg[data-role="user"]').first)
     aligned(bubble())
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-collapsed.png'))
@@ -222,7 +223,6 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     live = page.locator('.sdk-live .msg[data-role="user"]')
     expect(live).to_contain_text('实时绿气泡')
     aligned(live)
-    live.get_by_role('button', name='消息操作', exact=True).click()
     expect(live.locator('.sdk-bubble-menu')).to_be_visible()
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-live.png'))
     assert branch != source and not errors, errors

@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import server
@@ -32,18 +33,17 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
     if page.evaluate('uid => !!S.sessions.find(s=>s.uid===uid)?.fork_parent', uid):
         page.evaluate('uid => setForkParentVisibility([uid], true)', uid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
-    page.locator('#sdk-input').click()
+    start_sdk(page)
     page.wait_for_function("SdkView.connected && !SdkView.readOnly")
     if not baseline:
         no_identity = page.locator('.sdk-live .msg[data-role="user"]').filter(has_text='审查第 42 轮：')
         expect(no_identity).to_have_count(1)
-        expect(no_identity.locator('.sdk-bubble-toggle')).to_have_count(0)
+        expect(no_identity.locator('.sdk-bubble-menu')).to_have_count(0)
     # Older turns are projected history; newer turns arrive in the live snapshot.
     turn = 4 if theme == 'light' else 43
     bubble = page.locator('.sdk-history .msg[data-role="user"], .sdk-live .msg[data-role="user"]').filter(has_text=f'审查第 {turn:02d} 轮：')
     expect(bubble).to_have_count(1)
-    bubble.locator('.sdk-bubble-toggle').click()
-    menu = page.locator('.sdk-bubble-menu:popover-open')
+    menu = bubble.locator('.sdk-bubble-menu')
     if screenshots:
         page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-menu.png'), full_page=True)
     if baseline:
@@ -62,7 +62,6 @@ def exercise(browser, base, fixture, label, width, theme, screenshots, baseline=
         page.wait_for_function("document.querySelector('#sdk-status-menu').textContent.includes('synthetic fork failure')")
         assert page.evaluate('uid => S.sel===uid && !sessionHidden(S.sessions.find(s=>s.uid===uid))', uid)
         page.unroute('**/api/native-sdk/fork')
-        bubble.locator('.sdk-bubble-toggle').click()
     native_before = (fixture.v3_dir / 'messages.jsonl').read_bytes()
     with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/fork')) as fork:
         menu.get_by_role('button', name=action, exact=True).click()
@@ -131,9 +130,9 @@ def capability_gating(browser, base, fixture):
     if page.evaluate('uid => !!S.sessions.find(s=>s.uid===uid)?.fork_parent', uid):
         page.evaluate('uid => setForkParentVisibility([uid], true)', uid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
-    page.locator('#sdk-input').click()
+    start_sdk(page)
     page.wait_for_function('SdkView.connected && SdkView.capabilities.fork_at_message === false')
-    expect(page.locator('.sdk-bubble-toggle')).to_have_count(0)
+    expect(page.locator('.sdk-bubble-menu')).to_have_count(0)
     assert page.evaluate('SdkView.capabilities.fork === true')
     forks = len(fixture.received('session/fork'))
     denied = api_raw(page, 'fork', {'uid': uid, 'messageId': 'user-00', 'request_id': 'not-advertised'})

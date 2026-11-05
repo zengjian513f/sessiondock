@@ -67,7 +67,7 @@ Grok prompt index。缺少可关联身份时保留历史，不使用相同文本
 Grok 普通 ACP prompt 尚未提供与 chat_history prompt index 的可靠关联，不能把
 网页 request ID 或同文匹配冒充该身份，也不据此宣称已验证原生消费。
 
-历史和 live 的用户消息共用按能力开放的分支菜单；Grok/OpenCode 还提供对话回退。
+历史和 live 的用户消息共用按能力开放的顶部操作栏；Grok/OpenCode 还提供对话回退。
 操作使用该消息的原生身份，成功后追加原输入并保留已有草稿，不自动发送。
 Claude 仅分支，Agy 不显示未经原生支持的会话动作。`/new` 打开共用新建弹窗；
 `/rename 名称` 走原生改名；无参数时复用改名弹窗，取消、缺能力或失败保留输入。新建 SDK 模型目录与已打开

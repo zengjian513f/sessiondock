@@ -346,9 +346,8 @@ def main():
                     return_to_seed()
                     send('fork before this message')
                     snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: fork before this message')")
-                    bubble = page.locator('.sdk-live .msg').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-toggle')).last
-                    bubble.get_by_role('button', name='消息操作', exact=True).click()
-                    page.get_by_role('button', name='从此处之前分支', exact=True).click()
+                    bubble = page.locator('.sdk-live .msg').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-menu')).last
+                    bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
                     page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
                     assert native.forks == 2
                     forks = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/fork')]

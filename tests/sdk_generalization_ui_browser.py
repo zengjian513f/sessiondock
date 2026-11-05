@@ -82,7 +82,7 @@ def exercise(browser,base,source,events,screenshots):
         expect(page.locator('.sdk-history')).to_contain_text('历史答复 12')
         assert '读取历史失败' not in (status.get_attribute('title') or '')
         if source != 'codex':
-            expect(page.locator('.sdk-history .sdk-bubble-toggle')).to_have_count(0)
+            expect(page.locator('.sdk-history .sdk-bubble-menu')).to_have_count(0)
         assert not errors,errors
     start_sdk(page)
     if source=='codex':
@@ -100,7 +100,7 @@ def exercise(browser,base,source,events,screenshots):
         expect(page.locator('.sdk-history .msg[data-role="user"]')).to_have_count(2)
         expect(page.locator('.sdk-history')).to_contain_text('历史答复 12')
         if source=='agy':
-            expect(page.locator('.sdk-history .sdk-bubble-toggle, .sdk-live .sdk-bubble-toggle')).to_have_count(0)
+            expect(page.locator('.sdk-history .sdk-bubble-menu, .sdk-live .sdk-bubble-menu')).to_have_count(0)
             assert page.evaluate('SdkView.historyFailed') is False
         # Once the exact native identity appears, only its own tail is replaced.
         raw['items']=[live(12)]
@@ -109,8 +109,7 @@ def exercise(browser,base,source,events,screenshots):
         expect(page.locator('.sdk-history')).to_contain_text('历史答复 11')
         expect(page.locator('.sdk-history')).not_to_contain_text('历史答复 12')
         if source!='agy':
-            page.locator('.sdk-history .sdk-bubble-toggle').click()
-            expect(page.locator('.sdk-bubble-menu:popover-open')).to_contain_text('分支')
+            expect(page.locator('.sdk-bubble-menu').first).to_contain_text('分支')
             actions=[]
             def action(route):
                 actions.append(route.request.post_data_json)
@@ -122,17 +121,15 @@ def exercise(browser,base,source,events,screenshots):
             context.route('**/api/native-sdk/fork',action)
             context.route('**/api/native-sdk/rewind',action)
             context.route('**/api/native-sdk/revert',action)
-            page.locator('.sdk-bubble-menu:popover-open button').filter(has_text='分支').click()
+            page.locator('.sdk-history .sdk-bubble-menu button').filter(has_text='分支').click()
             expect(page.locator('#sdk-input')).to_have_value('重复输入内容')
             assert actions[-1].get('prompt_index' if source=='grok' else 'before') == (11 if source=='grok' else 'native-user-11'),actions
             assert 'restore_text' not in actions[-1],actions
             if source in ('grok','opencode'):
                 page.locator('#sdk-input').fill('保留草稿')
-                page.locator('.sdk-history .sdk-bubble-toggle').click()
-                page.locator('.sdk-bubble-menu:popover-open button').filter(has_text='回退').click()
+                page.locator('.sdk-history .sdk-bubble-menu button').filter(has_text='回退').click()
                 expect(page.locator('#sdk-input')).to_have_value('保留草稿\n\n重复输入内容')
                 assert actions[-1].get('prompt_index' if source=='grok' else 'message_id') == (11 if source=='grok' else 'native-user-11'),actions
-            page.locator('.sdk-history .sdk-bubble-toggle').click()
     for width,theme in ((1440,'light'),(390,'dark')):
         page.set_viewport_size({'width':width,'height':900})
         page.emulate_media(color_scheme=theme)
@@ -142,8 +139,6 @@ def exercise(browser,base,source,events,screenshots):
             start_sdk(page)
         if source=='codex' and not page.locator('#sdk-more-menu').is_visible():
             page.locator('#sdk-more').click()
-        elif source not in ('codex','agy') and not page.locator('.sdk-bubble-menu:popover-open').count():
-            page.locator('.sdk-history .sdk-bubble-toggle').click()
         expect(page.locator('.sdk-pane')).to_be_visible()
         page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}.png'),full_page=True)
     if source!='codex':
@@ -179,6 +174,7 @@ def exercise(browser,base,source,events,screenshots):
         assert any(row.get('source')==source and 'uid' not in row for row in model_requests),model_requests
         page.keyboard.press('Escape')
     assert not errors,errors
+    context.unroute_all(behavior="wait")
     context.close()
     print(f'PASS {source}: repeated input identity, history menus or native Token details',flush=True)
 

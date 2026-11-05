@@ -84,7 +84,6 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
     source = page.evaluate('S.sel')
     bubble = page.locator('.sdk-history .msg[data-role="user"]').filter(has_text='第二轮 remove this question')
-    bubble.get_by_role('button', name='消息操作', exact=True).click()
     bubble.get_by_role('button', name='分支', exact=True).click()
     expect(page.locator('#sdk-input')).to_have_value('第二轮 remove this question')
     branch = page.evaluate('S.sel')

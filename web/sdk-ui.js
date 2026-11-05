@@ -187,29 +187,22 @@ const SdkUI = {
   },
 
   decorateUserBubble(view, node, items) {
-    if (!items.length || node.querySelector('.sdk-bubble-toggle')) return;
+    if (!items.length || node.querySelector('.sdk-bubble-menu')) return;
     node.classList.add('sdk-user-actions');
-    const toggle = el('button', 'sdk-bubble-toggle', '⋯');
-    toggle.type = 'button';
-    toggle.setAttribute('aria-label', '消息操作');
-    toggle.setAttribute('aria-expanded', 'false');
-    const menu = el('div', 'new-model-menu sdk-bubble-menu');
-    menu.setAttribute('popover', 'auto');
+    const menu = el('div', 'sdk-bubble-menu');
+    menu.setAttribute('role', 'group');
     menu.setAttribute('aria-label', '消息操作');
-    menu.addEventListener('beforetoggle', event => toggle.setAttribute('aria-expanded', String(event.newState === 'open')));
     for (const [label, handler] of items) {
-      const button = el('button', 'new-model-option', label);
+      const button = el('button', 'message-action', label.includes('回退') ? '回退' : '分支');
       button.type = 'button';
-      button.onclick = () => { menu.hidePopover(); void handler(); };
+      button.title = label; button.setAttribute('aria-label', label);
+      button.onclick = async () => {
+        button.disabled = true;
+        try { await handler(); } finally { button.disabled = false; }
+      };
       menu.append(button);
     }
-    toggle.onclick = () => {
-      if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
-      view.closeToolbarMenus();
-      menu.showPopover();
-      view.placeMenu(menu, toggle, 180);
-    };
-    node.append(toggle, menu);
+    node.querySelector('.message-actions')?.append(menu);
   },
 
   ungroupTools(view) {

@@ -107,10 +107,9 @@ def exercise(browser, base, source, root, screenshots):
         # Native history menus use UUID/message/prompt identity even after
         # reopen. No text-based boundary is supplied to the adapter.
         if source in ('claude','opencode'):
-            toggles=page.locator('.sdk-pane .sdk-bubble-toggle')
+            toggles=page.locator('.sdk-pane .sdk-bubble-menu')
             expect(toggles.first).to_be_visible()
-            toggles.first.click()
-            expect(page.locator('.sdk-bubble-menu:popover-open')).to_contain_text('分支')
+            expect(page.locator('.sdk-bubble-menu').first).to_contain_text('分支')
             page.keyboard.press('Escape')
     if source in ('grok','claude'):
         send(page,'generalize-error-exit')

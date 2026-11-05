@@ -5,6 +5,7 @@ import asyncio
 import json
 from pathlib import Path
 import tempfile
+from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import sync_playwright, expect
 from codex_sdk_browser import build, server, THREAD
 from codex_sdk_fixtures import FakeAppServer
@@ -53,6 +54,7 @@ def main():
                     bubble.get_by_text('收起', exact=True).scroll_into_view_if_needed()
                     page.screenshot(path=str(args.screenshots/f'{theme}-{width}-expanded.png'))
                     bubble.get_by_text('收起', exact=True).click()
+                start_sdk(page)
                 page.locator('#sdk-input').fill('stream a long reply')
                 page.locator('#sdk-send').click()
                 expect(page.locator('.sdk-live')).to_contain_text('stream a long reply')

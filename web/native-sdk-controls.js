@@ -460,7 +460,7 @@ const NativeSdkControls = {
     return null;
   },
   decorate(view,node,item) {
-    if(item?.role!=='user' || node.querySelector('.sdk-bubble-toggle'))return;
+    if(item?.role!=='user' || node.querySelector('.sdk-bubble-menu'))return;
     const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:');
     if(!identity)return;
     if(view.uid.startsWith('kiro:')){

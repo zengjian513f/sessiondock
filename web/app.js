@@ -9740,6 +9740,15 @@ function renderFormulae(root) {
 }
 
 function msgNode(m) {
+  const node = messageBodyNode(m);
+  if (!node.classList.contains('msg') || node.hidden) return node;
+  const updateHeader = ConversationUI.messageHeader(node, m);
+  const updateBody = node._updateMessage;
+  if (updateBody) node._updateMessage = next => { updateHeader(next); updateBody(next); };
+  return node;
+}
+
+function messageBodyNode(m) {
   // A complete native shell envelope is a user action, not an assistant tool
   // call. Keep its turn boundary while reusing the command/result presentation.
   if (m.role === 'user' && String(S.sel || '').startsWith('codex:') && !m.media?.length) {

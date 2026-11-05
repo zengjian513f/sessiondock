@@ -3,6 +3,35 @@
 // Presentation shared by SDK and CLI-backed conversation views. Callers own
 // transport, draft identity and delivery evidence; these helpers never send.
 const ConversationUI = {
+  messageHeader(node, message) {
+    const header = el('div', 'message-header');
+    const time = el('time', 'message-time');
+    const actions = el('div', 'message-actions');
+    actions.setAttribute('role', 'group');
+    actions.setAttribute('aria-label', '消息操作');
+    const copy = el('button', 'message-action', '复制');
+    copy.type = 'button'; copy.title = '复制原文（保留链接地址）';
+    copy.setAttribute('aria-label', '复制消息原文');
+    copy.onclick = async () => {
+      copy.disabled = true;
+      try { await copyFileText(String(message.text || '')); copy.textContent = '已复制'; }
+      catch (error) { copy.textContent = '复制失败'; copy.title = error.message; }
+      finally { copy.disabled = false; }
+    };
+    actions.append(copy); header.append(time, actions); node.prepend(header);
+    const update = next => {
+      message = next;
+      const date = new Date(message.ts || message.timestamp || '');
+      const valid = Number.isFinite(date.getTime());
+      const value = valid ? date.toLocaleString('sv-SE', {hour12: false}) : '时间未提供';
+      if (time.textContent !== value) time.textContent = value;
+      if (valid) { time.dateTime = date.toISOString(); time.title = `本地时间 · ${message.ts || message.timestamp}`; }
+      else { time.removeAttribute('datetime'); time.title = '原始消息未提供有效时间'; }
+    };
+    update(message);
+    return update;
+  },
+
   resizeInput(input, {minHeight = 0, maxHeight = 240} = {}) {
     if (!input) return;
     input.style.height = 'auto';

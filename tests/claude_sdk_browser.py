@@ -308,7 +308,6 @@ def browser_check(fixture, base, screenshots):
         open_sdk(page, fixture, expect)
         first_user = next(row for row in source_rows if row.get('message', {}).get('content') == 'hello from browser')
         bubble = page.locator(f'.sdk-live [data-sdk-item="{first_user["uuid"]}"]')
-        bubble.locator('.sdk-bubble-toggle').click()
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
             bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
         partial = receipt(forked.value.json())
@@ -342,7 +341,6 @@ def browser_check(fixture, base, screenshots):
         open_sdk(page, fixture, expect, created['uid'])
         first = next(row for row in snapshot(page, created['uid'])['raw']['items'] if row['role'] == 'user')
         bubble = page.locator(f'.sdk-live [data-sdk-item="{first["id"]}"]')
-        bubble.locator('.sdk-bubble-toggle').click()
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
             bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
         empty = receipt(forked.value.json())
