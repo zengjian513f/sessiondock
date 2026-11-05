@@ -16,9 +16,10 @@
 
 ## Runtime and platform coverage
 
-- [ ] BUG-20261105-075749-d52ddc：外置图标与时间衔接修复 `af4e0619` 已以 web-only
-  部署、重启并健康于 Lyra、Cygnus、Pavo、Vela、Hub。Orion、Cetus 正式 SSH
-  尝试超时，待恢复连接后补发；三个资源代理按组件范围排除。
+- [ ] BUG-20261105-075749-d52ddc：后台接收时间及隐藏缺失占位修复 `100ef0ae`
+  已部署、重启并健康于 Lyra、Cygnus、Pavo、Vela，Hub 前端已同步且健康。
+  Orion、Cetus 正式 SSH 尝试超时，待恢复连接后补发后端、sdkhost 及前端；
+  三个资源代理按组件范围排除，现有宿主进程保持运行。
 
 
 - [ ] BUG-20261104-102740-283f30：SDK 查看入口修复 `f2c178bc` 已以 web-only
