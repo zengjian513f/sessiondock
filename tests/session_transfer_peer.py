@@ -111,6 +111,16 @@ def serve(config,root):
                     with sqlite3.connect(owned(request['path'])) as db:
                         result['previous']=db.execute('SELECT rollout_path FROM threads WHERE id=?',(request['sid'],)).fetchone()[0]
                         db.execute('UPDATE threads SET rollout_path=? WHERE id=?',(request['rollout'],request['sid']))
+                elif op=='receipt_fixture_sql':
+                    with sqlite3.connect(owned(request['path'])) as db:
+                        if request.get('script'):db.executescript(request['script'])
+                        if request.get('query'):result['rows']=db.execute(request['query'],request.get('params',[])).fetchall()
+                        if request.get('legacy'):
+                            operation=request['legacy']
+                            parts=db.execute('SELECT data FROM _sessiondock_clone_journal_chunks WHERE operation_id=? ORDER BY chunk',(operation,)).fetchall()
+                            receipt=json.loads(b''.join(row[0] for row in parts))
+                            db.execute('UPDATE _sessiondock_clone_journal SET receipt=? WHERE operation_id=?',(json.dumps(receipt),operation))
+                            db.execute('DELETE FROM _sessiondock_clone_journal_chunks WHERE operation_id=?',(operation,))
                 elif op=='receipt':
                     with sqlite3.connect(owned(request['path'])) as db:
                         receipt=db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -771,6 +772,139 @@ struct Receipt {
     #[serde(default)]
     replaced: Option<Database>,
 }
+// A native database can be valid while its combined rollback receipt exceeds
+// SQLite's single-value limit. Stream JSON into bounded rows in the same tx.
+const RECEIPT_CHUNK_BYTES: usize = 64 * 1024;
+#[derive(Serialize, Deserialize)]
+struct ChunkedReceipt {
+    chunked_receipt_version: u32,
+    chunks: u64,
+}
+struct ReceiptWriter<'a> {
+    db: &'a Connection,
+    operation: &'a str,
+    bytes: Vec<u8>,
+    chunks: u64,
+}
+impl ReceiptWriter<'_> {
+    fn store(&mut self) -> io::Result<()> {
+        if self.bytes.is_empty() {
+            return Ok(());
+        }
+        self.db.execute(
+            "INSERT INTO _sessiondock_clone_journal_chunks(operation_id,chunk,data) VALUES (?1,?2,?3)",
+            rusqlite::params![self.operation, self.chunks, &self.bytes],
+        ).map_err(io::Error::other)?;
+        self.bytes.clear();
+        self.chunks += 1;
+        Ok(())
+    }
+}
+impl Write for ReceiptWriter<'_> {
+    fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
+        let count = bytes.len();
+        while !bytes.is_empty() {
+            let take = bytes.len().min(RECEIPT_CHUNK_BYTES - self.bytes.len());
+            self.bytes.extend_from_slice(&bytes[..take]);
+            bytes = &bytes[take..];
+            if self.bytes.len() == RECEIPT_CHUNK_BYTES {
+                self.store()?;
+            }
+        }
+        Ok(count)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.store()
+    }
+}
+struct ReceiptReader<'a> {
+    db: &'a Connection,
+    operation: &'a str,
+    next: u64,
+    chunks: u64,
+    bytes: io::Cursor<Vec<u8>>,
+}
+impl Read for ReceiptReader<'_> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        if self.bytes.position() == self.bytes.get_ref().len() as u64 {
+            if self.next == self.chunks {
+                return Ok(0);
+            }
+            let bytes: Vec<u8> = self.db.query_row(
+                "SELECT data FROM _sessiondock_clone_journal_chunks WHERE operation_id=?1 AND chunk=?2",
+                rusqlite::params![self.operation, self.next], |r| r.get(0),
+            ).map_err(io::Error::other)?;
+            if bytes.is_empty() {
+                return Err(io::Error::other("empty native receipt chunk"));
+            }
+            self.bytes = io::Cursor::new(bytes);
+            self.next += 1;
+        }
+        self.bytes.read(output)
+    }
+}
+fn save_receipt(
+    db: &Connection,
+    operation: &str,
+    planned: &Database,
+    inserted: &Database,
+    replaced: &Database,
+) -> Result<(), TransferError> {
+    #[derive(Serialize)]
+    struct BorrowedReceipt<'a> {
+        planned: &'a Database,
+        inserted: &'a Database,
+        replaced: &'a Database,
+    }
+    db.execute_batch("CREATE TABLE IF NOT EXISTS _sessiondock_clone_journal_chunks (operation_id TEXT NOT NULL, chunk INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(operation_id,chunk)) WITHOUT ROWID")?;
+    let mut writer = ReceiptWriter {
+        db,
+        operation,
+        bytes: Vec::with_capacity(RECEIPT_CHUNK_BYTES),
+        chunks: 0,
+    };
+    serde_json::to_writer(
+        &mut writer,
+        &BorrowedReceipt {
+            planned,
+            inserted,
+            replaced,
+        },
+    )?;
+    writer.flush()?;
+    let header = serde_json::to_string(&ChunkedReceipt {
+        chunked_receipt_version: 1,
+        chunks: writer.chunks,
+    })?;
+    db.execute(
+        "INSERT INTO _sessiondock_clone_journal VALUES (?,?)",
+        [operation, &header],
+    )?;
+    Ok(())
+}
+fn delete_receipt(db: &Connection, operation: &str) -> Result<(), TransferError> {
+    for table in [
+        "_sessiondock_clone_journal_chunks",
+        "_sessiondock_clone_journal",
+    ] {
+        let exists: i64 = db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name=?1 AND type='table'",
+            [table],
+            |r| r.get(0),
+        )?;
+        if exists != 0 {
+            db.execute(
+                &format!("DELETE FROM {table} WHERE operation_id=?"),
+                [operation],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
 pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), TransferError> {
@@ -874,17 +1008,7 @@ pub fn insert_with_prefix(
                 inserted.tables[table_index].rows.push(row.clone());
             }
         }
-        tx.execute(
-            "INSERT INTO _sessiondock_clone_journal VALUES (?,?)",
-            [
-                operation,
-                &serde_json::to_string(&Receipt {
-                    planned: database.clone(),
-                    inserted,
-                    replaced: Some(replaced),
-                })?,
-            ],
-        )?;
+        save_receipt(&tx, operation, database, &inserted, &replaced)?;
         tx.commit()?;
     }
     Ok(())
@@ -909,7 +1033,26 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
         let (inserted, replaced) = match receipt {
             Err(rusqlite::Error::QueryReturnedNoRows) => continue,
             Ok(value) => {
-                if let Ok(receipt) = serde_json::from_str::<Receipt>(&value) {
+                let parsed = if let Ok(header) = serde_json::from_str::<ChunkedReceipt>(&value) {
+                    if header.chunked_receipt_version != 1 || header.chunks == 0 {
+                        return Err(TransferError::new(
+                            "move_recovery_required",
+                            "数据库复制凭据分块版本无效",
+                        ));
+                    }
+                    let reader = ReceiptReader {
+                        db: &tx,
+                        operation,
+                        next: 0,
+                        chunks: header.chunks,
+                        bytes: io::Cursor::new(Vec::new()),
+                    };
+                    // A missing/corrupt chunk is an error, never a legacy fallback.
+                    Some(serde_json::from_reader::<_, Receipt>(reader)?)
+                } else {
+                    serde_json::from_str::<Receipt>(&value).ok()
+                };
+                if let Some(receipt) = parsed {
                     if receipt.planned != *database {
                         return Err(TransferError::new(
                             "move_recovery_required",
@@ -997,10 +1140,7 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
                 }
             }
         }
-        tx.execute(
-            "DELETE FROM _sessiondock_clone_journal WHERE operation_id=?",
-            [operation],
-        )?;
+        delete_receipt(&tx, operation)?;
         tx.commit()?;
     }
     Ok(())
@@ -1131,14 +1271,10 @@ pub(super) fn forget_receipts(paths: &[PathBuf], operation: &str) -> Result<(), 
         if !path.is_file() {
             continue;
         }
-        let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        let exists: i64 = db.query_row("SELECT count(*) FROM sqlite_master WHERE name='_sessiondock_clone_journal' AND type='table'", [], |r| r.get(0))?;
-        if exists != 0 {
-            db.execute(
-                "DELETE FROM _sessiondock_clone_journal WHERE operation_id=?",
-                [operation],
-            )?;
-        }
+        let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        delete_receipt(&tx, operation)?;
+        tx.commit()?;
     }
     Ok(())
 }
