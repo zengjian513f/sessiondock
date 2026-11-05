@@ -18,7 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn failure(error: TransferError) -> Response {
@@ -43,6 +43,40 @@ fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
         )))
     })
 }
+/// Migration owns physical members, including agents hidden inside a sidebar
+/// row. Never use the top-level list as the set of possible native writers.
+fn member_rows(
+    group: &crate::transfer::group::Group,
+    snapshot: &SessionSnapshot,
+    uid_for: impl Fn(&crate::transfer::group::Member) -> Result<String, TransferError>,
+) -> Result<Vec<Value>, TransferError> {
+    let rows = snapshot.list["sessions"].as_array();
+    let index = snapshot.index();
+    let entries: std::collections::HashMap<_, _> = index
+        .candidates()
+        .map(|entry| (entry.uid.as_str(), entry))
+        .collect();
+    group
+        .members
+        .iter()
+        .map(|member| {
+            let uid = uid_for(member)?;
+            if let Some(row) = rows.and_then(|rows| rows.iter().find(|row| row["uid"] == uid)) {
+                return Ok(row.clone());
+            }
+            let mut row = json!({"uid":uid,"sid":member.sid,"source":member.source,
+            "path":member.path,"cwd":member.cwd,"title":member.title});
+            if let Some(entry) = entries.get(uid.as_str()) {
+                row["sid"] = json!(entry.summary.sid);
+                row["path"] = json!(entry.path);
+                row["created"] = json!(entry.summary.created);
+                row["forked_from_id"] = json!(entry.summary.forked_from_id);
+            }
+            Ok(row)
+        })
+        .collect()
+}
+
 async fn stopped(
     state: &AppState,
     op: &Operation,
@@ -60,32 +94,18 @@ async fn stopped(
             .map_err(|error| Box::new(failure(error)))?,
     };
     let indexed = started.elapsed();
-    let mut uids = std::collections::HashMap::new();
-    for member in &op.group().members {
-        let uid = if op.incoming_digest.is_some() {
+    let catalog = snapshot.native_catalog();
+    let rows = member_rows(op.group(), &snapshot, |member| {
+        if op.incoming_digest.is_some() {
             match (&state.transfer, &op.staged) {
-                (Some(service), Some(staged)) => service
-                    .member_target_uid(op, member, staged)
-                    .map_err(|error| Box::new(failure(error)))?,
-                _ => member.uid.clone(),
+                (Some(service), Some(staged)) => service.member_target_uid(op, member, staged),
+                _ => Ok(member.uid.clone()),
             }
         } else {
-            member.uid.clone()
-        };
-        uids.insert(uid, member.title.clone());
-    }
-    let catalog = snapshot.native_catalog();
-    let rows: Vec<_> = snapshot.list["sessions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|row| {
-            row["uid"]
-                .as_str()
-                .is_some_and(|uid| uids.contains_key(uid))
-        })
-        .cloned()
-        .collect();
+            Ok(member.uid.clone())
+        }
+    })
+    .map_err(|error| Box::new(failure(error)))?;
     let live = super::trash::observe_liveness(state, &rows, &catalog)
         .await
         .map_err(|error| Box::new(error.into_response()))?;
@@ -94,12 +114,11 @@ async fn stopped(
         serde_json::json!({"inventory_ms": indexed.as_millis(),
             "runtime_ms": started.elapsed().saturating_sub(indexed).as_millis()}),
     );
-    for (uid, title) in uids {
-        if let RunState::Running(evidence) = live.state(&uid) {
-            let row = rows.iter().find(|row| row["uid"] == uid);
-            let message = if evidence == "sdk_thread"
-                && row.is_some_and(|row| row["source"] == "codex")
-            {
+    for row in &rows {
+        let uid = row["uid"].as_str().unwrap_or_default();
+        let title = row["title"].as_str().unwrap_or_default();
+        if let RunState::Running(evidence) = live.state(uid) {
+            let message = if evidence == "sdk_thread" && row["source"] == "codex" {
                 format!(
                     "Codex 原生线程尚未卸载，仍可能写入历史：{title}。停止 SDK 模式只会中断当前工作并取消本连接的订阅，不代表原生线程已卸载。请等待卸载，或关闭仍连接此会话的其他客户端后重试。"
                 )
@@ -108,7 +127,7 @@ async fn stopped(
             };
             crate::log::info(
                 "transfer.blocked_by_writer",
-                json!({"uid": uid, "sid": row.and_then(|row| row["sid"].as_str()),
+                json!({"uid": uid, "sid": row["sid"].as_str(),
                     "evidence": evidence, "operation_id": op.id}),
             );
             return Err(Box::new(failure(TransferError::new(
@@ -136,17 +155,62 @@ pub async fn tree(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         Ok(service) => service,
         Err(error) => return *error,
     };
-    match tokio::task::spawn_blocking(move || {
+    let (mut tree, group, snapshot) = match tokio::task::spawn_blocking(move || {
         let snapshot = service.inventory_snapshot()?;
         let group = service.group_in(&body.uid, &snapshot)?;
-        Ok::<_, TransferError>(service.selection_tree(&group, &snapshot))
+        Ok::<_, TransferError>((service.selection_tree(&group, &snapshot), group, snapshot))
     })
     .await
     {
-        Ok(Ok(tree)) => Json(tree).into_response(),
-        Ok(Err(error)) => failure(error),
-        Err(error) => failure(TransferError::new("move_io", error.to_string())),
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => return failure(error),
+        Err(error) => return failure(TransferError::new("move_io", error.to_string())),
+    };
+    let rows = match member_rows(&group, &snapshot, |member| Ok(member.uid.clone())) {
+        Ok(rows) => rows,
+        Err(error) => return failure(error),
+    };
+    let live = match super::trash::observe_liveness(&state, &rows, &snapshot.native_catalog()).await
+    {
+        Ok(live) => live,
+        Err(error) => return error.into_response(),
+    };
+    if let Some(members) = tree["sessions"].as_array_mut() {
+        for member in members
+            .iter_mut()
+            .filter(|member| member["selectable"] == true)
+        {
+            if let RunState::Running(evidence) =
+                live.state(member["uid"].as_str().unwrap_or_default())
+            {
+                member["selectable"] = json!(false);
+                member["disabled_reason"] =
+                    json!(if evidence == "sdk_thread" && member["source"] == "codex" {
+                        "Codex 原生线程尚未卸载，请等待卸载后重试"
+                    } else {
+                        "会话正在运行，请先停止"
+                    });
+            }
+        }
+        let unavailable: std::collections::HashSet<_> = members
+            .iter()
+            .filter(|member| member["selectable"] == false)
+            .filter_map(|member| member["uid"].as_str().map(str::to_owned))
+            .collect();
+        for member in members
+            .iter_mut()
+            .filter(|member| member["selectable"] == true)
+        {
+            if member["required_uids"].as_array().is_some_and(|uids| {
+                uids.iter()
+                    .any(|uid| uid.as_str().is_some_and(|uid| unavailable.contains(uid)))
+            }) {
+                member["selectable"] = json!(false);
+                member["disabled_reason"] = json!("原生历史依赖当前不可迁移");
+            }
+        }
     }
+    Json(tree).into_response()
 }
 #[derive(Deserialize)]
 pub struct ExecuteRequest {

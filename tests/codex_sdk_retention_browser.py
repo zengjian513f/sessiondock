@@ -11,19 +11,21 @@ import tempfile
 from codex_sdk_browser import THREAD as SDK_THREAD, build, server, open_sdk
 
 THREAD = "01a10000-0000-7000-8000-000000000001"
+CHILD = "01a10000-0000-7000-8000-000000000002"
 from codex_sdk_fixtures import FakeAppServer
 from grok_sdk_lifecycle_browser import advance
-from history_fixtures import BINARY
+from history_fixtures import BINARY, codex_row, codex_message
 
 
 class RetainedPeer(FakeAppServer):
     loaded = True
+    child_loaded = False
 
     async def _handle(self, writer, message):
         if message.get('method') == 'thread/loaded/list':
             # Discovery must not adopt unrelated daemon sessions.
             await self.send(writer, {'id': message['id'], 'result': {
-                'data': ([self.thread_id] if self.loaded else []) + ['external-thread']}})
+                'data': ([self.thread_id] if self.loaded else []) + ([CHILD] if self.child_loaded else []) + ['external-thread']}})
         else:
             await super()._handle(writer, message)
 
@@ -50,6 +52,13 @@ def main():
         native=old.with_name('rollout-2026-09-11T10-00-00-'+THREAD+'.jsonl')
         native.write_text(old.read_text().replace(SDK_THREAD,THREAD).replace('/synthetic/sdk',str(root)))
         old.unlink();corpus.paths['sdk']=native
+        corpus.put('child', 'codex', [codex_row('session_meta', {
+            'id': CHILD, 'cwd': str(root), 'timestamp': '2026-09-11T11:00:00Z',
+            'source': {'subagent': {'thread_spawn': {'parent_thread_id': THREAD}}}}),
+            codex_message('user', '子代理：核对迁移中的原生历史与依赖')], [])
+        child = corpus.paths['child']
+        child_native = child.with_name('rollout-2026-09-11T11-00-00-'+CHILD+'.jsonl')
+        child.rename(child_native); corpus.paths['child'] = child_native
         (root / 'state').mkdir()
         (root / 'trash').mkdir()
         library = root / 'clock.so'
@@ -105,16 +114,16 @@ def main():
                 # native last-subscriber grace. Display stop is not quiescence.
                 page.locator('#a-clone-group').click()
                 dialog=page.locator('#clone-group-dialog')
-                expect(dialog.locator('.transfer-tree input[data-uid]')).to_be_attached()
+                expect(dialog.locator('.transfer-tree input[data-uid]')).to_have_count(2)
                 # A standalone node cannot select a remote Hub target. Exercise
                 # the same selected-plan HTTP boundary from the Chromium page.
                 def migration_plan():
-                    return page.evaluate("""async uid => {
+                    return page.evaluate("""async ([uid, child]) => {
                       const response=await fetch('/api/session/clone/plan', {method:'POST',
                         headers:{'Content-Type':'application/json'},body:JSON.stringify({uid,
-                          selected_uids:[uid],mode:'move',new_ids:false,target_node:'b'.repeat(32)})});
+                          selected_uids:[uid,child],mode:'move',new_ids:false,target_node:'b'.repeat(32)})});
                       return {status:response.status,body:await response.json()};
-                    }""",corpus.uid('sdk'))
+                    }""",[corpus.uid('sdk'),corpus.uid('child')])
                 refused=migration_plan()
                 assert refused['status']==409 and refused['body']['code']=='move_session_running',refused
                 assert 'Codex 原生线程尚未卸载' in refused['body']['error'],refused
@@ -127,7 +136,32 @@ def main():
                 cancelled=page.request.post(base+'/api/session/clone/cancel',data={
                     'uid':corpus.uid('sdk'),'operation_id':accepted['body']['operation_id']})
                 assert cancelled.ok,cancelled.text()
+                fake.child_loaded=True
+                page.locator('#a-clone-group').click()
+                expect(dialog.locator('.transfer-tree input[data-uid]')).to_have_count(2)
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots/'child-writer-desktop.png'), full_page=True)
+                child_box=dialog.locator(f'input[data-uid="{corpus.uid("child")}"]')
+                expect(child_box).to_be_disabled()
+                expect(dialog.locator('.transfer-tree')).to_contain_text('Codex 原生线程尚未卸载')
+                expect(dialog.locator('.transfer-tree input[data-uid]:checked')).to_have_count(0)
+                refused=migration_plan()
+                assert refused['status']==409 and refused['body']['code']=='move_session_running',refused
+                assert '子代理' in refused['body']['error'],refused
+                if args.screenshots:
+                    page.set_viewport_size({'width':390,'height':844})
+                    page.evaluate("localStorage.setItem('sessiondock.theme','dark');document.documentElement.dataset.theme='dark'")
+                    page.screenshot(path=str(args.screenshots/'child-writer-mobile.png'), full_page=True)
+                    page.set_viewport_size({'width':1280,'height':900})
+                dialog.locator('.clone-cancel').click()
+                fake.child_loaded=False
+                accepted=migration_plan()
+                assert accepted['status']==200,accepted
+                cancelled=page.request.post(base+'/api/session/clone/cancel',data={
+                    'uid':corpus.uid('sdk'),'operation_id':accepted['body']['operation_id']})
+                assert cancelled.ok,cancelled.text()
                 fake.loaded=True
+                print('PASS Chromium child writer blocks native unit in tree and selected-plan boundary',flush=True)
                 print('PASS Chromium selected-plan boundary blocks stopped-but-loaded writer until native unload',flush=True)
                 page.close()
             n = len(fake.methods('thread/resume'))
