@@ -951,7 +951,11 @@ impl ResourceSampler {
                 .any(|s| s.metrics[name]["status"] != "unavailable");
             metric_availability.insert(name.into(), metric(Value::Null,
                 if !readable {"unavailable"} else if elapsed.is_none() {"warming_up"} else {"partial"},
-                "Linux /proc/PID/io storage-layer counters; not VFS/NFS logical bytes; delayed writeback attribution may differ"));
+                if name == "proc_storage_write_bytes_per_second" {
+                    "Observed /proc/PID/task/TID/io deltas by thread lifetime; excludes reaped-child history; missing/new threads only establish baselines; delayed writeback may differ"
+                } else {
+                    "Linux /proc/PID/io storage-layer reads; not VFS/NFS logical bytes"
+                }));
         }
         for (name, kind, reason, operations) in IO_METRICS {
             metric_availability.insert(
