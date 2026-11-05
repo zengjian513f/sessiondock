@@ -22,6 +22,11 @@ Chromium 通过 `codex_sdk_message_actions_browser`、`codex_sdk_actions_browser
 现有居中弹窗，文字与按钮完整可读；截图在测试机 `/tmp/sessiondock-confirm-*`。
 文档链接、AGENTS、品牌及差异空白检查通过；没有调用真实模型或操作生产测试数据。
 
+修复 `665f0347` 已推送；web-only 正式尝试全部七个前端目标，Lyra、Cygnus、
+Pavo、Vela、Hub 已重启且健康，前端版本 `20261105T122344233634Z`。
+Orion、Cetus SSH 超时待补发，三个资源代理按组件范围排除；后端和宿主二进制
+未变，现有宿主及会话保留，并保留部署回滚备份。
+
 ## BUG-20261105-075749-d52ddc 后续：移除旧分块时间条
 
 逐条时间上线后，旧的 5 分钟空档／20 分钟周期分隔条仍由公共渲染器插入，
