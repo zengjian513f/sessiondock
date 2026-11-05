@@ -20,6 +20,11 @@
 独立居中的时间条，气泡外逐条时间和图标可读、对齐。视觉证据在测试机
 `/tmp/sessiondock-no-time-dividers` 与 `/tmp/sessiondock-no-time-dividers-turns`。
 
+修复 `29e72863` 已推送，以 web-only 正式尝试全部七个前端目标；
+Lyra、Cygnus、Pavo、Vela、Hub 已重启且健康，前端版本
+`20261105T121024648988Z`，后端／sdkhost／ptyhost 二进制未变，保留会话和回滚备份。
+Orion、Cetus SSH 超时，待补发已更新 TODO；三个资源代理按组件范围排除。
+
 ## BUG-20261105-075749-d52ddc 再续：新消息后台接收时间
 
 上轮只解决已有历史时间被回放覆盖；没有原生时间的全新 SDK 消息仍一直缺时间。
