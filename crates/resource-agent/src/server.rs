@@ -362,6 +362,13 @@ impl Response {
 // Report readers use the last completed sample without joining attribution or
 // persistence work. Publishing only swaps an Arc under this short-held lock.
 type PublishedReport = Arc<Mutex<Arc<Report>>>;
+type PublishedUsage = Arc<Mutex<Arc<Value>>>;
+
+fn usage_response(published: &PublishedUsage) -> Response {
+    let snapshot = published.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Clone the response outside the publication lock; attribution may be busy.
+    Response::Value((*snapshot).clone())
+}
 
 struct State {
     published_report: PublishedReport,
@@ -370,7 +377,7 @@ struct State {
     report: Arc<Report>,
     resources: Arc<Resources>,
     status: CollectorStatus,
-    usage: Value,
+    usage: PublishedUsage,
     forks: u64,
     execs: u64,
     exits: u64,
@@ -409,7 +416,7 @@ impl State {
     }
     fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
-            Request::Usage => Ok(Response::Value(self.usage.clone())),
+            Request::Usage => Ok(usage_response(&self.usage)),
             Request::Health => Ok(Response::Value(
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits,"runtime_log":crate::runtime_log::snapshot()}),
             )),
@@ -1048,6 +1055,7 @@ fn serve(
     mut stream: UnixStream,
     state: Arc<Mutex<State>>,
     published: PublishedReport,
+    published_usage: PublishedUsage,
     uid: u32,
 ) -> io::Result<()> {
     use std::os::fd::AsRawFd;
@@ -1095,6 +1103,7 @@ fn serve(
         Err(_) => "invalid",
     };
     let response = match decoded {
+        Ok(Request::Usage) => Ok(usage_response(&published_usage)),
         Ok(Request::Report) => Ok(Response::Report(
             published.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         )),
@@ -1220,7 +1229,7 @@ pub fn run() -> io::Result<()> {
         &config.node_id,
         now(),
     )?;
-    let initial_usage = usage.view();
+    let published_usage = Arc::new(Mutex::new(Arc::new(usage.view())));
     let state = Arc::new(Mutex::new(State {
         published_report: published_report.clone(),
         engine,
@@ -1228,7 +1237,7 @@ pub fn run() -> io::Result<()> {
         report,
         resources: Arc::new(data),
         status,
-        usage: initial_usage,
+        usage: published_usage.clone(),
         forks: 0,
         execs: 0,
         exits: 0,
@@ -1387,6 +1396,7 @@ pub fn run() -> io::Result<()> {
     } else {
         None
     };
+    let worker_usage = published_usage.clone();
     let worker_state = state.clone();
     let worker_config = config.clone();
     let worker_store = store.clone();
@@ -1496,18 +1506,22 @@ pub fn run() -> io::Result<()> {
                     );
                 }
                 if usage_saved_at.elapsed() >= Duration::from_secs(30) {
-                    if let Err(error) = usage.save() {
+                    let persistence_error = usage.save().err();
+                    let mut view = usage.view();
+                    if let Some(error) = persistence_error {
                         crate::runtime_log::emit(
                             "error",
                             "resource.usage_save_failed",
                             json!({"error_kind":error.kind().to_string()}),
                         );
-                        let mut view = usage.view();
                         view["persistence_error"] = json!(error.to_string());
-                        worker_state.lock().unwrap_or_else(|e| e.into_inner()).usage = view;
-                    } else {
-                        worker_state.lock().unwrap_or_else(|e| e.into_inner()).usage = usage.view();
                     }
+                    let next = Arc::new(view);
+                    let previous = {
+                        let mut published = worker_usage.lock().unwrap_or_else(|e| e.into_inner());
+                        std::mem::replace(&mut *published, next)
+                    };
+                    drop(previous);
                     usage_saved_at = Instant::now();
                 }
                 saved_at = Instant::now();
@@ -1526,10 +1540,11 @@ pub fn run() -> io::Result<()> {
             Ok((stream, _)) => {
                 let state = state.clone();
                 let published = published_report.clone();
+                let published_usage = published_usage.clone();
                 let uid = config.uid;
                 std::thread::spawn(move || {
                     let started = Instant::now();
-                    let result = serve(stream, state, published, uid);
+                    let result = serve(stream, state, published, published_usage, uid);
                     if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
                         crate::runtime_log::emit(
                             "warn",
