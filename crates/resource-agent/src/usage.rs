@@ -1,13 +1,13 @@
 //! Durable, sampled accounting. No browser request advances counters.
 use process_links::{Process, Report, Session, agent::Resources};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
-    io::{self, Write},
+    fs, io,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 fn identity(s: &Session) -> String {
@@ -41,6 +41,7 @@ struct Saved {
     #[serde(default)]
     gaps: Vec<[f64; 2]>,
     device_models: BTreeMap<String, String>,
+    #[serde(default)]
     rows: BTreeMap<String, Row>,
 }
 struct Prior {
@@ -49,7 +50,9 @@ struct Prior {
     write_bytes: Option<u64>,
 }
 pub struct Ledger {
-    path: PathBuf,
+    db: Connection,
+    dirty: BTreeSet<String>,
+    persisted_gaps: usize,
     saved: Saved,
     boot: String,
     at: f64,
@@ -60,29 +63,82 @@ pub struct Ledger {
 }
 impl Ledger {
     pub fn open(path: &Path, node: &str, at: f64) -> io::Result<Self> {
-        let saved = match fs::File::open(path) {
-            Ok(file) => {
-                file.set_permissions(fs::Permissions::from_mode(0o600))?;
-                serde_json::from_reader::<_, Saved>(io::BufReader::new(file))
-                    .map_err(io::Error::other)?
+        let database = path.with_extension("sqlite3");
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(&database)?;
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o600))?;
+        let db = Connection::open(database).map_err(io::Error::other)?;
+        db.busy_timeout(std::time::Duration::from_secs(10))
+            .map_err(io::Error::other)?;
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+          CREATE TABLE IF NOT EXISTS usage_meta(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS usage_rows(key TEXT PRIMARY KEY,data TEXT NOT NULL) WITHOUT ROWID;
+          CREATE TABLE IF NOT EXISTS usage_gaps(id INTEGER PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL);").map_err(io::Error::other)?;
+        let meta: Option<String> = db
+            .query_row("SELECT data FROM usage_meta WHERE id=1", [], |r| r.get(0))
+            .optional()
+            .map_err(io::Error::other)?;
+        let imported = meta.is_none();
+        let saved = if let Some(meta) = meta {
+            let mut saved: Saved = serde_json::from_str(&meta).map_err(io::Error::other)?;
+            let mut rows = db
+                .prepare("SELECT key,data FROM usage_rows")
+                .map_err(io::Error::other)?;
+            for row in rows
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(io::Error::other)?
+            {
+                let (key, data) = row.map_err(io::Error::other)?;
+                saved
+                    .rows
+                    .insert(key, serde_json::from_str(&data).map_err(io::Error::other)?);
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Saved {
-                version: 1,
-                node_id: node.into(),
-                started_at: at,
-                updated_at: at,
-                gap_seconds: 0.,
-                gaps: Vec::new(),
-                device_models: BTreeMap::new(),
-                rows: BTreeMap::new(),
-            },
-            Err(e) => return Err(e),
+            let mut gaps = db
+                .prepare("SELECT start,end FROM usage_gaps ORDER BY id")
+                .map_err(io::Error::other)?;
+            saved.gaps = gaps
+                .query_map([], |r| Ok([r.get(0)?, r.get(1)?]))
+                .map_err(io::Error::other)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(io::Error::other)?;
+            saved
+        } else {
+            match fs::File::open(path) {
+                Ok(file) => {
+                    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                    serde_json::from_reader::<_, Saved>(io::BufReader::new(file))
+                        .map_err(io::Error::other)?
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Saved {
+                    version: 1,
+                    node_id: node.into(),
+                    started_at: at,
+                    updated_at: at,
+                    gap_seconds: 0.,
+                    gaps: Vec::new(),
+                    device_models: BTreeMap::new(),
+                    rows: BTreeMap::new(),
+                },
+                Err(e) => return Err(e),
+            }
         };
         if saved.node_id != node || saved.version != 1 {
             return Err(io::Error::other("usage ledger identity/version mismatch"));
         }
-        Ok(Self {
-            path: path.into(),
+        let dirty = if imported {
+            saved.rows.keys().cloned().collect()
+        } else {
+            BTreeSet::new()
+        };
+        let persisted_gaps = if imported { 0 } else { saved.gaps.len() };
+        let mut ledger = Self {
+            db,
+            dirty,
+            persisted_gaps,
             saved,
             boot: String::new(),
             at: 0.,
@@ -90,7 +146,11 @@ impl Ledger {
             utilization: BTreeMap::new(),
             previous: BTreeMap::new(),
             devices: BTreeMap::new(),
-        })
+        };
+        if imported {
+            ledger.save()?;
+        }
+        Ok(ledger)
     }
     pub fn observe(&mut self, resources: &Resources, report: &Report) {
         let at = resources.sampled_at;
@@ -225,25 +285,23 @@ impl Ledger {
                     let day = ((start + 28800.) / 86400.).floor() as i64;
                     let end = at.min((day + 1) as f64 * 86400. - 28800.);
                     let fraction = (end - start) / dt;
-                    let row = self
-                        .saved
-                        .rows
-                        .entry(format!("{day}:{key}"))
-                        .or_insert(Row {
-                            session: session.clone(),
-                            scope: scope.clone(),
-                            day,
-                            cpu_seconds: 0.,
-                            storage_write_bytes: 0.,
-                            storage_write_observed_seconds: 0.,
-                            gpu_seconds: BTreeMap::new(),
-                            compute_seconds: BTreeMap::new(),
-                            compute_observed_seconds: 0.,
-                            gpu_observed_seconds: 0.,
-                            observed_seconds: 0.,
-                            first_at: start,
-                            last_at: end,
-                        });
+                    let row_key = format!("{day}:{key}");
+                    self.dirty.insert(row_key.clone());
+                    let row = self.saved.rows.entry(row_key).or_insert(Row {
+                        session: session.clone(),
+                        scope: scope.clone(),
+                        day,
+                        cpu_seconds: 0.,
+                        storage_write_bytes: 0.,
+                        storage_write_observed_seconds: 0.,
+                        gpu_seconds: BTreeMap::new(),
+                        compute_seconds: BTreeMap::new(),
+                        compute_observed_seconds: 0.,
+                        gpu_observed_seconds: 0.,
+                        observed_seconds: 0.,
+                        first_at: start,
+                        last_at: end,
+                    });
                     if session.title.is_some() {
                         row.session.title = session.title.clone();
                     }
@@ -294,23 +352,39 @@ impl Ledger {
     pub fn view(&self) -> Value {
         json!({"version":1,"node_id":self.saved.node_id,"started_at":self.saved.started_at,"updated_at":self.saved.updated_at,"gap_seconds":self.saved.gap_seconds,"gaps":self.saved.gaps,"rows":self.saved.rows.values().collect::<Vec<_>>(),"cpu_status":"partial","storage_write_status":"partial","gpu_status":"estimated","compute_status":"estimated","device_models":self.saved.device_models,"timezone":"Asia/Shanghai","reason":"CPU 为已观察进程累计执行时间差，短命进程可能漏计；GPU 为计算上下文驻留采样，非独占卡时；有效计算卡时按 pmon 进程 SM 利用率估算，缺失不补零；同卡并发利用率相加后封顶，可能重叠。存储写入按 /proc/PID/io write_bytes 差值累计，不扣取消写入，不代表实际落盘量或完整 NFS 写入量；短命进程及未观测区间可能漏计。每日桶按北京时间划分。"})
     }
-    pub fn save(&self) -> io::Result<()> {
-        let tmp = self.path.with_extension("tmp");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        // A leftover temporary file may predate private ledger permissions.
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        serde_json::to_writer(&mut file, &self.saved)?;
-        file.flush()?;
-        file.sync_all()?;
-        fs::rename(tmp, &self.path)?;
-        if let Some(parent) = self.path.parent() {
-            fs::File::open(parent)?.sync_all()?;
+    pub fn save(&mut self) -> io::Result<()> {
+        let tx = self.db.transaction().map_err(io::Error::other)?;
+        let meta = json!({"version":self.saved.version,"node_id":self.saved.node_id,
+            "started_at":self.saved.started_at,"updated_at":self.saved.updated_at,
+            "gap_seconds":self.saved.gap_seconds,"device_models":self.saved.device_models});
+        tx.execute(
+            "INSERT INTO usage_meta VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+            [meta.to_string()],
+        )
+        .map_err(io::Error::other)?;
+        {
+            let mut insert=tx.prepare_cached("INSERT INTO usage_rows VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET data=excluded.data").map_err(io::Error::other)?;
+            for key in &self.dirty {
+                if let Some(row) = self.saved.rows.get(key) {
+                    insert
+                        .execute(params![
+                            key,
+                            serde_json::to_string(row).map_err(io::Error::other)?
+                        ])
+                        .map_err(io::Error::other)?;
+                }
+            }
         }
+        for (id, gap) in self.saved.gaps.iter().enumerate().skip(self.persisted_gaps) {
+            tx.execute(
+                "INSERT INTO usage_gaps VALUES(?1,?2,?3)",
+                params![id, gap[0], gap[1]],
+            )
+            .map_err(io::Error::other)?;
+        }
+        tx.commit().map_err(io::Error::other)?;
+        self.dirty.clear();
+        self.persisted_gaps = self.saved.gaps.len();
         Ok(())
     }
 }

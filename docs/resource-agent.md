@@ -89,11 +89,15 @@ short-lived processes that exit between polls. Kernel tracing and hardware
 memory-bandwidth monitoring require a separately configured privileged service;
 the web application itself remains unprivileged.
 
-The cumulative usage ledger beside the state file (`resource-agent.usage.json`
-in this example) contains session identities, titles and resource measurements.
-The collector writes it and its temporary file with owner-only permissions
-(`0600`), independent of the process umask, and tightens existing ledger
-permissions when opening it. Keep the containing directory private as above.
+The cumulative usage ledger beside the state file uses owner-only (`0600`)
+SQLite storage (`resource-agent.usage.sqlite3` in this example). Every 30 seconds,
+a transaction updates only active session/day/scope rows, small metadata, and
+new observation gaps; historical rows remain untouched and are never pruned.
+The first start imports the former `.usage.json` ledger, preserving CPU/GPU and
+write history, then retains that JSON as a read-only migration backup. SQLite
+is authoritative afterwards. Rolling back to a JSON-only binary requires an
+explicit export of current SQLite data first; the backup is not current state.
+Keep the containing directory private as above.
 
 ## Install an optional system service
 

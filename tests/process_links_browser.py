@@ -241,7 +241,8 @@ def main():
                     # Upgrade an older ledger and reuse a permissive leftover temp file.
                     ledger.write_text(json.dumps({'version': 1, 'node_id': nodes[index].nid,
                         'started_at': 123., 'updated_at': time.time(), 'gap_seconds': 0.,
-                        'gaps': [], 'device_models': {'GPU-old': 'Synthetic retained model'}, 'rows': {}}))
+                        'gaps': [[100.,101.]], 'device_models': {'GPU-old': 'Synthetic retained model'},
+                        'rows': {'historical':{'session':{'node_id':nodes[index].nid,'source':'codex','sid':'historic-usage'},'scope':'direct','day':1,'cpu_seconds':12.,'gpu_seconds':{},'compute_seconds':{},'compute_observed_seconds':0.,'gpu_observed_seconds':0.,'observed_seconds':1.,'first_at':100.,'last_at':101.}}}))
                     ledger.chmod(0o644)
                     ledger.with_suffix('.tmp').touch(mode=0o644)
                     ledger.with_suffix('.tmp').chmod(0o644)
@@ -269,6 +270,10 @@ def main():
                     db.executescript("CREATE TABLE fixture_updates(n INTEGER); CREATE TRIGGER unchanged_history_update AFTER UPDATE ON evidence WHEN new.section='parents' AND json_extract(new.key,'$.pid')>=800000 BEGIN INSERT INTO fixture_updates VALUES(1); END;")
                 if index == 1:
                     wait_for(lambda: ledger.stat().st_mode & 0o777 == 0o600)
+                    usage_db=ledger.with_suffix('.sqlite3')
+                    with sqlite3.connect(usage_db) as db:
+                        assert db.execute("SELECT count(*) FROM usage_rows WHERE key='historical'").fetchone()[0]==1
+                        db.executescript("CREATE TABLE fixture_usage_updates(n INTEGER); CREATE TRIGGER historical_usage_update AFTER UPDATE ON usage_rows WHEN new.key='historical' BEGIN INSERT INTO fixture_usage_updates VALUES(1); END;")
                 agents.enter_context(gpu_collector(corpus.root, receives_links=index == 1))
         hubroot = root / 'hub'
         hubroot.mkdir()
@@ -550,14 +555,25 @@ def main():
             if args.with_agent:
                 for index, corpus in enumerate(corpora):
                     ledger = corpus.root / 'agent-state.usage.json'
-                    saved = wait_for(lambda: json.loads(ledger.read_text()) if ledger.exists()
-                        and json.loads(ledger.read_text())['rows'] else None, timeout=40)
-                    assert ledger.stat().st_mode & 0o777 == 0o600, 'saved ledger must ignore permissive umask/temp mode'
+                    database=ledger.with_suffix('.sqlite3')
+                    def usage_saved():
+                        with sqlite3.connect(database) as db:
+                            meta=db.execute('SELECT data FROM usage_meta WHERE id=1').fetchone()
+                            count=db.execute('SELECT count(*) FROM usage_rows').fetchone()[0]
+                            return json.loads(meta[0]) if meta and count else None
+                    saved=wait_for(usage_saved,timeout=40)
+                    assert database.stat().st_mode & 0o777 == 0o600
                     assert saved['node_id'] == nodes[index].nid
                     if index == 1:
                         assert saved['started_at'] == 123.
                         assert saved['device_models']['GPU-old'] == 'Synthetic retained model'
-                print('PASS private usage persistence with umask 022, existing ledger and leftover temp file', flush=True)
+                        with sqlite3.connect(database) as db:
+                            historic=json.loads(db.execute("SELECT data FROM usage_rows WHERE key='historical'").fetchone()[0])
+                            assert historic['cpu_seconds']==12. and historic['storage_write_bytes']==0.
+                            assert db.execute('SELECT count(*) FROM fixture_usage_updates').fetchone()[0]==0
+                            assert db.execute('SELECT start,end FROM usage_gaps WHERE id=0').fetchone()==(100.,101.)
+                        assert list(json.loads(ledger.read_text())['rows'])==['historical'], 'legacy backup must not be rewritten'
+                print('PASS incremental private usage SQLite migration, historical rows untouched, gap history and restart', flush=True)
                 # New boot: the retained pre-migration JSON must never be reimported
                 # over SQLite history. Use a separate proc root and socket so the
                 # current fixture collectors remain unaffected.
