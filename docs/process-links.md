@@ -567,15 +567,25 @@ for independent installation and privileges.
 
 The collector's read-only `usage` request returns a version-1 cumulative ledger,
 shared with Node Status (`/api/usage`) without requiring any diagnostic lease.
-`state.usage.json` beside the attribution state contains per-session/per-scope
+`state.usage.sqlite3` beside the attribution state contains per-session/per-scope
 Beijing calendar-day buckets, CPU seconds, GPU UUID residency seconds, estimated
-compute seconds and observed compute card-seconds. Storage writes accumulate
-continuous same-process/owner deltas of the existing `/proc/PID/io` `write_bytes`
-counter in `storage_write_bytes`, with `storage_write_observed_seconds` for
-availability. No extra reads or probes are required. Cancelled writes are not
+compute seconds and observed compute card-seconds. Legacy JSON is imported once
+and retained without rewriting. Storage-write version 2 accumulates continuous
+per-thread `write_bytes` deltas
+from `/proc/PID/task/TID/io`, keyed by TID and start time, into a monotonic
+per-process counter. Reaped-child I/O in `/proc/PID/io` is excluded. Exited
+threads never reduce that counter; new/reused threads, unreadable counters,
+missed intervals and collector restarts establish baselines without backfill.
+Readable threads still contribute when other threads are unavailable. The ledger
+stores current writes in `storage_write_v2_bytes`, with
+`storage_write_v2_observed_seconds` for availability and `storage_write_version: 2`
+in the response. Legacy `storage_write_bytes` and `storage_write_observed_seconds`
+remain unchanged historical fields, never added to version-2 rankings or daily
+write totals. CPU/GPU buckets retain their existing values and semantics.
+Cancelled writes are not
 subtracted; this is neither physical disk traffic nor complete NFS accounting.
 Missing samples, resets and first observations add nothing; short-lived processes
-may be missed. Older rows default to zero bytes and zero coverage, preserving
+may be missed. Older rows default to zero version-2 bytes and zero coverage, preserving
 CPU/GPU history without fabricating historic write totals. Device names and sampling-gap
 intervals remain durable. Direct and inclusive buckets are separate views, never
 additive; inclusive attribution uses causal launch chains, not sidebar nesting.

@@ -700,6 +700,7 @@ impl IoWindow {
 
 #[derive(Default)]
 struct ResourceSampler {
+    writes: crate::thread_writes::ThreadWrites,
     previous: Option<(Resources, Instant)>,
 }
 type PssCache = BTreeMap<Process, (Option<u64>, f64)>;
@@ -769,11 +770,18 @@ impl ResourceSampler {
                     .push(sample);
             }
         }
+        self.writes.begin(
+            &snapshot.boot_id,
+            sampled,
+            snapshot.entries.values().map(|entry| entry.process.clone()),
+        );
         let mut samples = Vec::new();
         for entry in snapshot.entries.values() {
             let Some(mut sample) = basic_sample(root, &entry.process, ticks, page_size) else {
+                self.writes.missing(&entry.process);
                 continue;
             };
+            sample.write_bytes = self.writes.sample(root, &entry.process);
             let prior = previous.get(&sample.process).copied();
             sample.metrics.insert(
                 "cpu_cores".into(),
@@ -800,7 +808,11 @@ impl ResourceSampler {
                     value.map(|v| v as f64),
                     old.map(|v| v as f64),
                     elapsed,
-                    "Linux /proc/PID/io storage-layer bytes; distinct from local VFS/NFS logical I/O; delayed writeback may differ",
+                    if name == "proc_storage_write_bytes_per_second" {
+                        "Observed /proc/PID/task/TID/io deltas by thread lifetime; excludes reaped-child history; missing/new threads only establish baselines; delayed writeback may differ"
+                    } else {
+                        "Linux /proc/PID/io storage-layer reads; distinct from local VFS/NFS logical I/O"
+                    },
                 );
                 if value["status"] == "ok" {
                     value["status"] = json!("partial");
@@ -1030,7 +1042,7 @@ fn basic_sample(root: &Path, process: &Process, ticks: f64, page_size: u64) -> O
         rss_bytes: value(21)?.saturating_mul(page_size),
         threads: value(17)?,
         read_bytes: counter("read_bytes:"),
-        write_bytes: counter("write_bytes:"),
+        write_bytes: None, // Filled from continuous task-local observations by ResourceSampler.
         metrics: BTreeMap::new(),
     })
 }

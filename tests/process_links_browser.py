@@ -95,6 +95,39 @@ def gpu_collector(root, receives_links=False):
         listener.close()
 
 
+def thread_write_counter_browser(page, corpus, proc):
+    """Real collector and resource refreshes; synthetic task counters are the oracle."""
+    task = proc / '100/task'
+    def read():
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.settimeout(5); sock.connect(str(corpus.root/'agent.sock'))
+            sock.sendall(b'{"op":"resources"}\n')
+            result=json.loads(sock.makefile('rb').readline())['result']
+        return result['sampled_at'], next(x for x in result['samples'] if x['process']['pid']==100)['write_bytes']
+    at, total=read(); assert total==0, (at,total)
+    def observed(expected):
+        nonlocal at
+        page.get_by_role('button',name='刷新资源').click()
+        value=wait_for(lambda: (lambda pair:pair if pair[0]>at and pair[1]==expected else None)(read()))
+        at=value[0]
+    def io(tid, amount): (task/str(tid)/'io').write_text(f'write_bytes: {amount}\n')
+    mib=1024**2
+    io(100,9*mib); io(101,10*mib)
+    (proc/'100/io').write_text(f'write_bytes: {42*1024**4}\n')
+    observed(2*mib)  # Parent's reaped-child total must be ignored.
+    shutil.rmtree(task/'101'); observed(2*mib)
+    io(100,10*mib); observed(3*mib)  # Thread exit must never reset process total.
+    (task/'101').mkdir(); (task/'101/stat').write_text((task/'100/stat').read_text().replace(' 10000',' 20000'))
+    io(101,1024*mib); observed(3*mib)  # Reused TID starts a new baseline.
+    io(101,1025*mib); observed(4*mib)
+    (task/'101/io').unlink();io(100,11*mib);observed(5*mib)
+    io(101,2048*mib);io(100,12*mib);observed(6*mib)  # Recovery adds no unseen gap.
+    (task/'100/io').unlink();(task/'101/io').unlink();observed(None)
+    io(100,100*mib);io(101,3000*mib);observed(6*mib)
+    io(100,101*mib);observed(7*mib)
+    print('PASS browser task writes: child reaping, exited/reused threads, partial/unreadable counters and baselines',flush=True)
+
+
 def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=None):
     """Local identity and resources do not require a Hub authentication listener."""
     forbidden = socket.socket(socket.AF_UNIX)
@@ -135,6 +168,7 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     if observed:
                         assert resources['availability'] == 'observed', resources
                         expect(page.locator('.sr-node .sr-status')).to_have_text('在线')
+                        thread_write_counter_browser(page, corpus, proc)
                     else:
                         assert resources['availability'] == 'unavailable' and resources['samples'] is None
                         expect(page.locator('.sr-node .sr-status')).to_have_text('采集端不支持')
@@ -230,6 +264,13 @@ def main():
                     stat = entry / 'stat'
                     stat.write_text(stat.read_text().rstrip() + ' 0 0\n')
                     (entry / 'smaps_rollup').write_text(f'Pss: {entry.name} kB\n')
+                    task=entry/'task'/entry.name;task.mkdir(parents=True)
+                    (task/'stat').write_text(stat.read_text());(task/'io').write_text('write_bytes: 0\n')
+            if index == 0:
+                task=proc/'100/task/101';task.mkdir()
+                (task/'stat').write_text((proc/'100/stat').read_text())
+                (task/'io').write_text(f'write_bytes: {9*1024**2}\n')
+                (proc/'100/task/100/io').write_text(f'write_bytes: {8*1024**2}\n')
             corpora.append(corpus)
             procs.append(proc)
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
@@ -242,7 +283,7 @@ def main():
                     ledger.write_text(json.dumps({'version': 1, 'node_id': nodes[index].nid,
                         'started_at': 123., 'updated_at': time.time(), 'gap_seconds': 0.,
                         'gaps': [[100.,101.]], 'device_models': {'GPU-old': 'Synthetic retained model'},
-                        'rows': {'historical':{'session':{'node_id':nodes[index].nid,'source':'codex','sid':'historic-usage'},'scope':'direct','day':1,'cpu_seconds':12.,'gpu_seconds':{},'compute_seconds':{},'compute_observed_seconds':0.,'gpu_observed_seconds':0.,'observed_seconds':1.,'first_at':100.,'last_at':101.}}}))
+                        'rows': {'historical':{'session':{'node_id':nodes[index].nid,'source':'codex','sid':'historic-usage'},'scope':'direct','day':1,'cpu_seconds':12.,'storage_write_bytes':42*1024**4,'storage_write_observed_seconds':100.,'gpu_seconds':{},'compute_seconds':{},'compute_observed_seconds':0.,'gpu_observed_seconds':0.,'observed_seconds':1.,'first_at':100.,'last_at':101.}}}))
                     ledger.chmod(0o644)
                     ledger.with_suffix('.tmp').touch(mode=0o644)
                     ledger.with_suffix('.tmp').chmod(0o644)
@@ -569,7 +610,7 @@ def main():
                         assert saved['device_models']['GPU-old'] == 'Synthetic retained model'
                         with sqlite3.connect(database) as db:
                             historic=json.loads(db.execute("SELECT data FROM usage_rows WHERE key='historical'").fetchone()[0])
-                            assert historic['cpu_seconds']==12. and historic['storage_write_bytes']==0.
+                            assert historic['cpu_seconds']==12. and historic['storage_write_bytes']==42*1024**4 and historic['storage_write_v2_bytes']==0.
                             assert db.execute('SELECT count(*) FROM fixture_usage_updates').fetchone()[0]==0
                             assert db.execute('SELECT start,end FROM usage_gaps WHERE id=0').fetchone()==(100.,101.)
                         assert list(json.loads(ledger.read_text())['rows'])==['historical'], 'legacy backup must not be rewritten'
