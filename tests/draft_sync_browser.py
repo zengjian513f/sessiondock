@@ -12,6 +12,8 @@ from bug_report_node_browser import open_report
 import argparse
 import base64
 import json
+import sqlite3
+from conversation_storage_fixtures import read_document
 import os
 import subprocess
 import tempfile
@@ -90,6 +92,11 @@ def main():
                  'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
                          'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_CLAUDE_ROOT': str(root / 'claude'),
                          'SESSIONDOCK_TEST_GATE': str(root / 'gate'), 'SESSIONDOCK_TEST_GATE_TRACE': str(root / 'gate.trace')}}]}))
+        legacy = root / 'state/conversations/conversation-ledger.json'
+        legacy.parent.mkdir()
+        historical = {f'launch:archived-{i}': {'revision': 7, 'value': {'text': 'historical draft '+str(i)}} for i in range(2000)}
+        legacy.write_text(json.dumps({'drafts': historical}))
+        legacy_mtime = legacy.stat().st_mtime_ns
         initialize('--initialize-lifecycle', root / 'ledger')
         with sync_playwright() as playwright:
             options = {'headless': True}
@@ -131,8 +138,23 @@ def main():
                     #    text, adopts the server revision and reports no error.
                     #    (The composer is disabled until that read returns, so
                     #    typing cannot race the first read through the UI.)
+                    database = legacy.with_suffix('.sqlite3')
+                    with sqlite3.connect(database) as db:
+                        db.executescript('CREATE TABLE changed(section TEXT,key TEXT); CREATE TRIGGER fixture_changes AFTER UPDATE ON records BEGIN INSERT INTO changed VALUES(new.section,new.key); END; CREATE TRIGGER fixture_insert AFTER INSERT ON records BEGIN INSERT INTO changed VALUES(new.section,new.key); END;')
                     a.fill('#cinput', 'from A')
                     wait_server_text(context, base, uid, 'from A')
+                    durable = read_document(legacy)
+                    assert all(durable['drafts'][key] == value for key, value in historical.items())
+                    assert legacy.stat().st_mtime_ns == legacy_mtime
+                    with sqlite3.connect(database) as db:
+                        touched = list(db.execute('SELECT section,key FROM changed'))
+                    assert touched and all(section == 'drafts' and key not in historical for section,key in touched), touched
+                    revision, value = draft(context, base, uid)
+                    before_wal = Path(str(database)+'-wal').stat().st_mtime_ns
+                    result = context.request.post(base+'/api/session/conversation', data={'uid':uid,'revision':revision,'value':value})
+                    assert result.ok, result.text()
+                    assert Path(str(database)+'-wal').stat().st_mtime_ns == before_wal
+
                     b = open_page(context)
                     open_session(b, uid)
                     expect(b.locator('#cinput')).to_have_value('from A')

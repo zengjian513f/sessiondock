@@ -457,6 +457,16 @@ impl Sink {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;
+                // Inspect first: retained-only logs must never be copied to disk.
+                s.cleanup_scanned_bytes
+                    .fetch_add(meta.len(), Ordering::Relaxed);
+                let (removed, expiry) = scan_retained(&path, cutoff, fallback, None)?;
+                if !removed {
+                    if self.cache.len() < 4096 {
+                        self.cache.insert(path, (meta.len(), modified, expiry));
+                    }
+                    return Ok(());
+                }
                 // Streaming copy bounds memory even for corrupt/unterminated large records.
                 let mut options = OpenOptions::new();
                 options.write(true).create_new(true);
@@ -485,39 +495,7 @@ impl Sink {
                 let mut out = io::BufWriter::new(file);
                 s.cleanup_scanned_bytes
                     .fetch_add(meta.len(), Ordering::Relaxed);
-                let work = (|| -> io::Result<(bool, u64)> {
-                    let mut reader = io::BufReader::new(fs::File::open(&path)?);
-                    let mut line = Vec::new();
-                    let mut removed = false;
-                    let mut expiry = u64::MAX;
-                    let mut continuation = false;
-                    loop {
-                        line.clear();
-                        let read = reader
-                            .by_ref()
-                            .take(64 * 1024)
-                            .read_until(b'\n', &mut line)?;
-                        if read == 0 {
-                            break;
-                        }
-                        let mut stamp = serde_json::from_slice::<Value>(&line)
-                            .ok()
-                            .and_then(|r| r["timestamp_ms"].as_u64())
-                            .unwrap_or(fallback);
-                        // Oversized/malformed bytes use file mtime; no raw content is diagnosed.
-                        if continuation || (line.last() != Some(&b'\n') && read == 64 * 1024) {
-                            stamp = fallback;
-                        }
-                        continuation = line.last() != Some(&b'\n');
-                        if stamp < cutoff {
-                            removed = true;
-                        } else {
-                            out.write_all(&line)?;
-                            expiry = expiry.min(stamp.saturating_add(DAY));
-                        }
-                    }
-                    Ok((removed, expiry))
-                })();
+                let work = scan_retained(&path, cutoff, fallback, Some(&mut out));
                 if work.is_ok() {
                     out.flush()?;
                     out.get_ref()
@@ -596,4 +574,45 @@ pub fn drain_diagnostics(mut reader: impl Read, event: &str, lost: &AtomicU64) {
             }
         }
     }
+}
+
+fn scan_retained(
+    path: &std::path::Path,
+    cutoff: u64,
+    fallback: u64,
+    mut output: Option<&mut dyn Write>,
+) -> io::Result<(bool, u64)> {
+    let mut reader = io::BufReader::new(fs::File::open(&path)?);
+    let mut line = Vec::new();
+    let mut removed = false;
+    let mut expiry = u64::MAX;
+    let mut continuation = false;
+    loop {
+        line.clear();
+        let read = reader
+            .by_ref()
+            .take(64 * 1024)
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
+            break;
+        }
+        let mut stamp = serde_json::from_slice::<Value>(&line)
+            .ok()
+            .and_then(|r| r["timestamp_ms"].as_u64())
+            .unwrap_or(fallback);
+        // Oversized/malformed bytes use file mtime; no raw content is diagnosed.
+        if continuation || (line.last() != Some(&b'\n') && read == 64 * 1024) {
+            stamp = fallback;
+        }
+        continuation = line.last() != Some(&b'\n');
+        if stamp < cutoff {
+            removed = true;
+        } else {
+            if let Some(out) = output.as_mut() {
+                out.write_all(&line)?;
+            }
+            expiry = expiry.min(stamp.saturating_add(DAY));
+        }
+    }
+    Ok((removed, expiry))
 }

@@ -7,6 +7,7 @@ CLI, app-server and /proc only; no production records or models.
 """
 import argparse
 import json
+from conversation_storage_fixtures import read_document, write_document
 import os
 from pathlib import Path
 import sys
@@ -88,7 +89,7 @@ def run(browser, root, binary, screenshots):
                 page.expose_function(f'submitted{i}', lambda r=report: manifest(r)['status'] == 'submitted')
                 wait_for_async(page, f'async () => await submitted{i}()', timeout=25000)
                 key = f'report-rename:{report["worker"]["record_id"]}'
-                store = json.loads((root / 'state/conversations/conversation-ledger.json').read_text())
+                store = read_document((root / 'state/conversations/conversation-ledger.json'))
                 receipt = next((r for r in store['requests'].values() if r['id'] == key), None)
                 assert receipt, (key, list(store['requests']), report)
                 sid = receipt['result']['sid']
@@ -117,11 +118,11 @@ def run(browser, root, binary, screenshots):
         # Simulate exactly the old successful rename result on private data.
         report, sid = reports[1]
         ledger_path = root / 'state/conversations/conversation-ledger.json'
-        old = json.loads(ledger_path.read_text())
+        old = read_document(ledger_path)
         for receipt in old['requests'].values():
             if receipt['id'] == f'report-rename:{report["worker"]["record_id"]}':
                 receipt['result'].pop('sid')
-        ledger_path.write_text(json.dumps(old))
+        write_document(ledger_path, old)
         fake.thread_id, fake.rollout = sid, publish(sid)
         print('restart: recover legacy receipt after its status card disappeared', flush=True)
         with node() as (base, _):

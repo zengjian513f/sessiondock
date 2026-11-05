@@ -55,10 +55,10 @@ def main():
         try:
             with private_hosts(root):
                 with server() as (base,opener):
-                    page=browser.new_page(viewport={'width':1280,'height':900});page.goto(base,wait_until='networkidle')
+                    page=browser.new_page(viewport={'width':1280,'height':900});page.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))");page.goto(base,wait_until='networkidle')
                     for index in range(3):
                         if index:
-                            page.close();page=browser.new_page(viewport={'width':1280,'height':900});page.goto(base,wait_until='networkidle')
+                            page.close();page=browser.new_page(viewport={'width':1280,'height':900});page.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))");page.goto(base,wait_until='networkidle')
                         receipt=create_claude(page,base,root/'work')
                         page.locator('#a-chat').click();page.locator('#cinput').fill(f'private host seed {index}');page.locator('#csend').click()
                         wait_history(page,f'private host seed {index}');uids.append(page.evaluate('S.sel'))
@@ -116,7 +116,7 @@ def main():
                 result['survived_restart']=True
             deliveries=[r for r in rows(logs) if r.get('event')=='log.delivery']
             per_host={str(pid):max((r.get('cleanup_scanned_bytes',0) for r in deliveries if r.get('pid')==pid),default=0) for pid in identities}
-            assert all(input_bytes//3 <= count < input_bytes//3+100000 for count in per_host.values()),per_host
+            assert all(2*input_bytes//3 <= count < 2*input_bytes//3+100000 for count in per_host.values()),per_host
             result['host_scanned_bytes']=per_host
             # Node restart must still maintain orphan logs from terminated hosts.
             orphan=logs/f'runtime-{next(iter(identities))}-2.jsonl';orphan.write_bytes(old+recent)

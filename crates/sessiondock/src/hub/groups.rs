@@ -23,11 +23,14 @@ pub struct Groups {
     /// Generation of the latest save request, assigned under `catalog`.
     saves: AtomicU64,
     /// Generation last written to `cache`.
-    written: Arc<std::sync::Mutex<u64>>,
+    written: Arc<std::sync::Mutex<(u64, Option<GroupCatalog>)>>,
 }
 impl Groups {
     pub fn open(cache: PathBuf) -> std::io::Result<Self> {
         fs::create_dir_all(cache.parent().unwrap())?;
+        let saved: Option<GroupCatalog> = fs::read(&cache)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok());
         let catalog = fs::read(&cache)
             .or_else(|_| fs::read(cache.with_file_name("labels.json")))
             .ok()
@@ -37,7 +40,7 @@ impl Groups {
             catalog: Mutex::new(catalog),
             cache,
             saves: AtomicU64::new(0),
-            written: Default::default(),
+            written: Arc::new(std::sync::Mutex::new((0, saved))),
         })
     }
     /// Write the cache off the runtime: `sync_all` and the directory fsync
@@ -51,11 +54,14 @@ impl Groups {
         let generation = self.saves.fetch_add(1, Ordering::Relaxed) + 1;
         tokio::task::spawn_blocking(move || {
             let mut written = written.lock().unwrap_or_else(|e| e.into_inner());
-            if *written > generation {
+            if written.0 > generation {
                 return Ok(());
             }
-            save(&cache, &catalog)?;
-            *written = generation;
+            if written.1.as_ref() != Some(&catalog) || !cache.exists() {
+                save(&cache, &catalog)?;
+                written.1 = Some(catalog);
+            }
+            written.0 = generation;
             Ok(())
         })
         .await

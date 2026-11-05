@@ -364,7 +364,10 @@ still occurs per process, but retained bytes are not parsed once per host.
 Active minute segments are
 skipped. Valid records expire by receipt time after 24 hours. Mixed files retain
 recent records byte-for-byte; malformed, invalid-UTF8 and partial bytes use the
-file mtime plus 24 hours. Rewrites preserve mtime. Strictly named orphan cleanup
+file mtime plus 24 hours. A read-only first pass checks expiry; files with no expired records create no
+scratch file and write no retained bytes, including after restart. Mixed files
+use a second streaming pass only when pruning is necessary. Scanned-byte
+counters include both passes. Rewrites preserve mtime. Strictly named orphan cleanup
 temporaries expire by mtime. New scratch names include PID, time and a process
 sequence, retry existing names and have an RAII cleanup guard on every exit.
 Recent crash leftovers are preserved without blocking later sweeps. If the

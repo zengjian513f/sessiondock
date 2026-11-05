@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import hashlib
 import json
+from conversation_storage_fixtures import read_document
 import os
 from pathlib import Path
 import socket
@@ -123,7 +124,7 @@ def main():
                     assert not probes, f'{sid} history needlessly probed a terminal: {requested}'
                     if sid == 'pending':
                         assert body['cli']['queued'][0]['text'] == 'Still waiting for CLI'
-                saved = json.loads(ledger.read_text())['queued']
+                saved = read_document(ledger)['queued']
                 assert not saved.get(corpus.uid('own')) and not saved.get('launch:alias')
                 assert saved['launch:unknown'][0]['text'] == 'Unknown queued input'
                 # A possible echo with no durable identity still uses the
@@ -131,7 +132,7 @@ def main():
                 page.locator(f'#side .item[data-uid="{corpus.uid("candidate")}"] .t').click()
                 expect(page.locator('#msgs')).to_contain_text('Unknown queued input')
                 assert probes, 'unknown matching echo bypassed identity resolution'
-                assert json.loads(ledger.read_text())['queued']['launch:unknown']
+                assert read_document(ledger)['queued']['launch:unknown']
                 assert all(path.read_bytes() == native[sid] for sid, path in corpus.paths.items())
             finally:
                 browser.close()

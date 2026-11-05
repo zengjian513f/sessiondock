@@ -2,6 +2,7 @@
 """Feature requests retain attachments and hand off once to SDK workers, node and Hub."""
 import argparse
 import json
+from conversation_storage_fixtures import read_document
 import os
 import tempfile
 import time
@@ -71,7 +72,7 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         assert data['status'] == 'failed', data
         sid = data['worker']['session']['sid']
         assert not [m for m in peer.methods('turn/start') if m['params']['threadId'] == sid]
-        ledger = json.loads((root/'state/conversations/conversation-ledger.json').read_text())
+        ledger = read_document((root/'state/conversations/conversation-ledger.json'))
         draft = next(d for d in ledger['drafts'].values()
                      if d['value'].get('session', {}).get('report_id') == reply['report_id'])
         assert draft['value']['text'] == (manifest.parent/'worker-prompt.md').read_text()
@@ -130,7 +131,7 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         assert '诊断包所在机器：处理会话本机' in prompt
         assert str(manifest.parent) in prompt
     # The first SEND has one durable SDK receipt, including after a repeated request.
-    ledger = json.loads((root/'state/conversations/conversation-ledger.json').read_text())
+    ledger = read_document((root/'state/conversations/conversation-ledger.json'))
     submitted = [r for r in ledger['requests'].values()
                  if r.get('id') == 'report-send:' + reply['report_id']]
     assert len(submitted) == 1, submitted

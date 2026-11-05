@@ -5,13 +5,14 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
-    io::Write,
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
+mod disk;
+
 type Result<T> = std::result::Result<T, Failure>;
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 struct Document {
     drafts: BTreeMap<String, Draft>,
@@ -47,12 +48,12 @@ pub struct QueuedSend {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Draft {
     pub revision: u64,
     pub value: Value,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Submission {
     pub key: String,
     pub id: String,
@@ -62,7 +63,7 @@ pub struct Submission {
     pub phase: String,
     pub result: Value,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Upload {
     pub key: String,
     pub id: String,
@@ -78,6 +79,7 @@ pub struct Upload {
 pub struct Store {
     directory: PathBuf,
     state: Mutex<Document>,
+    database: Mutex<rusqlite::Connection>,
     draft_listener: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 pub fn fingerprint(value: &Value) -> Value {
@@ -190,18 +192,9 @@ impl Store {
             fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(io)?;
         }
         let directory = directory.canonicalize().map_err(io)?;
-        let path = directory.join("conversation-ledger.json");
-        let mut state: Document = match fs::read(path) {
-            Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
-                .ok()
-                .and_then(|v| serde_json::from_value(v).ok())
-                .ok_or_else(|| {
-                    Failure::new(503, "conversation_storage", "会话记录无法读取，保留原文件")
-                })?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Document::default(),
-            Err(e) => return Err(io(e)),
-        };
-        for request in state.requests.values_mut() {
+        let (database, state) = disk::open(&directory)?;
+        let mut repaired = state.clone();
+        for request in repaired.requests.values_mut() {
             if request.payload.is_object() {
                 request.attachments = request.payload["attachments"]
                     .as_array()
@@ -212,26 +205,22 @@ impl Store {
                 request.payload = fingerprint(&request.payload);
             }
         }
-        let repair = state
-            .drafts
-            .iter()
-            .any(|(key, d)| completed_editor_value(&state.requests, key, &d.value).is_some());
+        for (key, draft) in &mut repaired.drafts {
+            if let Some(value) = completed_editor_value(&repaired.requests, key, &draft.value) {
+                draft.value = value;
+                draft.revision += 1;
+            }
+        }
         let store = Self {
             directory,
             state: Mutex::new(state),
+            database: Mutex::new(database),
             draft_listener: Mutex::new(None),
         };
-        if repair {
-            store.update(|doc| {
-                for (key, draft) in &mut doc.drafts {
-                    if let Some(value) = completed_editor_value(&doc.requests, key, &draft.value) {
-                        draft.value = value;
-                        draft.revision += 1;
-                    }
-                }
-                Ok(())
-            })?;
-        }
+        store.update(|doc| {
+            *doc = repaired;
+            Ok(())
+        })?;
         Ok(store)
     }
     pub fn directory(&self) -> &Path {
@@ -251,34 +240,15 @@ impl Store {
         let drafts_changed = next.drafts.iter().any(|(key, draft)| {
             state.drafts.get(key).map_or(0, |old| old.revision) != draft.revision
         });
-        let bytes = serde_json::to_vec(&next)
-            .map_err(|_| Failure::new(503, "conversation_storage", "会话记录无法序列化"))?;
-        let temporary = self
-            .directory
-            .join(format!(".conversation-{}.tmp", super::random_id()?));
-        let installed = (|| {
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            fs::rename(&temporary, self.directory.join("conversation-ledger.json"))?;
-            // Once installed, later writes must use this document even if
-            // directory sync fails and its acknowledgment is lost.
-            *state = next;
-            #[cfg(unix)]
-            fs::File::open(&self.directory)?.sync_all()?;
-            Ok::<_, std::io::Error>(())
-        })();
-        if let Err(error) = installed {
-            let _ = fs::remove_file(&temporary);
-            return Err(io(error));
+        if next == *state {
+            return Ok(result);
         }
+        disk::persist(
+            &mut self.database.lock().unwrap_or_else(|p| p.into_inner()),
+            &state,
+            &next,
+        )?;
+        *state = next;
         drop(state);
         if drafts_changed
             && let Some(listener) = self

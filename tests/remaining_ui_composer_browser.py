@@ -8,6 +8,7 @@ IME composition is CDP text composition, not an OS candidate-window claim.
 import argparse
 import base64
 import json
+from conversation_storage_fixtures import read_document
 from pathlib import Path
 import tempfile
 import time
@@ -25,8 +26,8 @@ PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAE0lEQVR4
 def durable(page, root, text, present=True):
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
-        files = list((root/'state').rglob('conversation-ledger.json'))
-        if files and (text in files[0].read_text()) == present:
+        files = list((root/'state').rglob('conversation-ledger.sqlite3'))
+        if files and (text in json.dumps(read_document(files[0].with_suffix('.json')), ensure_ascii=False)) == present:
             return
         page.wait_for_timeout(50)
     raise AssertionError(f'durable draft expectation not reached: {text!r}, present={present}')

@@ -317,6 +317,12 @@ def main():
             assign(mobile, '')
             expect(mobile.locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_be_hidden()
             assert 'group' not in stored(0)['sessions'][uid_a]
+            # Two background synchronizations of identical catalogs do not rewrite disk.
+            group_cache = hubroot / 'hub-cache/groups.json'
+            page.wait_for_timeout(11000)
+            saved_mtime = group_cache.stat().st_mtime_ns
+            page.wait_for_timeout(21000)
+            assert group_cache.stat().st_mtime_ns == saved_mtime
             # Delete with a node offline. Rejoin must not resurrect its catalog/assignment.
             for context in contexts: context.close()
             contexts.clear(); stacks[1].close()

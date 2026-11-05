@@ -8,6 +8,7 @@ fixture's host to put a native append inside the in-flight screen read.
 
 import argparse
 import json
+from conversation_storage_fixtures import read_document
 import os
 from pathlib import Path
 import signal
@@ -54,6 +55,7 @@ def main():
             context = browser.new_context(service_workers='block', viewport={'width': 1280, 'height': 900})
             context.route('**/*', lambda route: route.continue_()
                           if route.request.url.startswith(base + '/') else route.abort())
+            context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
             page = context.new_page()
             errors, watches = [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -117,7 +119,7 @@ def main():
                 append_during_observation('user', text)
                 expect(page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text=text)).to_have_count(1, timeout=5000)
                 expect(queued).to_have_count(0)
-                ledger = json.loads((root / 'state/conversations/conversation-ledger.json').read_text())
+                ledger = read_document((root / 'state/conversations/conversation-ledger.json'))
                 assert not any(row['request_id'] == request_id for queue in ledger['queued'].values() for row in queue)
                 assert not any(row['type'] == 'assistant' and text in str(row['message'])
                                for row in map(json.loads, native.read_text().splitlines()))

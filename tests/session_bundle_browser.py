@@ -18,6 +18,7 @@ import time
 from transfer_ui import select_target
 from contextlib import ExitStack
 import json
+from conversation_storage_fixtures import read_document
 import os
 from pathlib import Path
 import tempfile
@@ -311,7 +312,7 @@ def main():
                                 assert saved.ok,saved.text()
                                 status,raw=node_call(a,'/api/session/transfer/retire',{'operation_id':completed['operation_id']})
                                 assert status==200,raw
-                                assert any(row['value'].get('text')=='new draft after moving back' for row in json.loads(ledger.read_text())['drafts'].values())
+                                assert any(row['value'].get('text')=='new draft after moving back' for row in read_document(ledger)['drafts'].values())
                                 status,raw=node_call(a,'/api/session/clone/plan',{'uid':target_local});assert status==200,raw
                                 peer.call('stop');peer.call('start')
                                 status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local})
@@ -644,7 +645,7 @@ def main():
                                     held=manifest_path.parent/'files'/file['name']
                                     recovered[file['origin']]=os.readlink(held) if file['origin'] in original_links else held.read_bytes()
                             assert set(recovered)==moved and all(recovered[p]==(original_links[p] if p in original_links else originals[p]) for p in moved)
-                            drafts=json.loads(ledger.read_text())['drafts']
+                            drafts=read_document(ledger)['drafts']
                             assert selected not in drafts and drafts['codex:ffffffffffffffff']['value']['text']=='unrelated draft'
                             if receipt_ids:
                                 receipts=json.loads((source.root/'lifecycle/lifecycle-ledger.json').read_text())['records']

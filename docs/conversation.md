@@ -114,3 +114,17 @@ Hub 按限定 UID 路由到所属节点；旧节点未声明能力时不查询�
 验收：[SDK 浏览器套件](../tests/codex_sdk_compose_browser.py)覆盖节点/Hub、宽窄屏、明暗主题、
 真实临时目录与保存恢复；[普通编辑器套件](../tests/composer_editor_browser.py)覆盖补全后发送，
 共同使用[路径夹具](../tests/path_completion_fixtures.py)。
+
+### Durable conversation records
+
+Private conversation state uses `conversations/conversation-ledger.sqlite3`
+(mode 0600, WAL with synchronous FULL) inside the node state directory. Each
+section/key is stored independently: a draft edit writes its draft row, and a
+SEND transition commits its changed receipt, draft and queue rows in one
+transaction. Semantic no-ops issue no persistence transaction. Existing
+`conversation-ledger.json` is imported once in an atomic transaction and retained
+as a migration backup; it is never refreshed after migration. Restart reads
+SQLite, including receipts and history for finished sessions. Back up the live
+database with SQLite's backup API (or stop the node before copying state); do
+not restore only the legacy JSON over an already migrated database. Rolling
+back to software that only reads JSON requires an explicit state export first.

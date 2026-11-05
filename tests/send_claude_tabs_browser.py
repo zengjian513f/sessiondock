@@ -8,6 +8,7 @@ import argparse
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 import json
+from conversation_storage_fixtures import read_document
 from pathlib import Path
 import sys
 import tempfile
@@ -134,7 +135,7 @@ TabsFake(parse(sys.argv[1:])).run()
 
                 negative = 'Held\talpha  beta\nsecond\trow'
                 request = send(negative)
-                original = json.loads((root / 'state/conversations/conversation-ledger.json').read_text())
+                original = read_document((root / 'state/conversations/conversation-ledger.json'))
                 queued = next(r for q in original['queued'].values() for r in q if r['request_id'] == request)
                 assert queued['text'] == negative
                 append(negative.replace('\t', '  '))
@@ -147,7 +148,7 @@ TabsFake(parse(sys.argv[1:])).run()
                 page.wait_for_timeout(1800)
                 page.reload(wait_until='domcontentloaded')
                 expect(bubble(request)).to_have_count(1)
-                after = json.loads((root / 'state/conversations/conversation-ledger.json').read_text())
+                after = read_document((root / 'state/conversations/conversation-ledger.json'))
                 unchanged = next(r for q in after['queued'].values() for r in q if r['request_id'] == request)
                 assert (unchanged['text'], unchanged['echo_hash']) == (queued['text'], queued['echo_hash'])
                 append(negative.replace('\t', '    '))

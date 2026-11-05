@@ -605,6 +605,11 @@ CLI survival, runtime retention and sink faults.
 [Runtime maintenance](../tests/runtime_final_review_browser.py) covers private
 multi-host maintenance, abandoned scratch recovery and independent process
 lifetimes, including service restart and cleanup after a host exits.
+[Retained log writes](../tests/runtime_retained_browser.py) uses Linux inotify
+while opening real history in Chromium, verifying that two cold maintenance
+starts create no scratch copy for retained-only logs.
+Draft sync additionally imports 2,000 old draft records, observes per-record
+SQLite updates, and checks that same-value saves do not write the WAL.
 
 [HTTP contexts](../tests/http_context_browser.py) uses a private hostname mapped
 to loopback to exercise a genuinely insecure HTTP origin, alongside secure

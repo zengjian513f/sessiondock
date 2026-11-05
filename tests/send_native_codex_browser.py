@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+from conversation_storage_fixtures import read_document, write_document
 import os
 from pathlib import Path
 import sys
@@ -124,8 +125,8 @@ def main():
                 build = context.request.get(base + '/api/meta').json()['build']
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
                 survivors = ['escaped-status', 'ordinary-model-text']
-                assert [r['request_id'] for r in checked['cli']['queued']] == survivors, (checked, json.loads(ledger.read_text()))
-                persisted = json.loads(ledger.read_text())
+                assert [r['request_id'] for r in checked['cli']['queued']] == survivors, (checked, read_document(ledger))
+                persisted = read_document(ledger)
                 assert [r['request_id'] for rows in persisted['queued'].values() for r in rows] == survivors, persisted['queued']
                 for request_id in survivors:
                     dismissed = context.request.post(base + '/api/session/conversation/queued/dismiss',
@@ -292,7 +293,7 @@ def main():
                 replay = context.request.post(base + '/api/session/conversation/send', data=submission)
                 assert replay.status == 200, replay.text()
                 expect(bubble).to_have_attribute('data-state', 'interrupted')
-                persisted = json.loads(ledger.read_text())
+                persisted = read_document(ledger)
                 assert any(r['state'] == 'interrupted' and r['text'] == text
                            for rows in persisted['queued'].values() for r in rows)
                 # The report must freeze both the rendered receipt and the
@@ -397,11 +398,11 @@ def main():
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(bubbles).to_have_count(2, timeout=15000)
                     context.request.get(base + '/api/messages/' + uid)
-                persisted = json.loads(ledger.read_text())
+                persisted = read_document(ledger)
                 assert sum(len(rows) for rows in persisted['merged_echoes'].values()) == 1, persisted
                 remaining = [r for rows in persisted['queued'].values() for r in rows]
                 assert [r['request_id'] for r in remaining] == [r['request_id'] for r in submissions[2:]], remaining
-                recovery_ledger = ledger.read_bytes()
+                recovery_ledger = read_document(ledger)
                 recovery_rollout = rollout.read_bytes()
                 page.locator('#cesc').click()
                 expect(bubbles).to_have_count(0, timeout=15000)
@@ -411,7 +412,7 @@ def main():
                 page.reload(wait_until='domcontentloaded')
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
                 expect(bubbles).to_have_count(0, timeout=15000)
-                persisted = json.loads(ledger.read_text())
+                persisted = read_document(ledger)
                 assert all(not rows for rows in persisted['queued'].values()), persisted['queued']
                 assert sum(len(rows) for rows in persisted['merged_echoes'].values()) == 2
                 assert not errors, errors
@@ -419,7 +420,7 @@ def main():
                 browser.close()
             # Reopen a captured private fixture with a fresh server: the first
             # merged echo was consumed but the identical second pair was not.
-            ledger.write_bytes(recovery_ledger)
+            write_document(ledger, recovery_ledger)
             rollout.write_bytes(recovery_rollout)
             with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                     launcher_config=launcher, state_dir=root / 'state',

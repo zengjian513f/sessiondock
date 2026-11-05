@@ -232,6 +232,8 @@ retain unused entries and support creation, assignment and deletion.
 The Hub merges all registered enabled nodes' catalogs and distributes the result
 back to reachable nodes every ten seconds, independent of browser filters.
 `hub-cache/groups.json` is a rebuildable cache; nodes own the durable catalogs.
+Unchanged catalogs do not rewrite the cache, including after restart; a missing
+cache is recreated on the next successful save.
 Hub creation requires at least one node to confirm the write. Responses expose
 `synced_nodes` and `sync_errors`; offline nodes catch up after rejoining.
 Node reads run without holding the Hub catalog; merge (last writer wins per
