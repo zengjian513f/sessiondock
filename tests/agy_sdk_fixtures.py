@@ -251,6 +251,8 @@ for line in sys.stdin:
             result('CANCELED',error='synthetic native cancellation')
             continue
         step('agent_response',state='DONE',text_delta='finished '+token);advance()
+        if token=='offline-times':
+            step('agent_response',state='DONE',text_delta='New message produced while node is offline');advance()
         answer='Agy running '+token+' finished '+token
     else:
         step('tool',state='ACTIVE',tool_name='view_file',tool_info={'name':'view_file','parameters':{'AbsolutePath':str(Path.cwd()/'synthetic.txt')}})

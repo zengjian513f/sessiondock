@@ -69,6 +69,8 @@ struct Live {
     host_key: Option<String>,
     seq: u64,
     items: Vec<Value>,
+    #[serde(skip)]
+    message_time: crate::sdk_message_time::MessageTime,
     requests: BTreeMap<String, Value>,
     #[serde(skip)]
     controls: BTreeMap<String, ControlReply>,
@@ -263,6 +265,7 @@ impl Session {
                 host_key: None,
                 seq: 0,
                 items: vec![],
+                message_time: Default::default(),
                 requests: BTreeMap::new(),
                 controls: BTreeMap::new(),
                 control_requests: BTreeMap::new(),
@@ -821,7 +824,7 @@ impl Bridge {
                 let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id,"sdkhost":live.host_key.is_some()});
                 live.accepted.insert(dedup_key, receipt.clone());
                 live.turns.push_back(request_id.clone());
-                live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id}));
+                live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id,"received_at":crate::sdk_message_time::now()}));
                 live.compact = Value::Null;
                 live.retry = Value::Null;
                 live.error = None;

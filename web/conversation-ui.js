@@ -23,18 +23,22 @@ const ConversationUI = {
       finally { copy.disabled = false; }
     };
     actions.append(copy); header.append(time, actions); node.prepend(header);
-    let knownTime = '';
+    let knownTime = '', knownSource = '';
     const update = next => {
       message = next;
       node._messageData = next;
       const stamp = message.ts || message.timestamp || '';
-      if (Number.isFinite(new Date(stamp).getTime())) knownTime = stamp;
+      if (Number.isFinite(new Date(stamp).getTime())) { knownTime = stamp; knownSource = '原始时间'; }
+      else if (knownSource !== '原始时间' && Number.isFinite(new Date(message.received_at || '').getTime())) {
+        knownTime = message.received_at; knownSource = '后台接收时间';
+      }
       const date = new Date(knownTime);
       const valid = Number.isFinite(date.getTime());
-      const value = valid ? date.toLocaleString('sv-SE', {hour12: false}) : '时间未提供';
+      const value = valid ? date.toLocaleString('sv-SE', {hour12: false}) : '';
+      time.hidden = !valid;
       if (time.textContent !== value) time.textContent = value;
-      if (valid) { time.dateTime = date.toISOString(); time.title = `本地时间 · ${knownTime}`; }
-      else { time.removeAttribute('datetime'); time.title = '原始消息未提供有效时间'; }
+      if (valid) { time.dateTime = date.toISOString(); time.title = `${knownSource} · 本地时间 · ${knownTime}`; }
+      else { time.removeAttribute('datetime'); time.removeAttribute('title'); }
     };
     update(message);
     node._updateMessageHeader = update;

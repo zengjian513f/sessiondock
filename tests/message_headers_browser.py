@@ -81,7 +81,8 @@ def exercise(browser, base, source, events, screenshots, mode):
             answer.get_by_role('button', name='复制消息原文').click()
             assert page.evaluate('navigator.clipboard.readText()') == ANSWER
             missing = scope.locator('.msg[data-role="user"]').filter(has_text='没有原始时间')
-            expect(missing.locator('time')).to_have_text('时间未提供')
+            expect(missing.locator('time')).to_be_hidden()
+            expect(missing).not_to_contain_text('时间未提供')
             expect(missing.locator('time')).not_to_have_attribute('datetime', '')
             if screenshots: page.screenshot(path=str(screenshots / f'{name}-{entry}.png'), full_page=True)
         check(page.locator('.sdk-history'), 'sdk')
@@ -113,12 +114,17 @@ def exercise(browser, base, source, events, screenshots, mode):
         raw.update(items=[item], running=True, turn={'id': 'header-live-turn', 'status': 'inProgress'})
         events.publish()
         live = page.locator('.sdk-live .msg[data-role="assistant"]').filter(has_text='实时回复')
-        expect(live.locator('time')).to_have_text('时间未提供')
+        expect(live.locator('time')).to_be_hidden()
+        item['received_at'] = '2026-11-05T07:57:52Z'
+        events.publish()
+        expect(live.locator('time')).to_have_text('2026-11-05 15:57:52')
+        expect(live.locator('time')).to_have_attribute('title', '后台接收时间 · 本地时间 · 2026-11-05T07:57:52Z')
         # Real SDK items can arrive before their timestamped native record.
         # The history poll alone must fill in the date without another SDK event.
         history.append(dict(role='assistant', text=live_text, ts=STAMP, turn_id='header-live-turn',
                             id='header-live', native_item_id='header-live', native_id='header-live'))
         expect(live.locator('time')).to_have_text('2026-11-05 15:57:49', timeout=15000)
+        expect(live.locator('time')).to_have_attribute('title', '原始时间 · 本地时间 · 2026-11-05T07:57:49Z')
         live.get_by_role('button', name='复制消息原文').click()
         assert page.evaluate('navigator.clipboard.readText()') == live_text
         item['text'] += '\n\n后续增量必须完整复制。'

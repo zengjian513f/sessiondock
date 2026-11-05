@@ -397,8 +397,9 @@ impl Pending {
                     assistant |= !text.is_empty();
                     step["text"] = text.into();
                 }
+                step["timestamp"] = record["created_at"].clone();
                 step["transcript"] = record;
-                project(live, turn, &step);
+                project(live, turn, &step, None);
             }
             if need_rescan && !rescanned {
                 rescanned = true;

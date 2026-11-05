@@ -9,6 +9,11 @@ typing into a terminal. Persisted history still comes from the ordinary read
 model, so its bubbles are identical to the message view; only the in-flight
 turn, approvals and questions come from the app-server.
 
+Live items retain native timestamps when supplied. Otherwise the node records
+`received_at` on the first item notification, preserving it through deltas,
+completion and browser reconnect snapshots. This is backend receipt time,
+not browser load time; recovered older items use their native history when available.
+
 References: [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk),
 [Codex app-server](https://learn.chatgpt.com/docs/app-server). Verified
 against Codex CLI 0.163.0.

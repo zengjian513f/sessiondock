@@ -54,6 +54,9 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 
 状态栏、菜单条件、可读标签、缓存先显示、异步隔离与视觉验收统一见
 [SDK 界面合同](sdk-ui.md)，各来源只在自己的协议合同记录差异。
+消息投影保留原生时间（包括 Kiro 回放元数据、OpenCode created 时间与 Agy transcript
+created_at）；缺字段的新消息记录后台 `received_at`。stdio 优先取 sdkhost 原始输出的
+接收索引，检查点与回放保留首次值，后续正文和工具状态更新不覆盖；不改写原生历史。
 压缩进度与结果使用状态栏，不创建实时压缩气泡；SDK 历史不重复显示
 `event_kind:compact` 提示，保留原生历史、分页和普通对话记录。
 

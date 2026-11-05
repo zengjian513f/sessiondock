@@ -6,7 +6,8 @@ pub(super) fn messages(record: &Value) -> Vec<Value> {
     let mut output = Vec::new();
     let mut emit = |suffix: &str, role: &str, text: Value, extra: Value| {
         let mut item = json!({"id":format!("{id}{suffix}"),"native_id":id,"role":role,
-            "content":text,"text":text,"timestamp":record["time"]["created"]});
+            "content":text,"text":text,"timestamp":record["time"]["created"],
+            "ts":crate::sessions::text::norm_ts(&record["time"]["created"])});
         if let Some(extra) = extra.as_object() {
             item.as_object_mut().unwrap().extend(extra.clone());
         }

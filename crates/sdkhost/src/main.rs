@@ -98,16 +98,32 @@ mod unix {
         let f = std::fs::OpenOptions::new()
             .append(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&path)?;
+        let mut timing = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path.with_extension("time"))?;
         let mut file = tokio::fs::File::from_std(f);
         let mut bytes = [0; 65536];
+        let mut end = 0u64;
         loop {
             let n = reader.read(&mut bytes).await?;
+            let received = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_millis() as u64;
             if n == 0 {
                 break;
             }
             file.write_all(&bytes[..n]).await?;
             file.flush().await?;
+            // Opaque byte ranges, not parsed SDK messages. Save the receipt
+            // instant before making these bytes visible to attached readers.
+            end += n as u64;
+            use std::io::Write;
+            timing.write_all(&end.to_le_bytes())?;
+            timing.write_all(&received.to_le_bytes())?;
             {
                 let mut s = state.lock().await;
                 if stdout {
@@ -118,6 +134,7 @@ mod unix {
             }
             notify.notify_waiters();
         }
+        timing.sync_data()?;
         file.sync_data().await
     }
     async fn handle(

@@ -277,7 +277,7 @@ impl Connection {
         self.wake.notify_one();
         Ok(rx)
     }
-    fn observe(&self, message: &Value, next: u64) -> Result<(), String> {
+    fn observe(&self, message: &Value, next: u64, received: Option<String>) -> Result<(), String> {
         let association = message["id"].as_u64().and_then(|id| {
             self.journal
                 .lock()
@@ -295,7 +295,7 @@ impl Connection {
                 Some("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")
             );
             let prev_seq = state.seq;
-            if let Some(response) = state.receive(message) {
+            if let Some(response) = state.receive_at(message, received) {
                 self.send(response)?;
             }
             if state.seq == prev_seq {
@@ -419,6 +419,11 @@ async fn run(
     let mut caught_up = Some(caught_up);
     let mut sent = 0;
     let mut read_offset = connection.live.lock().unwrap().stdout_offset;
+    let live_start = client
+        .status()
+        .await
+        .map(|s| s.stdout_len)
+        .unwrap_or(u64::MAX);
     let mut buffer = Vec::new();
     let mut detached = false;
     let mut deliberate = false;
@@ -443,7 +448,7 @@ async fn run(
         while let Some(length)=buffer.iter().position(|b|*b==b'\n').map(|p|p+1).or_else(||(output.eof&&!buffer.is_empty()).then_some(buffer.len())){
             let line:Vec<_>=buffer.drain(..length).collect();let next=read_offset-buffer.len()as u64;
             if line.iter().all(u8::is_ascii_whitespace){let mut state=connection.live.lock().unwrap();state.stdout_offset=next;state.save_checkpoint_throttled().map_err(error)?;continue;}
-            let message:Value=serde_json::from_slice(&line).map_err(|_|"grok_sdk_invalid_protocol".to_owned())?;connection.observe(&message,next)?;
+            let message:Value=serde_json::from_slice(&line).map_err(|_|"grok_sdk_invalid_protocol".to_owned())?;connection.observe(&message,next,crate::sdk_message_time::hosted(&client,next,live_start))?;
         }
         if output.eof{connection.live.lock().unwrap().save_checkpoint().map_err(error)?;}
         let status=client.status().await.map_err(error)?;

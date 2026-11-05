@@ -280,8 +280,16 @@ impl LiveThread {
         let _ = self.tx.send(event);
     }
 
-    pub fn apply(&self, method: &str, params: Value) {
+    pub fn apply(&self, method: &str, mut params: Value) {
+        let received = crate::sdk_message_time::now();
         let mut state = self.state.lock().expect("live");
+        if matches!(method, "item/started" | "item/completed") && params["item"].is_object() {
+            let item = &mut params["item"];
+            if let Some(previous) = item["id"].as_str().and_then(|id| state.items.get(id)) {
+                crate::sdk_message_time::preserve(item, previous);
+            }
+            crate::sdk_message_time::MessageTime::new(item, Some(received)).stamp(item);
+        }
         let previous = state.capacity.summary();
         state.reduce(method, &params);
         let retry = state.capacity.summary();

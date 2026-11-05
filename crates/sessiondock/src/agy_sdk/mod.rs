@@ -342,7 +342,7 @@ impl Bridge {
                 let receipt = json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
                 self.save_binding(&live, &turn)?;
                 live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
-                data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued"}));
+                data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued","received_at":crate::sdk_message_time::now()}));
                 data.receipts.insert(request, receipt.clone());
                 data.outstanding += 1;
                 data.error = None;
@@ -707,7 +707,7 @@ async fn actor(
                             {
                                 if event["event"]=="step_update" {
                                     log_step(&live,&turn,runtime.native.as_ref().unwrap(),&event["step_update"],true);
-                                    project(&live,&turn,&event["step_update"]);
+                                    project(&live,&turn,&event["step_update"],runtime.native.as_ref().unwrap().received_at.clone());
                                     runtime.transcript.observe(&event["step_update"]);
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                 } else if event["event"]=="result" {
@@ -888,7 +888,7 @@ async fn actor(
                     });
                     data.error = Some(error.clone());
                     if !conflict {
-                        data.items.push(json!({"id":format!("agy:error:{}",turn.id),"role":"system","content":error,"error":true}));
+                        data.items.push(json!({"id":format!("agy:error:{}",turn.id),"role":"system","content":error,"error":true,"received_at":crate::sdk_message_time::now()}));
                     }
                 }
                 live.publish(&mut data);
@@ -1057,7 +1057,7 @@ async fn execute(
                         let step=&event["step_update"];
                         log_step(live,turn,native,step,false);
                         saw_assistant |= step["step_type"]=="agent_response" && step["text_delta"].as_str().is_some_and(|s|!s.is_empty());
-                        project(live,turn,step);
+                        project(live,turn,step,native.received_at.clone());
                         transcript.observe(step);
                         saw_assistant |= transcript.refresh(process,live,turn).await;
                     }
@@ -1067,7 +1067,7 @@ async fn execute(
                         if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
                         if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.is_empty()) {
                             let mut data=live.data.lock().unwrap();
-                            data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value}));live.publish(&mut data);
+                            data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value,"received_at":native.received_at}));live.publish(&mut data);
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
                         let evidence=transcript::conflicting_result(process,live,turn,value).await;
@@ -1098,7 +1098,7 @@ async fn execute(
                     _=>{
                         let mut data=live.data.lock().unwrap();
                         let id=format!("agy:event:{}:{}",turn.id,data.seq);
-                        data.items.push(json!({"id":id,"role":"system","content":event.to_string(),"native":event}));live.publish(&mut data);
+                        data.items.push(json!({"id":id,"role":"system","content":event.to_string(),"native":event,"received_at":native.received_at}));live.publish(&mut data);
                     }
                 }
             }
@@ -1151,7 +1151,8 @@ async fn execute(
     outcome
 }
 
-fn project(live: &Live, turn: &Turn, step: &Value) {
+fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
+    let time = crate::sdk_message_time::MessageTime::new(step, received);
     let mut data = live.data.lock().unwrap();
     if step["usage"].is_object() {
         data.step_usage = step["usage"].clone();
@@ -1164,7 +1165,9 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
     {
         let id = format!("{native_id}:thinking");
         if !data.items.iter().any(|item| item["id"] == id) {
-            data.items.push(json!({"id":id,"role":"thinking","content":thinking,"request_id":turn.id,"native_type":"PLANNER_RESPONSE"}));
+            let mut item = json!({"id":id,"role":"thinking","content":thinking,"request_id":turn.id,"native_type":"PLANNER_RESPONSE"});
+            time.stamp(&mut item);
+            data.items.push(item);
         }
     }
     // A completed step notification need not carry any visible body. Its
@@ -1185,6 +1188,7 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
             .iter_mut()
             .find(|item| item["request_id"] == turn.id && item["role"] == "user")
         {
+            time.stamp(item);
             item["native_id"] = json!(native_id);
             item["native"] = step.clone();
             item["status"] = json!("accepted");
@@ -1203,6 +1207,7 @@ fn project(live: &Live, turn: &Turn, step: &Value) {
             data.items.len() - 1
         };
         let item = &mut data.items[index];
+        time.stamp(item);
         if let Some(text) = step["text"].as_str() {
             item["content"] = json!(text);
         } else if let Some(delta) = step["text_delta"].as_str() {

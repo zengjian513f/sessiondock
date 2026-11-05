@@ -56,6 +56,8 @@ pub(super) struct LiveState {
     pub(super) interrupted_turn: bool,
     #[serde(default, skip_serializing)]
     pub(super) items: Vec<Value>,
+    #[serde(skip)]
+    message_time: crate::sdk_message_time::MessageTime,
     #[serde(default)]
     pub(super) history_len: usize,
     #[serde(skip)]
@@ -153,6 +155,7 @@ impl LiveState {
             loading: false,
             interrupted_turn: false,
             items: Vec::new(),
+            message_time: Default::default(),
             history_len: 0,
             history_store: None,
             history_key: String::new(),
@@ -291,7 +294,7 @@ impl LiveState {
             .filter_map(|block| block["text"].as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        self.begin_turn(&text, rpc.request_key.as_deref(), None, None);
+        self.begin_turn(&text, rpc.request_key.as_deref(), None, None, None);
     }
 
     pub(super) fn alloc_item_id(&mut self, prefix: &str) -> String {
@@ -625,6 +628,7 @@ impl LiveState {
         request_id: Option<&str>,
         model: Option<String>,
         effort: Option<String>,
+        received: Option<String>,
     ) {
         self.running = true;
         self.interrupted_turn = false;
@@ -639,6 +643,7 @@ impl LiveState {
         if let Some(e) = effort.filter(|s| !s.is_empty() && self.effort_supported()) {
             self.effort = Some(e);
         }
+        self.message_time = crate::sdk_message_time::MessageTime::new(&Value::Null, received);
         let user_id = self.alloc_item_id("user");
         let mut user_item = json!({
             "id": user_id,
@@ -792,6 +797,14 @@ impl LiveState {
     }
 
     pub(super) fn handle_notification(&mut self, method: &str, params: &Value) {
+        self.handle_notification_at(method, params, None);
+    }
+    pub(super) fn handle_notification_at(
+        &mut self,
+        method: &str,
+        params: &Value,
+        received: Option<String>,
+    ) {
         if params["sessionId"]
             .as_str()
             .is_some_and(|sid| !self.session_id.is_empty() && sid != self.session_id)
@@ -868,7 +881,7 @@ impl LiveState {
                 if let Some(meta) = routed["update"]["_meta"]["kiro"].as_object_mut() {
                     meta.remove("agentSubtaskId");
                 }
-                task.state.handle_notification(method, &routed);
+                task.state.handle_notification_at(method, &routed, received);
                 self.publish();
                 return;
             }
@@ -897,6 +910,8 @@ impl LiveState {
             || u["_meta"]["isReplay"].as_bool() == Some(true)
             || params["isReplay"].as_bool() == Some(true)
             || u["isReplay"].as_bool() == Some(true);
+        self.message_time =
+            crate::sdk_message_time::MessageTime::new(u, if is_replay { None } else { received });
 
         let msg_id = u["messageId"]
             .as_str()
@@ -1391,7 +1406,8 @@ impl LiveState {
     /// Append an item and record its id index. All pushes to `self.items` in
     /// the reducers go through here so `item_index` stays in sync, keeping
     /// later lookups O(1).
-    fn push_item(&mut self, item: Value) {
+    fn push_item(&mut self, mut item: Value) {
+        self.message_time.stamp(&mut item);
         self.history_dirty.insert(self.items.len());
         self.history_len = self.items.len() + 1;
         self.projection_dirty = true;
@@ -1407,7 +1423,9 @@ impl LiveState {
         if self.items.iter().any(|item| item["id"] == id) {
             return false;
         }
-        self.push_item(steer_item(id, text));
+        let mut item = steer_item(id, text);
+        item["received_at"] = json!(crate::sdk_message_time::now());
+        self.push_item(item);
         true
     }
 

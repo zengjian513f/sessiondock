@@ -823,7 +823,7 @@ impl Bridge {
             state.running = false;
             state.prompt_started = false;
             state.setup_pending = false;
-            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":"user","content":text,"request_id":request_id}));
+            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":"user","content":text,"request_id":request_id,"received_at":crate::sdk_message_time::now()}));
             state.publish();
             if let Some(err) = state.last_checkpoint_error.clone() {
                 return Err(err);
@@ -860,7 +860,7 @@ impl Bridge {
             state.error = None;
             state.error_kind = None;
             state.turn += 1;
-            let item = json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell{"tool"}else{"user"},"content":text,"tool_name":if shell{json!("shell")}else{Value::Null},"request_id":request_id});
+            let item = json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell{"tool"}else{"user"},"content":text,"tool_name":if shell{json!("shell")}else{Value::Null},"request_id":request_id,"received_at":crate::sdk_message_time::now()});
             state.items.push(item.clone());
             let response = session.connection.begin_prompt(
                 json!({"sessionId":session.sid,"prompt":prompt}),

@@ -719,7 +719,8 @@ const CodexSdkView = {
     let message = this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
-    message = SdkUI.messageTime(this, {...message, id: item.id, turn_id: this.turn?.id, ts: item.ts || item.timestamp});
+    message = SdkUI.messageTime(this, {...message, id: item.id, turn_id: this.turn?.id,
+      ts: item.ts || item.timestamp, received_at: item.received_at});
     if (old?._updateMessage && old.dataset.role === message.role) {
       old._updateMessage(message);
       return;

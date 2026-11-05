@@ -316,6 +316,11 @@ impl Session {
             let st = self.state.lock().unwrap();
             (st.stdout_offset, st.stderr_offset)
         };
+        let live_start = client
+            .status()
+            .await
+            .map(|s| s.stdout_len)
+            .unwrap_or(u64::MAX);
         let mut out_buffer = Vec::new();
         let mut err_buffer = Vec::new();
         let mut batch_started = Instant::now();
@@ -347,11 +352,19 @@ impl Session {
             if flush && let Some(end) = out_buffer.iter().rposition(|b| *b == b'\n') {
                 let bytes: Vec<u8> = out_buffer.drain(..=end).collect();
                 let committed = out_pos - out_buffer.len() as u64;
-                self.observe_line(&String::from_utf8_lossy(&bytes), Some(committed))?;
+                self.observe_line(
+                    &String::from_utf8_lossy(&bytes),
+                    Some(committed),
+                    Some((client, live_start)),
+                )?;
                 batch_started = Instant::now();
             }
             if out.eof && !out_buffer.is_empty() {
-                self.observe_line(&String::from_utf8_lossy(&out_buffer), Some(out_pos))?;
+                self.observe_line(
+                    &String::from_utf8_lossy(&out_buffer),
+                    Some(out_pos),
+                    Some((client, live_start)),
+                )?;
                 out_buffer.clear();
             }
             // Empty host reads long-poll for 250 ms. Do not put that wait after
@@ -427,13 +440,24 @@ impl Session {
         Ok(())
     }
 
-    fn observe_line(self: &Arc<Self>, line: &str, cursor: Option<u64>) -> Result<(), String> {
+    fn observe_line(
+        self: &Arc<Self>,
+        line: &str,
+        cursor: Option<u64>,
+        host: Option<(&Client, u64)>,
+    ) -> Result<(), String> {
         let mut auto = Vec::new();
         let mut sid = None;
         {
             let mut st = self.state.lock().unwrap();
             st.observing = true;
-            for line in line.lines() {
+            let mut end = cursor.unwrap_or_default().saturating_sub(line.len() as u64);
+            for line in line.split_inclusive('\n') {
+                end += line.len() as u64;
+                let received = host.map_or_else(
+                    || Some(crate::sdk_message_time::now()),
+                    |(client, start)| crate::sdk_message_time::hosted(client, end, start),
+                );
                 if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
                     if value.get("method").is_none() {
                         if let Some(id) = value["id"].as_u64() {
@@ -521,7 +545,7 @@ impl Session {
                                 auto.push(key);
                             }
                         } else {
-                            st.handle_notification(method, &params);
+                            st.handle_notification_at(method, &params, received);
                         }
                     }
                 }
@@ -590,7 +614,7 @@ impl Session {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if s.observe_line(&line, None).is_err() {
+                if s.observe_line(&line, None, None).is_err() {
                     break;
                 }
             }
@@ -812,7 +836,13 @@ impl Session {
                 st.observing = true;
                 st.active_prompt = Some(id);
                 st.model_retry = Default::default();
-                st.begin_turn(text, delivery_id, None, None);
+                st.begin_turn(
+                    text,
+                    delivery_id,
+                    None,
+                    None,
+                    Some(crate::sdk_message_time::now()),
+                );
                 st.observing = false;
                 st.persist()?;
                 st.broadcast();
@@ -861,7 +891,13 @@ impl Session {
             st.model_retry.deadline = None;
             st.observing = true;
             st.active_prompt = Some(id);
-            st.begin_turn(super::retry::CONTINUE, None, None, None);
+            st.begin_turn(
+                super::retry::CONTINUE,
+                None,
+                None,
+                None,
+                Some(crate::sdk_message_time::now()),
+            );
             st.observing = false;
             st.persist()?;
             st.broadcast();

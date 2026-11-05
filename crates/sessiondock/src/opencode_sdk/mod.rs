@@ -468,7 +468,7 @@ impl Bridge {
             state.sending += 1;
             state.raw["running"] = json!(true);
             state.raw["error"] = Value::Null;
-            state.items.push(json!({"id":native_id,"native_id":native_id,"role":"user","content":text,"text":text,"request_id":request,"delivery_state":"admitting"}));
+            state.items.push(json!({"id":native_id,"native_id":native_id,"role":"user","content":text,"text":text,"request_id":request,"delivery_state":"admitting","received_at":crate::sdk_message_time::now()}));
             state.publish();
         }
         session.wake.notify_one();
@@ -754,9 +754,15 @@ impl Bridge {
                 continue;
             }
             let projected = project::messages(&record);
-            for item in projected {
+            for mut item in projected {
+                crate::sdk_message_time::MessageTime::new(
+                    &Value::Null,
+                    Some(crate::sdk_message_time::now()),
+                )
+                .stamp(&mut item);
                 if let Some(old) = state.items.iter_mut().find(|m| m["id"] == item["id"]) {
                     let native_admitted = old["native_admitted"] == true;
+                    crate::sdk_message_time::preserve(&mut item, old);
                     *old = item;
                     if native_admitted {
                         old["native_admitted"] = json!(true);

@@ -39,6 +39,11 @@ Unix socket 两端检查同 UID。Linux 使用目录 FD 路径连接 socket，�
 
 - stdout/stderr 分开追加到私有文件；read 带字节 offset，返回 bytes、next_offset、eof。
   读取分块不限制原生消息长度，完整行的组装由对应协议适配层负责。
+- `stdout.time`／`stderr.time` 随输出保存宿主读到字节时的 UTC 毫秒时间；每条索引为
+  两个 little-endian u64（字节区间的结束 offset、接收时间），不解析或修改原始流。
+  适配层用完整消息最后一个字节定位接收时间，节点停服期间的输出恢复后仍用原时间。
+  索引随原流保留，压缩原流不删除索引；旧宿主没有索引时，旧缓冲输出不补造时间，
+  新输出可采用适配层接收时间。原生时间字段优先，接收时间不等同于模型生成时间。
 - write 带稳定传输 ID；先持久化 unknown，再写管道，成功后记录 written。
   同一个 ID 再次请求只返回原回执，不重复写入。written 不代表 CLI 已消费。
 - close_stdin 是显式操作，不随客户端 Drop 自动发生。

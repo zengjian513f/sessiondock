@@ -50,6 +50,9 @@ fn unsupported<T>() -> io::Result<T> {
     ))
 }
 impl Client {
+    pub fn received_at(&self, _: Stream, _: u64) -> io::Result<Option<u64>> {
+        Ok(None)
+    }
     pub fn directory(&self) -> &Path {
         &self.dir
     }

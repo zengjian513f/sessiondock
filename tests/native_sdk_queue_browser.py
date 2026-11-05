@@ -133,7 +133,7 @@ def pictures(page, uid, folder, prefix, *, all_sizes=False):
         if page.locator('.sdk-queue').is_visible():
             page.locator('.sdk-queue').scroll_into_view_if_needed()
         else:
-            page.locator('.sdk-live .msg').last.scroll_into_view_if_needed()
+            page.locator('.sdk-live .msg:visible').last.scroll_into_view_if_needed()
         page.screenshot(path=str(folder / f'{prefix}-{width}-{theme}.png'), full_page=True)
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.emulate_media(color_scheme='light')

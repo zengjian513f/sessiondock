@@ -155,6 +155,44 @@ pub struct Client {
     dir: PathBuf,
 }
 impl Client {
+    /// UTC milliseconds when the host read the last byte of a complete frame.
+    /// The optional index survives host exit and output compression. Older
+    /// hosts have no index; never substitute the time of this read.
+    pub fn received_at(&self, stream: Stream, end: u64) -> io::Result<Option<u64>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let path = self.dir.join(match stream {
+            Stream::Stdout => "stdout.time",
+            Stream::Stderr => "stderr.time",
+        });
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        if end == 0 {
+            return Ok(None);
+        }
+        let count = file.metadata()?.len() / 16;
+        let (mut low, mut high) = (0, count);
+        let mut row = [0u8; 16];
+        while low < high {
+            let mid = low + (high - low) / 2;
+            file.seek(SeekFrom::Start(mid * 16))?;
+            file.read_exact(&mut row)?;
+            if u64::from_le_bytes(row[..8].try_into().unwrap()) < end {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        if low == count {
+            return Ok(None);
+        }
+        file.seek(SeekFrom::Start(low * 16))?;
+        file.read_exact(&mut row)?;
+        Ok(Some(u64::from_le_bytes(row[8..].try_into().unwrap())))
+    }
+
     pub fn directory(&self) -> &Path {
         &self.dir
     }

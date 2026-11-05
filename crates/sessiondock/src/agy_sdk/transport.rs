@@ -249,6 +249,8 @@ pub(super) struct Native {
     output: BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>,
     line: Vec<u8>,
     pub stdout_offset: u64,
+    pub received_at: Option<String>,
+    live_start: u64,
     pub key: Option<String>,
     stderr: Option<JoinHandle<String>>,
     pub sid: String,
@@ -426,6 +428,14 @@ impl Native {
                 )
             };
         process.owned.lock().unwrap().insert(pid);
+        let live_start = if let Some(host) = &host {
+            host.status()
+                .await
+                .map(|s| s.stdout_len)
+                .unwrap_or(u64::MAX)
+        } else {
+            0
+        };
         let mut native = Self {
             child,
             host,
@@ -433,6 +443,8 @@ impl Native {
             output: BufReader::new(stdout),
             line: Vec::new(),
             stdout_offset: 0,
+            received_at: None,
+            live_start,
             key: binding.map(|(key, _, _)| key.to_owned()),
             stderr,
             pump,
@@ -515,6 +527,10 @@ impl Native {
         }
         let mut bytes = std::mem::take(&mut self.line);
         self.stdout_offset += bytes.len() as u64;
+        self.received_at = self.host.as_ref().map_or_else(
+            || Some(crate::sdk_message_time::now()),
+            |host| crate::sdk_message_time::hosted(host, self.stdout_offset, self.live_start),
+        );
         if bytes.last() == Some(&b'\n') {
             bytes.pop();
         }

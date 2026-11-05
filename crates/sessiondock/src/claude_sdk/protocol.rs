@@ -20,7 +20,8 @@ fn text(value: &Value) -> String {
     value.to_string()
 }
 
-fn upsert(live: &mut Live, row: Value) {
+fn upsert(live: &mut Live, mut row: Value) {
+    live.message_time.stamp(&mut row);
     if let Some(existing) = live.items.iter_mut().find(|item| item["id"] == row["id"]) {
         // A late full assistant frame must not erase an observed tool result.
         // Claude can emit that full frame before content_block_stop; a later
@@ -30,6 +31,7 @@ fn upsert(live: &mut Live, row: Value) {
         }
         let result = existing.get("result").cloned();
         let request_id = existing.get("request_id").cloned();
+        crate::sdk_message_time::preserve(&mut row, existing);
         *existing = row;
         if let Some(result) = result {
             existing["result"] = result;
@@ -77,10 +79,15 @@ fn block_row(message: &str, index: u64, block: &Value, native_id: Option<&str>) 
 }
 
 pub(super) fn observe(session: &Session, frame: Value) {
-    observe_at(session, frame, None);
+    observe_at(session, frame, None, Some(crate::sdk_message_time::now()));
 }
 
-pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
+pub(super) fn observe_at(
+    session: &Session,
+    frame: Value,
+    offset: Option<u64>,
+    received: Option<String>,
+) {
     // Native SessionStart hooks run before --resume loads its persisted SID.
     // These unprojected startup notifications carry a temporary process UUID;
     // discard their telemetry without accepting any of its content or identity.
@@ -105,6 +112,7 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
     let is_delta =
         frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
     let mut live = lock(&session.live);
+    live.message_time = crate::sdk_message_time::MessageTime::new(&frame, received);
     if let Some(offset) = offset {
         live.stdout_offset = offset;
     }
@@ -253,18 +261,24 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
                 } else {
                     // Exact per-kind renderer opt-in: never settle an unknown
                     // kind as a real user dismissal.
-                    live.items.push(json!({"id":format!("unsupported:{key}"),"role":"system",
+                    upsert(
+                        &mut live,
+                        json!({"id":format!("unsupported:{key}"),"role":"system",
                         "content":format!("Unsupported Claude dialog kind: {}",native["dialog_kind"]),
-                        "text":format!("Unsupported Claude dialog kind: {}",native["dialog_kind"]),"error":true}));
+                        "text":format!("Unsupported Claude dialog kind: {}",native["dialog_kind"]),"error":true}),
+                    );
                 }
             } else {
                 if let Some(sender) = &live.outbound {
                     let _=sender.send(json!({"type":"control_response","response":{"subtype":"error","request_id":key,
                         "error":"SessionDock does not implement this Claude native control request"}}));
                 }
-                live.items.push(json!({"id":format!("unsupported:{key}"),"role":"system",
+                upsert(
+                    &mut live,
+                    json!({"id":format!("unsupported:{key}"),"role":"system",
                     "content":format!("Unsupported Claude request: {}",native["subtype"]),
-                    "text":format!("Unsupported Claude request: {}",native["subtype"]),"error":true}));
+                    "text":format!("Unsupported Claude request: {}",native["subtype"]),"error":true}),
+                );
             }
         }
         "control_cancel_request" => {

@@ -32,6 +32,8 @@ pub(super) struct Live {
     pub cancel_requested: bool,
     pub prompt_started: bool,
     pub items: Vec<Value>,
+    #[serde(skip)]
+    message_time: crate::sdk_message_time::MessageTime,
     pub requests: HashMap<String, Value>,
     pub receipts: HashMap<String, Value>,
     pub error: Option<String>,
@@ -82,6 +84,7 @@ impl Live {
             cancel_requested: false,
             prompt_started: false,
             items: vec![],
+            message_time: Default::default(),
             requests: HashMap::new(),
             receipts: HashMap::new(),
             error: None,
@@ -215,6 +218,11 @@ impl Live {
         };
     }
     pub fn receive(&mut self, message: &Value) -> Option<Value> {
+        self.receive_at(message, Some(crate::sdk_message_time::now()))
+    }
+    pub fn receive_at(&mut self, message: &Value, received: Option<String>) -> Option<Value> {
+        self.message_time =
+            crate::sdk_message_time::MessageTime::new(&message["params"]["update"], received);
         let params = &message["params"];
         let sid = params["sessionId"].as_str();
         let ours = sid.is_some_and(|sid| self.sid.is_empty() || sid == self.sid);
@@ -237,7 +245,7 @@ impl Live {
                 self.publish();
                 return None;
             }
-            self.items.push(
+            self.push_item(
                 json!({"id":format!("grok:{}:native-steer:{}",self.sid,self.seq),
                 "role":"user","content":params["text"],"delivery":"steer","native":params}),
             );
@@ -339,7 +347,7 @@ impl Live {
                     .iter()
                     .position(|i| i["id"] == item_id)
                     .unwrap_or_else(|| {
-                        self.items.push(
+                        self.push_item(
                             json!({"id":item_id,"role":"tool","content":"","tool_call_id":id}),
                         );
                         self.items.len() - 1
@@ -485,14 +493,14 @@ impl Live {
             }
             "image_dropped" | "image_compressed" => {
                 self.segment += 1;
-                self.items.push(
+                self.push_item(
                     json!({"id":format!("grok:{}:status:{}:{}",self.sid,self.turn,self.segment),
                     "role":"system","content":content_text(update),"native":update}),
                 );
             }
             "plan" => {
                 self.segment += 1;
-                self.items.push(
+                self.push_item(
                     json!({"id":format!("grok:{}:plan:{}:{}",self.sid,self.turn,self.segment),
                 "role":"system","content":content_text(&update["entries"]),"native":update}),
                 );
@@ -508,6 +516,10 @@ impl Live {
             self.publish();
         }
         None
+    }
+    fn push_item(&mut self, mut item: Value) {
+        self.message_time.stamp(&mut item);
+        self.items.push(item);
     }
     fn chunk(&mut self, role: &str, content: &Value) {
         if self.items.last().is_none_or(|item| item["role"] != role) {
@@ -525,8 +537,7 @@ impl Live {
                 blocks.push(content.clone());
             }
         } else {
-            self.items
-                .push(json!({"id":id,"role":role,"content":text,"native_content":[content]}));
+            self.push_item(json!({"id":id,"role":role,"content":text,"native_content":[content]}));
         }
     }
 }

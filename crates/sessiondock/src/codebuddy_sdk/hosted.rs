@@ -347,6 +347,11 @@ async fn run(
     let mut deliberate = false;
     let mut detached = false;
     let mut read_offset = lock(&session.live).stdout_offset;
+    let live_start = client
+        .status()
+        .await
+        .map(|s| s.stdout_len)
+        .unwrap_or(u64::MAX);
     let mut buffer = Vec::new();
     let mut signal_sent = false;
     let mut stderr_offset = 0;
@@ -429,7 +434,12 @@ async fn run(
                     .map_err(|_| "codebuddy_sdk: invalid native stream-json output")?;
                 let is_delta = frame["type"] == "stream_event"
                     && frame["event"]["type"] == "content_block_delta";
-                protocol::observe_at(&session, frame, Some(next));
+                protocol::observe_at(
+                    &session,
+                    frame,
+                    Some(next),
+                    crate::sdk_message_time::hosted(&client, next, live_start),
+                );
                 if let Some(err) = lock(&session.live).last_checkpoint_error.clone() {
                     return Err(err);
                 }
