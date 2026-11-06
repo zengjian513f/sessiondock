@@ -21,6 +21,10 @@
 
 ## Runtime and platform coverage
 
+- [ ] BUG-20261106-143936-9d8a6d：额度快照跨视图／标签页同步 `70b9bea4`
+  已以 web-only 部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Vela、Cetus。
+  Orion 正式 SSH 尝试超时，待恢复后补发前端；三个资源代理按组件范围排除。
+
 - [ ] `kiro_sdk_browser.py` 在 BUG-20261106-143936-9d8a6d 排查中于 stop/reopen 后重载，
   等待原会话侧栏行超时（第 406 行），未完成综合套件；待定位列表恢复路径。
   额度同步另由 `quota_sync_browser.py` 的节点／Hub、已停止／已启动 SDK 实际操作覆盖。
