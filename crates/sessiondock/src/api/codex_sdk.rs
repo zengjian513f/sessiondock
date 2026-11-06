@@ -5,7 +5,7 @@ use std::{convert::Infallible, path::Path, sync::Arc, time::Duration};
 
 use axum::{
     Extension, Json,
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::StatusCode,
     response::{
         IntoResponse, Response,
@@ -124,6 +124,18 @@ pub struct Create {
 
 pub async fn create(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    Json(body): Json<Create>,
+) -> Result<Json<Value>, ApiError> {
+    tokio::spawn(create_owned(State(state), peer, hub, Json(body)))
+        .await
+        .map_err(|_| rpc(RpcError::Disconnected))?
+}
+
+async fn create_owned(
+    State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(body): Json<Create>,
 ) -> Result<Json<Value>, ApiError> {
@@ -150,18 +162,33 @@ pub async fn create(
         hub.is_some(),
     )
     .await?;
+    let initiator = if continuation.is_none() && hub.is_none() {
+        crate::runtime::sdk_spawn::capture(&state, peer.map(|Extension(ConnectInfo(p))| p)).await?
+    } else {
+        None
+    };
     let result = sdk.create(&body.request_id, params).await.map_err(rpc)?;
     let path = result["thread"]["path"]
         .as_str()
         .ok_or_else(|| rpc(RpcError::Disconnected))?;
     let uid = crate::sessions::uid_for("codex", Path::new(path));
     super::relations::record_sdk_continuation(&state, &uid, continuation)?;
+    crate::runtime::sdk_spawn::record(
+        &state,
+        &uid,
+        "codex",
+        result["thread"]["id"].as_str().unwrap_or(""),
+        initiator,
+    )?;
     state.reader.store.invalidate_inventory();
-    let session = sdk
+    let mut session = sdk
         .pending()
         .map_err(rpc)?
         .into_iter()
         .find(|row| row["uid"] == uid);
+    if let (Some(metadata), Some(row)) = (&state.metadata, session.as_mut()) {
+        metadata.snapshot()?.enrich(std::slice::from_mut(row));
+    }
     Ok(Json(
         json!({"ok":true,"uid":uid,"session":session,"cwd":cwd,"thread_id":result["thread"]["id"],"raw":result}),
     ))

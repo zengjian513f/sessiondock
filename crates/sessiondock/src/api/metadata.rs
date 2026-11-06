@@ -362,9 +362,17 @@ pub async fn nest(
             "跨机器附属需要通过 Hub 验证",
         ));
     }
+    let pending = super::terminal::collect_sdk_sessions(&state)?;
     write(state, move |store, events| {
-        let list = store.list(true)?;
-        let rows = list["sessions"].as_array().expect("session snapshot rows");
+        let mut list = store.list(true)?;
+        let rows = list["sessions"]
+            .as_array_mut()
+            .expect("session snapshot rows");
+        for row in pending {
+            if !rows.iter().any(|native| native["uid"] == row["uid"]) {
+                rows.push(row);
+            }
+        }
         if listed_row(rows, &body.uid).is_none() {
             return Err(ApiError::new(
                 StatusCode::NOT_FOUND,

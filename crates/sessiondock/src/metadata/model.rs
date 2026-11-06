@@ -532,6 +532,16 @@ impl MetadataSnapshot {
         })
     }
 
+    /// A successful SDK create without an initiator is independent. A later
+    /// retry is not another launch and must not infer a different caller.
+    pub fn with_initial_nest_decision(&self, uid: &str) -> Result<Self, MetadataError> {
+        validate_uid(uid)?;
+        self.change(|rows| {
+            rows.entry(uid.to_owned()).or_default().nest_initialized = Some(true);
+            Ok(())
+        })
+    }
+
     pub fn with_initial_nest_parents(
         &self,
         found: &[(String, NestParent)],

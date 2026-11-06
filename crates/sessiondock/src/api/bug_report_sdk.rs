@@ -34,6 +34,7 @@ pub(super) async fn launch(
         super::codex_sdk::create(
             State(state.clone()),
             None,
+            None,
             Json(serde_json::from_value(body).map_err(|e| e.to_string())?),
         )
         .await
@@ -41,6 +42,7 @@ pub(super) async fn launch(
         super::native_sdk::call(
             State(state.clone()),
             Path("create".into()),
+            None,
             None,
             Json(body),
         )
@@ -87,6 +89,7 @@ pub(super) async fn launch(
             State(state.clone()),
             Path("open".into()),
             None,
+            None,
             Json(json!({"uid":uid})),
         )
         .await
@@ -114,6 +117,7 @@ pub(super) async fn launch(
             let renamed = super::native_sdk::call(
                 State(state.clone()),
                 Path("rename".into()),
+                None,
                 None,
                 Json(json!({"uid":uid,"title":title,
                         "request_id":format!("report-rename:{report_id}")})),
@@ -174,6 +178,7 @@ pub(super) async fn launch(
                 Ok(super::native_sdk::call(
                     State(state.clone()),
                     Path("turn".into()),
+                    None,
                     None,
                     Json(input),
                 )

@@ -928,7 +928,7 @@ pub(super) async fn list_value(state: &AppState, force: bool) -> Result<Value, A
     Ok(response)
 }
 
-fn collect_sdk_sessions(state: &AppState) -> Result<Vec<Value>, ApiError> {
+pub(super) fn collect_sdk_sessions(state: &AppState) -> Result<Vec<Value>, ApiError> {
     let mut sdk_sessions = state
         .codex_sdk
         .as_ref()
@@ -937,6 +937,9 @@ fn collect_sdk_sessions(state: &AppState) -> Result<Vec<Value>, ApiError> {
         .map_err(super::codex_sdk::rpc)?
         .unwrap_or_default();
     sdk_sessions.extend(state.native_sdks.pending());
+    if let Some(metadata) = &state.metadata {
+        metadata.snapshot()?.enrich(&mut sdk_sessions);
+    }
     Ok(sdk_sessions)
 }
 

@@ -4,7 +4,7 @@ mod snapshot_delta;
 use crate::{error::ApiError, state::AppState};
 use axum::{
     Extension, Json,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     response::{
         IntoResponse, Response,
@@ -48,6 +48,7 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
 pub async fn call(
     State(state): State<AppState>,
     Path(method): Path<String>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
@@ -64,9 +65,29 @@ pub async fn call(
         } else {
             None
         };
-        let result = execute(state.clone(), method, body).await?;
+        let initiator = if method == "create" && continuation.is_none() && hub.is_none() {
+            crate::runtime::sdk_spawn::capture(&state, peer.map(|Extension(ConnectInfo(p))| p))
+                .await?
+        } else {
+            None
+        };
+        let creating = method == "create";
+        let mut result = execute(state.clone(), method, body).await?;
         if let Some(uid) = result.0["uid"].as_str() {
             super::relations::record_sdk_continuation(&state, uid, continuation)?;
+            if creating {
+                let row = &result.0["session"];
+                crate::runtime::sdk_spawn::record(
+                    &state,
+                    uid,
+                    row["source"].as_str().unwrap_or(""),
+                    row["sid"].as_str().unwrap_or(""),
+                    initiator,
+                )?;
+            }
+        }
+        if let (Some(metadata), Some(row)) = (&state.metadata, result.0.get_mut("session")) {
+            metadata.snapshot()?.enrich(std::slice::from_mut(row));
         }
         Ok(result)
     })

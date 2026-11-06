@@ -285,3 +285,51 @@ pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
     }
     Snapshot { boot_id, entries }
 }
+
+/// Match a direct local HTTP client's live socket, never a forwarded address.
+/// Return exact process incarnations so callers can recheck after attribution.
+pub fn local_socket_owners(
+    root: &Path,
+    peer: std::net::SocketAddr,
+    snapshot: &Snapshot,
+) -> Vec<Process> {
+    let ip = match peer.ip() {
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map_or_else(|| ip.to_string(), |ip| ip.to_string()),
+        ip => ip.to_string(),
+    };
+    let inodes: BTreeSet<_> = socket_table(root)
+        .into_iter()
+        .filter(|(_, socket)| socket.client_ip == ip && socket.client_port == peer.port())
+        .map(|(inode, _)| inode)
+        .collect();
+    if inodes.is_empty() {
+        return vec![];
+    }
+    snapshot
+        .entries
+        .values()
+        .filter_map(|entry| {
+            let holds = fs::read_dir(root.join(entry.process.pid.to_string()).join("fd"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|fd| {
+                    fs::read_link(fd.path())
+                        .ok()
+                        .and_then(|target| {
+                            target
+                                .to_str()?
+                                .strip_prefix("socket:[")?
+                                .strip_suffix(']')?
+                                .parse::<u64>()
+                                .ok()
+                        })
+                        .is_some_and(|inode| inodes.contains(&inode))
+                });
+            (holds && identity(root, entry.process.pid).is_some_and(|(p, _)| p == entry.process))
+                .then(|| entry.process.clone())
+        })
+        .collect()
+}

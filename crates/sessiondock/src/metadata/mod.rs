@@ -200,6 +200,13 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.without_invalid_initial_nest_parents(invalid))
     }
 
+    pub fn initialize_nest_decision(
+        &self,
+        uid: &str,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_initial_nest_decision(uid))
+    }
+
     pub fn initialize_nest_parents(
         &self,
         found: &[(String, NestParent)],

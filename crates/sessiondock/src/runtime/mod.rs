@@ -30,6 +30,7 @@ pub mod freeze;
 pub mod process;
 pub mod process_links;
 pub mod procscan;
+pub mod sdk_spawn;
 use process::ProcClock;
 pub use process::{IdentityFailure, ProcessIdentity};
 

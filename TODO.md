@@ -5,6 +5,11 @@
 
 ## Kiro integration
 
+- [ ] BUG-20261106-021317-6b1897 补充的 Kiro SSH 后台启动：原生发起记录已确认父会话，
+  但源 SSH 已退出、当前跨节点账本没有该启动映射；无法证明当时哪次采样首先缺失。
+  现有 socket 采样可能错过短连接，需要保留启动时的跨节点身份，而非按目录或提示词猜配。
+  本机 SDK HTTP 创建与临时回执附属关系修复不覆盖此路径；存量关系等待用户确认经正式接口补回。
+
 - [ ] BUG-20261103-112752-cb1c9d：原生上游三次返回 `ServerConnectionResetError`
   的具体服务端／网络原因缺少日志，仍待定位。SessionDock 错误误记为取消已修复；
   原生 `TRANSIENT` 错误接入退避续跑，保留已完成工作，不重放原始消息。
@@ -15,6 +20,10 @@
   同步 replay；默认 history 空响应不作为完整历史证明。见 [Kiro](docs/kiro.md)。
 
 ## Runtime and platform coverage
+
+- [ ] `nest_tree_browser.py` 的 `Grandchild C renamed` 列表刷新等待超时：
+  BUG-20261106-021317-6b1897 验证中，新构建与未修改的 `aa1ab8a8` 基线均在同一断言失败；
+  四组宽窄屏／明暗主题详情父关系同步断言通过。待定位这条既存刷新路径。
 
 - [ ] BUG-20261105-075749-d52ddc：后台接收时间及隐藏缺失占位修复 `100ef0ae`
   已部署、重启并健康于 Lyra、Cygnus、Pavo、Vela，Hub 前端已同步且健康。

@@ -138,7 +138,24 @@ or reopen folded branches. `tests/nest_tree_browser.py` covers full reads withou
 SSE, a delayed catalog followed by an unchanged detail delta, and explicit detach
 on desktop/mobile in both themes.
 
+DELTA (BUG-20261106-021317-6b1897): on Linux, direct loopback SDK create requests capture
+an initiating session from the live client socket's process incarnation and its
+inherited native identity or owning CLI ancestor. Shared daemons are not callers.
+Codex and native SDK creation save the parent before replying; create receipts and
+pending SDK list rows carry the same metadata as native rows; pending identities
+can also use the node attachment/detachment endpoint. Continuations are
+not nested. Retries do not replace an initialized or explicitly detached parent.
+Ordinary browser creation, Hub/proxy requests and requests without process evidence
+remain independent; a successful create records that initial decision so another
+caller retrying its request ID cannot attach it later. No directory or prompt-text
+matching is used.
+Coverage: [SDK caller browser regression](../tests/sdk_spawn_browser.py).
+
 Verified SSH initiators also initialize the same parent, with the remote node ID.
+The originating SSH socket must have been observed while it existed. A detached
+remote command can retain its connection tuple after SSH exits, but that tuple
+alone cannot reconstruct the originating session. Explicit attachment through
+`/api/session/nest` remains available when the caller knows both identities.
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second
 relationship or a public row field. Existing manual parents always win. Legacy
