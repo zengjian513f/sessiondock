@@ -21,6 +21,10 @@
 
 ## Runtime and platform coverage
 
+- [ ] `kiro_sdk_browser.py` 在 BUG-20261106-143936-9d8a6d 排查中于 stop/reopen 后重载，
+  等待原会话侧栏行超时（第 406 行），未完成综合套件；待定位列表恢复路径。
+  额度同步另由 `quota_sync_browser.py` 的节点／Hub、已停止／已启动 SDK 实际操作覆盖。
+
 - [ ] BUG-20261106-021317-6b1897：SDK 自动附属及临时回执修复 `6ce04eea`
   已部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Vela、Cetus；原有 ptyhost 保留。
   Orion 正式 SSH 尝试超时，待恢复后补发服务二进制；资源代理与 ptyhost 按组件范围排除。

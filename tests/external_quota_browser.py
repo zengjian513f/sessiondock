@@ -1,6 +1,7 @@
 """External Codex and conversation views share the node's cached collector."""
 import argparse
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -28,7 +29,7 @@ for line in sys.stdin:
  q=json.loads(line)
  if q.get('method')=='initialize':print(json.dumps({'id':q['id'],'result':{}}),flush=True)
  if q.get('method')=='account/rateLimits/read':
-  print(json.dumps({'id':q['id'],'result':{'rateLimits':{'primary':{'usedPercent':40,'windowDurationMins':10080,'resetsAt':1800000000},'credits':{'balance':'30816.7'}}}}),flush=True)
+  print(json.dumps({'id':q['id'],'result':{'rateLimits':{'primary':{'usedPercent':float((root/'used').read_text()) if (root/'used').exists() else 40,'windowDurationMins':10080,'resetsAt':1800000000},'credits':{'balance':'30816.7'}}}}),flush=True)
 '''
 
 
@@ -96,6 +97,19 @@ def main():
                     page.screenshot(path=str(args.screenshots/f'{mode}-{width}-disabled-controls.png'))
                     page.keyboard.press('Escape')
                     page.screenshot(path=str(args.screenshots/f'{mode}-{width}-sdk.png'))
+                    tab=context.new_page();tab.goto(url+'/quotas.html')
+                    expect(tab.locator('#quota-refresh')).to_be_enabled()
+                    (root/'used').write_text('30.8')
+                    tab.locator('#quota-refresh').click()
+                    expect(tab.locator('[data-source="codex"] .quota-remaining b')).to_have_text('30.8%',timeout=30000)
+                    expect(page.locator('[data-gauge="7d"] b')).to_have_text('30.8%')
+                    page.locator('#a-chat').click()
+                    expect(page.locator('#conversation-status .sdk-gauges')).to_contain_text('30.8%')
+                    (root/'used').write_text('40')
+                    tab.locator('#quota-refresh').click()
+                    expect(page.locator('#conversation-status .sdk-gauges')).to_contain_text('40%',timeout=30000)
+                    tab.close()
+                    page.locator('#a-sdk').click()
                     captured=json.loads(quota.read_text())['captured_at']
                     count=(root/'calls').read_text().count('query')
                     page.locator('#a-chat').click()
@@ -148,6 +162,20 @@ def main():
             expect(page.locator('#sdk-model')).to_have_value('fake-sol')
             expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
             page.screenshot(path=str(args.screenshots/'managed-sdk.png'))
+            tab=context.new_page();tab.goto(base+'/quotas.html')
+            expect(tab.locator('#quota-refresh')).to_be_enabled()
+            updated=page.request.get(base+'/api/quotas').json()
+            def managed_refresh(route):
+                updated['agents'][0]['captured_at']=datetime.now(timezone.utc).isoformat()
+                route.fulfill(json=updated)
+            tab.route('**/api/quotas/refresh',managed_refresh)
+            updated['agents'][0]['buckets'][0]['remaining_percent']=69.2
+            tab.locator('#quota-refresh').click()
+            expect(page.locator('[data-gauge="5h"] b')).to_have_text('30.8%')
+            updated['agents'][0]['buckets'][0]['remaining_percent']=60
+            tab.locator('#quota-refresh').click()
+            expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
+            tab.close()
             page.locator('#a-chat').click()
             expect(page.locator('#conversation-status [data-balance="reset-credits"]')).to_have_text('重置卡 2 张')
             expect(page.locator('#conversation-status .sdk-gauges')).to_contain_text('40%')

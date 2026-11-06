@@ -55,7 +55,7 @@ async function initQuotas(container) {
       }
       head.append(labels);table.append(columns,head);
       for (const node of installedNodes) {
-        const agent=(node.data?.agents || []).find(a => a.source===source);
+        const agent=UsageUI.accounts.get(accountKey(node,source)) || (node.data?.agents || []).find(a => a.source===source);
         const all=agent?.buckets || [];
         const credits=all.filter(b=>b.id==='credits' || b.id?.endsWith(':credits'));
         const cards=all.find(b=>b.id==='reset-credits');
@@ -119,6 +119,13 @@ async function initQuotas(container) {
       scroll.scrollLeft=offsets.get(source) || 0;
     }
   }
+  const accountKey=(node,source)=>`${hub ? node.id : ''}:${source}`;
+  function accept(node,data) {
+    node.data=data;node.error=null;
+    for(const quota of data.agents || [])UsageUI.publishQuota(accountKey(node,quota.source),quota);
+    render();
+  }
+  UsageUI.watchQuota(root,null,()=>render());
   async function load(collect=false) {
     refresh.disabled=true;status.textContent='正在查询额度…';
     try {
@@ -136,13 +143,13 @@ async function initQuotas(container) {
             request(base.replace(/quotas$/, 'clients'))
           ]);
           if(clients.status==='fulfilled') node.clients=clients.value.clients || [];
-          if(quotas.status==='fulfilled') {node.data=quotas.value;node.error=null;}
+          if(quotas.status==='fulfilled') {accept(node,quotas.value);}
           else if(collect) throw quotas.reason;
           else node.error=quotas.reason.message;
           render();
           // Each node refreshes after its own cached read, without waiting for peers.
           if(!collect && !stopped) {
-            node.data=await request(base+'/refresh?cached=true','POST');node.error=null;render();
+            accept(node,await request(base+'/refresh?cached=true','POST'));
           }
         }
         catch(error) {failures++;node.error=error.message;render();}
@@ -154,7 +161,7 @@ async function initQuotas(container) {
   refresh.addEventListener('click',()=>load(true));
   // Only update the local clock; opening and the refresh button collect quotas.
   const timer=setInterval(tick,1000);
-  const stopClock=()=>{stopped=true;clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
+  const stopClock=()=>{stopped=true;UsageUI.watchers.delete(root);clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
   container.addEventListener('close',stopClock,{once:true});
   window.addEventListener('pagehide',stopClock,{once:true});
   await load();

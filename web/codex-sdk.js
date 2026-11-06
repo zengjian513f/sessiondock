@@ -56,6 +56,7 @@ const CodexSdkView = {
     this.mountToolbar(generation);
     this.paintPickers();
     this.paintGauges();
+    UsageUI.watchQuota(pane,UsageUI.accountKey(uid),quota=>this.applyQuota(quota,true));
     this.applyQuota(UsageUI.quota(uid));
     // Account collection is shared by every session on this node. It does not
     // resume the selected thread, including an externally running CLI.
@@ -76,6 +77,7 @@ const CodexSdkView = {
   },
 
   close() {
+    UsageUI.watchers.delete(this.pane);
     if(this.uid)UsageUI.remember(this.uid,this.agent,{usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
     this.quotaRead?.abort();this.quotaRead=null;
     this.recordedRead?.abort();this.recordedRead=null;this.recordedEnd=null;this.recordedAt=null;this.recordedModel=null;
@@ -259,8 +261,9 @@ const CodexSdkView = {
     finally { if(this.recordedRead===read)this.recordedRead=null; }
   },
 
-  applyQuota(quota) {
-    if(this.limitsFresh || !quota?.captured_at)return;
+  applyQuota(quota, shared=false) {
+    if((this.limitsFresh && !shared) || !quota?.captured_at)return;
+    if(shared && this.limitsFresh && Date.parse(quota.captured_at)<=Date.parse(this.limitsObservedAt))return;
     if(this.limitsRecordedAt && Date.parse(this.limitsRecordedAt)>Date.parse(quota.captured_at))return;
     const windows=(quota.buckets || []).filter(row=>['codex:primary','codex:secondary'].includes(row.id) && Number.isFinite(row.remaining_percent));
     const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
@@ -279,8 +282,9 @@ const CodexSdkView = {
     this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
     this.limitsRecordedAt = null;
     this.limitsFresh = true;
+    this.limitsObservedAt = new Date().toISOString();
     this.resetCards = raw?.rateLimitResetCredits || null;
-    UsageUI.rememberCodexLimits(this.uid,raw);
+    UsageUI.rememberCodexLimits(this.uid,raw,this.limitsObservedAt);
     this.paintGauges();
   },
 
@@ -664,7 +668,8 @@ const CodexSdkView = {
           this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
           this.limitsRecordedAt = null;
           this.limitsFresh = true;
-          UsageUI.rememberCodexLimits(this.uid,{rateLimits:this.limits});
+          this.limitsObservedAt = new Date().toISOString();
+          UsageUI.rememberCodexLimits(this.uid,{rateLimits:this.limits},this.limitsObservedAt);
         }
         break;
       case 'error':

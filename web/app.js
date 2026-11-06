@@ -10086,6 +10086,7 @@ function renderConversationUsage(row, uid) {
     renderConversationBalances(gauges, agent);
     if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
   };
+  UsageUI.watchQuota(row,UsageUI.accountKey(uid),paint);
   paint(UsageUI.quota(uid));
   void (async()=>{
     for(const refresh of [false,true]) {

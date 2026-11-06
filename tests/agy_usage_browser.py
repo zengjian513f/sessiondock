@@ -32,15 +32,23 @@ def exercise(browser, base, fixture, screenshots):
     context.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[quota]}))
     def grouped_quota(route):
         response=route.fetch();data=response.json()
-        data.get('raw',data)['quota']=quota
+        payload=data.get('raw',data)
+        payload['quota']={**quota,'captured_at':payload.get('quota',{}).get('captured_at',quota['captured_at'])}
         route.fulfill(response=response,json=data)
     context.route('**/api/native-sdk/usage',grouped_quota)
+    def grouped_snapshot(route):
+        response=route.fetch();data=response.json()
+        data['agents']=[{**quota,'captured_at':q.get('captured_at',quota['captured_at'])} if q['source']=='agy' else q for q in data['agents']]
+        route.fulfill(response=response,json=data)
+    context.route('**/api/quotas/refresh*',grouped_snapshot)
     held_open=[]
     context.route('**/api/native-sdk/open',lambda route:held_open.append(route))
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
     # /open is held, so selection must not wait for the native connection.
     select_sdk(page, connected=False)
+    with page.expect_request('**/api/native-sdk/open'):
+        page.locator('#sdk-composer .composer-run-action').click()
     footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
     expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
     assert held_open,'cold quota must render while native open is blocked'
@@ -99,6 +107,7 @@ def exercise(browser, base, fixture, screenshots):
             page.screenshot(path=str(screenshots/f'agy-footer-{width}-{theme}.png'),full_page=True)
             expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
     context.unroute('**/api/native-sdk/usage',grouped_quota)
+    context.unroute('**/api/quotas/refresh*',grouped_snapshot)
     before=len(fixture.inputs())
     (fixture.root/'quota-hold').touch()
     refresh_usage(page)

@@ -25,6 +25,10 @@ const NativeSdkControls = {
     view.usageData=UsageUI.remembered(view.uid,view.agent) || {};
     view.usageData.quota=UsageUI.quota(view.uid) || view.usageData.quota;
     view.quotaRevision=0;
+    UsageUI.watchQuota(view.pane,UsageUI.accountKey(view.uid),quota=>{
+      if(view.usageData.quota===quota)return;
+      view.usageData.quota=quota;view.quotaRevision++;this.paintUsage(view);
+    });
     view.nativeSettings=[];
     const menu = view.pane.querySelector('#sdk-more-menu');
     menu.classList.add('sdk-native-menu');
@@ -47,6 +51,7 @@ const NativeSdkControls = {
     }
   },
   close(view) {
+    UsageUI.watchers.delete(view.pane);
     if(view.uid)this.rememberUsage(view);
     view.quotaRead?.abort();view.quotaRead=null;
     clearTimeout(view.usageRetryTimer);view.usageRetryTimer=0;
@@ -144,7 +149,9 @@ const NativeSdkControls = {
     const cost=usage.usageIsIncomplete || usage.costIsPartial ? undefined : number(usage.cost_usd,usage.total_cost_usd,typeof usage.costUsdTicks==='number'?usage.costUsdTicks/1e10:null); if(cost!=null)text('成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage || {};
     const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens) ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
-    const quota=view.usageData?.quota;
+    UsageUI.rememberQuota(view.uid,view.usageData?.quota);
+    const quota=UsageUI.quota(view.uid) || view.usageData?.quota;
+    view.usageData.quota=quota;
     UsageUI.appendQuotas(gauges,quota,view.uid.split(':')[0]);
     for(const bucket of quota?.buckets || []){
       const unit=bucket.unit || (view.uid.startsWith('kiro:') ? 'Credits' : '');

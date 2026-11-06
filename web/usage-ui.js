@@ -14,13 +14,37 @@ const UsageUI = {
     this.sessions.set(key, structuredClone(data));
   },
   quota(uid) { return this.accounts.get(this.accountKey(uid)); },
-  rememberQuota(uid, quota) {
-    const previous=this.quota(uid);
-    if(previous?.buckets?.length && !quota?.captured_at && !quota?.buckets?.length)return;
-    if(quota && (!previous || !previous.captured_at || Date.parse(quota.captured_at)>=Date.parse(previous.captured_at)))
-      this.accounts.set(this.accountKey(uid),quota);
+  watchers: new Map(),
+  channel: null,
+  watchQuota(holder, key, paint) {
+    for(const [element] of this.watchers)if(!element.isConnected)this.watchers.delete(element);
+    this.watchers.set(holder,{key,paint});
+    this.openChannel();
   },
-  rememberCodexLimits(uid, raw) {
+  openChannel() {
+    if(this.channel || typeof BroadcastChannel==='undefined')return;
+    this.channel=new BroadcastChannel(`sessiondock.quotas.${new URL('./',location.href).pathname}`);
+    this.channel.onmessage=event=>{
+      const {key,quota}=event.data || {};
+      if(typeof key==='string')this.publishQuota(key,quota,false);
+    };
+  },
+  publishQuota(key, quota, broadcast=true) {
+    const previous=this.accounts.get(key);
+    if(!quota || previous===quota)return;
+    if(previous?.buckets?.length && !quota.captured_at && !quota.buckets?.length)return;
+    if(previous?.captured_at && !(Date.parse(quota.captured_at)>=Date.parse(previous.captured_at)))return;
+    this.accounts.set(key,quota);
+    for(const [element,{key:watched,paint}] of this.watchers) {
+      if(!element.isConnected)this.watchers.delete(element);
+      else if(watched===key || watched===null)paint(quota,key);
+    }
+    if(broadcast){this.openChannel();this.channel?.postMessage({key,quota});}
+  },
+  rememberQuota(uid, quota) {
+    this.publishQuota(this.accountKey(uid),quota);
+  },
+  rememberCodexLimits(uid, raw, capturedAt=new Date().toISOString()) {
     const limits=raw?.rateLimitsByLimitId || {codex:raw?.rateLimits};
     const ids=new Set(Object.keys(limits));
     const buckets=(this.quota(uid)?.buckets || []).filter(row=>!ids.has(row.id?.split(':')[0])
@@ -42,7 +66,7 @@ const UsageUI = {
       buckets.push({id:'reset-credits',group:'重置卡',remaining_text:Number.isFinite(resets.availableCount)?`${resets.availableCount} 张`:null,
         expires_at:expiries.length?new Date(Math.min(...expiries)*1000).toISOString():null});
     }
-    this.rememberQuota(uid,{source:'codex',captured_at:new Date().toISOString(),buckets});
+    this.rememberQuota(uid,{source:'codex',captured_at:capturedAt,buckets});
   },
   async readQuota(uid, signal, refresh=false) {
     const node=HUB_MODE ? nodeOf(uid) : '';

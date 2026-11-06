@@ -203,6 +203,12 @@ def main():
             page.unroute('**/api/quotas/refresh*')
             page.route('**/api/quotas/refresh*',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
+            # Missing fields on a cold page are N/A; an undated response must
+            # not erase a newer account snapshot in an already-open page.
+            page.reload()
+            if page.locator('#header-more-btn').is_visible():page.locator('#header-more-btn').click()
+            page.locator('#settings').click()
+            page.get_by_role('tab',name='机器',exact=True).click()
             page.locator('#quota-open').click()
             expect(machine.locator('td.quota-credits')).to_have_text(['N/A'])
             expect(machine.locator('.quota-cards')).to_have_text(['N/A'])
