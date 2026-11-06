@@ -15,6 +15,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_controls_browser import ControlsServer
 from history_fixtures import BINARY
+from sdk_ui_fixtures import reveal_sdk_tool, start_sdk
 
 CHILD = '019a1da0-2244-7333-8444-556677889900'
 PROMPT = '检查子代理返回值 / inspect protocol event from /synthetic/sdk/long-project-name'
@@ -67,11 +68,14 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='domcontentloaded')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+    start_sdk(page)
     expect(page.locator('#sdk-input')).to_be_visible()
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 1,235')
     page.locator('#sdk-input').fill(PROMPT)
     page.locator('#sdk-send').click()
     tool = page.locator('[data-sdk-item="native-collab"]')
+    expect(tool).to_be_attached()
+    reveal_sdk_tool(tool)
     expect(tool).to_be_visible()
     expect(tool).to_contain_text('spawnAgent')
     expect(tool.locator('.tool-status')).to_have_text('运行中…')
@@ -120,7 +124,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         'secondary': {'usedPercent': 26, 'windowDurationMins': None, 'resetsAt': None}}})
     expect(page.locator('[data-gauge="7d"] b')).to_have_text('26%')
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 1,235')
     assert page.evaluate('CodexSdkView.limits.limitName') == 'Codex account'
     assert page.evaluate('CodexSdkView.limits.planType') == 'pro'
     assert page.evaluate('CodexSdkView.limits.normalModelSlug') == 'fake-sol'
@@ -129,11 +133,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
     fake.emit('account/rateLimits/updated', {'rateLimits': {'limitId': 'codex',
         'credits': {'hasCredits': True, 'unlimited': False, 'balance': '0'},
-        'primary': {'usedPercent': 0}, 'secondary': None}})
+        'primary': {'usedPercent': 0, 'resetsAt': 1791604800}, 'secondary': None}})
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('0%')
     expect(page.locator('[data-gauge="7d"] b')).to_have_text('26%')
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 0')
-    usage = page.locator('.sdk-gauges')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 0')
+    usage = page.locator('.sdk-pane .sdk-gauges')
     if not usage.is_visible():
         toggle = page.locator('#sdk-usage-toggle')
         (toggle if toggle.is_visible() else page.locator('#sdk-more')).click()
@@ -155,7 +159,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('#sdk-stop')).to_be_hidden()
     # An authoritative complete read can remove the absent secondary window.
     expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 1,235')
     assert not errors, errors
     context.close()
 

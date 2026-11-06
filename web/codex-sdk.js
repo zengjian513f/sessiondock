@@ -665,6 +665,20 @@ const CodexSdkView = {
         // Rolling notifications are sparse: null means unavailable, including
         // account metadata and windows. Only a complete read removes a window.
         if (raw.rateLimits && (!this.limits || !raw.rateLimits.limitId || raw.rateLimits.limitId === this.limits.limitId)) {
+          // Concurrent turns can report an older account measurement later.
+          // Receipt order is not measurement order: confirm a same-window
+          // decrease before publishing it to this pane and other tabs. A full
+          // account read may legitimately lower usage; never clamp that value.
+          const decreased = ['primary','secondary'].some(name => {
+            const before = this.limits?.[name], next = raw.rateLimits[name];
+            return Number.isFinite(before?.usedPercent) && Number.isFinite(next?.usedPercent)
+              && next.usedPercent < before.usedPercent
+              && (next.resetsAt == null || before.resetsAt == null || next.resetsAt === before.resetsAt);
+          });
+          if (decreased) {
+            if (!this.limitsRetryTimer) void this.loadLimits();
+            break;
+          }
           this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
           this.limitsRecordedAt = null;
           this.limitsFresh = true;
