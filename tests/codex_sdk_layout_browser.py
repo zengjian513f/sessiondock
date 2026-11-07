@@ -6,6 +6,7 @@ Chromium uses private histories and a fake app-server. No real model or account.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import asyncio
 import json
 from pathlib import Path
@@ -163,7 +164,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         expect(menu).to_be_visible()
         expect(menu.locator('#sdk-reset-card')).to_be_visible()
         expect(page.locator('#sdk-tier')).to_be_visible()
-        expect(page.locator('[data-sdk-action]')).to_have_count(4)
+        expect(page.locator('[data-sdk-action]')).to_have_count(5)
         expect(page.locator('#sdk-actions select, #sdk-controls, #sdk-controls-dialog')).to_have_count(0)
         if menu.locator('#sdk-mode').count():
             expect(menu.locator('#sdk-mode')).to_be_visible()
@@ -222,29 +223,35 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         assert_inline_usage(page)
         expect(page.locator('#sdk-model')).to_have_value('fake-luna')
         expect(page.locator('#sdk-effort')).to_have_value('medium')
+    page.wait_for_function("!CodexSdkView.limitsRead")
     # Live gauge composition changes must reflow without a viewport resize.
     page.set_viewport_size({'width': 1440, 'height': 900})
     rates = fake._bucket(); rates['secondary'] = None; rates['credits']['balance'] = '12345.6'
     rates['primary']['usedPercent']=40.5
+    # A sparse notification triggers a complete account read; only that read
+    # may publish the new percentage/credits or remove a quota window.
+    complete = {**rates, 'secondary': fake._bucket()['secondary']}
+    page.route('**/api/codex-sdk/limits?*', lambda route: route.fulfill(json={
+        'ok': True, 'captured_at': datetime.now(timezone.utc).isoformat(), 'raw': {'rateLimits': complete, 'rateLimitsByLimitId': {'codex': complete}}}), times=1)
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': rates}), fake.loop).result(timeout=5)
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 12,346')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 12,346')
     progress=page.locator('[data-gauge="5h"] [role="progressbar"]')
     expect(progress).to_have_attribute('aria-valuenow','40.5')
     assert progress.locator('u').evaluate('e=>e.style.width')=='40.5%'
     assert '40.5%' in page.locator('[data-gauge="5h"]').get_attribute('title')
-    # Rolling notifications are sparse: null is unavailable, not a deletion.
+    # Missing notification fields do not delete complete account fields.
     expect(page.locator('[data-gauge="7d"]')).to_be_visible()
     single_row(page)
     # Only the authoritative account read may remove a missing quota window.
     page.route('**/api/codex-sdk/limits?*', lambda route: route.fulfill(status=200,
-        content_type='application/json', body=json.dumps({'ok': True, 'raw': {
+        content_type='application/json', body=json.dumps({'ok': True, 'captured_at': datetime.now(timezone.utc).isoformat(), 'raw': {
             'rateLimits': rates, 'rateLimitsByLimitId': {'codex': rates},
             'rateLimitResetCredits': {'availableCount': len(fake.cards), 'credits': fake.cards}}})), times=1)
     notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})
     expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
     single_row(page)
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': fake._bucket()}), fake.loop).result(timeout=5)
-    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
+    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 1,235')
     single_row(page)
     assert not errors, errors
     notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})

@@ -23,7 +23,8 @@ const UsageUI = {
   },
   openChannel() {
     if(this.channel || typeof BroadcastChannel==='undefined')return;
-    this.channel=new BroadcastChannel(`sessiondock.quotas.${new URL('./',location.href).pathname}`);
+    // Older clients publish unconfirmed inference notifications on the old channel.
+    this.channel=new BroadcastChannel(`sessiondock.quotas.v2.${new URL('./',location.href).pathname}`);
     this.channel.onmessage=event=>{
       const {key,quota}=event.data || {};
       if(typeof key==='string')this.publishQuota(key,quota,false);
@@ -46,9 +47,8 @@ const UsageUI = {
   },
   rememberCodexLimits(uid, raw, capturedAt=new Date().toISOString()) {
     const limits=raw?.rateLimitsByLimitId || {codex:raw?.rateLimits};
-    const ids=new Set(Object.keys(limits));
-    const buckets=(this.quota(uid)?.buckets || []).filter(row=>!ids.has(row.id?.split(':')[0])
-      && !(raw?.rateLimitResetCredits && row.id==='reset-credits'));
+    // Only complete account reads reach this path; absent buckets are removed.
+    const buckets=[];
     for(const [id,limit] of Object.entries(limits)) {
       for(const name of ['primary','secondary']) {
         const window=limit?.[name];

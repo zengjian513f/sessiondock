@@ -111,17 +111,32 @@ impl Quotas {
     }
     /// Publish an account read from the already connected SDK into the same
     /// snapshot used by external sessions and the quota page.
-    pub async fn record_codex(&self, raw: &Value) {
-        let Some(dir) = &self.directory else { return };
-        let Ok(value) = codex_snapshot(raw) else {
-            return;
-        };
-        let requested_at = Instant::now();
+    pub async fn record_codex(&self, raw: &Value, captured_at: &str) -> Option<Value> {
+        let dir = self.directory.as_ref()?;
+        let mut value = codex_snapshot(raw).ok()?;
+        value["captured_at"] = json!(captured_at);
         let mut completed = self.refresh[0].lock().await;
-        if completed.is_some_and(|time| time >= requested_at) { return; }
-        if save(&dir.join("codex.json"), &value).is_ok() {
+        let path = dir.join("codex.json");
+        let previous = tokio::fs::read(&path)
+            .await
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        // A failed collector retains its old capture time. It must not discard
+        // a successful SDK read merely because the failed attempt ended later.
+        if let Some(previous) = previous
+            && let Some(saved) = previous["captured_at"].as_str()
+            && let (Ok(saved), Ok(incoming)) = (
+                chrono::DateTime::parse_from_rfc3339(saved),
+                chrono::DateTime::parse_from_rfc3339(captured_at),
+            )
+            && saved > incoming
+        {
+            return Some(previous);
+        }
+        if save(&path, &value).is_ok() {
             *completed = Some(Instant::now());
         }
+        Some(value)
     }
     pub async fn collect(&self) -> Value {
         self.collect_selected(None, false).await

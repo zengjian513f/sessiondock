@@ -23,10 +23,13 @@ PROMPT = '检查子代理返回值 / inspect protocol event from /synthetic/sdk/
 
 class ProtocolServer(ControlsServer):
     single_window = False
+    empty_balance = False
 
     def _bucket(self):
         bucket = super()._bucket()
         bucket.update(limitName='Codex account', normalModelSlug='fake-sol')
+        if self.empty_balance:
+            bucket['credits']['balance'] = '0'
         if self.single_window:
             bucket['secondary'] = None
         return bucket
@@ -60,6 +63,8 @@ class ProtocolServer(ControlsServer):
 def exercise(browser, base, corpus, fake, width, theme, screenshots):
     print(f'{width}-{theme}: collab tool / invalid MCP JSON / sparse limits', flush=True)
     fake.single_window = False
+    fake.empty_balance = False
+    fake.used = {"primary": 40, "secondary": 25}
     context = browser.new_context(viewport={'width': width, 'height': 1000}, color_scheme=theme, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()
@@ -117,7 +122,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('.sdk-live')).to_contain_text('MCP accepted supplied JSON')
 
     # Native rolling updates may contain null metadata and windows. Preserve
-    # the complete snapshot while accepting false, zero and fresh window data.
+    # the complete snapshot; changes are confirmed by an account read.
+    fake.used["secondary"] = 26
     fake.emit('account/rateLimits/updated', {'rateLimits': {
         'limitId': 'codex', 'limitName': None, 'planType': None, 'normalModelSlug': None,
         'credits': None, 'primary': None,
@@ -131,6 +137,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     fake.emit('account/rateLimits/updated', {'rateLimits': {'limitId': 'another-bucket',
                                                          'primary': {'usedPercent': 99}}})
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
+    fake.used['primary'] = 0
+    fake.empty_balance = True
     fake.emit('account/rateLimits/updated', {'rateLimits': {'limitId': 'codex',
         'credits': {'hasCredits': True, 'unlimited': False, 'balance': '0'},
         'primary': {'usedPercent': 0, 'resetsAt': 1791604800}, 'secondary': None}})
@@ -155,6 +163,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     fake.emit('item/completed', {'turnId': fake.turn, 'item': {**failed, 'id': 'interrupted-collab', 'status': 'interrupted'}})
     expect(page.locator('[data-sdk-item="interrupted-collab"] .tool-out.err')).to_contain_text('errored')
     fake.single_window = True
+    fake.empty_balance = False
     page.locator('#sdk-stop').click()
     expect(page.locator('#sdk-stop')).to_be_hidden()
     # An authoritative complete read can remove the absent secondary window.

@@ -465,9 +465,11 @@ pub async fn limits(
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
     let _ = &query.uid;
-    let value = sdk.rate_limits().await.map_err(rpc)?;
-    state.quotas.record_codex(&value).await;
-    Ok(Json(json!({"ok": true, "raw": value})))
+    let (value, captured_at) = sdk.rate_limits(true).await.map_err(rpc)?;
+    let quota = state.quotas.record_codex(&value, &captured_at).await;
+    Ok(Json(
+        json!({"ok": true, "raw": value, "captured_at": captured_at, "quota": quota}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -496,10 +498,10 @@ pub async fn reset_credit(
         .await
         .map_err(rpc)?;
     // The daemon says to read the windows again instead of inferring them.
-    let limits = sdk.rate_limits().await.map_err(rpc)?;
-    state.quotas.record_codex(&limits).await;
+    let (limits, captured_at) = sdk.rate_limits(false).await.map_err(rpc)?;
+    let quota = state.quotas.record_codex(&limits, &captured_at).await;
     Ok(Json(
-        json!({"ok": true, "raw": {"outcome": outcome, "limits": limits}}),
+        json!({"ok": true, "raw": {"outcome": outcome, "limits": limits}, "captured_at": captured_at, "quota": quota}),
     ))
 }
 

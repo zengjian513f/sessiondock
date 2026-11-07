@@ -1,5 +1,7 @@
 """External Codex and conversation views share the node's cached collector."""
 import argparse
+import asyncio
+import threading
 from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
@@ -33,6 +35,21 @@ for line in sys.stdin:
 '''
 
 
+class DelayedQuotaServer(FakeAppServer):
+    quota_gate = None
+
+    async def _handle(self, writer, message):
+        gate = self.quota_gate
+        if message.get('method') == 'account/rateLimits/read' and gate:
+            bucket = self._bucket()
+            while not gate.is_set():
+                await asyncio.sleep(0.01)
+            await self.send(writer, {'id': message['id'], 'result': {
+                'rateLimits': bucket, 'rateLimitsByLimitId': {'codex': bucket}}})
+            return
+        await super()._handle(writer, message)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--screenshots', type=Path, required=True)
@@ -61,7 +78,7 @@ def main():
         subprocess.run([str(BINARY),'--initialize-lifecycle',str(root/'ledger')],check=True,capture_output=True)
         port=free_port();env=node_env(root,port,'127.0.0.0/8')
         env.update(SESSIONDOCK_PTYHOST_DIR=str(root/'host'),SESSIONDOCK_LIFECYCLE_DIR=str(root/'ledger'),SESSIONDOCK_STATE_DIR=str(state),SESSIONDOCK_LAUNCHER_CONFIG=str(config))
-        fake=stack.enter_context(FakeAppServer(root/'app.sock',corpus.paths['sdk'],THREAD))
+        fake=stack.enter_context(DelayedQuotaServer(root/'app.sock',corpus.paths['sdk'],THREAD))
         base=stack.enter_context(server(corpus,BINARY,root/'app.sock',env))
         hubroot=root/'hub';hubroot.mkdir()
         hub=Hub(BINARY.with_name('sessiondock-hub'),hubroot,[SimpleNamespace(name='Quota node',token=TOKEN,port=port)])
@@ -192,6 +209,61 @@ def main():
             expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
             expect(page.locator('[data-gauge="7d"] b')).to_have_text('25%')
             page.screenshot(path=str(args.screenshots/'failed-refresh.png'))
+            # Two SDK pages share one in-flight native read. A separate fresh
+            # collector may finish first; the delayed SDK value must not replace
+            # its persisted snapshot or any already-open surface.
+            (root/'fail').unlink()
+            page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+            expect(page.locator('#sdk-input')).to_be_visible()
+            page.wait_for_function('CodexSdkView.connected && !CodexSdkView.limitsRead')
+            other_context=browser.new_context()
+            other=other_context.new_page();other.goto(base)
+            other.wait_for_function('T.listLoaded')
+            other.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+            other.wait_for_function('CodexSdkView.connected && !CodexSdkView.limitsRead')
+            quota_page=context.new_page();quota_page.goto(base+'/quotas.html')
+            expect(quota_page.locator('#quota-refresh')).to_be_enabled()
+            before=len(fake.methods('account/rateLimits/read'))
+            fake.quota_gate=threading.Event()
+            page.locator("#a-chat").click()
+            page.locator("#a-sdk").click()
+            page.wait_for_timeout(200)
+            other.locator("#a-chat").click()
+            other.locator("#a-sdk").click()
+            other.wait_for_timeout(200)
+            (root/'used').write_text('57')
+            with quota_page.expect_response('**/api/quotas/refresh'):
+                quota_page.locator('#quota-refresh').click()
+            expect(quota_page.locator('#quota-refresh')).to_be_enabled()
+            expect(quota_page.locator('[data-source="codex"] .quota-remaining b')).to_have_count(1)
+            expect(quota_page.locator('[data-source="codex"] .quota-remaining b')).to_have_text('57%')
+            expect(page.locator('[data-gauge="7d"] b')).to_have_text('57%')
+            saved=page.request.get(base+'/api/quotas').json()['agents'][0]
+            fake.quota_gate.set()
+            page.wait_for_function('!CodexSdkView.limitsRead')
+            other.wait_for_function('!CodexSdkView.limitsRead')
+            assert len(fake.methods('account/rateLimits/read')) == before+1, 'native query must be shared'
+            persisted=page.request.get(base+'/api/quotas').json()['agents'][0]
+            assert persisted['captured_at']==saved['captured_at'], (saved,persisted)
+            assert persisted['buckets']==saved['buckets'], (saved,persisted)
+            expect(page.locator('[data-gauge="7d"] b')).to_have_text('57%')
+            expect(other.locator('[data-gauge="7d"] b')).to_have_text('57%')
+            page.screenshot(path=str(args.screenshots/'delayed-sdk-read.png'))
+            # A later failed collection must not suppress a successful SDK read.
+            other_context.close()
+            fake.quota_gate=threading.Event()
+            page.locator('#a-chat').click();page.locator('#a-sdk').click()
+            page.wait_for_timeout(200)
+            (root/'fail').touch()
+            with quota_page.expect_response('**/api/quotas/refresh'):
+                quota_page.locator('#quota-refresh').click()
+            expect(quota_page.locator('#quota-refresh')).to_be_enabled()
+            fake.quota_gate.set()
+            page.wait_for_function('!CodexSdkView.limitsRead')
+            expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
+            recovered=page.request.get(base+'/api/quotas').json()['agents'][0]
+            assert recovered['error'] is None and recovered['buckets'][0]['remaining_percent']==60, recovered
+            print('PASS shared native read, late success, late failure and persisted quota ordering', flush=True)
             context.close()
             browser.close()
 

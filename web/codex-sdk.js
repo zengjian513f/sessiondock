@@ -33,7 +33,7 @@ const CodexSdkView = {
     const generation = ++this.generation;
     const remembered=UsageUI.remembered(uid,agent);
     this.limits=null;this.cachedUsage=remembered?.usage || null;
-    this.limitsRecordedAt=null;
+    this.limitsRecordedAt=null;this.limitsAccountAt=null;
     SdkUI.mount(this, {name: 'Codex', readOnly, historyReady,
       settings: (view, values) => CodexSdkControls.settings(view, values)});
     pane.querySelector('.sdk-gauges').innerHTML = `
@@ -224,12 +224,14 @@ const CodexSdkView = {
     this.limitsRetryTimer = 0;
     const read = new AbortController();
     this.limitsRead = read;
+    const requestedAt = new Date().toISOString();
     try {
       const response = await fetch(appUrl(`api/codex-sdk/limits?${new URLSearchParams({uid: this.uid})}`), {signal: read.signal});
       const data = await response.json();
       if (!this.current(generation)) return;
       if (!response.ok || !data?.ok) throw new Error('limits unavailable');
-      this.applyLimits(data.raw);
+      UsageUI.rememberQuota(this.uid,data.quota);
+      this.applyLimits(data.raw, data.captured_at || requestedAt);
       this.limitsRetryDelay = 1000;
     } catch {
       // 保留上次成功值；短暂失败不能让用量一直隐藏到下一回合。
@@ -253,7 +255,7 @@ const CodexSdkView = {
       if(!this.current(generation) || this.connected)return;
       this.cachedUsage=data.usage;this.recordedAt=data.captured_at;this.recordedModel=data.model;
       const recorded=data.recorded_limits;
-      if(!this.limitsFresh && recorded?.rateLimits && (!this.limitsRecordedAt || Date.parse(recorded.capturedAt)>Date.parse(this.limitsRecordedAt))) {
+      if(!this.limits && recorded?.rateLimits) {
         this.limits=recorded.rateLimits;this.limitsRecordedAt=recorded.capturedAt || '';
       }
       this.paintGauges();this.paintPickers();
@@ -264,10 +266,10 @@ const CodexSdkView = {
   applyQuota(quota, shared=false) {
     if((this.limitsFresh && !shared) || !quota?.captured_at)return;
     if(shared && this.limitsFresh && Date.parse(quota.captured_at)<=Date.parse(this.limitsObservedAt))return;
-    if(this.limitsRecordedAt && Date.parse(this.limitsRecordedAt)>Date.parse(quota.captured_at))return;
+    if(this.limitsAccountAt && Date.parse(this.limitsAccountAt)>Date.parse(quota.captured_at))return;
     const windows=(quota.buckets || []).filter(row=>['codex:primary','codex:secondary'].includes(row.id) && Number.isFinite(row.remaining_percent));
     const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
-    if(!windows.length && !credit)return;
+    this.limitsAccountAt=quota.captured_at;
     this.limits={limitId:'codex'};
     if(credit){
       const unlimited=['不限量','无限','unlimited'].includes(String(credit.remaining_text).toLowerCase());
@@ -278,11 +280,15 @@ const CodexSdkView = {
     this.limitsRecordedAt=quota.captured_at;this.paintGauges();
   },
 
-  applyLimits(raw) {
+  applyLimits(raw, capturedAt=new Date().toISOString()) {
+    // Order full reads by the server's query time, never browser arrival time.
+    const previous=UsageUI.quota(this.uid);
+    if(previous?.captured_at && Date.parse(capturedAt)<Date.parse(previous.captured_at))return;
     this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
     this.limitsRecordedAt = null;
     this.limitsFresh = true;
-    this.limitsObservedAt = new Date().toISOString();
+    this.limitsObservedAt = capturedAt;
+    this.limitsAccountAt = capturedAt;
     this.resetCards = raw?.rateLimitResetCredits || null;
     UsageUI.rememberCodexLimits(this.uid,raw,this.limitsObservedAt);
     this.paintGauges();
@@ -401,7 +407,8 @@ const CodexSdkView = {
       const data = await this.request('api/codex-sdk/reset-credit',
         {uid: this.uid, credit_id: creditId || null, idempotency_key: key});
       this.redeemKeys.delete(creditId);
-      this.applyLimits(data.raw.limits);
+      UsageUI.rememberQuota(this.uid,data.quota);
+      this.applyLimits(data.raw.limits, data.captured_at);
       const outcome = data.raw.outcome?.outcome;
       this.setNotice({reset: '已兑换，限额窗口已重置。', alreadyRedeemed: '这张卡此前已兑换，已刷新用量。',
         nothingToReset: '当前没有可重置的限额窗口，未消耗卡片。', noCredit: '没有可用的重置卡。'}[outcome]
@@ -662,29 +669,11 @@ const CodexSdkView = {
         break;
       case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
       case 'account/rateLimits/updated':
-        // Rolling notifications are sparse: null means unavailable, including
-        // account metadata and windows. Only a complete read removes a window.
-        if (raw.rateLimits && (!this.limits || !raw.rateLimits.limitId || raw.rateLimits.limitId === this.limits.limitId)) {
-          // Concurrent turns can report an older account measurement later.
-          // Receipt order is not measurement order: confirm a same-window
-          // decrease before publishing it to this pane and other tabs. A full
-          // account read may legitimately lower usage; never clamp that value.
-          const decreased = ['primary','secondary'].some(name => {
-            const before = this.limits?.[name], next = raw.rateLimits[name];
-            return Number.isFinite(before?.usedPercent) && Number.isFinite(next?.usedPercent)
-              && next.usedPercent < before.usedPercent
-              && (next.resetsAt == null || before.resetsAt == null || next.resetsAt === before.resetsAt);
-          });
-          if (decreased) {
-            if (!this.limitsRetryTimer) void this.loadLimits();
-            break;
-          }
-          this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
-          this.limitsRecordedAt = null;
-          this.limitsFresh = true;
-          this.limitsObservedAt = new Date().toISOString();
-          UsageUI.rememberCodexLimits(this.uid,{rateLimits:this.limits},this.limitsObservedAt);
-        }
+        // Inference notifications can keep a previous plan's quota scale even
+        // when their reset window matches the current account. Both increases
+        // and decreases must be confirmed; receipt time is not measurement time.
+        // Do not broadcast these sparse, unversioned measurements as snapshots.
+        if (raw.rateLimits && !this.limitsRetryTimer) void this.loadLimits();
         break;
       case 'error':
         if (this.summary) {
@@ -997,16 +986,6 @@ function userMessageText(item) {
 }
 
 const SDK_JSON = value => typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
-
-function mergeSdkLimits(previous, update) {
-  const merged = {...previous};
-  for (const [key, value] of Object.entries(update)) {
-    if (value == null) continue;
-    merged[key] = typeof value === 'object' && !Array.isArray(value)
-      ? mergeSdkLimits(previous?.[key], value) : value;
-  }
-  return merged;
-}
 
 /** app-server ThreadItem → 消息模式的消息对象，由同一个 msgNode 渲染。 */
 

@@ -188,6 +188,7 @@ pub struct CodexSdk {
 }
 
 type CreateReceipt = watch::Receiver<Option<Result<Value, RpcError>>>;
+type AccountRead = Result<(Value, String), RpcError>;
 
 pub(crate) struct Inner {
     endpoint: Endpoint,
@@ -197,6 +198,7 @@ pub(crate) struct Inner {
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
     stopped: Mutex<HashSet<String>>,
     models: Mutex<HashMap<u64, (Instant, Value)>>,
+    account_read: tokio::sync::Mutex<Option<(Instant, AccountRead)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
     retention: retention::Retention,
@@ -280,6 +282,7 @@ impl CodexSdk {
                 threads: Mutex::new(HashMap::new()),
                 stopped: Mutex::new(HashSet::new()),
                 models: Mutex::new(HashMap::new()),
+                account_read: tokio::sync::Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
                 retention,
@@ -432,11 +435,29 @@ impl CodexSdk {
 
     /// `account/rateLimits/read`: the 5 h / weekly windows, credits and the
     /// earned reset cards. Account-wide, so it needs no thread.
-    pub async fn rate_limits(&self) -> Result<Value, RpcError> {
-        let connection = self.inner.connection().await?;
-        connection
-            .request("account/rateLimits/read", json!({}))
-            .await
+    pub async fn rate_limits(&self, share_in_flight: bool) -> AccountRead {
+        let requested = Instant::now();
+        let mut cached = self.inner.account_read.lock().await;
+        if let Some((completed, result)) = cached.as_ref()
+            && share_in_flight
+            && *completed >= requested
+        {
+            return result.clone();
+        }
+        let captured =
+            chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339();
+        let result = async {
+            let connection = self.inner.connection().await?;
+            let value = connection
+                .request("account/rateLimits/read", json!({}))
+                .await?;
+            Ok((value, captured))
+        }
+        .await;
+        // All pages notified by the same account event share success or failure.
+        // A later explicit read starts a new query; this is not a TTL cache.
+        *cached = Some((Instant::now(), result.clone()));
+        result
     }
 
     /// `account/rateLimitResetCredit/consume` for one chosen card. The caller's
