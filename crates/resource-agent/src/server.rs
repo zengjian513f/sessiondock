@@ -1492,11 +1492,16 @@ pub fn run() -> io::Result<()> {
                     &slow,
                 );
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
-                s.status.lost_events = lost.load(Ordering::Relaxed);
-                if s.status.lost_events > 0 {
-                    s.status.ssh_connections = false;
+                let lost_events = lost.load(Ordering::Relaxed);
+                let new_loss = lost_events != s.status.lost_events;
+                if new_loss {
                     s.engine.connections.gap();
                 }
+                // The counter is cumulative. Invalidate evidence once per new
+                // gap, not every later sample and every future SSH launch.
+                // Previously ambiguous records stay ambiguous in the tracker.
+                s.status.lost_events = lost_events;
+                s.status.ssh_connections = s.status.events == "bpf" && !new_loss;
                 s.update(snapshot, data);
                 let resources = s.resources.clone();
                 let report = s.report.clone();

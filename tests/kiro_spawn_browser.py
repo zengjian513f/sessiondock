@@ -20,6 +20,7 @@ from node_auth_fixtures import TOKEN, node_env
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
 from spawned_by_fixtures import START, proc_pid
+from collector_events_fixtures import tracer, recover_after_loss
 
 
 def main():
@@ -116,8 +117,11 @@ def main():
                 agent = subprocess.Popen([str(binary.with_name('resource-agent')),
                     '--uid',str(os.getuid()),'--node-id-file',str(node.root/'node-id'),
                     '--socket',str(node.root/'agent.sock'),'--state',str(node.root/'agent.json'),
-                    '--proc-root',str(proc),'--events','off'],stdout=log,stderr=log)
+                    '--proc-root',str(proc),'--events','auto' if node.name == 'a' else 'off'],
+                    env=tracer(node.root) if node.name == 'a' else None, stdout=log,stderr=log)
                 stack.callback(lambda p=agent: (p.terminate(),p.wait(timeout=10)))
+                if node.name == 'a':
+                    recover_after_loss(node.root, boot)
         browser = pw.chromium.launch(headless=True); stack.callback(browser.close)
         hub_root = root/'hub'; hub_root.mkdir()
         hub = None

@@ -416,7 +416,10 @@ entries; absent evidence falls back to live snapshots.
 A TCP socket inherited by an SSH client's child or a client opening a listener
 is shared evidence (including ControlMaster/ControlPersist). Its channels are
 not assigned to the master's session. Event loss invalidates unconfirmed
-connection exclusivity; unfinished spans restored across a collector outage
+connection exclusivity once for each increase of the cumulative loss counter.
+An unchanged historical loss count does not invalidate later SSH launches; after
+a clean sample the active tracer reports SSH observation available again. Already
+ambiguous records remain ambiguous. Unfinished spans restored across a collector outage
 remain ambiguous. Closed spans and verified process bindings survive a restart
 within the same boot; a boot change discards them. Evidence is kept for the boot,
 so storage grows with observed SSH launches, not with an arbitrary expiry that
