@@ -28,7 +28,10 @@ JSON-RPC 模式的模型、强度必须通过请求传递，CLI 同名参数在�
 | 新建／恢复 | `droid.initialize_session` / `droid.load_session` |
 | 发送 | `droid.add_user_message {messageId,text,queuePlacement:"end_of_turn"}` |
 | 中断 | `droid.interrupt_session`；结束以 `agent_turn_completed` 为证据 |
-| 模型／强度 | `droid.update_session_settings {modelId,reasoningEffort}`，立即生效 |
+| 模型／强度／模式／自主权限 | `droid.update_session_settings`；模式 auto/spec，自主权限 off/low/medium/high，显示原生通知确认值 |
+| 重命名 | `droid.rename_session {title}`，原生更新 session_start，不自行重写 JSONL |
+| 分支 | `droid.fork_session {title?}`，使用返回的 newSessionId，在新会话继续 |
+| 压缩 | `droid.compact_session {customInstructions?}`；按返回 SID 刷新原会话或切换新会话 |
 | 模型目录 | `droid.list_models`，不创建会话或模型回合；强度按模型返回 |
 | 审批 | `droid.request_permission` 回送 `selectedOption`；展示原生允许本次／取消选项 |
 | 问答 | `droid.ask_user` 回送带原生 index 的 answers；拒绝回送 cancelled |
@@ -39,9 +42,17 @@ SDK 不接管独立 TUI；Linux 使用现有进程/SID/原生路径占用检测�
 发送须收到原生响应才确认准入；失联无法确认时保留 unknown，不自动重发。
 `create_message.requestId` 或相同 messageId 的回显才作为原生消费证据。
 
-未开放 rename、compact、fork、steer、原生权限模式设置、子代理导航和共享 daemon；
-它们不是 Droid 协议本身不支持，而是本次适配未覆盖。界面按能力隐藏相关操作，
-不把斜杠控制命令发给模型。附件沿用共用文件发布合同。
+未开放按历史消息分支、对话回退、steer、子代理独立 SDK 控制及共享 daemon。
+界面按能力隐藏相关操作，不把斜杠控制命令发给模型。附件沿用共用文件发布合同。
+
+DELTA：重命名、分支和压缩使用持久操作请求 ID；发送前保存意图，重复请求不重放
+原生操作，不确定结果保留错误供核对。设置以 settings_updated 为准，不将请求值
+当作生效值。自主权限使用 Droid 原生等级，不冒充 Codex 沙箱策略。
+普通压缩在 1.6.0 实测返回原 SID 并写 compaction_state；即使字段名为 newSessionId，
+也不能推断一定新建。压缩后刷新历史与 ctx；若返回新 SID，先结束旧身份的传输，
+再转到原生新身份，避免后续输入串会话。分支保留源会话，原生文件决定子会话设置；
+原生可能迁移旧模型，界面显示实际模型，不承诺与源会话完全相同。操作取消不发送 RPC。
+按消息分支请求目前明确返回不支持，不静默退化为全量分支。
 
 ## 记录与通知投影
 
@@ -61,6 +72,11 @@ SDK 不接管独立 TUI；Linux 使用现有进程/SID/原生路径占用检测�
 | `permission_resolved` | 撤去已解决审批 |
 | `session_compacted` | 状态栏信息，不制造助手回复 |
 | 未识别历史记录 | 可见 system 原文及 native_type，不推测语义 |
+
+DELTA：session_start.callingSessionId 明确关联同来源父会话，复用现有子代理历史
+与导航；普通 fork 的 parent 单独作为分支关系，不能误判为子代理。关系本身不表示
+任务正在运行；孤儿和歧义父身份沿用通用索引行为。子代理独立 SDK 发送、中断仍关闭，
+child_session_available 实时通知尚未接入关系投影。
 
 消息里的文本 tag 不全局剥离；未知包裹保留正文。后台任务、hook、mission、MCP
 状态等通知尚未投影，不宣称完整识别；原始流保留在私有 sdkhost 日志。
@@ -105,3 +121,11 @@ cumulativeTokenUsage。结束事件仅有单回合 tokenUsage 时不覆盖累计
 账户的 Standard/Core 六个窗口及重置倒计时见 [额度合同](quotas.md#droid-接入)。
 [Droid 用量回归](../tests/droid_usage_browser.py) 覆盖加密认证、上下文、累计计数、
 Credits、刷新失败保留、原生命令不推理及宽窄屏。
+
+## 高级操作验收
+
+[Droid 操作浏览器回归](../tests/droid_actions_browser.py) 覆盖节点与 Hub 的模式／权限、
+原生改名、分支继续、同 SID 压缩和新 SID 回执、取消、失败及幂等。
+[子代理历史回归](../tests/droid_children_browser.py) 覆盖父子导航、独立分支、孤儿与
+歧义父身份，不启动子代理写者。原生 1.6.0 独立 HOME 探测确认改名落盘、模式／权限
+通知、fork 新 SID、普通 compact 同 SID，以及 callingMetadata 的持久父身份。

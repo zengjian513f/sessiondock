@@ -654,3 +654,6 @@ The retired copy/new-ID UI acceptance modules carry `run_validation: skip` and r
 Their fixture builders remain imported by native-data and recovery tests; the current public migration
 flow is covered by `session_selected_move_browser` and `session_transfer_sources_browser`.
 Historical results in the incident ledger refer to the revision at which those suites ran.
+
+[Droid 高级操作](../tests/droid_actions_browser.py) covers rename, settings, fork and compact through Node/Hub Chromium.
+[Droid 子代理历史](../tests/droid_children_browser.py) covers native parent identity, history navigation and fork separation.

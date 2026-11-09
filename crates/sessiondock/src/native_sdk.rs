@@ -601,16 +601,23 @@ impl NativeSdks {
             .providers
             .get(source)
             .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
-        if matches!(method, "create" | "fork") {
+        if matches!(method, "create" | "fork") || (source == "droid" && method == "compact") {
             let rows = self.receipts.lock().expect("SDK receipts");
             if let Some(row) = rows.values().find(|row| {
                 row["source"] == source
                     && self.current_scope(row)
                     && row["sdk_operation"].as_str().unwrap_or("create") == method
-                    && (method != "fork" || row["sdk_parent"] == target["uid"])
+                    && (!matches!(method, "fork" | "compact") || row["sdk_parent"] == target["uid"])
                     && row["request_id"] == input["request_id"]
                     && row["request_id"].is_string()
             }) {
+                if source == "droid"
+                    && row
+                        .get("action_input")
+                        .is_some_and(|previous| *previous != input)
+                {
+                    return Err("Droid 操作请求 ID 已用于不同的输入".into());
+                }
                 if row["cwd"] != target["cwd"] {
                     return Err("此创建请求已用于不同的目录".into());
                 }
@@ -663,7 +670,9 @@ impl NativeSdks {
             }
             Err(error) => return Err(error),
         };
-        if matches!(method, "create" | "fork") {
+        if matches!(method, "create" | "fork")
+            || (source == "droid" && method == "compact" && result["uid"] != target["uid"])
+        {
             let uid = result["uid"].as_str().ok_or("SDK 未返回原生会话身份")?;
             let mut row = result
                 .get("session")
@@ -706,7 +715,10 @@ impl NativeSdks {
                 row["creation_choices"] = json!({"model":input["model"],"effort":input["effort"],"mode":input["mode"],"autopilot":input["autopilot"],"permission_mode":input["permission_mode"]});
             }
             row["sdk_operation"] = json!(method);
-            if method == "fork" {
+            if source == "droid" {
+                row["action_input"] = input.clone();
+            }
+            if matches!(method, "fork" | "compact") {
                 row["sdk_parent"] = target["uid"].clone();
             }
             row["sdk_model"] = input["model"].clone();

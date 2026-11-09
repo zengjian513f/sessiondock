@@ -2,8 +2,8 @@
 use serde_json::Value;
 
 use super::{
-    CLAUDE_HEAD_LINES, Input, Records, RowSummary, clip, committed_end, cursor_head, iso_seconds,
-    native_identity,
+    AgentMeta, CLAUDE_HEAD_LINES, Input, Records, RowSummary, clip, committed_end, cursor_head,
+    iso_seconds, native_identity,
 };
 
 pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
@@ -53,8 +53,30 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     );
     let warnings = Vec::new();
     let committed = committed_end(data);
+    let head = records
+        .all()
+        .find(|record| record.value["type"] == "session_start")
+        .map(|record| &record.value);
+    // Native calling metadata identifies a delegated child. `parent` instead
+    // identifies a fork, which remains an independently listed conversation.
+    let agent = head
+        .and_then(|head| head["callingSessionId"].as_str())
+        .filter(|parent| !parent.is_empty())
+        .map(|parent| AgentMeta {
+            id: sid.clone(),
+            parent_sid: Some(parent.to_owned()),
+            title: title.clone(),
+            kind: "subagent".to_owned(),
+            // A child relationship is not evidence that its process is active.
+            open_turn: false,
+            turn_at: None,
+        });
+    let forked_from_id = head
+        .and_then(|head| head["parent"].as_str())
+        .filter(|parent| !parent.is_empty())
+        .map(str::to_owned);
     RowSummary {
-        forked_from_id: None,
+        forked_from_id,
         sid,
         title: clip(&title, 110),
         cwd,
@@ -64,7 +86,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model,
         branch: Value::Null,
         codex: None,
-        agent: None,
+        agent,
         grok: None,
         continued_in_sid: None,
         native_id,

@@ -29,7 +29,7 @@ const NativeSdkControls = {
       if(view.usageData.quota===quota)return;
       view.usageData.quota=quota;view.quotaRevision++;this.paintUsage(view);
     });
-    view.nativeSettings=[];
+    view.nativeSettings=[];view.nativeActionPending=false;
     const menu = view.pane.querySelector('#sdk-more-menu');
     menu.classList.add('sdk-native-menu');
     // ⋯ only holds controls that do not fit; usage stays in the footer and its tooltip.
@@ -101,7 +101,10 @@ const NativeSdkControls = {
   },
   paint(view) {
     if (!view.pane) return;
-    for (const button of view.pane.querySelectorAll('[data-sdk-action]')) button.hidden=!this.supportsAction(view,button.dataset.sdkAction);
+    for (const button of view.pane.querySelectorAll('[data-sdk-action]')) {
+      button.hidden=!this.supportsAction(view,button.dataset.sdkAction);
+      if(view.uid.startsWith('droid:'))button.disabled=!!view.nativeActionPending;
+    }
     this.paintSettings(view);this.paintUsage(view);this.paintQueue(view);this.layout(view);
   },
   supportsAction(view,method) {
@@ -216,10 +219,11 @@ const NativeSdkControls = {
   },
   paintSettings(view) {
     const holder=view.pane.querySelector('#native-sdk-settings'),raw=view.raw || {},source=view.uid.split(':')[0];
-    const modes=raw.modes?.availableModes || (Array.isArray(raw.modes)?raw.modes:null) || (source==='kiro' && (view.capabilities.mode || view.capabilities.settings) ? ['default','plan','auto'] : []);
+    const modes=raw.modes?.availableModes || (Array.isArray(raw.modes)?raw.modes:null) || (source==='droid' && view.capabilities.mode ? ['auto','spec'] : source==='kiro' && (view.capabilities.mode || view.capabilities.settings) ? ['default','plan','auto'] : []);
     const definitions=[];
-    if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.modes?.currentModeId || raw.settings?.mode]);
-    if(view.capabilities.permission_mode || (view.capabilities.approval && source !== 'droid') || (source==='kiro' && (view.capabilities.permissions || view.capabilities.settings)))definitions.push(['permission_mode','权限模式',raw.permission_modes || raw.approvals || (source==='kiro'?['default','autopilot']:['default','acceptEdits','plan','dontAsk','auto','bypassPermissions']),raw.permission_mode || raw.settings?.permission_mode || (typeof raw.autopilot==='boolean'?(raw.autopilot?'autopilot':'default'):raw.approval)]);
+    if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.modes?.currentModeId || raw.settings?.mode || (source==='droid'?raw.settings?.interactionMode:null)]);
+    if(source==='droid' && view.capabilities.permission_mode)definitions.push(['autonomy_level','自主权限',['off','low','medium','high'],raw.settings?.autonomy_level || raw.settings?.autonomyLevel]);
+    if(source!=='droid' && (view.capabilities.permission_mode || view.capabilities.approval || (source==='kiro' && (view.capabilities.permissions || view.capabilities.settings))))definitions.push(['permission_mode','权限模式',raw.permission_modes || raw.approvals || (source==='kiro'?['default','autopilot']:['default','acceptEdits','plan','dontAsk','auto','bypassPermissions']),raw.permission_mode || raw.settings?.permission_mode || (typeof raw.autopilot==='boolean'?(raw.autopilot?'autopilot':'default'):raw.approval)]);
     if(view.capabilities.fast_mode)definitions.push(['fast_mode','Fast',['false','true'],raw.settings?.fast_mode==null?'':String(raw.settings.fast_mode)]);
     if(view.capabilities.settings && source==='opencode')definitions.push(['native_agent','代理',view.nativeAgents || raw.agents || [],raw.agent]);
     for(const definition of definitions){definition[3]=sdkSettingValue(view,definition[0],definition[3] || '');definition[4]=view.settingChoices.has(definition[0]);}
@@ -228,7 +232,7 @@ const NativeSdkControls = {
     for(const control of view.nativeSettings || [])control.remove();view.nativeSettings=[];holder.replaceChildren();
     for(const [key,title,options,current,pending] of definitions) {
       const label=el('label','new-effort sdk-native-setting'),select=document.createElement('select');label.title=title;select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
-      const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',autopilot:'Autopilot',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
+      const names=source==='droid' && key==='mode'?{auto:'执行模式',spec:'计划模式'}:source==='droid' && key==='autonomy_level'?{off:'自主权限关闭',low:'低自主权限',medium:'中自主权限',high:'高自主权限'}:key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',autopilot:'Autopilot',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
       for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
       if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
       ConversationUI.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
@@ -325,10 +329,14 @@ const NativeSdkControls = {
   },
   async action(view,method,body={}) {
     if(method==='steer' && view.uid.startsWith('kiro:'))return view.send('steer');
-    const generation=view.generation;
+    const generation=view.generation,droid=view.uid.startsWith('droid:');
+    if(droid && view.nativeActionPending){view.setNotice('会话操作正在进行，请稍候。');return false;}
+    if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setNotice('当前原生接口尚未提供按消息分支，输入已保留。','blocked');return false;}
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
     if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
+    if(droid){view.nativeActionPending=true;this.paint(view);}
     try{
+      if(droid && method==='compact' && view.capabilities.compact_creates_session && !await appConfirm('压缩当前上下文？原生将压缩会话记录；若生成新会话，将切换到新会话继续。',{ok:'压缩'}))return false;
       if(method==='fork'){
         const kiro=view.uid.startsWith('kiro:') && body.messageId;
         const text=kiro ? body.hide_source
@@ -366,14 +374,23 @@ const NativeSdkControls = {
         view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
         view.paintStatus();
       }
-      const {restore_text,hide_source,...nativeBody}=body;
+      const {restore_text,hide_source,command_text,...nativeBody}=body;
       const sourceUid=view.uid;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
-      if(!view.current(generation))return true;
+      if(!view.current(generation)){
+        // Inventory can select the compact continuation before its receipt arrives.
+        // Finish only that already-selected handoff; never undo user navigation.
+        if(droid && method==='compact' && response.uid && response.uid!==sourceUid && S.sel===response.uid && SdkView.uid===response.uid && !SdkView.agent && (response.accepted ?? response.raw?.accepted)!==false){
+          await SdkView.startSession(response.uid);
+          if(SdkView.uid===response.uid && !SdkView.openFailed)await SdkView.refreshHistory(SdkView.generation,true);
+        }
+        return true;
+      }
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
-      if(method==='fork'){
+      if(method==='fork' || droid && method==='compact' && response.uid && response.uid!==sourceUid){
+        if(droid && command_text && view.input?.value===command_text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
         await CodexSdkActions.openFork(view,response);
-        if(response.session?.source==='kiro' && SdkView.uid===response.uid){
+        if(['kiro','droid'].includes(response.session?.source) && SdkView.uid===response.uid){
           await SdkView.startSession(response.uid);
           if(SdkView.uid===response.uid && !SdkView.openFailed)
             await SdkView.refreshHistory(SdkView.generation,true);
@@ -388,6 +405,7 @@ const NativeSdkControls = {
         if(body.restore_text && view.current(generation))await CodexSdkActions.restoreInput(view,body.restore_text);
       }
       if(method==='compact'){
+        if(droid){await view.refreshHistory(generation,true);if(!view.current(generation))return true;void this.loadUsage(view,false);}
         if(view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:response.raw?.compact || response.compact || {state:'success'}};
         view.paintStatus();
       }else view.setNotice('原生操作已接受');return true;
@@ -397,6 +415,8 @@ const NativeSdkControls = {
         view.setNotice(`操作失败：${error.message}`,'blocked');
       }
       return false;
+    }finally{
+      if(droid && view.current(generation)){view.nativeActionPending=false;this.paint(view);}
     }
   },
   async command(view,text) {
@@ -421,9 +441,9 @@ const NativeSdkControls = {
       if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
       else {await this.settings(view,{[command]:arg});success=true;}
     }else if(command==='plan'){
-      await this.settings(view,{mode:arg || 'plan'});
+      await this.settings(view,{mode:arg || (view.uid.startsWith('droid:')?'spec':'plan')});
       success=true;
-    }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{});
+    }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,{...(command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{}),...(view.uid.startsWith('droid:')?{command_text:text}:{})});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
     return true;
@@ -452,7 +472,15 @@ const NativeSdkControls = {
       audit('requested',{title_length:title.length});
       await view.request('api/native-sdk/rename',{uid,title,request_id:requestId});
       audit('finished',{outcome:'succeeded'});
-      if(current())view.setNotice('会话已重命名');
+      if(current()){
+        view.setNotice('会话已重命名');
+        // Refreshing the inventory can replace the view. Consume only this
+        // successful Droid command before that replacement, preserving edits.
+        if(uid.startsWith('droid:')){
+          if(input?.value===text){input.value='';view.fitInput();CodexSdkCompose.input(view);}
+          if(!await persistComposerDraft(uid))throw new Error('会话已重命名，但输入草稿尚未保存，请保留当前页面');
+        }
+      }
       await loadTermList(true);
       await loadSessions(true,true);
       if(current() && input?.value===text){input.value='';view.fitInput();CodexSdkCompose.input(view);}
@@ -494,7 +522,7 @@ const NativeSdkControls = {
     }
     const items=[];
     for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
-      if(!view.capabilities[method])continue;
+      if(!view.capabilities[method] || method==='fork' && view.uid.startsWith('droid:') && !view.capabilities.fork_before)continue;
       items.push([label,async()=>{
         await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork'?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
       }]);

@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from contextlib import contextmanager
 from codebuddy_sdk_fixtures import CodebuddyFixture, native_uid as buddy_uid
 
@@ -60,7 +61,7 @@ def fake_cli():
     def record(v):
         with log.open('a') as f:f.write(json.dumps(v)+'\n')
     record({'type':'spawn','args':sys.argv[2:],'pid':os.getpid()})
-    sid=None;path=None;pending={};settings={'modelId':'fake-droid','reasoningEffort':'low','autonomyLevel':'off'}
+    sid=None;path=None;pending={};context_used=12000;settings={'modelId':'fake-droid','reasoningEffort':'low','interactionMode':'auto','autonomyLevel':'off'}
     models=[{'id':m,'displayName':name,'supportedReasoningEfforts':['low','high']} for m,name in [('fake-droid','Synthetic Droid'),('fake-droid-2','Synthetic Droid 2')]]
     def emit(v):print(json.dumps({'jsonrpc':'2.0','factoryApiVersion':'1.0.0',**v}),flush=True)
     def reply(v,result):emit({'id':v['id'],'type':'response','result':result})
@@ -84,10 +85,41 @@ def fake_cli():
                 path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n');settings.update({k:p[k] for k in ('modelId','reasoningEffort') if k in p})
             else:assert path.is_file()
             reply(v,{'sessionId':sid,'session':{'messages':[]},'settings':settings,'availableModels':models})
+        elif method=='droid.rename_session':
+            while (log.parent/'rename-hold').exists():time.sleep(.02)
+            if p['title']=='reject rename':
+                emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic rename failure'}});continue
+            rows=[json.loads(line) for line in path.read_text().splitlines()]
+            rows[0].update(title=p['title'],isSessionTitleManuallySet=True)
+            path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            reply(v,{'success':True});note({'type':'session_title_updated','title':p['title'],'updateType':'manual_rename'})
+        elif method=='droid.fork_session':
+            if (log.parent/'fork-fail').exists():
+                emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic fork failure'}});continue
+            child=str(uuid.uuid4())
+            rows=[json.loads(line) for line in path.read_text().splitlines()]
+            messages=[row for row in rows if row.get('type')=='message']
+            rows[0].update(id=child,parent=sid,title=p.get('title','Droid native fork'),forkedAtMessageId=messages[-1]['id'] if messages else None)
+            path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            reply(v,{'newSessionId':child})
+        elif method=='droid.compact_session':
+            context_used=8000
+            child=sid
+            if (log.parent/'compact-new-session').exists():
+                child=str(uuid.uuid4())
+                rows=native_records(child,Path.cwd(),[('Native compact summary','Earlier conversation preserved as a compact summary')])
+                rows[0].update(parent=sid,title='Droid compact continuation')
+                path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            else:
+                with path.open('a') as f:f.write(json.dumps({'type':'compaction_state','removedCount':3})+'\n')
+            reply(v,{'newSessionId':child,'removedCount':3})
+            note({'type':'session_compacted','summaryId':'synthetic-summary','removedCount':3,'visibleBoundaryMessageId':None})
         elif method=='droid.get_context_stats':
             if (log.parent/'context-fail').exists():emit({'id':v['id'],'error':{'code':-32601,'message':'Unavailable context'}})
-            else:reply(v,{'used':12000,'remaining':138000,'limit':150000,'accuracy':'estimated','updatedAt':'2026-11-09T01:00:00Z'})
+            else:reply(v,{'used':context_used,'remaining':150000-context_used,'limit':150000,'accuracy':'estimated','updatedAt':'2026-11-09T01:00:00Z'})
         elif method=='droid.update_session_settings':
+            if (log.parent/'settings-fail').exists():
+                emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic settings failure'}});continue
             settings.update(p);reply(v,{});note({'type':'settings_updated','settings':settings})
         elif method=='droid.add_user_message':
             msg(p['messageId'],'user',p['text'],v['id']);reply(v,{})

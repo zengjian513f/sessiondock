@@ -406,7 +406,7 @@ async fn execute(
             .map_err(failure)?;
     }
     let mut result = native_result.map_err(failure)?;
-    if method == "rename" {
+    if method == "rename" || (source == "droid" && method == "compact") {
         state.reader.store.invalidate_inventory();
     }
     if matches!(method.as_str(), "create" | "fork") {

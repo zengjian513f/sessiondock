@@ -1,6 +1,7 @@
 //! Droid's native, persistent JSON-RPC SDK transport. See docs/droid-sdk.md.
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
+mod actions;
 #[cfg(unix)]
 mod hosted;
 mod protocol;
@@ -183,9 +184,9 @@ fn parse_json(text: &str) -> Result<Value, String> {
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
-        "subagents":false,"effort":true,"settings":true,"permission_mode":false,"fast_mode":false,
-        "usage":true,"context_usage":true,"compact":false,"rename":false,
-        "fork":false,"fork_before":false,"mcp_elicitation":false,"user_dialog":false})
+        "subagents":false,"effort":true,"settings":true,"permission_mode":true,"mode":true,"fast_mode":false,
+        "usage":true,"context_usage":true,"compact":true,"compact_creates_session":true,"rename":true,
+        "fork":true,"fork_before":false,"mcp_elicitation":false,"user_dialog":false})
 }
 fn normalize_models(models: &mut Value) {
     let Some(rows) = models.as_array_mut() else {
@@ -358,7 +359,12 @@ impl Session {
                 return Err("droid_sdk: native transport disconnected".into());
             }
         }
-        match tokio::time::timeout(Duration::from_secs(60), rx).await {
+        let timeout = if request["method"] == "droid.compact_session" {
+            240
+        } else {
+            60
+        };
+        match tokio::time::timeout(Duration::from_secs(timeout), rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => {
                 Err("droid_sdk: native transport disconnected; request outcome unknown".into())
@@ -645,6 +651,7 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
+            "rename" | "fork" | "compact" => self.action(&session, method, &input).await,
             "usage" => {
                 // Read only the owned transport; a quota read must never take a TUI.
                 if lock(&session.live).outbound.is_some() {
@@ -724,6 +731,7 @@ impl Bridge {
                 Ok(session.receipt())
             }
             "settings" => {
+                self.ensure(&session).await?;
                 let request_id = input["request_id"]
                     .as_str()
                     .filter(|s| !s.is_empty())
@@ -754,17 +762,27 @@ impl Bridge {
                 if let Some(effort) = input["effort"].as_str() {
                     params["reasoningEffort"] = json!(effort);
                 }
+                if let Some(mode) = input.get("mode") {
+                    params["interactionMode"] = mode.clone();
+                }
+                if let Some(level) = input.get("autonomy_level") {
+                    params["autonomyLevel"] = level.clone();
+                }
+                lock(&session.live)
+                    .save_checkpoint()
+                    .map_err(|e| format!("droid_sdk_checkpoint: {e}"))?;
                 session
                     .control(json!({"method":"droid.update_session_settings","params":params}))
                     .await?;
                 let mut live = lock(&session.live);
-                protocol::settings(&mut live, &params);
                 session.publish(&mut live);
                 drop(live);
                 let receipt = json!({"configured":true,"request_id":request_id,"session_id":session.sid,
                     "settings":lock(&session.live).settings});
-                lock(&session.live).actions.get_mut(request_id).unwrap()["receipt"] =
-                    receipt.clone();
+                let mut live = lock(&session.live);
+                live.actions.get_mut(request_id).unwrap()["receipt"] = receipt.clone();
+                live.save_checkpoint()
+                    .map_err(|e| format!("droid_sdk_checkpoint: {e}"))?;
                 Ok(receipt)
             }
             "turn" => {

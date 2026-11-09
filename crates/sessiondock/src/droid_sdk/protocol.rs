@@ -12,7 +12,11 @@ pub(super) fn settings(live: &mut Live, settings: &Value) {
     if let Some(effort) = settings["reasoningEffort"].as_str() {
         live.effort = Some(effort.into());
     }
-    for key in ["interactionMode", "autonomyLevel"] {
+    for key in [
+        "interactionMode",
+        "autonomyLevel",
+        "availableAutonomyLevels",
+    ] {
         if let Some(value) = settings.get(key) {
             live.settings[key] = value.clone();
         }
@@ -163,7 +167,7 @@ pub(super) fn observe_at(
                         }
                         live.ready = true;
                     }
-                    "droid.update_session_settings" => settings(&mut live, &request["params"]),
+                    "droid.update_session_settings" => settings(&mut live, &result["settings"]),
                     _ => {}
                 }
             }
@@ -284,7 +288,10 @@ pub(super) fn observe_at(
             "assistant_message_retracted" => {
                 live.items.retain(|r| r["native_id"] != n["messageId"])
             }
-            "session_compacted" => live.compact = n.clone(),
+            "session_compacted" => {
+                live.compact = json!({"state":"success","native":n});
+                live.context_usage = Value::Null;
+            }
             "tool_result" => {
                 let id = format!("tool:{}", n["toolUseId"].as_str().unwrap_or(""));
                 if let Some(row) = live.items.iter_mut().find(|r| r["id"] == id) {
