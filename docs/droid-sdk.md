@@ -72,9 +72,9 @@ SDK 不接管独立 TUI；Linux 使用现有进程/SID/原生路径占用检测�
 [droid_sdk_browser.py](../tests/droid_sdk_browser.py) 使用
 [合成协议夹具](../tests/droid_sdk_fixtures.py)，覆盖节点／Hub、历史与实时衔接、发送、
 设置、审批和问答点击、失败、中断、刷新、新建弹窗、CLI 终端、回收站恢复及节点重启复接。
-真实隔离探测确认 1.6.0 的模型查询、创建、恢复、用户回显、落盘与认证失败事件。
-临时 HOME 无登录凭据，真实模型回合返回 `No access token available`；合成成功回复
-不作为真实模型生成、工具执行或审批已验收的证明。后续项见 [TODO](../TODO.md)。
+真实 1.6.0 探测确认模型查询、创建、恢复、用户回显、落盘与认证失败事件。
+用户授权的生产专用会话以 `claude-haiku-4-5-20251001` / low 验证真实回复、
+ctx、Token/Credits 和账户额度。工具执行、审批和问答仍只有合成验收；后续项见 [TODO](../TODO.md)。
 
 官方参考：[Droid Exec](https://docs.factory.com/droid-exec/overview)、
 [TypeScript SDK](https://docs.factory.com/sdk/typescript)。
@@ -100,8 +100,8 @@ DELTA：SDK 用量读取在已经连接的原生传输上调用 `droid.get_conte
 只读查询不启动或接管外部 TUI；失败保留先前数据并显示错误。
 会话累计用量来自恢复回执 tokenUsage、session_token_usage_changed 和结束事件的
 cumulativeTokenUsage。结束事件仅有单回合 tokenUsage 时不覆盖累计值。
-分别显示输入、输出、思考、缓存读写和 Factory Credits；累计 Token 摘要为输入加输出，
-缓存计数在提示中单列，不把它当上下文长度或账户剩余额度。未提供字段不补零。
+分别显示输入、输出、思考、缓存读写和 Factory Credits；累计 Token 摘要为输入、输出、缓存读写之和，
+思考为输出子项不重复累加，缓存计数在提示中也单列，不把它当上下文长度或账户剩余额度。未提供字段不补零。
 账户的 Standard/Core 六个窗口及重置倒计时见 [额度合同](quotas.md#droid-接入)。
 [Droid 用量回归](../tests/droid_usage_browser.py) 覆盖加密认证、上下文、累计计数、
 Credits、刷新失败保留、原生命令不推理及宽窄屏。

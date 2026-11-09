@@ -311,8 +311,20 @@ pub(super) fn observe_at(
     }
 }
 fn usage(v: &Value) -> Value {
+    // Factory reports uncached input separately from cache reads and writes.
+    // Thinking is already represented in output, so do not count it twice.
+    let total = [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheCreationTokens",
+    ]
+    .into_iter()
+    .map(|key| v[key].as_u64())
+    .collect::<Option<Vec<_>>>()
+    .map(|parts| parts.into_iter().sum::<u64>());
     json!({"basis":"原生会话累计", "credits":v["factoryCredits"],
-        "tokens":{"input":v["inputTokens"],"output":v["outputTokens"],"reasoning":v["thinkingTokens"],
+        "tokens":{"total_tokens":total,"input":v["inputTokens"],"output":v["outputTokens"],"reasoning":v["thinkingTokens"],
         "cache":{"read":v["cacheReadTokens"],"write":v["cacheCreationTokens"]}}})
 }
 pub(super) fn restore_initial_requests(_session: &Session) {}

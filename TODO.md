@@ -9,8 +9,8 @@
   `013e0e05`：正式 SSH 尝试超时。
   Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康；Lyra 已启用 Droid。
   三个资源代理不涉及本次组件，按范围排除。
-- [ ] 在隔离且已认证的 HOME 验证真实模型回复、工具、审批和问答；当前 1.6.0
-  已确认协议和原生认证失败路径，合成 Chromium 验证不能代替真实成功回合。
+- [ ] 在隔离且已认证的 HOME 验证真实工具、审批和问答；当前 1.6.0
+  已在用户授权的生产专用会话验证真实模型回复与用量，工具交互仍只有合成 Chromium 验收。
 - [ ] 补原生 rename/compact/fork/steer、权限设置、子代理／后台通知、非 Linux
   恢复及 CLI 模型目录；现有能力边界见 [Droid SDK](docs/droid-sdk.md)。
 

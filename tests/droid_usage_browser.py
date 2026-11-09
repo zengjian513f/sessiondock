@@ -26,7 +26,7 @@ def check(page,base,f,state,out,hub=False):
     for text in ['1,200','50','20','300','40','12,000','150,000','原生估计','重置剩余']:
         assert text in description,(text,description)
     # A per-turn completion must not replace the cumulative notification.
-    assert '1,250' in description,description
+    assert '1,590' in description,description
     page.screenshot(path=str(out/'sdk-wide-light.png'),full_page=True)
     (f.root/'context-fail').touch();send(page,'/usage')
     expect(gauges).to_have_attribute('aria-description',__import__('re').compile('上下文查询失败'))
