@@ -64,6 +64,8 @@ Covered by [Codex compose](../tests/codex_sdk_compose_browser.py) on node/Hub an
 
 DELTA: FileDock owns directory listing, file-manager actions and chunked uploads.
 SessionDock exposes session-reference reads and multipart attachment publication.
+It does not load or persist the retired directory-browser grant store; file reads
+resolve references from the currently selected session.
 
 Conversation links recognize absolute Windows drive paths (`X:\project\file.md`
 and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive

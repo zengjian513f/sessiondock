@@ -1,7 +1,6 @@
-//! File transport. Every request resolves the selected session; opening a
-//! referenced directory grants authenticated operator navigation. Persisted
-//! grants survive rename/delete, while write targets keep OS and private-data
-//! guards. Request cwd alone never establishes a browser grant.
+//! Session-reference file reads, resolution and attachment publication.
+//! Every request resolves the selected session; cwd alone does not grant reads.
+//! Directory browsing and file-manager mutations belong to FileDock.
 use std::{
     io::{self, Read},
     sync::Arc,

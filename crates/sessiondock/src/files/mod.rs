@@ -1,10 +1,8 @@
-//! Session-reference-scoped file reads and authenticated directory browsing.
-//! Configured roots enable the service; grants permit operator navigation up
-//! to the OS volume root. Transport validates each selected session first and
-//! runs blocking filesystem work off the async reactor. See `docs/files.md`.
+//! Session-reference-scoped file reads and attachment support.
+//! Transport validates each selected session and runs blocking filesystem work
+//! off the async reactor. Directory browsing belongs to FileDock. See `docs/files.md`.
 
 mod boundary;
-mod grants;
 mod media;
 mod references;
 mod response;
@@ -91,14 +89,12 @@ pub struct FileScope<'a> {
 }
 
 pub struct FileService {
-    grants: grants::Grants,
     /// Media reference indexes keyed by view revision (`files/media.rs`).
     media_indexes: std::sync::Mutex<VecDeque<(String, std::sync::Arc<references::ReferenceIndex>)>>,
 }
 impl FileService {
     pub fn open(_roots: Vec<PathBuf>) -> Result<Self, FileError> {
         Ok(Self {
-            grants: grants::Grants::default(),
             media_indexes: std::sync::Mutex::new(VecDeque::new()),
         })
     }
@@ -108,8 +104,8 @@ impl FileService {
         boundary::open_target(boundary::volume_root(&path)?, path)
     }
 
-    /// Resolve navigation only after transport has validated the session and
-    /// its durable directory grant. Cwd or a client path alone is no grant.
+    /// Resolve navigation only after validating a directory reference in the
+    /// selected session. Cwd or a client path alone is no grant.
     pub fn navigation(&self, raw: &str) -> Result<ResolvedTarget, FileError> {
         let path = boundary::absolute_navigation(raw)?;
         boundary::open_target(boundary::volume_root(&path)?, path)

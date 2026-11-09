@@ -61,7 +61,6 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 ### `file_directory_anchor_required`
 
 - 文件浏览入口必须是会话提及的目录
-- [`files/grants.rs`](../crates/sessiondock/src/files/grants.rs) `directory_grant` L138
 - [`files/mod.rs`](../crates/sessiondock/src/files/mod.rs) `target` L226
 
 ### `file_directory_required`
@@ -88,10 +87,8 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 
 - 文件目录必须能表示为 UTF-8 路径
 - 路径无法表示为 UTF-8
-- 目录路径不是 UTF-8
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `open` L132
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `wire_path` L447
-- [`files/grants.rs`](../crates/sessiondock/src/files/grants.rs) `browser_anchor` L165
 - [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `move_recycle_entry` L352
 
 ### `file_path_invalid`
@@ -102,13 +99,11 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 路径组件无效
 - 路径为空、过长或包含空字符
 - 文件引用不能是 URL
-- 无效的目录引用
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `absolute_path` L419
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `open` L142
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `open_target` L310, L315
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `validate_path_text` L385
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `volume_root` L100
-- [`files/grants.rs`](../crates/sessiondock/src/files/grants.rs) `directory_grant` L130
 
 ### `file_preview_unsupported`
 
@@ -1498,12 +1493,6 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 ### `file_attachment_id`
 
 - 无法分配附件目录编号 — [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `attachment_upload` L779
-
-### `file_grant_store`
-
-- 无法保存目录浏览授权
-- 无法创建目录授权暂存文件
-- [`files/grants.rs`](../crates/sessiondock/src/files/grants.rs) `insert` L81, L84
 
 ### `file_io`
 

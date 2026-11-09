@@ -121,10 +121,9 @@ python3 tests/module_map.py --write
 - `error.rs` (68 lines)
 - `files/`
   - `boundary.rs` (467 lines)
-  - `grants.rs` (168 lines)
   - `media.rs` (113 lines)
   - `mod.rs` (317 lines)
-    - mods: `boundary`, `grants`, `media`, `references`, `response`, `write`
+    - mods: `boundary`, `media`, `references`, `response`, `write`
   - `references.rs` (303 lines)
   - `response.rs` (519 lines)
   - `write.rs` (949 lines)

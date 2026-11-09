@@ -11,8 +11,11 @@ NODE='a'*32
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY);parser.add_argument('--screenshots',type=Path);args=parser.parse_args()
  with tempfile.TemporaryDirectory(prefix='sessiondock-filedock-') as t:
-  corpus=build_corpus(Path(t));directory=corpus.root/'files';directory.mkdir();file=directory/'文档 with spaces.md';file.write_text('# linked file')
+  corpus=build_corpus(Path(t));directory=corpus.root/'files';directory.mkdir();file=directory/'文档 + 100% with spaces.md';file.write_text('# linked file')
   image=directory/'preview.png';image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=='))
+  state=corpus.root/'state';state.mkdir()
+  # A retired grant store must not participate in startup or file resolution.
+  obsolete_grants=state/'file-browser-grants.json';obsolete_grants.mkdir()
   sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`. **[完整报告]({file.as_uri()})**',cwd=str(directory))],[])
   # A prior mention of another project's same-named file must not override cwd.
   current=directory/'SCREENING.md';current.write_text('# current project')
@@ -54,7 +57,7 @@ def main():
   text+='普通文件 report.md 和目录 ./docs/ 保持原样。\n\n```text\nhttps://links.example.test/literal\n```'
   corpus.put(web,'claude',[claude_row(web,'assistant','a0',None,text,cwd=str(directory))],[])
   before={p:p.read_bytes() for p in corpus.paths.values()}
-  with isolated_server(corpus,args.binary,file_roots=(directory,),extra_env={'SESSIONDOCK_FILEDOCK_URL':'/file-manager/'}) as (base,_),sync_playwright() as pw:
+  with isolated_server(corpus,args.binary,state_dir=state,file_roots=(directory,),extra_env={'SESSIONDOCK_FILEDOCK_URL':'/file-manager/'}) as (base,_),sync_playwright() as pw:
    browser=pw.chromium.launch(**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
    for width in [1280,390]:
     context=browser.new_context(viewport={'width':width,'height':900},service_workers='block');errors=[];destinations=[]
@@ -155,7 +158,7 @@ def main():
     print(f'PASS web links: bold/plain/italic/parenthesized/www/query/fragment/Markdown/code-span clicks; width={width}',flush=True)
     assert not errors,errors;context.close()
    browser.close()
-  with isolated_server(corpus,args.binary,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
+  with isolated_server(corpus,args.binary,state_dir=state,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
    browser=pw.chromium.launch(headless=True)
    for width,theme in [(1280,'light'),(1280,'dark'),(390,'light'),(390,'dark')]:
     context=browser.new_context(viewport={'width':width,'height':900},color_scheme=theme,service_workers='block')
@@ -211,6 +214,8 @@ def main():
     finally:hub.stop()
    browser.close()
   print('PASS Hub FileDock: disabled directory fallback and configured custom-base navigation',flush=True)
+  assert obsolete_grants.is_dir()
+  print('PASS retired directory grant store ignored during startup and file-link navigation',flush=True)
   assert all(p.read_bytes()==v for p,v in before.items())
  print('PASS SessionDock file-reference click, Windows drive recognition/backend grants/routing/copy/drive roots, exact node/Unicode path, cwd precedence, explicit sibling path, unique fallback, ambiguous/missing errors, independent directory entry; desktop/mobile')
 if __name__=='__main__':main()

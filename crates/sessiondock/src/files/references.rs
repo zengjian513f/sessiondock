@@ -39,23 +39,7 @@ pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
             "图片路径不能为空",
         ));
     }
-    let bytes = raw.as_bytes();
-    let mut decoded = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && let (Some(high), Some(low)) = (bytes.get(index + 1), bytes.get(index + 2))
-            && let (Some(high), Some(low)) =
-                ((*high as char).to_digit(16), (*low as char).to_digit(16))
-        {
-            decoded.push((high * 16 + low) as u8);
-            index += 3;
-            continue;
-        }
-        decoded.push(bytes[index]);
-        index += 1;
-    }
-    let decoded = String::from_utf8_lossy(&decoded);
+    let decoded = crate::json_compat::unquote(raw);
     let value = if let Some(rest) = decoded
         .get(..7)
         .filter(|prefix| prefix.eq_ignore_ascii_case("file://"))
