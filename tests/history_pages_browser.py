@@ -59,6 +59,11 @@ def build(root):
         codex_row("session_meta",{"id":"codex-oversized-window","cwd":"/synthetic/oversized"}),
         *[row(f"OLDER ROW {index:04d}") for index in range(30)],
         row("OVERSIZED LATEST " + "y" * (3 * 1024 * 1024))],[])
+    corpus.put("codex-oversized-page", "codex", [
+        codex_row("session_meta", {"id": "codex-oversized-page", "cwd": "/synthetic/page"}),
+        *[row(f"LARGE PAGE HEAD {index}") for index in range(5)],
+        row("LARGE MIDDLE " + "z" * (9 * 1024 * 1024)),
+        *[row(f"LARGE PAGE TAIL {index}") for index in range(200)]], [])
     latest = [codex_row("session_meta",{"id":"codex-latest-turn","cwd":"/synthetic/latest-turn"}),
         *[row(f"OLDER TURN {index:04d}") for index in range(300)],row("LATEST TURN QUESTION")]
     for index in range(120):
@@ -531,6 +536,18 @@ def main():
                     assert restored["text"]==expected and restored["cursor"]==live
                     print(f"PASS {name}: opening {len(opening[0])} bytes, {len(wire['messages'])} messages; complete history restored")
 
+                # A soft page target must not reject a larger individual event.
+                select('codex-oversized-page', 'LARGE PAGE TAIL 199')
+                large = snapshot()
+                assert large['partial']['omitted'] == 1
+                page.locator('.history-gap-backward').click()
+                settled()
+                expect(page.locator('.history-gap')).to_have_count(0)
+                restored = snapshot()
+                assert restored['text'][5] == 'LARGE MIDDLE ' + 'z' * (9 * 1024 * 1024)
+                assert restored['text'][:5] + restored['text'][6:] == large['text']
+                assert restored['cursor'] == large['cursor']
+                print('PASS oversized middle: backward page preserves a complete event above the soft 8 MiB grouping target', flush=True)
                 # Exercise the real covered-activity handler in Chromium with a
                 # synthetic duplicate packet. It deliberately changes a message
                 # in-place, without a native rewrite/reset or a new msgs array.

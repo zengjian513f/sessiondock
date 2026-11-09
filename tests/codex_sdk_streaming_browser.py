@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright, expect
 from codex_sdk_browser import THREAD, build, server, open_sdk
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY
+from sdk_ui_fixtures import start_sdk
 
 
 def main():
@@ -28,6 +29,7 @@ def main():
                 page = context.new_page()
                 page.goto(base, wait_until='networkidle')
                 open_sdk(page, corpus, expect)
+                start_sdk(page)
                 page.locator('#sdk-input').click()
                 page.locator('#sdk-input').fill('dense streaming ' + theme)
                 page.locator('#sdk-send').click()
@@ -53,10 +55,14 @@ def main():
                         await notify('item/reasoning/textDelta', {'itemId':'raw-thought', 'delta':'x'})
                     await notify('item/started', {'item':{'id':'raw-end', 'type':'agentMessage', 'text':'RAW BURST END'}})
                 asyncio.run_coroutine_threadsafe(raw_burst(), fake.loop).result(10)
-                expect(page.locator('[data-sdk-item="raw-end"]')).to_have_text('RAW BURST END', timeout=15000)
+                expect(page.locator('[data-sdk-item="raw-end"] .mb')).to_have_text('RAW BURST END', timeout=15000)
                 changes = page.evaluate('paneObserver.disconnect(); paneChanges')
                 assert changes < 500, f'hidden tokens repeatedly rebuilt the pane: {changes}'
 
+                for index in range(3):
+                    emit('item/started', {'item': {'id': f'kept-tool-{index}',
+                        'type': 'commandExecution', 'command': f'completed-check-{index}',
+                        'status': 'completed', 'aggregatedOutput': 'unchanged tool output'}})
                 for item in [{'id':'dense-answer','type':'agentMessage','text':''},
                              {'id':'dense-plan','type':'plan','text':''},
                              {'id':'dense-thought','type':'reasoning','summary':['']},
@@ -64,6 +70,19 @@ def main():
                               'status':'inProgress','aggregatedOutput':''}]:
                     emit('item/started', {'item': item})
                 chunks = [f'{i:04d} 流式文本\n' for i in range(600)]
+                page.evaluate('''() => {
+                    window.toolbarChanges = 0;
+                    window.toolbarObserver = new MutationObserver(records => toolbarChanges += records.length);
+                    toolbarObserver.observe(document.querySelector('#sdk-composer'), {childList:true, subtree:true});
+                    window.keptGroup = document.querySelector('[data-sdk-item="kept-tool-0"]').closest('.sdk-tool-group');
+                    if (!keptGroup) throw Error('missing tool group');
+                    window.groupDetachments = 0;
+                    window.groupObserver = new MutationObserver(records => {
+                        for (const record of records) for (const node of record.removedNodes)
+                            if (node === keptGroup) groupDetachments++;
+                    });
+                    groupObserver.observe(document.querySelector('.sdk-live'), {childList:true, subtree:true});
+                }''')
 
                 async def visible_burst():
                     for chunk in chunks:
@@ -75,6 +94,9 @@ def main():
                 asyncio.run_coroutine_threadsafe(visible_burst(), fake.loop).result(15)
                 for item in ('dense-answer', 'dense-plan'):
                     expect(page.locator(f'[data-sdk-item="{item}"] .mb')).to_have_text(''.join(chunks), timeout=15000)
+                toolbar_changes = page.evaluate('toolbarObserver.disconnect(); toolbarChanges')
+                assert toolbar_changes < 20, f'text deltas rebuilt unrelated composer controls: {toolbar_changes}'
+                assert page.evaluate('groupObserver.disconnect(); keptGroup.isConnected && groupDetachments===0'), 'text deltas detached an unchanged tool group'
                 for item in ('dense-thought', 'dense-tool'):
                     card = page.locator(f'[data-sdk-item="{item}"]')
                     group = page.locator(f'.sdk-live .grp.folded:has([data-sdk-item="{item}"]) .fold-toggle')
@@ -88,7 +110,7 @@ def main():
                 # Pending final text must be reconciled before the completion body.
                 emit('item/agentMessage/delta', {'itemId':'dense-answer', 'delta':'pending tail'})
                 emit('item/completed', {'item':{'id':'dense-answer','type':'agentMessage','text':'FINAL AUTHORITATIVE BODY'}})
-                expect(page.locator('[data-sdk-item="dense-answer"]')).to_have_text('FINAL AUTHORITATIVE BODY')
+                expect(page.locator('[data-sdk-item="dense-answer"] .mb')).to_have_text('FINAL AUTHORITATIVE BODY')
                 page.locator('#sdk-stop').click()
                 expect(page.locator('#sdk-stop')).to_be_hidden()
                 expect(page.locator('#sdk-input')).to_have_value('unsent draft ' + theme)
@@ -98,7 +120,7 @@ def main():
                 expect(page.locator('#sdk-input')).to_be_visible()
                 assert len(fake.methods('turn/start')) == starts, 'view reentry replayed accepted input'
                 context.close()
-                print(f'PASS {theme}/{width}: 1500 hidden + 2400 visible SSE deltas, pane mutations={changes}, complete text, draft and stop', flush=True)
+                print(f'PASS {theme}/{width}: 1500 hidden + 2400 visible SSE deltas, pane mutations={changes}, composer mutations={toolbar_changes}, complete text, draft and stop', flush=True)
             browser.close()
 
 

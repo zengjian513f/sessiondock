@@ -263,8 +263,9 @@ No frontend framework is introduced.
 ### Wire contract
 
 `GET /api/messages/{uid}?window=1&agent=...` keeps the existing live checkpoint
-fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`
-and an opaque `cursor`. Initial windows target 200 latest visible events, extend
+fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`,
+an opaque `cursor` and `batch` (the opening window's default, currently 200).
+Initial windows target 200 latest visible events, extend
 backward to the start of the boundary turn when it has a `turn_id`, then add
 up to 5 earliest visible events within a separate 2 MiB estimated JSON target
 (including the 64 KiB metadata reserve). Large text or media can reduce either
@@ -294,6 +295,26 @@ The example omits actual message contents: a successful page is nonempty and
 including `counted:false`, rather than native byte offsets or `message_total`.
 Several events may share an offset; inherited events may have offset zero.
 `next` is null exactly when the initial omitted range has been filled.
+
+DELTA: SDK and ordinary conversation gaps offer **载入前面 N 条**, **全部载入**,
+and **载入后面 N 条**, where N is `partial.batch` (200 on older nodes).
+The directional buttons request one batch with `limit=N` and
+`direction=forward|backward`. Forward reads the oldest end of the gap; backward
+reads its newest end, still returning messages in chronological order. Byte and
+media grouping can yield fewer events; a larger individual event remains readable.
+Without these options, the existing configured page size and forward order apply.
+The all button chains finite pages and can cancel, retaining completed pages.
+
+For backward reads `page.end == page.stop`, `page.start` is the first returned
+index, and `remaining` counts the gap preceding that page. Its continuation grant
+binds the remaining `[old head, page.start)` range. The UI increases `partial.tail`,
+keeps `partial.head` and shrinks `partial.resume.stop` to `page.start`; forward
+reads increase `partial.head`. Alternating directions, retrying and recovering
+evicted grants must preserve order without duplicates. Both insert at the current
+head/tail boundary in the loaded array, preserving the gap's scroll position.
+Coverage: [SDK and conversation pages](../tests/codex_sdk_history_pages_browser.py)
+and [lost-grant recovery](../tests/history_pages_resume_browser.py), through node
+and Hub browser entry points.
 
 A page has no live `end`, `head`, `anchor`, `version` or session metadata fields.
 Its messages are inserted before the existing tail. Loading a page must never

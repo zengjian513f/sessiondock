@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 from sdk_ui_fixtures import start_sdk
 from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
-from codex_sdk_fixtures import FakeAppServer
+from codex_sdk_status_browser import StatusDaemon
 from history_fixtures import BINARY, codex_message
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
@@ -50,7 +50,7 @@ def exercise(browser, binary, mode, width, theme, screenshots):
                     row = codex_message(role, f'{role} history row {index:04d} / 中间历史按需读取')
                     row['payload']['turn_id'] = f'past-turn-{index}'
                     native.write(json.dumps(row, ensure_ascii=False) + '\n')
-        with FakeAppServer(root/'app.sock', path, THREAD) as fake, runtime(corpus, binary, root, mode) as base:
+        with StatusDaemon(root/'app.sock', path, THREAD) as fake, runtime(corpus, binary, root, mode) as base:
             context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
             page = context.new_page()
             errors, reads, held = [], [], []
@@ -76,13 +76,55 @@ def exercise(browser, binary, mode, width, theme, screenshots):
                 screenshots.mkdir(parents=True, exist_ok=True)
                 gap.scroll_into_view_if_needed()
                 page.screenshot(path=str(screenshots/f'{mode}-{width}-{theme}-gap.png'))
-            page.locator('#sdk-input').fill('草稿保持 / keep draft while paging')
             page.evaluate('HISTORY_PAGE_CHAIN = false')
             def state():
                 return page.evaluate('''() => {
                   const e=cache.get(viewKey(S.sel,S.agent));
                   return {end:e.end, head:e.version.head, anchor:e.anchor, omitted:e.partial?.omitted || 0};
                 }''')
+            # Both ends use the opening window's batch, independently of the
+            # server's larger/smaller HTTP page default. Exercise SDK and chat.
+            for view in ('sdk', 'chat'):
+                page.locator('#a-' + view).click()
+                box = page.locator('.sdk-history' if view == 'sdk' else '#msgs')
+                expect(box.locator('.history-gap-button')).to_have_count(3)
+                for direction in ('forward', 'backward'):
+                    old = page.evaluate('''() => { const e=cache.get(viewKey(S.sel,S.agent));
+                        return {messages:e.msgs, partial:e.partial, end:e.end, anchor:e.anchor}; }''')
+                    control = box.locator('.history-gap-' + direction)
+                    expect(control).to_have_text('载入' + ('前面' if direction == 'forward' else '后面') + ' 200 条')
+                    if direction == 'backward':
+                        page.route('**/api/messages/*/page?*', lambda route: route.fulfill(
+                            status=503, json={'error': 'Synthetic backward read failure'}), times=1)
+                        control.click()
+                        expect(box.locator('.history-page-error')).to_contain_text('Synthetic backward read failure')
+                        assert state()['omitted'] == old['partial']['omitted']
+                        expect(control).to_have_text('重试加载这一页')
+                        if screenshots:
+                            page.screenshot(path=str(screenshots/f'{mode}-{width}-{theme}-{view}-error.png'))
+                    control.scroll_into_view_if_needed()
+                    top = box.locator('.history-gap').bounding_box()['y']
+                    with page.expect_response('**/api/messages/*/page?*') as response:
+                        control.click()
+                    data = response.value.json()
+                    assert len(data['messages']) == 200
+                    page.wait_for_function('historyPageRequests.size===0')
+                    expect(box.locator('.history-gap-button:disabled')).to_have_count(0)
+                    current = page.evaluate('''() => { const e=cache.get(viewKey(S.sel,S.agent));
+                        return {messages:e.msgs, partial:e.partial, end:e.end, anchor:e.anchor}; }''')
+                    at = old['partial']['head']
+                    assert current['messages'] == old['messages'][:at] + data['messages'] + old['messages'][at:]
+                    assert current['partial']['head'] == at + (200 if direction == 'forward' else 0)
+                    assert current['partial']['omitted'] == old['partial']['omitted'] - 200
+                    assert current['partial']['resume']['stop'] == current['partial']['head'] + current['partial']['omitted']
+                    assert (current['end'], current['anchor']) == (old['end'], old['anchor'])
+                    page.wait_for_function('''([selector, top]) => Math.abs(document.querySelector(selector).getBoundingClientRect().top-top)<12''',
+                        arg=[('.sdk-history' if view == 'sdk' else '#msgs') + ' .history-gap', top])
+                    assert box.locator('.history-gap').evaluate('(g)=>g.scrollWidth<=g.clientWidth'), 'gap overflows'
+                    if screenshots:
+                        page.screenshot(path=str(screenshots/f'{mode}-{width}-{theme}-{view}-{direction}.png'))
+            page.locator('#a-sdk').click()
+            page.locator('#sdk-input').fill('草稿保持 / keep draft while paging')
             before = state()
             # The native live stream advances while a historical page is held.
             page.route('**/api/messages/*/page?*', lambda route: held.append(route))
@@ -93,6 +135,10 @@ def exercise(browser, binary, mode, width, theme, screenshots):
             expect(history).to_contain_text('SDK native live append while page is pending')
             live = state()
             assert live['end'] > before['end'] and live['omitted'] == before['omitted']
+            expect(history.locator('.history-gap-button:disabled')).to_have_count(3)
+            if screenshots:
+                gap.scroll_into_view_if_needed()
+                page.screenshot(path=str(screenshots/f'{mode}-{width}-{theme}-loading.png'))
             held.pop().continue_()
             page.unroute('**/api/messages/*/page?*')
             page.wait_for_function('n => cache.get(viewKey(S.sel,S.agent)).partial?.omitted === n', arg=before['omitted']-80)
@@ -135,6 +181,7 @@ def exercise(browser, binary, mode, width, theme, screenshots):
             page.wait_for_function('historyPageRequests.size === 0')
             assert state() == pending_state
             # Full SDK refresh after a turn still preserves the native gap.
+            start_sdk(page)
             page.locator('#sdk-input').fill('hold synthetic SDK work')
             page.locator('#sdk-send').click()
             expect(page.locator('#sdk-stop')).to_be_visible()

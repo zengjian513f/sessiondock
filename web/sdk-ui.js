@@ -353,11 +353,10 @@ const SdkUI = {
     view.liveTurns = groups;
   },
 
-  paintHistory(view, messages, {tailComplete = true, decorate} = {}) {
+  paintHistory(view, messages, {tailComplete = true, decorate, actions = ''} = {}) {
     S.autoOpen = 0; S.markCapped = false;
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
-    view.history.replaceChildren();
     const partial = view.historyData.partial;
     const split = partial ? Math.min(partial.head, messages.length) : 0;
     const visible = message => message.event_kind !== 'compact';
@@ -366,12 +365,50 @@ const SdkUI = {
          {gap: {uid: view.uid, agent: view.agent, omitted: partial.omitted}},
          ...planTurns(messages.slice(split).filter(visible), {tailComplete, openTail: !tailComplete})]
       : planTurns(messages.filter(visible), {tailComplete, openTail: !tailComplete});
-    const built = buildPlan(view.history, plan, null);
-    if (decorate) built.forEach((node, index) => decorate(node, plan[index].m));
-    for (const node of view.history.querySelectorAll(':scope > .turn-process')) {
-      if (folds.has(node.dataset.turnId))
-        folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
+    // History appends and native replay joins usually leave the older turns
+    // untouched. Reuse their nodes, including text selections and disclosures.
+    const equalContent = (a, b) => {
+      if (a === b) return true;
+      if (!a || !b || typeof a !== 'object' || typeof b !== 'object'
+          || Array.isArray(a) !== Array.isArray(b)) return false;
+      const keys = Object.keys(a);
+      return keys.length === Object.keys(b).length
+        && keys.every(key => Object.hasOwn(b, key) && equalContent(a[key], b[key]));
+    };
+    const equalItems = (a, b) => a?.length === b?.length && a.every((item, i) => equalContent(item, b[i]));
+    const key = p => p.m || p.g?.[0] || p.turn?.items[0] || 'gap';
+    const unchanged = (a, b) => a.m ? equalContent(a.m, b.m)
+      : a.g ? !!b.g && equalItems(a.g, b.g) && a.open === b.open
+      : a.turn ? !!b.turn && a.turn.key === b.turn.key && equalItems(a.turn.items, b.turn.items)
+        && a.turn.hasConclusion === b.turn.hasConclusion && a.turn.inferred === b.turn.inferred
+        && a.turn.interrupted === b.turn.interrupted
+      : !!b.gap && a.gap.omitted === b.gap.omitted;
+    const previous = view.history._sdkPlan;
+    const old = new Map(previous?.actions === actions ? previous.entries.map(entry => [entry.key, entry]) : []);
+    const entries = [], kept = new Set();
+    let before = view.history.firstChild;
+    for (const item of plan) {
+      // A bounded reset can deserialize the same content into new objects.
+      // Compare that slot's complete message data before reusing its UI.
+      const prior = old.get(key(item)) || (previous?.actions === actions ? previous.entries[entries.length] : null);
+      let node = prior?.node;
+      if (!node || kept.has(node) || node.parentNode !== view.history || !unchanged(prior.plan, item)) {
+        [node] = buildPlan(view.history, [item], before);
+        if (decorate) decorate(node, item.m);
+        if (item.turn && folds.has(node.dataset.turnId))
+          folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
+      } else if (node !== before) view.history.insertBefore(node, before);
+      before = node.nextSibling;
+      // Activity annotates interruption fields in place; media continuation
+      // replaces media fields. Retain the displayed fields, not that mutable row.
+      const saved = item.m ? {...item, m: {...item.m}}
+        : item.g ? {...item, g: item.g.map(message => ({...message}))}
+        : item.turn ? {...item, turn: {...item.turn, items: item.turn.items.map(message => ({...message}))}}
+        : item;
+      entries.push({key: key(item), plan: saved, node}); kept.add(node);
     }
+    for (const node of [...view.history.childNodes]) if (!kept.has(node)) node.remove();
+    view.history._sdkPlan = {entries, actions};
     markMatches(view.history);
     updateMatchNav();
     // History is only part of a snapshot: live tools may still be unpacked.

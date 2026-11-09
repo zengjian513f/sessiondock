@@ -133,8 +133,21 @@ def run(binary, through_hub):
                 assert first["partial"]["head"] == initial["partial"]["head"] + 200
                 assert first["partial"]["resume"] == initial["partial"]["resume"]
                 assert first["cursor"] == live["cursor"] and first["end"] == live["end"]
+                # Alternate directions after a lost grant; recovery must retain
+                # the shrinking upper bound and never duplicate the loaded tail.
+                page.locator('.history-gap-backward').click()
+                settled()
+                back = snapshot()
+                assert back['partial']['head'] == first['partial']['head']
+                assert back['partial']['resume']['stop'] == first['partial']['resume']['stop'] - 200
+                at = first['partial']['head']
+                stop = first['partial']['resume']['stop']
+                assert back['text'] == first['text'][:at] + [f'PAGE ROW {i:04d}' for i in range(stop-200, stop)] + first['text'][at:]
                 while snapshot()["partial"]:
-                    click()
+                    if snapshot()['partial']['omitted'] <= 200:
+                        page.locator('.history-gap-backward').click()
+                    else:
+                        click()
                     settled()
                 final = snapshot()
                 assert final["text"] == [*[f"PAGE ROW {i:04d}" for i in range(1400)], "LIVE APPEND WHILE GRANT RECOVERS"]

@@ -17,6 +17,11 @@ const GRANT_TTL: Duration = Duration::from_secs(10 * 60);
 /// 8 MiB JSON / 128-image / 24 MiB image targets below group a page. A
 /// larger individual event gets its own page so history always advances.
 pub const DEFAULT_PAGE_EVENTS: usize = 2000;
+#[derive(Default)]
+pub(crate) struct HistoryPageOptions {
+    pub backward: bool,
+    pub limit: Option<usize>,
+}
 const MAX_IMAGES: usize = 128;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
@@ -453,7 +458,9 @@ pub(super) fn window(
     };
     let token = pages.issue_page(grant)?;
     selected.drain(start..stop);
-    Ok(json!({"head":start,"tail":total-stop,"omitted":stop-start,"cursor":token,"resume":resume}))
+    Ok(
+        json!({"head":start,"tail":total-stop,"omitted":stop-start,"cursor":token,"resume":resume,"batch":WINDOW_TAIL_EVENTS}),
+    )
 }
 
 /// Content identity of one projected message, independent of media fields
@@ -537,13 +544,14 @@ impl ViewSnapshot {
         media: &MediaStore,
         files: Option<&FileService>,
         pages: &PageStore,
+        options: &HistoryPageOptions,
     ) -> Result<Vec<u8>, SessionError> {
         self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)?;
         let events = self.checkpoint_events(&grant.checkpoint);
         if events.len() != grant.total || grant.next >= grant.stop || grant.stop > events.len() {
             return Err(SessionError::new(409, "历史页范围已变化，请重新载入会话"));
         }
-        let (selected, page) = self.page_selection(&grant, token, &events, pages)?;
+        let (selected, page) = self.page_selection(&grant, token, &events, pages, options)?;
         let mut body = Vec::new();
         body.extend_from_slice(b"{\"messages\":");
         super::views::body::write_messages(self, &selected, media, files, pages, &mut body)?;
@@ -562,31 +570,49 @@ impl ViewSnapshot {
         token: &str,
         events: &[&'a Event],
         pages: &PageStore,
+        options: &HistoryPageOptions,
     ) -> Result<(Vec<Selected<'a>>, Value), SessionError> {
         let mut budget = Budget::default();
-        let mut end = grant.next;
-        while end < grant.stop && budget.take_at(self, end, events[end], pages.page_events())? {
-            end += 1;
+        let backward = options.backward;
+        let limit = options.limit.unwrap_or(pages.page_events()).max(1);
+        let (mut start, mut end) = if backward {
+            (grant.stop, grant.stop)
+        } else {
+            (grant.next, grant.next)
+        };
+        if backward {
+            while start > grant.next && budget.take_at(self, start - 1, events[start - 1], limit)? {
+                start -= 1;
+            }
+        } else {
+            while end < grant.stop && budget.take_at(self, end, events[end], limit)? {
+                end += 1;
+            }
         }
-        if end == grant.next {
+        if end == start {
             return Err(SessionError::new(413, "此历史页无法在读取预算内推进"));
         }
-        let selected = events[grant.next..end]
+        let selected = events[start..end]
             .iter()
             .enumerate()
             .map(|(offset, event)| Selected {
-                index: grant.next + offset,
+                index: start + offset,
                 event,
             })
             .collect::<Vec<_>>();
-        let next = if end < grant.stop {
+        let remaining = grant.stop - grant.next - (end - start);
+        let next = if remaining > 0 {
             let mut next = grant.clone();
-            next.next = end;
+            if backward {
+                next.stop = start;
+            } else {
+                next.next = end;
+            }
             Some(pages.issue_page(next)?)
         } else {
             None
         };
-        let page = json!({"cursor":token,"next":next,"start":grant.next,"end":end,"stop":grant.stop,"remaining":grant.stop-end});
+        let page = json!({"cursor":token,"next":next,"start":start,"end":end,"stop":grant.stop,"remaining":remaining});
         Ok((selected, page))
     }
 

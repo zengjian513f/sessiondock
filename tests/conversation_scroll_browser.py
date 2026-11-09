@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SDK and CLI conversation history share bottom-follow behavior across sources."""
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         history = []
+        activity = {'state': 'working', 'ts': datetime.now(timezone.utc).isoformat()}
         for index in range(24):
             history.extend([
                 {'role': 'user', 'text': f'问题 {index}：请解释会话历史如何展示。', 'turn_id': f'turn-{index}'},
@@ -34,7 +36,7 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
             start = int(parse_qs(urlsplit(route.request.url).query).get('start', ['0'])[0])
             data.update(messages=history[start:], reset=not start, start=start, end=len(history),
                         message_total=len(history), partial=None, activity_changed=True,
-                        activity={'state': 'working'})
+                        activity=activity)
             route.fulfill(response=response, json=data)
         context.route('**/api/messages/**', messages)
         def inactive(route):
@@ -55,7 +57,7 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
         row.click()
         page.locator('#a-sdk').click()
         page.wait_for_function('SdkView.pane && !SdkView.historyReady && SdkView.historyData')
-        for mode in (('sdk',) if source in ('kiro', 'codebuddy') else ('sdk', 'chat')):
+        for mode in (('sdk',) if source in ('kiro', 'codebuddy', 'droid') else ('sdk', 'chat')):
             page.locator('#a-' + mode).click()
             box = page.locator('.sdk-msgs' if mode == 'sdk' else '#msgs')
             expect(box).to_contain_text('答复 23')
@@ -92,11 +94,19 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
             box.hover(); page.mouse.wheel(0, -650)
             page.wait_for_function('selector => {const b=document.querySelector(selector); return b.scrollHeight-b.scrollTop-b.clientHeight>300}', arg='.sdk-msgs' if mode == 'sdk' else '#msgs')
             before = box.evaluate('(b)=>b.scrollTop')
-            history.append({'role': 'assistant', 'phase': 'final', 'text': f'后台追加 {name}'})
+            history.append({'role': 'assistant', 'phase': 'commentary' if mode == 'sdk' else 'final', 'turn_id': f'scroll-{name}', 'text': f'后台追加 {name}'})
             page.evaluate('async () => {await syncSession(S.sel, S.agent)}')
             expect(box).to_contain_text(f'后台追加 {name}')
             assert abs(box.evaluate('(b)=>b.scrollTop') - before) < 3, name
             page.screenshot(path=str(screenshots / f'{name}-reading.png'), full_page=True)
+            # A status-only read annotates the existing cached message object.
+            # Reusing its DOM must still reveal the new interruption state.
+            if mode == 'sdk':
+                activity.update(state='aborted', turn_id=f'scroll-{name}', reason='Synthetic interrupted scroll update',
+                                ts=datetime.now(timezone.utc).isoformat())
+                page.evaluate('async () => {await syncSession(S.sel, S.agent)}')
+                expect(box.locator('.native-interrupted').filter(has_text=f'后台追加 {name}')).to_be_visible()
+                activity.clear(); activity.update(state='working', ts=datetime.now(timezone.utc).isoformat())
             page.mouse.wheel(0, 100000)
             bottom()
             history.append({'role': 'assistant', 'phase': 'final', 'text': f'跟随追加 {name}'})
@@ -121,7 +131,7 @@ def exercise(browser, base, source, screenshots, label, baseline=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--sources', default='kiro,codex,claude,grok,agy,opencode')
+    parser.add_argument('--sources', default='kiro,codex,claude,grok,agy,opencode,codebuddy,droid')
     parser.add_argument('--screenshots', type=Path, required=True)
     parser.add_argument('--baseline', action='store_true')
     args = parser.parse_args()

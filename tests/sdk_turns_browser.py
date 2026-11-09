@@ -153,9 +153,11 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             native[-3]['text'] += '\n当前回合持续生成'
         else:
             raw['items'][0]['text'] += '\n当前回合持续生成'
+        page.evaluate('window.historyProbe = document.querySelector(".sdk-history .msg")')
         events.publish()
         expect(tail).to_contain_text('当前回合持续生成')
         expect(replay.locator('.turn-process-body')).to_be_visible()
+        assert page.evaluate('historyProbe === document.querySelector(".sdk-history .msg")'), name
         if source != 'codex':
             expect(tool.locator('.tool-args')).to_be_visible()
             expect(page.locator('[data-sdk-item="tool-3-7"] .tool-toggle')).to_have_attribute('aria-expanded', 'false')
@@ -174,6 +176,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         events.publish()
         expect(page.locator('.sdk-msgs')).to_contain_text('第 4 轮最终结论')
         expect(groups).to_have_count(4)
+        assert page.evaluate('historyProbe === document.querySelector(".sdk-history .msg")'), name
         expect(replay.locator('.turn-process-body')).to_be_visible()
         toggle()  # expand all, including the newly completed tail
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(4)
@@ -200,7 +203,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--sources', default='kiro,codex,claude,grok,agy,opencode')
+    parser.add_argument('--sources', default='kiro,codex,claude,grok,agy,opencode,codebuddy,droid')
     parser.add_argument('--screenshots', type=Path)
     parser.add_argument('--baseline', action='store_true')
     args = parser.parse_args()

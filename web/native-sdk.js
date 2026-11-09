@@ -443,7 +443,7 @@ const NativeSdkView = {
     if (this.historyRenderedData === this.historyData && this.historyCut === cut && this.historyActions===actions) return;
     this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
-    SdkUI.paintHistory(this, messages, {decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
+    SdkUI.paintHistory(this, messages, {actions, decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
   },
 
   requestCard(request) {

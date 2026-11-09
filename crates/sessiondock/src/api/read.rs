@@ -264,6 +264,8 @@ pub struct PageQuery {
     agent: String,
     resume: Option<String>,
     next: Option<usize>,
+    direction: Option<String>,
+    limit: Option<usize>,
 }
 struct PageBody {
     bytes: Bytes,
@@ -348,6 +350,10 @@ pub async fn history_page(
             &resources.media,
             resources.files.as_deref(),
             &resources.pages,
+            &crate::sessions::HistoryPageOptions {
+                backward: query.direction.as_deref() == Some("backward"),
+                limit: query.limit,
+            },
         )
     })
     .await

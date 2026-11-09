@@ -15,7 +15,7 @@ const CodexSdkView = {
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
   pendingAtOpen: false,
-  streamItems: new Set(), streamTimer: 0,
+  streamItems: new Set(), streamTimer: 0, streamStatusDirty: false,
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true
@@ -583,6 +583,7 @@ const CodexSdkView = {
     if (['item/agentMessage/delta', 'item/plan/delta', 'item/commandExecution/outputDelta',
       'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta'].includes(method)) {
       const retrying = !!this.summary?.retry_error;
+      this.streamStatusDirty ||= retrying;
       if (this.summary) this.summary.retry_error = null;
       const target = this.items.get(raw.itemId);
       if (target && method !== 'item/reasoning/textDelta') {
@@ -700,6 +701,7 @@ const CodexSdkView = {
     clearTimeout(this.streamTimer);
     this.streamTimer = 0;
     this.streamItems.clear();
+    this.streamStatusDirty = false;
   },
 
   flushStreamPaint() {
@@ -708,17 +710,25 @@ const CodexSdkView = {
     this.streamTimer = 0;
     if (!this.pane) { this.streamItems.clear(); return; }
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
-    SdkUI.ungroupTools(this);
+    const groups = new Set();
     for (const id of this.streamItems) {
       const item = this.items.get(id);
+      const group = this.nodes.get(id)?.closest('.sdk-tool-group');
+      if (group) groups.add(group);
       if (item) this.paintItem(item);
+      const node = this.nodes.get(id);
+      if (node) markMatches(node);
     }
     this.streamItems.clear();
-    SdkUI.groupTools(this);
-    CodexSdkQuestions.paint(this);
-    CodexSdkActions.paint(this);
-    CodexSdkControls.paint(this);
-    this.paintStatus();
+    // Text/output deltas do not change membership, requests, actions or usage.
+    // Update only affected summaries; leave unrelated tools and the composer in place.
+    for (const group of groups) {
+      group._toolItems = [...group.querySelectorAll(':scope > [data-sdk-item]')].map(node => node._sdkToolMessage);
+      group._refreshToolTail?.();
+    }
+    updateMatchNav();
+    if (this.streamStatusDirty) this.paintStatus();
+    this.streamStatusDirty = false;
     if (stick) this.scrollBottom();
   },
 

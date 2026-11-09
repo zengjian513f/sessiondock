@@ -1255,19 +1255,21 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 /* 跟随进行中的回合时补上视口下方变矮的高度（app.js holdFollowSpace）。 */
 .msgs::after { content: ""; display: block; height: var(--follow-space, 0px); }
 .history-gap {
-  display: flex; align-items: center; gap: 10px; width: 100%; margin: 10px 0 16px;
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; width: 100%; margin: 10px 0 16px;
   color: var(--muted);
 }
 .history-gap::before, .history-gap::after {
   content: ""; flex: 1; height: 1px; background: var(--border);
 }
-.history-gap-load {
-  flex: none; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+.history-gap-button, .history-gap-reload {
+  flex: none; max-width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--panel); color: var(--muted); font: inherit; font-size: 12px;
   cursor: pointer; box-shadow: var(--shadow);
 }
-.history-gap-load:hover { border-color: var(--accent); color: var(--text); background: var(--hover); }
-.history-gap-load:disabled { cursor: wait; opacity: .7; }
+.history-gap-button:hover, .history-gap-reload:hover { border-color: var(--accent); color: var(--text); background: var(--hover); }
+.history-gap-button:disabled { cursor: wait; opacity: .7; }
+.history-page-error { flex-basis: 100%; font-size: 12px; overflow-wrap: anywhere; text-align: center; }
+.history-gap-failed::before, .history-gap-failed::after { display: none; }
 .msg {
   --bubble: var(--bubble-assistant);
   position: relative; width: fit-content; max-width: 100%; min-width: 0;

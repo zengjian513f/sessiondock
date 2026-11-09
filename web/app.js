@@ -6442,14 +6442,36 @@ let renderSeq = 0;
 
 function historyGapNode(info) {
   const gap = el('div', 'history-gap');
-  const button = el('button', 'history-gap-load',
-    `加载中间 ${Number(info.omitted || 0).toLocaleString()} 条消息`);
-  button.type = 'button';
-  button.onclick = () => historyPagesEnabled()
-    ? loadHistoryPage(info.uid, info.agent, button)
-    : loadFullHistory(info.uid, info.agent, button);
-  gap.appendChild(button);
+  const partial = cache.get(viewKey(info.uid, info.agent))?.partial;
+  const batch = partial?.batch || 200;
+  const choices = historyPagesEnabled()
+    ? [['forward', `载入前面 ${batch} 条`], ['all', '全部载入'], ['backward', `载入后面 ${batch} 条`]]
+    : [['all', '全部载入']];
+  for (const [mode, label] of choices) {
+    const button = el('button', `history-gap-button history-gap-${mode === 'all' ? 'load' : mode}`, label);
+    button.type = 'button';
+    button.dataset.mode = mode;
+    button.dataset.label = label;
+    button.title = mode === 'all' ? `载入剩余 ${Number(info.omitted || 0).toLocaleString()} 条消息`
+      : `从中间缺口的${mode === 'forward' ? '前' : '后'}端载入，最多 ${batch} 条`;
+    button.onclick = () => historyPagesEnabled()
+      ? loadHistoryPage(info.uid, info.agent, button, mode)
+      : loadFullHistory(info.uid, info.agent, button);
+    gap.appendChild(button);
+  }
+  const pending = historyPageRequests.get(viewKey(info.uid, info.agent));
+  if (pending?.mode && currentHistoryPage(pending)) paintHistoryPageControls(gap, pending);
   return gap;
+}
+
+function paintHistoryPageControls(gap, request) {
+  for (const button of gap.querySelectorAll('.history-gap-button')) {
+    const active = button.dataset.mode === request.mode;
+    button.disabled = !active || !request.chain;
+    if (active) button.textContent = request.chain
+      ? `正在加载历史… ${(request.loaded || 0).toLocaleString()} / ${request.target.toLocaleString()} 条 · 点击中止`
+      : '正在读取这一页…';
+  }
 }
 
 function historyPagesEnabled() {
@@ -6457,7 +6479,7 @@ function historyPagesEnabled() {
 }
 
 const historyPageRequests = new Map();
-// 点一次“加载中间 N 条”后自动连续翻页直到缺口填满（分页取但不停）。
+// “全部载入”连续翻页直到缺口填满；前后按钮只取一批。
 // 按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
 // 能关掉连续翻页，逐页检验竞争。
 let HISTORY_PAGE_CHAIN = true;
@@ -6481,31 +6503,34 @@ function historyPageBox(request) {
   return request.sdkGeneration != null ? SdkView.box : $('#msgs');
 }
 
-const HISTORY_PAGE_MAX_EVENTS = 10000;   // 服务端 SESSIONDOCK_HISTORY_PAGE_EVENTS 的上限
-
-function validateHistoryPage(data, partial, cursor) {
+function validateHistoryPage(data, partial, cursor, backward = false) {
   const page = data?.page;
   const integer = value => Number.isSafeInteger(value) && value >= 0;
   const token = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
-  if (!Array.isArray(data?.messages) || data.messages.length > HISTORY_PAGE_MAX_EVENTS || !page || !token(cursor) || page.cursor !== cursor
+  if (!Array.isArray(data?.messages) || !page || !token(cursor) || page.cursor !== cursor
       || !data.messages.every(message => message && typeof message === 'object' && !Array.isArray(message)
         && typeof message.role === 'string' && typeof message.text === 'string'
         && (message.media == null || (Array.isArray(message.media)
           && message.media.every(item => item && typeof item === 'object' && !Array.isArray(item)))))
       || !integer(partial.head) || !integer(partial.omitted)
       || !['start', 'end', 'stop', 'remaining'].every(key => integer(page[key]))
-      || page.start !== partial.head || page.stop !== partial.head + partial.omitted
+      || page.stop !== partial.head + partial.omitted
+      || (backward ? page.end !== page.stop || page.start < partial.head : page.start !== partial.head)
       || page.end < page.start || page.end > page.stop
       || page.end - page.start !== data.messages.length || !data.messages.length
-      || page.remaining !== page.stop - page.end
+      || page.remaining !== partial.omitted - data.messages.length
       || (page.remaining === 0 ? page.next !== null : !token(page.next) || page.next === cursor)) {
     throw new Error('历史分页响应与当前缺口不匹配；请重新载入当前历史。');
   }
   return page;
 }
 
-async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
+async function fetchHistoryPage(uid, agent, cursor, signal, partial, mode = 'all') {
   const query = new URLSearchParams({cursor});
+  if (mode !== 'all') {
+    query.set('direction', mode);
+    query.set('limit', partial?.batch || 200);
+  }
   if (agent) query.set('agent', agent);
   if (partial?.resume) {
     query.set('resume', JSON.stringify(partial.resume));
@@ -6540,7 +6565,6 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
       const {done, value} = await reader.read();
       if (done) break;
       bytes += value.length;
-      if (bytes > 8 * 1024 * 1024) throw new Error('历史分页响应超过浏览器读取预算。');
       chunks.push(value);
     }
   } catch (error) { await reader.cancel().catch(() => {}); throw error; }
@@ -6553,6 +6577,7 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
 function historyPageFailure(request, button, error) {
   if (!currentHistoryPage(request) || !button?.isConnected) return;
   const gap = button.parentElement;
+  gap.classList.add('history-gap-failed');
   gap.querySelector('.history-page-error')?.remove();
   gap.querySelector('.history-gap-reload')?.remove();
   const notice = el('div', 'history-page-error');
@@ -6583,7 +6608,7 @@ function restoreHistoryPageScroll(top, scrollTop, entry, request) {
   requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
 }
 
-async function loadHistoryPage(uid, agent, button) {
+async function loadHistoryPage(uid, agent, button, mode = 'all') {
   agent = agent || null;
   const key = viewKey(uid, agent), entry = cache.get(key);
   if (!historyPagesEnabled() || !entry?.partial) return;
@@ -6595,38 +6620,42 @@ async function loadHistoryPage(uid, agent, button) {
   }
   if (previous) { previous.ac?.abort(); historyPageRequests.delete(key); }
   const request = {key, uid, agent, entry, cursor: entry.partial.cursor, viewRequest: inflight,
-    sdkGeneration: sdkHistoryPageGeneration(uid, agent, button), chain: HISTORY_PAGE_CHAIN, aborted: false};
+    sdkGeneration: sdkHistoryPageGeneration(uid, agent, button), mode,
+    chain: mode === 'all' && HISTORY_PAGE_CHAIN, aborted: false,
+    target: Number(entry.partial.omitted || 0), loaded: 0};
   if (!currentHistoryPage(request)) return;
   const ac = new AbortController();
   request.ac = ac;
   let timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
   historyPageRequests.set(key, request);
-  const target = Number(entry.partial.omitted || 0);
-  let loaded = 0;
   const gap = button.parentElement, box = historyPageBox(request);
   const top = gap.getBoundingClientRect().top, scrollTop = box?.scrollTop || 0;
   // 连续翻页时按钮保持可点（用于中止），并显示进度。
-  button.disabled = !request.chain;
-  button.textContent = request.chain
-    ? `正在加载历史… 0 / ${target.toLocaleString()} 条 · 点击中止`
-    : '正在读取这一页…';
+  paintHistoryPageControls(gap, request);
   let changed = false, failure = null;
   try {
     for (;;) {
       if (!/^[0-9a-f]{32}$/.test(request.cursor || '')) throw new Error('历史分页凭据缺失，请重新载入当前历史。');
-      const {data, bytes} = await fetchHistoryPage(uid, agent, request.cursor, ac.signal, entry.partial);
+      const {data, bytes} = await fetchHistoryPage(uid, agent, request.cursor, ac.signal, entry.partial, mode);
       if (!currentHistoryPage(request)) return;
-      const page = validateHistoryPage(data, entry.partial, request.cursor);
+      const backward = mode === 'backward';
+      const page = validateHistoryPage(data, entry.partial, request.cursor, backward);
       // Ordinary SSE appends may have advanced this same entry while HTTP was
       // pending. Keep that tail and every live cursor field exactly as observed.
-      entry.msgs = [...entry.msgs.slice(0, page.start), ...data.messages, ...entry.msgs.slice(page.start)];
-      entry.partial = page.remaining ? {...entry.partial, head: page.end, omitted: page.remaining, cursor: page.next} : null;
+      const at = entry.partial.head;
+      entry.msgs = [...entry.msgs.slice(0, at), ...data.messages, ...entry.msgs.slice(at)];
+      entry.partial = page.remaining ? {...entry.partial,
+        head: backward ? at : page.end,
+        tail: entry.partial.tail + (backward ? data.messages.length : 0),
+        omitted: page.remaining, cursor: page.next,
+        resume: entry.partial.resume ? {...entry.partial.resume, stop: backward ? page.start : page.stop} : undefined} : null;
       entry.bytes = (entry.bytes || 0) + bytes;
       changed = true;
-      loaded += data.messages.length;
+      request.loaded += data.messages.length;
       request.cursor = entry.partial?.cursor || null;
       if (!request.chain || !entry.partial) break;
-      if (button.isConnected) button.textContent = `正在加载历史… ${loaded.toLocaleString()} / ${target.toLocaleString()} 条 · 点击中止`;
+      const currentGap = historyPageRoot(request)?.querySelector('.history-gap');
+      if (currentGap) paintHistoryPageControls(currentGap, request);
       clearTimeout(timer);
       timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
     }
@@ -6635,6 +6664,11 @@ async function loadHistoryPage(uid, agent, button) {
     if (!(error?.name === 'AbortError' && request.aborted)) failure = error;
   } finally {
     clearTimeout(timer);
+    const currentGap = currentHistoryPageEntry(request) ? historyPageRoot(request)?.querySelector('.history-gap') : null;
+    for (const control of currentGap?.querySelectorAll('.history-gap-button') || []) {
+      control.disabled = false;
+      control.textContent = control.dataset.label;
+    }
     if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
   }
   if (changed && currentHistoryPageEntry(request)) {
@@ -6643,14 +6677,10 @@ async function loadHistoryPage(uid, agent, button) {
     if (currentHistoryPageEntry(request)) {
       if (request.sdkGeneration != null) SdkView.useHistory(entry, true);
       restoreHistoryPageScroll(top, scrollTop, entry, request);
-      if (failure) historyPageFailure(request, historyPageRoot(request)?.querySelector('.history-gap-load'), failure);
+      if (failure) historyPageFailure(request, historyPageRoot(request)?.querySelector(`[data-mode="${mode}"]`), failure);
     }
   } else if (failure) historyPageFailure(request,
-    historyPageRoot(request)?.querySelector('.history-gap-load') || button, failure);
-  else if (request.aborted && currentHistoryPageEntry(request) && button.isConnected) {
-    button.disabled = false;
-    button.textContent = `加载中间 ${Number(entry.partial?.omitted || 0).toLocaleString()} 条消息`;
-  }
+    historyPageRoot(request)?.querySelector(`[data-mode="${mode}"]`) || button, failure);
 }
 
 /** 页已取到、只等渲染：视图与缓存条目仍是发起时的那份即可（游标已推进）。 */

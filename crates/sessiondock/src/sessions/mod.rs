@@ -19,6 +19,7 @@ mod native_media;
 pub mod opencode;
 mod pages;
 mod views;
+pub(crate) use pages::HistoryPageOptions;
 pub use pages::PageStore;
 pub use views::ViewSnapshot;
 pub(crate) use views::{
