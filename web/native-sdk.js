@@ -159,7 +159,7 @@ const NativeSdkView = {
       this.openFailed = false;
       void this.loadModels(generation);
       if (this.capabilities.agents) void this.request('api/native-sdk/agents',{uid:this.uid}).then(response => {if(this.current(generation)){this.nativeAgents=response.agents || response.raw?.agents || response.raw?.data || response.raw;NativeSdkControls.paintSettings(this);}}).catch(()=>{});
-      void NativeSdkControls.loadUsage(this, /^(agy|kiro):/.test(this.uid) ? 'auto' : true);
+      void NativeSdkControls.loadUsage(this, /^(agy|kiro|droid):/.test(this.uid) ? 'auto' : true);
       this.connectEvents(generation);
     } catch (error) {
       if (this.current(generation)) {

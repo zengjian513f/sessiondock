@@ -3,8 +3,8 @@
 设置 → 机器 → AI 客户端下方的 Agent 额度打开弹窗，关闭后保留设置页。
 独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
 未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
-Codex、Kiro、Agy、Claude Code 按此顺序各一个表格，复用客户端矩阵的表格样式；
-Agy 保留额度组，Claude 不显示额度组，Codex 的特殊模型额度在窗口列注明。
+Codex、Kiro、Agy、Claude Code、Droid 按此顺序各一个表格，复用客户端矩阵的表格样式；
+Agy、Droid 保留额度组，Claude 不显示额度组，Codex 的特殊模型额度在窗口列注明。
 窗口与 SDK、普通对话状态栏统一显示“5小时 / 7天 / 月度”，不直接显示 `weekly`、`monthly` 等原生字段。
 Codex 固定显示 Credits 和重置卡列，即使旧快照尚无这些字段也显示 N/A。
 百分比与进度条统一显示已使用（100% − 剩余百分比），缺字段不推算。
@@ -22,14 +22,14 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 ## 采集与快照
 
 - GET `/api/quotas` 只读 `<SESSIONDOCK_STATE_DIR>/quotas/{source}.json`。
-- POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy、Kiro profile；Claude 只重读快照。
+- POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy、Kiro、Droid profile；Claude 只重读快照。
   同节点按来源合并同时发生的查询，不同来源互不阻塞；不打开会话、不发送推理请求，不做定时刷新。
   可用 `source` 参数只查询当前来源。自动查询使用 `?cached=true`，复用一分钟内的采集或失败尝试；显式刷新跳过有效期。
 - Hub 页面通过已有 `/api/nodes/{nid}/api/...` 代理逐节点读取；一台失败不阻塞其它结果。
 - 复用 launcher profile 的 executable、固定参数与环境，清除会话身份环境变量；工作目录为临时目录。
   CLI 查询最长 25 秒，结束或取消时回收子进程。stderr 与原始认证错误不返回网页。
   Windows 查询复用后台 CLI 的无窗口启动方式，打开额度页及刷新不弹出控制台窗口。
-- 快照只存归一化额度字段，原子写入，文件权限 0600。不采集账号凭据、邮件、会话正文。
+- 快照只存归一化额度字段，原子写入，文件权限 0600。不持久化或向网页返回账号凭据、邮件、会话正文。
   没有快照或缺字段显示 N/A。
 - 查询失败保留旧快照并标记失败；重置时间经过不推断额度变成 100%。
   时间按浏览器本地时区显示。打开弹窗、独立页及页面重载先读取快照，再按有效期自动查询一次；
@@ -105,3 +105,15 @@ Codex 同时展示结构化 credits 余额与重置卡：数量取 availableCoun
 到期时间取已返回的可用卡片中最近的一次，不用明细条数推算总数，不提供兑换操作。
 Claude statusline 尚无 Usage credits 余额，不生成虚构的额度组占位行。
 接口依据：[Codex App Server](https://learn.chatgpt.com/docs/app-server)。
+
+## Droid 接入
+
+DELTA：Droid 1.6.0 原生账户使用 GET `https://api.factory.ai/api/billing/limits`，
+公开 SDK 暂无账单方法。后端只读 profile 的 `FACTORY_API_KEY`，或
+`FACTORY_HOME_OVERRIDE`（否则 HOME）下 `.factory/auth.v2.key`、`auth.v2.file`，
+按原生 AES-256-GCM 格式解密 access token；不刷新、改写凭据或将其放入快照。
+profile 可用 `FACTORY_API_BASE` 指定接口基址；HTTP 禁止重定向，失败只返回通用提示。
+映射 Standard/Core 的 fiveHour、weekly、monthly；剩余为 100 − usedPercent，
+windowEnd 为重置时间，null 保持未知。SDK、普通对话和额度页共用一分钟缓存，
+查询失败保留上次结果；不会启动 Droid 或发送推理请求。额外付费余额暂不展示。
+验收见 [Droid 用量浏览器回归](../tests/droid_usage_browser.py)。

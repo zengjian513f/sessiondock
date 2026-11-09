@@ -39,6 +39,8 @@ Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure reco
 
 [droid_external_browser.py](../tests/droid_external_browser.py) verifies external Droid green status, native log identity, SDK conflict, takeover cancellation and confirmed process termination/resume on node and Hub.
 
+[droid_usage_browser.py](../tests/droid_usage_browser.py) covers native context, cumulative tokens, Factory Credits and encrypted account quota collection with Chromium.
+
 [droid_sdk_browser.py](../tests/droid_sdk_browser.py) covers Droid JSON-RPC, native history, settings, approvals/questions, errors, interruption, node restart and Hub access with an isolated synthetic peer.
 
 ## When to run which tier

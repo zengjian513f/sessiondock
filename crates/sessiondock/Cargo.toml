@@ -13,6 +13,8 @@ path = "src/bin/sessiondock-hub.rs"
 [dependencies]
 flate2 = "1.1"
 base64 = "0.22"
+aes-gcm = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 tar = "0.4"
 # Raw WebSocket pass-through after the 101 (`hyper::upgrade` + `TokioIo`);
 # both are already in the lock file through axum.

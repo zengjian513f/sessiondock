@@ -15,14 +15,16 @@ use tokio::{
     sync::Mutex,
 };
 
+mod droid;
+
 pub struct Quotas {
     directory: Option<PathBuf>,
     profiles: Vec<CliProfile>,
     /// Kiro account HOME derived from the configured scope root, as for SDK sessions.
     kiro_home: Option<PathBuf>,
-    refresh: [Mutex<Option<Instant>>; 3],
+    refresh: [Mutex<Option<Instant>>; 4],
 }
-const COLLECTED: [&str; 3] = ["codex", "agy", "kiro"];
+const COLLECTED: [&str; 4] = ["codex", "agy", "kiro", "droid"];
 fn now() -> String {
     chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339()
 }
@@ -88,7 +90,7 @@ impl Quotas {
             None => false,
         };
         let mut agents = Vec::new();
-        for source in ["codex", "claude", "agy", "kiro"] {
+        for source in ["codex", "claude", "agy", "kiro", "droid"] {
             let mut value = empty(source);
             if let Some(dir) = &self.directory
                 && let Ok(bytes) = tokio::fs::read(dir.join(format!("{source}.json"))).await
@@ -213,9 +215,14 @@ impl Quotas {
             value["configured"] = json!(true);
             Some(value)
         };
-        let (codex, agy, kiro) = tokio::join!(collect("codex"), collect("agy"), collect("kiro"));
+        let (codex, agy, kiro, droid) = tokio::join!(
+            collect("codex"),
+            collect("agy"),
+            collect("kiro"),
+            collect("droid")
+        );
         let mut data = self.read().await;
-        for value in [codex, agy, kiro].into_iter().flatten() {
+        for value in [codex, agy, kiro, droid].into_iter().flatten() {
             if let Some(row) = data["agents"]
                 .as_array_mut()
                 .unwrap()
@@ -234,10 +241,14 @@ fn source_name(source: Source) -> &'static str {
         Source::Claude => "claude",
         Source::Agy => "agy",
         Source::Kiro => "kiro",
+        Source::Droid => "droid",
         _ => "",
     }
 }
 async fn query(profile: &CliProfile, kiro_home: Option<&Path>) -> Result<Value, ()> {
+    if profile.source == Source::Droid {
+        return droid::query(profile).await;
+    }
     let mut command = Command::new(&profile.executable);
     crate::lifecycle::launcher::background_command(command.as_std_mut());
     command

@@ -4,7 +4,7 @@ async function initQuotas(container) {
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
-  const names = {codex:'Codex', kiro:'Kiro', agy:'Agy', claude:'Claude Code'};
+  const names = {codex:'Codex', kiro:'Kiro', agy:'Agy', claude:'Claude Code', droid:'Droid'};
   let nodes = [], hub = false, stopped = false;
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
   async function request(path, method='GET') {
@@ -40,7 +40,7 @@ async function initQuotas(container) {
     for (const [source, name] of Object.entries(names)) {
       const installedNodes=nodes.filter(node => node.clients?.some(client => client.source===source && client.installed));
       if (!installedNodes.length) continue;
-      const grouped=source==='agy', codex=source==='codex';
+      const grouped=['agy','droid'].includes(source), codex=source==='codex';
       const section=el('section','quota-agent');section.dataset.source=source;
       const heading=el('h2','',name);heading.id=`quota-${source}-heading`;section.append(heading);
       const scroll=el('div','quota-scroll');scroll.dataset.source=source;

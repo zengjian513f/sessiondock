@@ -71,6 +71,7 @@ def fake_cli():
         note({'type':'create_message','message':m,**({'requestId':request} if request else {})})
     def finish(rid,text):
         msg('answer-'+rid,'assistant','Droid final '+text)
+        note({'type':'session_token_usage_changed','tokenUsage':{'inputTokens':1200,'outputTokens':50,'thinkingTokens':20,'cacheReadTokens':300,'cacheCreationTokens':40,'factoryCredits':1.25}})
         note({'type':'agent_turn_completed','reason':'completed','tokenUsage':{'inputTokens':10,'outputTokens':5}})
     for line in sys.stdin:
         v=json.loads(line);record(v);method=v.get('method');p=v.get('params',{})
@@ -83,6 +84,9 @@ def fake_cli():
                 path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n');settings.update({k:p[k] for k in ('modelId','reasoningEffort') if k in p})
             else:assert path.is_file()
             reply(v,{'sessionId':sid,'session':{'messages':[]},'settings':settings,'availableModels':models})
+        elif method=='droid.get_context_stats':
+            if (log.parent/'context-fail').exists():emit({'id':v['id'],'error':{'code':-32601,'message':'Unavailable context'}})
+            else:reply(v,{'used':12000,'remaining':138000,'limit':150000,'accuracy':'estimated','updatedAt':'2026-11-09T01:00:00Z'})
         elif method=='droid.update_session_settings':
             settings.update(p);reply(v,{});note({'type':'settings_updated','settings':settings})
         elif method=='droid.add_user_message':

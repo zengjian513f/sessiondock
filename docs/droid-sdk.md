@@ -92,3 +92,16 @@ DELTA：Linux 的 Droid 外部实例优先使用原生日志
 核对与 TERM/KILL 流程，结束外部实例再由 ptyhost `--resume`，受管实例显示蓝点。
 SDK 同样拒绝并行打开已识别的原生会话；同目录身份未解析的裸 Droid 沿用 Claude
 的占用检查。浏览器覆盖见 [外部实例测试](../tests/droid_external_browser.py)。
+
+## 上下文与用量
+
+DELTA：SDK 用量读取在已经连接的原生传输上调用 `droid.get_context_stats`，
+显示 used/limit 和 accuracy；估算值明确标为“原生估计”，不是累计 Token。
+只读查询不启动或接管外部 TUI；失败保留先前数据并显示错误。
+会话累计用量来自恢复回执 tokenUsage、session_token_usage_changed 和结束事件的
+cumulativeTokenUsage。结束事件仅有单回合 tokenUsage 时不覆盖累计值。
+分别显示输入、输出、思考、缓存读写和 Factory Credits；累计 Token 摘要为输入加输出，
+缓存计数在提示中单列，不把它当上下文长度或账户剩余额度。未提供字段不补零。
+账户的 Standard/Core 六个窗口及重置倒计时见 [额度合同](quotas.md#droid-接入)。
+[Droid 用量回归](../tests/droid_usage_browser.py) 覆盖加密认证、上下文、累计计数、
+Credits、刷新失败保留、原生命令不推理及宽窄屏。

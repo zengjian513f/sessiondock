@@ -184,7 +184,7 @@ fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":false,"fast_mode":false,
-        "usage":false,"context_usage":false,"compact":false,"rename":false,
+        "usage":true,"context_usage":true,"compact":false,"rename":false,
         "fork":false,"fork_before":false,"mcp_elicitation":false,"user_dialog":false})
 }
 fn normalize_models(models: &mut Value) {
@@ -645,6 +645,36 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
+            "usage" => {
+                // Read only the owned transport; a quota read must never take a TUI.
+                if lock(&session.live).outbound.is_some() {
+                    let result = session
+                        .control(json!({"method":"droid.get_context_stats","params":{}}))
+                        .await;
+                    let mut live = lock(&session.live);
+                    match result {
+                        Ok(value)
+                            if value["used"].is_number()
+                                && value["limit"].as_f64().is_some_and(|n| n > 0.) =>
+                        {
+                            live.context_usage = json!({"used_tokens":value["used"],"max_tokens":value["limit"],
+                                "remaining_tokens":value["remaining"],"percent":value["used"].as_f64().unwrap()*100./value["limit"].as_f64().unwrap(),
+                                "basis":if value["accuracy"] == "estimated" {"原生估计"} else {"原生统计"},
+                                "accuracy":value["accuracy"],"updated_at":value["updatedAt"]});
+                            live.usage_errors.remove("context");
+                        }
+                        _ => {
+                            live.usage_errors
+                                .insert("context".into(), "上下文查询失败，保留上次结果".into());
+                        }
+                    }
+                    session.publish(&mut live);
+                }
+                let live = lock(&session.live);
+                Ok(
+                    json!({"usage":live.usage,"context_usage":live.context_usage,"usage_errors":live.usage_errors}),
+                )
+            }
             "discard" => {
                 let active = {
                     let live = lock(&session.live);

@@ -124,7 +124,7 @@ DELTA（BUG-20261020-155723-71869d）：四种原生 SDK 的新建回执缺少�
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
 | POST `/api/native-sdk/models` | `{uid, agent?}` 或新建前的 `{source, cwd?}`；原生模型目录，Hub 加 `_node` |
 | POST `/api/native-sdk/rename` | `{uid, title, request_id}`；Grok/Claude/OpenCode/Kiro/Agy 原生改名 |
-| POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude 合并已有 quota；`refresh:true` 仅查询本来源 |
+| POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude/Kiro/Droid 合并已有 quota；`refresh:true` 仅查询本来源 |
 | POST `/api/native-sdk/settings` | 来源自己的模型/effort/模式/权限/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
 | POST `/api/native-sdk/fork` | Grok/OpenCode/Claude 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |
 | POST `/api/native-sdk/compact`、`shell` | 按 capability 走原生操作；mutation 带 request_id |

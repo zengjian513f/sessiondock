@@ -42,7 +42,7 @@ const NativeSdkControls = {
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
     this.paint(view);
     // Account snapshots are independent of native startup; never wait for /open.
-    if(['agy','claude','kiro'].includes(view.uid.split(':')[0])) {
+    if(['agy','claude','kiro','droid'].includes(view.uid.split(':')[0])) {
       const generation=view.generation,revision=view.quotaRevision,read=new AbortController();view.quotaRead=read;
       void UsageUI.readQuota(view.uid,read.signal).then(quota=>{
         if(!view.current(generation) || revision!==view.quotaRevision || !quota)return;

@@ -158,6 +158,9 @@ pub(super) fn observe_at(
                             .cloned()
                             .unwrap_or(Value::Null);
                         normalize_models(&mut live.models);
+                        if let Some(total) = result.get("tokenUsage").filter(|v| v.is_object()) {
+                            live.usage = usage(total);
+                        }
                         live.ready = true;
                     }
                     "droid.update_session_settings" => settings(&mut live, &request["params"]),
@@ -266,7 +269,9 @@ pub(super) fn observe_at(
                 {
                     row["phase"] = json!("final");
                 }
-                live.usage = usage(n.get("cumulativeTokenUsage").unwrap_or(&n["tokenUsage"]));
+                if let Some(total) = n.get("cumulativeTokenUsage").filter(|v| v.is_object()) {
+                    live.usage = usage(total);
+                }
             }
             "session_token_usage_changed" => live.usage = usage(&n["tokenUsage"]),
             "error" => {
@@ -306,7 +311,9 @@ pub(super) fn observe_at(
     }
 }
 fn usage(v: &Value) -> Value {
-    json!({"tokens":{"input":v["inputTokens"],"output":v["outputTokens"],"cached":v["cacheReadTokens"]}})
+    json!({"basis":"原生会话累计", "credits":v["factoryCredits"],
+        "tokens":{"input":v["inputTokens"],"output":v["outputTokens"],"reasoning":v["thinkingTokens"],
+        "cache":{"read":v["cacheReadTokens"],"write":v["cacheCreationTokens"]}}})
 }
 pub(super) fn restore_initial_requests(_session: &Session) {}
 pub(super) fn retire_dialog(_live: &mut Live, _card: &Value) {}
