@@ -65,6 +65,25 @@ fn summary(file: &Publication, old: &[u8], new: &[u8]) -> bool {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
+    if name.ends_with(".snapshots.json") {
+        let (Ok(old), Ok(new)) = (
+            serde_json::from_slice::<Value>(old),
+            serde_json::from_slice::<Value>(new),
+        ) else {
+            return false;
+        };
+        return old["version"] == 1
+            && new["version"] == 1
+            && old["sessionId"] == new["sessionId"]
+            && old["boundaries"]
+                .as_array()
+                .zip(new["boundaries"].as_array())
+                .is_some_and(|(old, new)| new.starts_with(old));
+    }
+    if name.ends_with(".settings.json") {
+        return serde_json::from_slice::<Value>(old).is_ok_and(|v| v.is_object())
+            && serde_json::from_slice::<Value>(new).is_ok_and(|v| v.is_object());
+    }
     if name != "summary.json" && !name.ends_with(".meta.json") {
         return false;
     }

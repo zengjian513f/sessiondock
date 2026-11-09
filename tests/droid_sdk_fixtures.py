@@ -102,14 +102,23 @@ def fake_cli():
             rows[0].update(id=child,parent=sid,title=p.get('title','Droid native fork'),forkedAtMessageId=messages[-1]['id'] if messages else None)
             path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
             reply(v,{'newSessionId':child})
+        elif method=='droid.get_rewind_info':
+            reply(v,{'availableFiles':[{'filePath':str(Path.cwd()/'existing.txt'),'contentHash':'native-snapshot','size':7}], 'createdFiles':[{'filePath':str(Path.cwd()/'created.txt')}], 'evictedFiles':[{'filePath':'expired.txt','reason':'snapshot expired'}]})
         elif method=='droid.execute_rewind':
-            assert p['sessionId']==sid and p['filesToRestore']==[] and p['filesToDelete']==[],p
+            assert p['sessionId']==sid,p
+            if (log.parent/'rewind-fail').exists():
+                emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic rewind failed'}});continue
+            for entry in p['filesToRestore']:
+                assert entry['contentHash']=='native-snapshot'
+                Path(entry['filePath']).write_text('BEFORE\n')
+            for entry in p['filesToDelete']:Path(entry['filePath']).unlink()
+
             rows=[json.loads(line) for line in path.read_text().splitlines()]
             boundary=next(i for i,row in enumerate(rows) if row.get('id')==p['messageId'])
             rows=rows[:boundary];child=str(uuid.uuid4())
             rows[0].update(id=child,parent=sid,title=p.get('forkTitle') or 'Droid message fork',forkedAtMessageId=rows[-1].get('id') if len(rows)>1 else None)
             path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
-            reply(v,{'newSessionId':child,'restoredCount':0,'deletedCount':0,'failedRestoreCount':0,'failedDeleteCount':0})
+            reply(v,{'newSessionId':child,'restoredCount':len(p['filesToRestore']),'deletedCount':len(p['filesToDelete']),'failedRestoreCount':0,'failedDeleteCount':0})
         elif method=='droid.compact_session':
             context_used=8000
             child=sid

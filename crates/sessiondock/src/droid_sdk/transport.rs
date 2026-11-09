@@ -22,6 +22,7 @@ impl Outbound {
 
 impl Bridge {
     pub(super) async fn ensure(self: &Arc<Self>, session: &Arc<Session>) -> Result<(), String> {
+        let _admission = self.writer_admission.lock().await;
         #[cfg(unix)]
         if self.state_dir.is_some() {
             return self.ensure_hosted(session).await;
@@ -280,18 +281,55 @@ impl Bridge {
     }
 
     pub(super) async fn check_conflict(&self, session: &Arc<Session>) -> Result<(), String> {
+        // Idle parent transports may retain delegated/background writers. Until
+        // native task ownership is terminal, stop that transport before opening
+        // the child. Also prevent the parent from reopening over a child writer.
+        {
+            let state = lock(&self.state);
+            for other in state.sessions.values() {
+                if other.uid == session.uid {
+                    continue;
+                }
+                let owner = state.owners.get(&session.uid);
+                let other_owner = state.owners.get(&other.uid);
+                let related = owner
+                    .is_some_and(|owner| owner == &other.uid || other_owner == Some(owner))
+                    || other_owner == Some(&session.uid);
+                if related && lock(&other.live).outbound.is_some() {
+                    return Err("droid_sdk_session_busy: 父会话或关联子代理仍有独立运行实例；请先停止该 SDK 实例，再打开此子代理，避免后台任务产生第二写者".into());
+                }
+            }
+        }
+
+        if self.proc_root != Path::new("/proc")
+            && self.proc_root.join("droid-processes.json").is_file()
+        {
+            return self.portable_conflict(session).await;
+        }
         #[cfg(target_os = "linux")]
         {
             use crate::runtime::procscan::{ProcTree, SessionRoots, scan};
             let root = self.proc_root.clone();
             let native_root = self.root.clone();
             let sid = session.sid.to_ascii_lowercase();
+            let ancestors = self.ancestor_sids(session)?;
             let cwd = crate::runtime::procscan::resolve_path(&session.cwd.to_string_lossy());
             let path = session.path.to_string_lossy().into_owned();
-            let own_pids: std::collections::BTreeSet<_> = lock(&self.state)
+            // Only this selected runtime owns this SID. Another SDK session's
+            // descendants may be delegated child writers, never shared transports.
+            let own_pids: std::collections::BTreeSet<_> =
+                lock(&session.live).pid.into_iter().collect();
+            // An explicitly owned, different SID is not an unidentified writer
+            // merely because stream RPC omits its SID from argv. This exception
+            // applies only to that exact root PID, never its delegated children.
+            let other_roots: std::collections::BTreeSet<_> = lock(&self.state)
                 .sessions
                 .values()
-                .filter_map(|session| lock(&session.live).pid)
+                .filter(|other| other.sid != session.sid)
+                .filter_map(|other| {
+                    let live = lock(&other.live);
+                    live.outbound.as_ref().and(live.pid)
+                })
                 .collect();
             let conflict = tokio::task::spawn_blocking(move || {
                 let scan = scan(
@@ -318,14 +356,18 @@ impl Bridge {
                     .get(&sid)
                     .into_iter()
                     .flatten()
-                    .chain(scan.paths.get(&path).into_iter().flatten());
+                    .chain(scan.paths.get(&path).into_iter().flatten())
+                    .chain(
+                        ancestors
+                            .iter()
+                            .flat_map(|sid| scan.sids.get(sid).into_iter().flatten()),
+                    );
                 holders
                     .filter_map(|pid| u32::try_from(pid.unsigned_abs()).ok())
                     .any(|pid| !own(pid))
-                    || scan
-                        .bare_droid
-                        .iter()
-                        .any(|(pid, process)| process.cwd == cwd && !own(*pid))
+                    || scan.bare_droid.iter().any(|(pid, process)| {
+                        process.cwd == cwd && !own(*pid) && !other_roots.contains(pid)
+                    })
             })
             .await
             .map_err(|_| "droid_sdk: native writer observation failed")?;
@@ -333,7 +375,9 @@ impl Bridge {
                 return Err("droid_sdk_session_busy: an independent Droid process owns this SID/path or has unresolved identity in this cwd; this subprocess cannot share that runtime (shared_tui:false). Stop it explicitly before SDK resume; no takeover was attempted.".into());
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(target_os = "macos", windows))]
+        self.portable_conflict(session).await?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         if session.path.is_file() && lock(&session.live).outbound.is_none() {
             return Err("droid_sdk_unsupported: independent Droid writer detection is unavailable on this platform; existing-session SDK resume cannot safely share a TUI (shared_tui:false)".into());
         }

@@ -7,7 +7,7 @@ mod journal;
 #[path = "names.rs"]
 mod names;
 #[path = "prefix.rs"]
-mod prefix;
+pub(super) mod prefix;
 #[path = "tool_requirements.rs"]
 mod tool_requirements;
 use super::{
@@ -63,6 +63,8 @@ pub struct Operation<N = Native> {
     pub file_plan: Option<files::Plan>,
     #[serde(default)]
     pub file_publications: Vec<Publication>,
+    #[serde(default)]
+    pub droid_publications: Vec<Publication>,
     #[serde(default)]
     pub incoming_digest: Option<String>,
     #[serde(default)]
@@ -178,6 +180,9 @@ pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), Transfe
 impl TransferService {
     pub fn operation_keys<N>(&self, op: &Operation<N>) -> Vec<String> {
         let mut keys = vec![format!("operation:{}", op.id)];
+        if super::droid::has_snapshots(op) {
+            keys.push("droid-snapshots".into());
+        }
         if op.codex_names.is_some() {
             keys.push("codex-name-index".into());
         }
@@ -199,7 +204,11 @@ impl TransferService {
         Ok(self.locks.acquire(self.operation_keys(&op)).await)
     }
     pub async fn session_guard(&self, uid: &str) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
-        self.locks.acquire(vec![format!("session:{uid}")]).await
+        let mut keys = vec![format!("session:{uid}")];
+        if uid.starts_with("droid:") {
+            keys.push("droid-snapshots".into());
+        }
+        self.locks.acquire(keys).await
     }
     pub fn open(
         directory: PathBuf,
@@ -565,6 +574,7 @@ impl TransferService {
             full_group: Some(group),
             file_plan,
             file_publications: Vec::new(),
+            droid_publications: Vec::new(),
             incoming_digest: None,
             export_lease_until: 0,
             reused_files: BTreeSet::new(),
@@ -805,6 +815,7 @@ impl TransferService {
     }
     pub(super) fn publications<N>(&self, op: &Operation<N>) -> Vec<Publication> {
         let mut result = op.file_publications.clone();
+        result.extend(op.droid_publications.clone());
         if let Some(staged) = &op.staged {
             result.extend(staged.files.iter().map(|f| {
                 Publication {
@@ -990,6 +1001,7 @@ impl TransferService {
                 snapshot.recheck()?;
             }
         }
+        op.droid_publications.clear();
         let mut extended_metadata = BTreeSet::new();
         if !op.new_ids() {
             let (mut extended, metadata) = prefix::prepare(self, &mut op)?;
@@ -1002,6 +1014,7 @@ impl TransferService {
         } else {
             native::preflight_copy(op.rewritten.as_ref().unwrap(), false)?;
         }
+        super::droid::prepare_target(self, &mut op)?;
         op.reused_files.clear();
         for file in self.publications(&op) {
             if fs::symlink_metadata(&file.target).is_ok() {

@@ -86,6 +86,7 @@ def check(root, through_hub, screenshots):
                 expect(run).to_have_text('接管')
                 run.click()
                 page.locator('dialog.app-popup[open]').get_by_role('button', name='取消', exact=True).click()
+                expect(page.locator('#a-term')).to_be_enabled()
                 opened = page.request.post(base+'/api/native-sdk/open', data={'uid':uid})
                 assert not opened.ok and 'busy' in opened.text(), opened.text()
                 assert not f.frames('spawn')

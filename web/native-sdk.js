@@ -73,7 +73,7 @@ const NativeSdkView = {
   uid: '', agent: null, pane: null, generation: 0, connected: false,
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
-    return !(agent && ['claude', 'kiro', 'codebuddy', 'droid'].includes(source))
+    return !(agent && ['claude', 'kiro', 'codebuddy'].includes(source))
       && (HUB_MODE ? hubSdkViewAvailable(source, nodeOf(uid)) : nativeSdkAvailable(source));
   },
   layoutToolbar() { NativeSdkControls.layout(this); },
@@ -84,7 +84,7 @@ const NativeSdkView = {
     this.historyReady = historyReady;
     this.readOnly = readOnly;
     this.pendingAtOpen = !agent && !!this.pending(uid);
-    this.items = []; this.requests = new Map(); this.nodes = new Map();
+    this.nativeActionResult = null; this.items = []; this.requests = new Map(); this.nodes = new Map();
     this.liveTurns = new Map();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
@@ -323,6 +323,11 @@ const NativeSdkView = {
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
     const effortCapabilityChanged = this.uid.startsWith('kiro:') && this.raw?.capabilities?.effort !== raw.capabilities?.effort;
     const kiroConfigChanged = this.uid.startsWith('kiro:') && JSON.stringify(this.raw?.configOptions) !== JSON.stringify(raw.configOptions);
+    if (this.uid.startsWith('droid:')) {
+      const before = Object.keys(this.raw?.activity || {}).filter(key => key.startsWith('child:')).join('|');
+      const after = Object.keys(raw.activity || {}).filter(key => key.startsWith('child:')).join('|');
+      if (after && before !== after) void loadSessions(true, true);
+    }
     this.raw = raw;
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
@@ -424,7 +429,9 @@ const NativeSdkView = {
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
       : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成' : '就绪';
     if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
-    this.setNotice(text, kind);
+    if(this.nativeActionResult && !this.running && !this.requests.size && !error){
+      this.setNotice(this.nativeActionResult.text,this.nativeActionResult.failed?'warning':'ready');
+    }else this.setNotice(text, kind);
   },
 
   paintHistory() {
@@ -537,6 +544,7 @@ const NativeSdkView = {
       if ((response.accepted ?? response.raw?.accepted) === false)
         throw new Error(response.error || response.raw?.error || '这次提交未进入发送队列，请查看队列记录');
       if(this.current(generation)){
+        this.nativeActionResult=null;
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this,payload);
@@ -848,8 +856,9 @@ const SdkView = new Proxy({
   syncRunning() {
     const view = this.active;
     if (view.observeExternal?.()) return;
-    if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
-        || SessionContentView.kind !== 'sdk' || !S.liveSdk.has(view.uid)) return;
+    const childSdk = view.agent && String(view.uid).startsWith('droid:') && view.agent===S.agent && S.liveSdk.has(`${view.uid}:${view.agent}`);
+    if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || (!childSdk && (view.agent || S.agent)) || view.uid !== S.sel
+        || SessionContentView.kind !== 'sdk' || !(childSdk || S.liveSdk.has(view.uid))) return;
     // Discovery can arrive after history was opened read-only on reload.
     // Attach to the observed running instance without replacing history/drafts.
     view.readOnly = false;
@@ -866,7 +875,7 @@ const SdkView = new Proxy({
     this.discovering = options?.discovering === true;
     if (!this.discovering) this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
-    const running = !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
+    const running = (agent && String(uid).startsWith('droid:') && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
       || (this.selection?.key === viewKey(uid,agent)
         ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
     this.active.open(uid,pane,agent,{...options, readOnly: this.discovering || (!options?.start && !running)});

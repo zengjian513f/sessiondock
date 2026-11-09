@@ -97,6 +97,7 @@ impl TransferService {
         op.metadata_after.clear();
         op.metadata_replaced.clear();
         op.replaced_files.clear();
+        op.droid_publications.clear();
         op.reused_files.clear();
         op.storage_probes.clear();
         session_ids(&mut op.plan.identities);

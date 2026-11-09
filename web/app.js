@@ -5046,14 +5046,16 @@ function agentRow(s, a, depth) {
 function paintAgentStatus(node) {
   const uid = node.dataset.owner, id = node.dataset.agent;
   const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
-  const running = !!item && agentRunning(uid, item);
+  const droidSdk = uid.startsWith('droid:') && (S.liveSdk.has(`${uid}:${id}`) || (SdkView.uid===uid && SdkView.agent===id && SdkView.connected));
+  const running = droidSdk || (!!item && agentRunning(uid, item));
   node.classList.toggle('live', running);
   node.classList.toggle('sel', S.sel === uid && S.agent === id);
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
   badge.classList.toggle('visible', running);
-  badge.classList.toggle('turn-working', running);
-  badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
+  badge.classList.toggle('sdk', droidSdk);
+  badge.classList.toggle('turn-working', droidSdk ? (SdkView.uid===uid && SdkView.agent===id && SdkView.running) : running);
+  badge.title = badge.ariaLabel = droidSdk ? '子代理受管 SDK 实例已连接' : running ? '子代理运行中' : '';
 }
 
 /** Move `.sel` without rebuilding `#side`. Clicking a row used to call
@@ -7864,7 +7866,8 @@ async function runComposerSession(uid, agent, mode, takeoverExternal = false) {
       await appAlert(`接管失败：${error.message || error}`);
     } finally {
       ConsoleUI.busy.delete(uid);
-      refreshSessionRunControls();
+      if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
+      else refreshSessionRunControls();
       renderComposer();
     }
   }

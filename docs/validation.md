@@ -662,3 +662,9 @@ Historical results in the incident ledger refer to the revision at which those s
 [Droid 高级操作](../tests/droid_actions_browser.py) covers rename, settings, fork and compact through Node/Hub Chromium.
 [Droid 引导](../tests/droid_steer_browser.py) covers Node/Hub running-turn steering, queue conversion, attachments, drafts and uncertain delivery without replay.
 [Droid 子代理历史](../tests/droid_children_browser.py) covers native parent identity, history navigation and fork separation.
+
+[Droid 文件回退](../tests/droid_rewind_browser.py) covers Node/Hub selective native file restore/delete, cancellation, preserved source history and idempotent receipts.
+[Droid 活动通知](../tests/droid_activity_browser.py) covers native child navigation, hooks, MCP, mission and detached background activity in Node/Hub Chromium.
+[Droid CLI 设置与版本](../tests/droid_clients_browser.py) covers model/effort selection, process-local settings and native update checks in Node/Hub Chromium.
+[Droid 跨平台写者](../tests/droid_writers_browser.py) covers explicit resume identities, native log timestamps, unresolved cwd and conflicting writers through browser recovery.
+[Droid 跨机移动](../tests/droid_move_browser.py) runs explicitly with `--peer`, covering native session/settings/snapshot preservation and shared snapshot index merging through Chromium and an isolated SSH peer.

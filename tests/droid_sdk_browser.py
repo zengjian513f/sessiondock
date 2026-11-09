@@ -126,6 +126,7 @@ def cli_check(root,screenshots):
         wait_start(f,lambda r:'--resume' not in r['args']);expect(page.locator('#termpane')).to_be_visible()
         page.set_viewport_size({'width':390,'height':844});page.emulate_media(color_scheme='dark')
         page.reload(wait_until='networkidle')
+        expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
         if page.locator('body').evaluate("e => e.classList.contains('mobile-detail')"):
             expect(page.locator('#detail .mobile-back')).to_be_visible();page.locator('#detail .mobile-back').click()
         if not page.locator('#new-session').is_visible():page.locator('#header-more-btn').click()

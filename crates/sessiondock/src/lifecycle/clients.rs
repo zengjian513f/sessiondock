@@ -388,7 +388,36 @@ fn latest(profile: &CliProfile) -> Option<String> {
             )?,
             "version",
         ),
-        Source::Droid | Source::Kiro | Source::Shell => None,
+        Source::Droid => {
+            let outcome = run(profile, &["update", "--check"], LATEST_TIMEOUT).ok()?;
+            if !outcome.status.is_some_and(|status| status.success()) {
+                return None;
+            }
+            // Native check mode does not install. Never report the installed
+            // version as latest when the network check failed.
+            let output = outcome.output;
+            output
+                .lines()
+                .find(|line| {
+                    line.to_ascii_lowercase().contains("new version")
+                        || line.to_ascii_lowercase().contains("latest version")
+                        || line.to_ascii_lowercase().contains("update available")
+                })
+                .and_then(|line| line.split_whitespace().rev().find_map(version_number))
+                .or_else(|| {
+                    output
+                        .to_ascii_lowercase()
+                        .contains("already up to date")
+                        .then(|| {
+                            output
+                                .lines()
+                                .find(|line| line.starts_with("Current version:"))
+                                .and_then(version_number)
+                        })
+                        .flatten()
+                })
+        }
+        Source::Kiro | Source::Shell => None,
     }
 }
 

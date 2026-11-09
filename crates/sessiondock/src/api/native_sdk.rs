@@ -41,6 +41,7 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
         let scope = store.native_scope(&uid, &agent)?;
         let snapshot = store.snapshot(&uid, &agent)?;
         Ok(json!({"uid":uid,"session_id":scope.session_id,"cwd":snapshot.metadata()["cwd"],"source":scope.source,"agent":agent,
+            "native_uid":snapshot.view.sources.first().map(|candidate|candidate.uid.as_str()),
             "observed_model":snapshot.metadata()["model"]}))
     }).await.map(|target| state.native_sdks.canonical_target(&target))
 }
@@ -199,6 +200,42 @@ async fn execute(
         }
     };
     let source = target["source"].as_str().unwrap_or_default();
+    let _droid_transfer_guard = if source == "droid"
+        && matches!(
+            method.as_str(),
+            "open"
+                | "create"
+                | "turn"
+                | "steer"
+                | "settings"
+                | "rename"
+                | "fork"
+                | "compact"
+                | "rewind"
+                | "rewind_points"
+        ) {
+        if let Some(transfer) = &state.transfer {
+            let uid = target["native_uid"]
+                .as_str()
+                .or_else(|| target["uid"].as_str())
+                .unwrap_or("droid:");
+            let guard = transfer.session_guard(uid).await;
+            if !matches!(method.as_str(), "stop" | "interrupt")
+                && transfer.locked(uid).map_err(|e| failure(e.to_string()))?
+            {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "move_session_locked",
+                    "会话正在迁移，请等待完成",
+                ));
+            }
+            Some(guard)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     if !state.native_sdks.capabilities()[source]
         .as_bool()
         .unwrap_or_default()

@@ -95,7 +95,7 @@ async fn stopped(
     };
     let indexed = started.elapsed();
     let catalog = snapshot.native_catalog();
-    let rows = member_rows(op.group(), &snapshot, |member| {
+    let mut rows = member_rows(op.group(), &snapshot, |member| {
         if op.incoming_digest.is_some() {
             match (&state.transfer, &op.staged) {
                 (Some(service), Some(staged)) => service.member_target_uid(op, member, staged),
@@ -106,6 +106,17 @@ async fn stopped(
         }
     })
     .map_err(|error| Box::new(failure(error)))?;
+    if op.incoming_digest.is_some() && crate::transfer::droid::has_snapshots(op) {
+        for entry in snapshot
+            .index()
+            .candidates()
+            .filter(|entry| entry.source == "droid")
+        {
+            if !rows.iter().any(|row| row["uid"] == entry.uid) {
+                rows.push(json!({"uid":entry.uid,"sid":entry.summary.sid,"source":"droid","path":entry.path,"cwd":entry.summary.cwd,"title":entry.summary.title}));
+            }
+        }
+    }
     let live = super::trash::observe_liveness(state, &rows, &catalog)
         .await
         .map_err(|error| Box::new(error.into_response()))?;
@@ -523,6 +534,7 @@ pub async fn retire_source(
                             (Source::Codex, "codex")
                                 | (Source::Claude, "claude")
                                 | (Source::Grok, "grok")
+                                | (Source::Droid, "droid")
                         ) && (record.declared_sid() == Some(m.sid.as_str())
                             || record.session_id() == Some(m.sid.as_str())))
                         || record.binding().is_some_and(|binding| {
@@ -1028,6 +1040,13 @@ pub async fn check_bundle(
         .locks
         .acquire(service.operation_keys(&manifest.operation))
         .await;
+    if crate::transfer::droid::has_snapshots(&manifest.operation) {
+        let mut incoming = manifest.operation.clone();
+        incoming.incoming_digest = Some(String::new());
+        if let Err(error) = stopped(&state, &incoming, None).await {
+            return *error;
+        }
+    }
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         let _work = service.progress.enter(&manifest.operation.id);

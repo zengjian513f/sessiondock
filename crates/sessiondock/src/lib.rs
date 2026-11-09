@@ -309,7 +309,9 @@ fn build_app(
     let mut capabilities = state::capabilities();
     config.integrations.apply(&mut capabilities);
     capabilities["session_clone_local_codex"] = serde_json::json!(
-        cfg!(target_os = "linux") && config.state_dir.is_some() && config.roots.codex.is_some()
+        cfg!(target_os = "linux")
+            && config.state_dir.is_some()
+            && (config.roots.codex.is_some() || config.roots.droid.is_some())
     );
     capabilities["terminal_transport"] = serde_json::json!(terminal.is_some());
     capabilities["terminal"] = serde_json::json!(terminal.is_some());
@@ -418,7 +420,8 @@ fn build_app(
             && config.state_dir.is_some()
             && (config.roots.codex.is_some()
                 || config.roots.claude.is_some()
-                || config.roots.grok.is_some())
+                || config.roots.grok.is_some()
+                || config.roots.droid.is_some())
     );
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(assets::Assets::load(
@@ -462,7 +465,8 @@ fn build_app(
     let transfer = if cfg!(target_os = "linux")
         && (config.roots.codex.is_some()
             || config.roots.claude.is_some()
-            || config.roots.grok.is_some())
+            || config.roots.grok.is_some()
+            || config.roots.droid.is_some())
     {
         config
             .state_dir

@@ -35,7 +35,7 @@ fn text(v: &Value) -> String {
     }
     v.to_string()
 }
-fn upsert(live: &mut Live, mut row: Value) {
+pub(super) fn upsert(live: &mut Live, mut row: Value) {
     live.message_time.stamp(&mut row);
     if let Some(old) = live.items.iter_mut().find(|r| r["id"] == row["id"]) {
         crate::sdk_message_time::preserve(&mut row, old);
@@ -234,6 +234,7 @@ pub(super) fn observe_at(
         }
     } else if frame["method"] == "droid.session_notification" {
         let n = &frame["params"]["notification"];
+        activity::observe(&mut live, n);
         match n["type"].as_str().unwrap_or("") {
             "create_message" => message(&mut live, n),
             "tool_call" => {
@@ -271,6 +272,7 @@ pub(super) fn observe_at(
                 }
             }
             "agent_turn_completed" => {
+                live.retry = Value::Null;
                 live.turns.clear();
                 live.native_running = false;
                 let reason = n["reason"].as_str().unwrap_or("unknown");

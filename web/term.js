@@ -2162,9 +2162,9 @@ async function openPendingSession(info, {historyMode = 'push'} = {}) {
   // 已结束但留有最终画面的 SSH 会话：控制台面板里只读显示它。
   if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false || noChat)
       && (running || retained || pending.final_screen))
-    await openTermPane(pending.name, true, noChat ? 'full' : (remembered ? null : (finalScreen ? 'full' : 'collapsed')));
+    await openTermPane(pending.name, true, noChat ? 'full' : (remembered ? null : (finalScreen ? 'full' : 'collapsed')), true);
   else if (remembered)
-    await openTermPane(pending.name);
+    await openTermPane(pending.name, true, null, true);
   resolveNewSession(pending);
 }
 

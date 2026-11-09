@@ -68,6 +68,7 @@ pub fn supports_effort(source: Source) -> bool {
             | Source::Agy
             | Source::Kiro
             | Source::Codebuddy
+            | Source::Droid
     )
 }
 
@@ -80,7 +81,8 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Agy => agy(profile),
         Source::Kiro => kiro(profile),
         Source::Codebuddy => codebuddy(profile),
-        Source::Droid | Source::Shell => Catalog::default(),
+        Source::Droid => droid(profile),
+        Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {
         catalog.efforts = merged_efforts(&catalog.models);
@@ -110,7 +112,12 @@ pub struct CatalogCache {
 fn slow(source: Source) -> bool {
     matches!(
         source,
-        Source::Agy | Source::Opencode | Source::Grok | Source::Kiro | Source::Codebuddy
+        Source::Agy
+            | Source::Opencode
+            | Source::Grok
+            | Source::Kiro
+            | Source::Codebuddy
+            | Source::Droid
     )
 }
 
@@ -616,6 +623,62 @@ pub(crate) fn codebuddy_help(output: &str) -> Catalog {
         efforts,
         default_model: None,
     }
+}
+
+/// The installed Droid advertises its exact model IDs and per-model reasoning
+/// levels in exec help; this performs no initialization or inference.
+fn droid(profile: &CliProfile) -> Catalog {
+    let cwd = cli_home(profile, "HOME", "");
+    let output = run_bounded(profile, &cwd, &["exec", "--help"], Duration::from_secs(15))
+        .unwrap_or_default();
+    let mut catalog = Catalog::default();
+    let Some((_, models)) = output.split_once("Available Models:") else {
+        return catalog;
+    };
+    let Some((models, details)) = models.split_once("Model details:") else {
+        return catalog;
+    };
+    for line in models
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Some((id, label)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let label = label.trim();
+        let name = label.strip_suffix(" (default)").unwrap_or(label);
+        if name != label {
+            catalog.default_model = Some(id.into());
+        }
+        let prefix = format!("- {name}: supports reasoning:");
+        let detail = details
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&prefix));
+        let efforts = detail
+            .and_then(|line| line.split_once("supported: ["))
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(levels, _)| {
+                levels
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let default_effort = detail
+            .and_then(|line| line.split_once("; default: "))
+            .map(|(_, value)| value.trim().to_owned());
+        catalog.models.push(Model {
+            id: id.into(),
+            name: name.into(),
+            efforts,
+            default_effort,
+        });
+    }
+    catalog
 }
 
 /// `kiro-cli chat --list-models -f json`: JSON model catalog (`models` +

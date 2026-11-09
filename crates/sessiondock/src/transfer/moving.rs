@@ -535,6 +535,11 @@ impl TransferService {
         }
         if let Some(plan) = &op.file_plan {
             for file in &plan.files {
+                if file.provider == "droid"
+                    && super::droid::shared_content(&plan.roots["droid"], &file.source)
+                {
+                    continue;
+                }
                 files
                     .entry(file.provider.clone())
                     .or_default()

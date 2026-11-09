@@ -46,7 +46,7 @@ fn error(error: impl std::fmt::Display) -> String {
 }
 
 impl Bridge {
-    fn checkpoint_path(&self, session: &Session) -> Result<PathBuf, String> {
+    pub(super) fn checkpoint_path(&self, session: &Session) -> Result<PathBuf, String> {
         let root = self
             .state_dir
             .as_ref()

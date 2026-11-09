@@ -182,6 +182,11 @@ fn build_links(
                 }),
             }
         };
+        if e.source == "droid"
+            && let Some(parent) = &e.summary.forked_from_id
+        {
+            relate("droid", parent, "fork");
+        }
         if let Some(c) = &e.summary.codex {
             relate("codex", &c.forked_from_id, "fork");
             relate("codex", &c.parent_thread_id, "subagent");
@@ -225,7 +230,7 @@ fn build_links(
                 message: reason.clone(),
             });
         }
-        if !matches!(e.source, "claude" | "codex" | "grok") {
+        if !matches!(e.source, "claude" | "codex" | "grok" | "droid") {
             blockers.push(Blocker {
                 uid: e.uid.clone(),
                 code: "move_group_unsupported".into(),

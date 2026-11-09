@@ -135,6 +135,12 @@ impl TransferService {
                     }
                 }),
                 "grok" => self.roots.grok.clone(),
+                "droid" => self
+                    .roots
+                    .droid
+                    .as_deref()
+                    .map(super::droid::root)
+                    .transpose()?,
                 _ => None,
             }
             .ok_or_else(|| {
@@ -352,6 +358,9 @@ impl TransferService {
             ));
         }
         let op = &manifest.operation;
+        if !op.droid_publications.is_empty() {
+            return Err(invalid("共享Droid索引只能由目标节点生成"));
+        }
         if let Some(selection) = &op.selection
             && (!op.moving
                 || op.new_ids()
@@ -544,6 +553,8 @@ impl TransferService {
                             || publication
                                 .target
                                 .starts_with(root.join("file-history").join(id));
+                    } else if member.source == "droid" {
+                        allowed |= super::droid::allowed(root, member, &publication.target);
                     } else if member.source == "grok" {
                         if mapped.file_name().and_then(|v| v.to_str()) != Some(id.as_str()) {
                             return Err(invalid("Grok 会话路径不符"));

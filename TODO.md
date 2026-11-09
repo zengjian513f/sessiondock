@@ -6,13 +6,13 @@
 ## Droid integration
 
 - [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
-  `1dd1680c`（含用量、外部实例识别、高级操作及引导／消息前分支）：正式 SSH 尝试超时。
+  最新版本（含文件回退、子代理控制、活动通知、CLI 设置及普通会话移动）：正式 SSH 尝试超时。
   Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康；Lyra 已启用 Droid。
   三个资源代理不涉及本次组件，按范围排除。
-- [ ] 在隔离且已认证的 HOME 验证真实审批、问答及更多工具交互；当前 1.6.0
-  已验证真实模型回复、用量、Execute 简单命令及引导，审批和问答仍只有合成 Chromium 验收。
-- [ ] 补文件／原地对话回退、子代理独立控制／实时后台通知、非 Linux
-  恢复及 CLI 模型目录；消息前分支、运行中引导及子代理历史导航已接，现有能力边界见 [Droid SDK](docs/droid-sdk.md)。
+- [ ] macOS／Windows 安装 Droid 后补真实恢复验收；跨平台进程采集及原生 SID 匹配已接，
+  当前只有系统命令与合成 Chromium 证据，不能以编译成功替代原生恢复验证。
+
+- [ ] Droid mission 原生迁移：核实 missions/missionsV2 的 worker、handoff、云端与工作树依赖闭包，并分离 BYOK／runtime model 凭据。当前普通会话、settings 和文件回退快照可迁移；已识别 mission 指针明确提示未适配，不整目录盲拷。
 
 ## Kiro integration
 

@@ -790,8 +790,90 @@ impl Launcher {
                 ]);
             }
         }
+        if spec.source() == Source::Droid && (spec.model().is_some() || spec.effort().is_some()) {
+            argv.extend([
+                OsString::from("--settings"),
+                self.droid_settings_path(record).into_os_string(),
+            ]);
+        }
         argv.extend(choice_args(spec).into_iter().map(OsString::from));
         Ok(argv)
+    }
+
+    fn droid_settings_path(&self, record: &Record) -> PathBuf {
+        self.host_dir()
+            .join(format!("{}.droid-settings", record.host_name()))
+    }
+
+    /// Droid TUI accepts process-local settings, not exec's model flags.
+    /// Preserve an explicit profile overlay, changing only the selected values.
+    fn prepare_droid_settings(&self, record: &Record, argv: &[OsString]) -> Result<(), Error> {
+        let spec = record.spec();
+        if spec.source() != Source::Droid || (spec.model().is_none() && spec.effort().is_none()) {
+            return Ok(());
+        }
+        let mut settings = serde_json::json!({});
+        // The final --settings pair is our generated overlay. Load the last
+        // original one with the same cwd resolution as the native process.
+        let original = &argv[..argv.len() - 2];
+        let mut path = None;
+        for (index, arg) in original.iter().enumerate() {
+            if arg == "--settings" {
+                path = original.get(index + 1).map(PathBuf::from);
+            } else if let Some(value) = arg
+                .to_str()
+                .and_then(|value| value.strip_prefix("--settings="))
+            {
+                path = Some(PathBuf::from(value));
+            }
+        }
+        if let Some(path) = path {
+            let path = if path.is_absolute() {
+                path
+            } else {
+                spec.cwd().join(path)
+            };
+            settings =
+                serde_json::from_slice(&std::fs::read(path).map_err(|_| Error::PrepareFailed)?)
+                    .map_err(|_| Error::PrepareFailed)?;
+        }
+        let object = settings.as_object_mut().ok_or(Error::PrepareFailed)?;
+        for (key, value) in [("model", spec.model()), ("reasoningEffort", spec.effort())] {
+            if let Some(value) = value {
+                object.insert(key.into(), serde_json::json!(value));
+            }
+        }
+        let defaults = object
+            .entry("sessionDefaultSettings")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or(Error::PrepareFailed)?;
+        for (key, value) in [("model", spec.model()), ("reasoningEffort", spec.effort())] {
+            if let Some(value) = value {
+                defaults.insert(key.into(), serde_json::json!(value));
+            }
+        }
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let name = format!("{}.droid-settings", record.host_name());
+        let mut file = self
+            .host_directory
+            .directory
+            .open_with(name, &options)
+            .map_err(|_| Error::PrepareFailed)?;
+        use std::io::Write;
+        file.write_all(&serde_json::to_vec(&settings).map_err(|_| Error::PrepareFailed)?)
+            .map_err(|_| Error::PrepareFailed)?;
+        file.sync_all().map_err(|_| Error::PrepareFailed)
     }
 
     /// Immutable host metadata: the reviewed launch identity, plus the full
@@ -921,6 +1003,9 @@ impl Launcher {
             Ok(argv) => argv,
             Err(error) => return Err(LaunchFailure { authority, error }),
         };
+        if let Err(error) = self.prepare_droid_settings(record, &argv) {
+            return Err(LaunchFailure { authority, error });
+        }
         if record.spec().source() == Source::Opencode
             && *record.spec().launch() == Launch::NewAssigned
             && let Err(error) = self.opencode_create(record)

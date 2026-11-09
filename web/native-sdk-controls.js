@@ -36,7 +36,7 @@ const NativeSdkControls = {
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
       const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=label;button.setAttribute('aria-label',label);
-      button.innerHTML=uiIcon(({fork:'fork',compact:'compact',revert:'undo',unrevert:'undo',revert_commit:'continue',rewind:'undo',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',label));
+      button.innerHTML=uiIcon(({fork:'fork',compact:'compact',revert:'undo',unrevert:'undo',revert_commit:'continue',rewind:'undo',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',view.uid.startsWith('droid:') && method==='rewind'?'回退对话与文件':label));
       button.onclick = () => { view.closeToolbarMenus(); void this.action(view,method); }; actions.append(button);
     }
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
@@ -339,6 +339,40 @@ const NativeSdkControls = {
       const body=cardFor({...item,id:item.id || item.request_id},title);body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note',note));if(item.error)body.append(el('p','sdk-control-note',item.error));
     }
   },
+  rewindResult(view,response) {
+    const native=response.native || response.raw?.native || {};
+    const failed=!!(native.failedRestoreCount || native.failedDeleteCount);
+    view.nativeActionResult={failed,text:`${failed?'回退部分失败':'回退完成'}：恢复 ${native.restoredCount ?? '未知'} 个文件，删除 ${native.deletedCount ?? '未知'} 个文件；恢复失败 ${native.failedRestoreCount ?? '未知'}，删除失败 ${native.failedDeleteCount ?? '未知'}。已在新会话中继续，原会话保留。`};
+    view.paintStatus();
+  },
+  async droidRewind(view,body) {
+    const generation=view.generation;
+    if(!body.before){
+      const modal=CodexSdkActions.form('选择回退位置','将从所选消息之前创建新会话，原会话历史保留。','下一步');
+      const select=document.createElement('select');select.setAttribute('aria-label','回退消息');
+      const seen=new Set();
+      for(const item of [...(view.historyData?.messages || []),...view.items].filter(item=>item.role==='user')){
+        const id=this.messageIdentity(view,item);if(id && !seen.has(id)){seen.add(id);select.add(new Option((item.text || id).slice(0,100),id));}
+      }
+      modal.fields.append(select);modal.form.onsubmit=e=>{e.preventDefault();if(select.value)modal.finish(select.value);};
+      const before=await modal.answer;if(!before)return null;body={...body,before};
+    }
+    const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid,before:body.before});
+    if(!view.current(generation))return null;
+    const info=response.rewind_info || response.raw?.rewind_info || {};
+    const modal=CodexSdkActions.form('回退对话与文件','从该消息之前创建新会话。勾选要恢复或删除的工作区文件；未勾选的文件保持现状，原会话历史保留。','创建回退分支');
+    const selected=[];
+    for(const [key,rows,label] of [['files_to_restore',info.availableFiles,'恢复'],['files_to_delete',info.createdFiles,'删除']]){
+      for(const file of rows || []){
+        const row=el('label','setting-row continue-session-option'),input=document.createElement('input');input.type='checkbox';input.setAttribute('aria-label',`${label} ${file.filePath}`);
+        const text=el('span','',`${label}：${file.filePath}`);text.style.overflowWrap='anywhere';row.append(text,input);modal.fields.append(row);selected.push({key,file,input});
+      }
+    }
+    if(!selected.length)modal.fields.append(el('p','','此位置没有可恢复或删除的文件；仅回退对话。'));
+    for(const file of info.evictedFiles || [])modal.fields.append(el('p','',`无法恢复：${file.filePath}（${file.reason}）`));
+    modal.form.onsubmit=e=>{e.preventDefault();modal.finish({...body,files_to_restore:selected.filter(x=>x.key==='files_to_restore' && x.input.checked).map(x=>x.file),files_to_delete:selected.filter(x=>x.key==='files_to_delete' && x.input.checked).map(x=>x.file)});};
+    return modal.answer;
+  },
   async action(view,method,body={}) {
     if(method==='steer' && ['kiro','droid'].includes(view.uid.split(':')[0]))return view.send('steer');
     const generation=view.generation,droid=view.uid.startsWith('droid:');
@@ -359,7 +393,7 @@ const NativeSdkControls = {
             : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
         if(!await appConfirm(text,{ok:kiro && body.hide_source?'回退':'分支'}))return false;
       }
-      if((method==='revert' && body.message_id) || (method==='rewind' && body.prompt_index!=null)){
+      if((method==='revert' && body.message_id) || (!droid && method==='rewind' && body.prompt_index!=null)){
         if(!await appConfirm('回退到这条消息之前？消息内容将追加回输入框，工作区文件保持原样。',{ok:'回退'}))return false;
       }
       if(!view.current(generation))return false;
@@ -379,7 +413,8 @@ const NativeSdkControls = {
       }
       if(method==='shell' && !body.command){const modal=CodexSdkActions.form('运行命令','由原生接口直接运行命令，使用该来源的实际权限策略。','运行');const input=document.createElement('textarea');input.setAttribute('aria-label','命令');modal.fields.append(input);modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish(input.value);};body.command=await modal.answer;if(!body.command)return false;}
       if(method==='revert' && !body.message_id){const modal=CodexSdkActions.form('回退对话','选择要回退到的消息之前；不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const item of view.items.filter(item=>item.role==='user'))select.add(new Option((item.text || item.id).slice(0,100),item.id));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish(select.value);};body.message_id=await modal.answer;if(!body.message_id)return false;}
-      if(method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
+      if(droid && method==='rewind'){body=await this.droidRewind(view,body);if(!body)return false;}
+      if(!droid && method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
       if(method==='revert_commit' && !await appConfirm('提交回退会永久移除被回退的对话记录；工作区文件不会回滚。',{ok:'提交回退'}))return false;
       if(!view.current(generation))return false;
       if(method==='compact'){
@@ -392,15 +427,28 @@ const NativeSdkControls = {
       if(!view.current(generation)){
         // Inventory can select a native continuation before its receipt arrives.
         // Finish only that already-selected handoff; never undo user navigation.
-        if(droid && (method==='compact' || method==='fork' && body.before!=null) && response.uid && response.uid!==sourceUid && S.sel===response.uid && SdkView.uid===response.uid && !SdkView.agent && (response.accepted ?? response.raw?.accepted)!==false){
+        if(droid && (method==='compact' || method==='rewind' || method==='fork' && body.before!=null) && response.uid && response.uid!==sourceUid && S.sel===response.uid && SdkView.uid===response.uid && !SdkView.agent && (response.accepted ?? response.raw?.accepted)!==false){
           await SdkView.startSession(response.uid);
           if(SdkView.uid===response.uid && !SdkView.openFailed)await SdkView.refreshHistory(SdkView.generation,true);
           if(body.restore_text && SdkView.uid===response.uid)await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
+          if(method==='rewind' && SdkView.uid===response.uid)this.rewindResult(SdkView.active,response);
         }
         return true;
       }
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
-      if(method==='fork' || droid && method==='compact' && response.uid && response.uid!==sourceUid){
+      if(droid && response.agent && response.agent!==view.agent){
+        if(command_text && view.input?.value===command_text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
+        await loadSessions(true,true);
+        await openSession(response.uid,response.agent);
+        await SdkView.startSession(response.uid,response.agent);
+        if(SdkView.uid===response.uid && SdkView.agent===response.agent && !SdkView.openFailed)
+          await SdkView.refreshHistory(SdkView.generation,true);
+        if(body.restore_text && SdkView.uid===response.uid && SdkView.agent===response.agent)
+          await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
+        if(method==='rewind' && SdkView.uid===response.uid && SdkView.agent===response.agent)this.rewindResult(SdkView.active,response);
+        return true;
+      }
+      if(method==='fork' || droid && ['compact','rewind'].includes(method) && response.uid && response.uid!==sourceUid){
         if(droid && command_text && view.input?.value===command_text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
         await CodexSdkActions.openFork(view,response);
         if(['kiro','droid'].includes(response.session?.source) && SdkView.uid===response.uid){
@@ -411,6 +459,7 @@ const NativeSdkControls = {
         if(hide_source && SdkView.uid===response.uid && !SdkView.openFailed)
           await setForkParentVisibility([sourceUid],false);
         if (body.restore_text && SdkView.uid === response.uid) await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
+        if(droid && method==='rewind' && SdkView.uid===response.uid)this.rewindResult(SdkView.active,response);
         return true;
       }
       if(['revert','unrevert','revert_commit','rewind'].includes(method)){
@@ -438,7 +487,7 @@ const NativeSdkControls = {
     let success=false;
     if(['usage','context','status','help'].includes(command)){
       if(command==='usage' || command==='context')void this.loadUsage(view,true);
-      if(command==='help')view.setNotice('网页命令：/usage、/context、/status、/model ID、/effort 档位、/mode 模式、/plan、/stop、/new、/rename 名称、/fork、/compact、/revert、/shell 命令。会话操作按原生能力开放。');
+      if(command==='help')view.setNotice('网页命令：/usage、/context、/status、/model ID、/effort 档位、/mode 模式、/plan、/stop、/new、/rename 名称、/fork、/compact、/revert、/rewind、/shell 命令。会话操作按原生能力开放。');
       else if(command==='status'){const menu=view.pane.querySelector('#sdk-status-menu');menu.showPopover();ConversationUI.placePopover(menu,view.notice);}
       // /usage and /context refresh the always-visible footer; no menu opens.
       success=true;
@@ -456,7 +505,7 @@ const NativeSdkControls = {
     }else if(command==='plan'){
       await this.settings(view,{mode:arg || (view.uid.startsWith('droid:')?'spec':'plan')});
       success=true;
-    }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,{...(command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{}),...(view.uid.startsWith('droid:')?{command_text:text}:{})});
+    }else if(['fork','compact','revert','rewind','shell'].includes(command))success=await this.action(view,command,{...(command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{}),...(view.uid.startsWith('droid:')?{command_text:text}:{})});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
     return true;
@@ -534,10 +583,10 @@ const NativeSdkControls = {
       return;
     }
     const items=[];
-    for(const [method,label] of [['fork','从此处之前分支'],[grok?'rewind':'revert','回退到此处之前']]){
+    for(const [method,label] of [['fork','从此处之前分支'],[grok || view.uid.startsWith('droid:')?'rewind':'revert',view.uid.startsWith('droid:')?'回退对话与文件':'回退到此处之前']]){
       if(!view.capabilities[method] || method==='fork' && view.uid.startsWith('droid:') && !view.capabilities.fork_before)continue;
       items.push([label,async()=>{
-        await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork'?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
+        await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork' || view.uid.startsWith('droid:')?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
       }]);
     }
     SdkUI.decorateUserBubble(view,node,items);

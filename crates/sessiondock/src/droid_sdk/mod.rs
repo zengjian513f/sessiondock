@@ -2,10 +2,12 @@
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
 mod actions;
+mod activity;
 #[cfg(unix)]
 mod hosted;
 mod protocol;
 mod transport;
+mod writers;
 use crate::sessions::native_json;
 
 use std::{
@@ -35,12 +37,15 @@ pub struct Bridge {
     proc_root: PathBuf,
     shutdown: CancellationToken,
     state: Mutex<BridgeState>,
+    writer_admission: AsyncMutex<()>,
 }
 
 #[derive(Default)]
 struct BridgeState {
     sessions: BTreeMap<String, Arc<Session>>,
     creates: BTreeMap<String, (Value, Value)>,
+    aliases: BTreeMap<String, String>,
+    owners: BTreeMap<String, String>,
 }
 
 struct Session {
@@ -105,6 +110,8 @@ struct Live {
     retry: Value,
     compact: Value,
     background_tasks: Vec<Value>,
+    #[serde(default)]
+    activity: BTreeMap<String, Value>,
     error: Option<String>,
     #[serde(default)]
     runtime_error: Option<String>,
@@ -160,6 +167,7 @@ pub fn new(
         proc_root: config.proc_root.clone(),
         shutdown,
         state: Mutex::default(),
+        writer_admission: AsyncMutex::new(()),
     });
     Ok(Some(bridge))
 }
@@ -183,10 +191,10 @@ fn parse_json(text: &str) -> Result<Value, String> {
 
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
-        "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
-        "subagents":false,"effort":true,"settings":true,"permission_mode":true,"mode":true,"fast_mode":false,
+        "models":true,"create":true,"resume":cfg!(any(target_os="linux",target_os="macos",windows)),"shared_tui":false,
+        "subagents":true,"effort":true,"settings":true,"permission_mode":true,"mode":true,"fast_mode":false,
         "usage":true,"context_usage":true,"compact":true,"compact_creates_session":true,"rename":true,
-        "fork":true,"fork_before":true,"steer":true,"mcp_elicitation":false,"user_dialog":false})
+        "fork":true,"fork_before":true,"rewind":true,"rewind_creates_session":true,"steer":true,"mcp_elicitation":false,"user_dialog":false})
 }
 fn normalize_models(models: &mut Value) {
     let Some(rows) = models.as_array_mut() else {
@@ -216,20 +224,28 @@ fn uuid() -> Result<String, String> {
 
 /// Native Factory project key (SDK 0.10.0 session-discovery).
 fn project_key(cwd: &Path) -> String {
-    let value = cwd.to_string_lossy();
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let value = canonical.to_string_lossy();
     #[cfg(windows)]
     {
-        format!(
-            "-{}",
-            value
-                .trim_end_matches(['/', '\\'])
-                .replace(':', "")
-                .replace(['/', '\\'], "-")
-        )
+        // Rust canonicalization returns extended-length paths; Node realpath
+        // (the official SDK's source) returns ordinary drive/UNC paths.
+        let value = if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            value.strip_prefix(r"\\?\").unwrap_or(&value).to_owned()
+        };
+        let value = value.trim_end_matches(['/', '\\']);
+        let drive = regex::Regex::new(r"^([A-Za-z]):").expect("static drive regex");
+        let value = drive.replace(value, "$1");
+        let separators = regex::Regex::new(r"[\\/]+").expect("static path regex");
+        format!("-{}", separators.replace_all(&value, "-"))
     }
     #[cfg(not(windows))]
     {
-        value.trim_end_matches('/').replace('/', "-")
+        let value = value.trim_end_matches(['/', '\\']).trim_start_matches('/');
+        let separators = regex::Regex::new(r"/+").expect("static path regex");
+        format!("-{}", separators.replace_all(value, "-"))
     }
 }
 
@@ -282,6 +298,7 @@ impl Session {
                 retry: Value::Null,
                 compact: Value::Null,
                 background_tasks: vec![],
+                activity: BTreeMap::new(),
                 error: None,
                 runtime_error: None,
                 last_turn: Value::Null,
@@ -305,7 +322,7 @@ impl Session {
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
             "steers":live.accepted.values().filter(|r|r["operation"]=="steer" && r["consumed"]!=true).collect::<Vec<_>>(),
-            "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "activity":live.activity,"background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "capabilities":capabilities()}})
     }
@@ -404,7 +421,15 @@ impl Bridge {
     }
 
     pub async fn stop(&self, uid: &str) -> Result<bool, String> {
-        let session = lock(&self.state).sessions.remove(uid);
+        let session = {
+            let mut state = lock(&self.state);
+            let native_uid = state
+                .aliases
+                .get(uid)
+                .cloned()
+                .unwrap_or_else(|| uid.to_owned());
+            state.sessions.remove(&native_uid)
+        };
         let Some(session) = session else {
             return Ok(false);
         };
@@ -429,25 +454,42 @@ impl Bridge {
     }
 
     pub fn loaded_uids(&self) -> Vec<String> {
-        lock(&self.state)
+        let state = lock(&self.state);
+        state
             .sessions
             .values()
             .filter(|session| {
                 let live = lock(&session.live);
                 live.ready && live.outbound.is_some()
             })
-            .map(|session| session.uid.clone())
+            .flat_map(|session| {
+                let aliases: Vec<String> = state
+                    .aliases
+                    .iter()
+                    .filter(|(_, uid)| *uid == &session.uid)
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                if aliases.is_empty() {
+                    vec![session.uid.clone()]
+                } else {
+                    aliases
+                }
+            })
             .collect()
     }
 
     /// Snapshot and receiver are acquired under the same lock as every update.
-    /// Main sessions use uid. Subagent uid:agent is reserved but unsupported.
+    /// Public owner:agent scope aliases the proven child native UID.
     pub fn subscribe(&self, key: &str) -> Result<(Value, broadcast::Receiver<Arc<str>>), String> {
-        let session = lock(&self.state)
-            .sessions
-            .get(key)
-            .cloned()
-            .ok_or("droid_sdk: session not open")?;
+        let session = {
+            let state = lock(&self.state);
+            let native_key = state.aliases.get(key).map(String::as_str).unwrap_or(key);
+            state
+                .sessions
+                .get(native_key)
+                .cloned()
+                .ok_or("droid_sdk: session not open")?
+        };
         // Snapshot and subscription share the live-state lock.
         let live = lock(&session.live);
         if !live.ready || live.outbound.is_none() {
@@ -456,16 +498,71 @@ impl Bridge {
         Ok((session.snapshot(&live), live.events.subscribe()))
     }
 
+    pub(crate) async fn child_handoff(
+        &self,
+        target: &Value,
+        result: &Value,
+    ) -> Result<Option<Value>, String> {
+        let owner = target["uid"].as_str().ok_or("droid_sdk: owner missing")?;
+        let native_uid = result["uid"]
+            .as_str()
+            .ok_or("droid_sdk: child identity missing")?;
+        let sid = result["session_id"]
+            .as_str()
+            .ok_or("droid_sdk: child SID missing")?;
+        let source = target["native_uid"]
+            .as_str()
+            .ok_or("droid_sdk: source child missing")?;
+        let child = lock(&self.state)
+            .sessions
+            .get(native_uid)
+            .cloned()
+            .ok_or("droid_sdk: new child missing")?;
+        use std::io::BufRead;
+        let file = std::fs::File::open(&child.path)
+            .map_err(|e| format!("droid_sdk: child provenance unavailable ({})", e.kind()))?;
+        let first = std::io::BufReader::new(file)
+            .lines()
+            .next()
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let start: Value =
+            serde_json::from_str(&first).map_err(|_| "droid_sdk: child provenance invalid")?;
+        if !start["callingSessionId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+        {
+            return Ok(None);
+        }
+        let session = lock(&self.state).sessions.get(source).cloned();
+        if let Some(session) = session {
+            self.retire_action_runtime(&session).await?;
+        }
+        let mut binding = target.clone();
+        binding["agent"] = json!(sid);
+        binding["session_id"] = json!(sid);
+        binding["native_uid"] = json!(native_uid);
+        let mut state = lock(&self.state);
+        state
+            .aliases
+            .insert(format!("{owner}:{sid}"), native_uid.to_owned());
+        state.owners.insert(native_uid.to_owned(), owner.to_owned());
+        Ok(Some(binding))
+    }
+
     fn native_home(&self) -> Result<PathBuf, String> {
         let home = self
             .profile
             .env
             .get("FACTORY_HOME_OVERRIDE")
             .or_else(|| self.profile.env.get("HOME"))
+            .or_else(|| self.profile.env.get("USERPROFILE"))
             .map(PathBuf::from)
             .or_else(|| {
                 std::env::var_os("FACTORY_HOME_OVERRIDE")
                     .or_else(|| std::env::var_os("HOME"))
+                    .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(PathBuf::from)
             })
             .ok_or("droid_sdk: native HOME unavailable")?;
@@ -484,13 +581,16 @@ impl Bridge {
     }
 
     fn select(&self, target: &Value) -> Result<Arc<Session>, String> {
-        if target["agent"]
-            .as_str()
-            .is_some_and(|agent| !agent.is_empty())
-        {
-            return Err("droid_sdk_unsupported: native Droid subagent transcripts cannot be independently resumed (subagents:false)".into());
-        }
-        let uid = target["uid"].as_str().ok_or("droid_sdk: uid is required")?;
+        let owner = target["uid"].as_str().ok_or("droid_sdk: uid is required")?;
+        let agent = target["agent"].as_str().filter(|s| !s.is_empty());
+        let uid = if agent.is_some() {
+            target["native_uid"]
+                .as_str()
+                .ok_or("droid_sdk: resolved child identity is required")?
+        } else {
+            owner
+        };
+        let scope_key = agent.map_or_else(|| owner.to_owned(), |agent| format!("{owner}:{agent}"));
         let sid = target["session_id"]
             .as_str()
             .ok_or("droid_sdk: resolved session_id is required")?;
@@ -500,6 +600,10 @@ impl Bridge {
                 .ok_or("droid_sdk: resolved cwd is required")?,
         );
         let mut state = lock(&self.state);
+        state.aliases.insert(scope_key, uid.to_owned());
+        if agent.is_some() {
+            state.owners.insert(uid.to_owned(), owner.to_owned());
+        }
         if let Some(session) = state.sessions.get(uid) {
             if session.sid != sid || session.cwd != cwd {
                 return Err("droid_sdk: native session identity changed".into());
@@ -652,7 +756,16 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
-            "rename" | "fork" | "compact" => self.action(&session, method, &input).await,
+            "rename" | "fork" | "compact" | "rewind" => self.action(&session, method, &input).await,
+            "rewind_points" => {
+                self.ensure(&session).await?;
+                self.check_conflict(&session).await?;
+                let before = input["before"]
+                    .as_str()
+                    .ok_or("droid_sdk: before must be a native message identity")?;
+                let result = session.control(json!({"method":"droid.get_rewind_info", "params":{"sessionId":session.sid,"messageId":before}})).await?;
+                Ok(json!({"uid":session.uid,"rewind_info":result}))
+            }
             "usage" => {
                 // Read only the owned transport; a quota read must never take a TUI.
                 if lock(&session.live).outbound.is_some() {

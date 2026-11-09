@@ -18,36 +18,55 @@ impl Bridge {
                     .into(),
             );
         }
-        let boundary = method == "fork" && input.get("before").is_some_and(|v| !v.is_null());
-        self.ensure(session).await?;
+        let boundary = method == "rewind"
+            || method == "fork" && input.get("before").is_some_and(|v| !v.is_null());
         let id = input["request_id"]
             .as_str()
             .filter(|id| !id.is_empty())
             .ok_or("droid_sdk: action request_id is required")?;
         let key = format!("{method}:{id}");
+        let previous = lock(&session.live).actions.get(&key).cloned();
+        // Read the durable receipt before launching or reattaching a retired
+        // source. A retry after service restart must not execute the action again.
+        #[cfg(unix)]
+        let previous = if previous.is_none()
+            && self.state_dir.is_some()
+            && lock(&session.live).checkpoint.is_none()
         {
-            let live = lock(&session.live);
-            if let Some(previous) = live.actions.get(&key) {
-                if previous["input"] != *input {
-                    return Err(
-                        "droid_sdk: action request_id already used with different input".into(),
-                    );
+            match std::fs::read(self.checkpoint_path(session)?) {
+                Ok(bytes) => {
+                    let saved: Value = serde_json::from_slice(&bytes)
+                        .map_err(|e| format!("droid_sdk_checkpoint: {e}"))?;
+                    saved["actions"].get(&key).cloned()
                 }
-                if let Some(receipt) = previous.get("receipt") {
-                    return Ok(receipt.clone());
-                }
-                return Err(previous["error"].as_str().unwrap_or("droid_sdk: action already attempted; outcome unknown, inspect native session before retrying").into());
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(format!("droid_sdk_checkpoint: {error}")),
             }
+        } else {
+            previous
+        };
+        if let Some(previous) = previous {
+            if previous["input"] != *input {
+                return Err(
+                    "droid_sdk: action request_id already used with different input".into(),
+                );
+            }
+            if let Some(receipt) = previous.get("receipt") {
+                return Ok(receipt.clone());
+            }
+            return Err(previous["error"].as_str().unwrap_or("droid_sdk: action already attempted; outcome unknown, inspect native session before retrying").into());
         }
+        self.ensure(session).await?;
         self.check_conflict(session).await?;
         let params = match method {
             "rename" => {
                 json!({"title":input["title"].as_str().ok_or("droid_sdk: title must be a string")?})
             }
-            "fork" if boundary => {
+            "fork" | "rewind" if boundary => {
                 json!({"sessionId":session.sid,
                     "messageId":input["before"].as_str().ok_or("droid_sdk: before must be a native message identity")?,
-                    "filesToRestore":[],"filesToDelete":[],
+                    "filesToRestore":if method == "rewind" { input["files_to_restore"].clone() } else { json!([]) },
+                    "filesToDelete":if method == "rewind" { input["files_to_delete"].clone() } else { json!([]) },
                     "forkTitle":input["title"].as_str().unwrap_or("消息前分支")})
             }
             "fork" => {
@@ -139,7 +158,7 @@ impl Bridge {
         result
     }
 
-    async fn retire_action_runtime(&self, session: &Arc<Session>) -> Result<(), String> {
+    pub(super) async fn retire_action_runtime(&self, session: &Arc<Session>) -> Result<(), String> {
         let mut done = {
             let live = lock(&session.live);
             if let Some(stop) = &live.runtime_stop {

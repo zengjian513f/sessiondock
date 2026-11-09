@@ -568,10 +568,16 @@ impl Plan {
         };
         let mut paths = BTreeMap::<PathBuf, (String, String)>::new();
         for member in &plan.group.members {
-            if !matches!(member.source.as_str(), "claude" | "grok") {
+            if !matches!(member.source.as_str(), "claude" | "grok" | "droid") {
                 return Err(TransferError::new(
                     "move_group_unsupported",
-                    "文件适配器仅处理 Claude 和 Grok",
+                    "文件适配器仅处理 Claude、Grok 和 Droid",
+                ));
+            }
+            if member.source == "droid" && new_ids {
+                return Err(TransferError::new(
+                    "move_group_unsupported",
+                    "Droid 仅支持保留身份移动",
                 ));
             }
             mint(&member.source, &member.sid, &mut plan.sessions, new_ids)?;
@@ -581,7 +587,9 @@ impl Plan {
                 plan.sessions
                     .insert(key("claude", &member.sid), format!("a{}", &id[..16]));
             }
-            let home = if member.source == "claude"
+            let home = if member.source == "droid" {
+                super::droid::root(&member.root)?
+            } else if member.source == "claude"
                 && member.root.file_name().is_some_and(|s| s == "projects")
             {
                 member.root.parent().unwrap().to_owned()
@@ -590,7 +598,9 @@ impl Plan {
             };
             plan.roots.insert(member.source.clone(), home);
             let mut owned = Vec::new();
-            if member.source == "grok" {
+            if member.source == "droid" {
+                owned = super::droid::owned(member)?;
+            } else if member.source == "grok" {
                 let summary = member.path.parent().unwrap().join("summary.json");
                 if summary.is_file() {
                     let row: Value = serde_json::from_slice(&fs::read(summary)?)?;
@@ -952,7 +962,7 @@ impl Plan {
             } else {
                 fs::read(&file.source)?
             };
-            if !matches!(file.provider.as_str(), "claude" | "grok")
+            if !matches!(file.provider.as_str(), "claude" | "grok" | "droid")
                 || !file
                     .target
                     .components()

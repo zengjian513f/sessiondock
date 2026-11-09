@@ -16,7 +16,10 @@ pub struct Selection {
 }
 
 pub fn supported(member: &Member) -> bool {
-    matches!(member.source.as_str(), "claude" | "codex" | "grok")
+    matches!(
+        member.source.as_str(),
+        "claude" | "codex" | "grok" | "droid"
+    )
 }
 
 pub fn required(group: &Group, uid: &str) -> BTreeSet<String> {

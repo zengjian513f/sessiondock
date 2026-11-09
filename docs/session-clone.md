@@ -62,7 +62,7 @@ journal 保存选择、源/目标节点、身份、文件清单、原生行、�
 
 ## 当前接口：同节点 Codex
 
-历史能力名 `session_clone_local_codex` 继续表示节点具有迁移原生适配器，覆盖 Claude、Codex、Grok。
+历史能力名 `session_clone_local_codex` 继续表示节点具有迁移原生适配器，覆盖 Claude、Codex、Grok、Droid。
 同节点新建复制已停用。`/api/session/clone` 保留给认证传输层在接收节点发布，以及恢复已有记录；
 新计划只接受跨机移动及保留 ID。页面和能力说明见[迁移合同](session-move.md)与
 [能力合同](capabilities.md#group-cloning)。

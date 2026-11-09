@@ -69,7 +69,7 @@ this routing; it does not establish mobile Edge device compatibility.
 
 ## Group cloning
 
-历史能力名 `session_clone_local_codex` 表示节点具有原生迁移适配器，覆盖 Claude、Codex、Grok；
+历史能力名 `session_clone_local_codex` 表示节点具有原生迁移适配器，覆盖 Claude、Codex、Grok、Droid；
 缺失或 false 不启用入口。页面使用可选树，支持且停止的成员默认选中，不支持来源置灰。
 Hub 的 `session_move_remote` 表示跨机移动服务；`session_clone_remote` 为 false。
 新计划仅支持移动且保留原生 ID，不提供同机/跨机复制或新身份开关。

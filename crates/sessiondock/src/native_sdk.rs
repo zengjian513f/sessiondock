@@ -670,8 +670,47 @@ impl NativeSdks {
             }
             Err(error) => return Err(error),
         };
+        // Native compaction/rewind and boundary forks retire their source
+        // transport. Recovery must not reopen that source as an active writer.
+        if source == "droid"
+            && (matches!(method, "compact" | "rewind")
+                || method == "fork" && input.get("before").is_some_and(|value| !value.is_null()))
+            && result["session_id"].is_string()
+            && result["session_id"] != target["session_id"]
+        {
+            self.remember_binding(&target, false)?;
+        }
+        if source == "droid"
+            && matches!(method, "fork" | "compact" | "rewind")
+            && target["agent"]
+                .as_str()
+                .is_some_and(|agent| !agent.is_empty())
+            && result["session_id"].is_string()
+            && result["session_id"] != target["session_id"]
+        {
+            let Provider::Droid(bridge) = bridge else {
+                unreachable!()
+            };
+            if let Some(binding) = bridge.child_handoff(&target, &result).await? {
+                self.remember_binding(&target, false)?;
+                self.remember_binding(&binding, true)?;
+                let mut result = result;
+                result["native_uid"] = binding["native_uid"].clone();
+                result["uid"] = binding["uid"].clone();
+                result["agent"] = binding["agent"].clone();
+                result["source_uid"] = target["uid"].clone();
+                result["session"] = Value::Null;
+                return Ok(result);
+            }
+        }
         if matches!(method, "create" | "fork")
-            || (source == "droid" && method == "compact" && result["uid"] != target["uid"])
+            || (source == "droid"
+                && matches!(method, "compact" | "rewind")
+                && result["uid"]
+                    != *target
+                        .get("native_uid")
+                        .filter(|uid| uid.is_string())
+                        .unwrap_or(&target["uid"]))
         {
             let uid = result["uid"].as_str().ok_or("SDK 未返回原生会话身份")?;
             let mut row = result
@@ -734,6 +773,10 @@ impl NativeSdks {
             binding["uid"] = result["uid"].clone();
             binding["session_id"] = result["session_id"].clone();
             binding["source"] = json!(source);
+            if source == "droid" {
+                binding["agent"] = json!("");
+                binding["native_uid"] = result["uid"].clone();
+            }
             for field in ["sdk_fork", "sdk_pending", "sdk_model", "sdk_effort"] {
                 if let Some(value) = row.get(field) {
                     binding[field] = value.clone();
@@ -753,6 +796,20 @@ impl NativeSdks {
             *rows = next;
         }
         let mut result = result;
+        // A child is displayed under its owner's public scope. Same-session
+        // actions must not navigate to a hidden direct child UID; new identities
+        // have already returned above with a new independent binding.
+        if source == "droid"
+            && target["agent"]
+                .as_str()
+                .is_some_and(|agent| !agent.is_empty())
+            && result["uid"] == target["native_uid"]
+            && result["uid"].is_string()
+        {
+            result["native_uid"] = result["uid"].clone();
+            result["uid"] = target["uid"].clone();
+            result["agent"] = target["agent"].clone();
+        }
         if method == "open" {
             if !result["capabilities"].is_object() {
                 result["capabilities"] = json!({});

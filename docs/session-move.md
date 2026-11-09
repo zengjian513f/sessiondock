@@ -1,7 +1,7 @@
 # 选择会话并跨机迁移
 
 迁移只移动用户选择的会话，原生 SID、rollout ID 和历史中的身份引用保持不变。
-当前原生适配支持 Claude、Codex、Grok；Kiro、Agy、OpenCode、CodeBuddy 尚不支持。
+当前原生适配支持 Claude、Codex、Grok、Droid；Kiro、Agy、OpenCode、CodeBuddy 尚不支持。
 页面和新计划不提供复制、同机克隆或生成新身份。已有事务仍按原记录恢复，见
 [事务与恢复](session-clone.md)。本功能是用户明确要求的新功能，不受 Python 功能对齐范围限制。
 
@@ -43,6 +43,7 @@ DELTA：连通组只用于发现候选树，不再要求搬走所有逻辑亲属
 | Claude | transcript、所属 subagents、tool-results、sidecar；存在的 file-history | 进程、PTY、临时后台任务日志 |
 | Codex | 所选线程的全部代次、归档及固定前缀依赖；当前 rollout 选择和原生数据库投影 | 进程、队列、内存工具句柄 |
 | Grok | 完整会话目录、summary、chat/update、checkpoints 及子代理元数据 | 进程和运行中执行状态 |
+| Droid | JSONL、同名 settings、会话快照 manifest 和有效边界引用的内容文件 | 进程、认证、共享快照库中其他会话的数据 |
 
 迁移原生文件遵守最小改动原则；固定身份时保留原历史，不重排 JSON、改写用户正文或
 重新序列化整条记录。目录中必要的附件、外部结果引用和原生 schema 仍按适配器核对。
@@ -70,6 +71,22 @@ CLI 版本和动态工具执行器核验结果作为可见提示，缺少版本�
 目标不存在原身份时正常发布。相同历史可复用；可验证的固定前缀允许延长。
 不同分支、当前 rollout 冲突、其他目标内容或被并发修改的显示设置不覆盖，保留现场并报错。
 源历史、原生元数据和已确认选择在执行前、交接前及清理前复核。
+
+### Droid 文件回退快照
+
+DELTA：Droid 的 `.factory/snapshots` 使用会话专属 manifest 和共享内容库。
+本次确认的文件集为 transcript、settings、snapshot manifest 及其有效内容。
+`decompMissionId` 或设置标签中的 mission 指针尚无完整持久状态适配，明确拒绝迁移；
+不将日志、缓存或未知 mission 根盲目纳入。
+移动保留 transcript、settings、manifest 原字节和所有原生身份；目标按有效边界合并
+`.index.json` 与 `content/.metadata.json` 的引用计数，只修改必要字段和插入项，保留其他
+会话及未知字段。共享 JSON 与历史文件一起持久发布，失败通过同一事务回滚。
+
+原生进程会缓存这些共享 JSON，故带快照的目标预检和发布前均要求该 Droid 根没有
+存活写者；不主动停止其他会话。受管 SDK 启动与快照发布使用同一锁；外部 TUI 仍按
+既有停写观察合同核验，不宣称能围栏独立 CLI。源端只移走专属 manifest、历史及设置，
+不删除共享内容，也不改写运行中其他会话缓存的全局索引。源端旧队列和引用计数交由
+原生后续淘汰处理；回迁可复用尚存的相同边界和内容。已有共享内容或索引却缺少引用计数时，迁移提示先由 Droid 完成原生恢复，不清空无关队列；真正空根可以初始化共享元数据。新建复制仍保持全局关闭。
 
 ## SessionDock 自身状态
 
@@ -125,6 +142,8 @@ Hub 不再声明跨机复制可用。传输和交接控制端点只开放给认�
 第三节点同 SID 隔离和 Hub/节点重启。它不调用真实模型，也不操作生产会话。
 [来源套件](../tests/session_transfer_sources_browser.py)覆盖七种来源、节点/Hub、宽窄屏和明暗主题；
 [Agy 历史套件](../tests/agy_history_browser.py)验证不支持来源保持原生数据及可见不可选状态。
+
+[Droid 移动浏览器套件](../tests/droid_move_browser.py)通过私有 SSH 节点覆盖设置、文件回退快照、共享内容及回迁。
 
 ## 交付验收
 
