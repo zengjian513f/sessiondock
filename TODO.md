@@ -39,6 +39,9 @@
 
 ## Runtime and platform coverage
 
+- [ ] Orion 补发 SDK 节点复用、流式更新优化与双向历史分页 `0473c540`（服务与前端）：
+  本轮正式 SSH 尝试超时，待恢复后补发；ptyhost、sdkhost 和资源代理不在本次变更范围。
+
 - [ ] Orion 补发额度修复 `85d871ca`（BUG-20261107-104739-ad88f6，包含此前额度同步修复）。
   Lyra、Cygnus、Pavo、Hub、Vela、Cetus 已部署、重启并健康；Orion 正式 SSH 尝试超时，
   待恢复后补发服务与前端。三个资源代理、ptyhost 按组件范围排除。
