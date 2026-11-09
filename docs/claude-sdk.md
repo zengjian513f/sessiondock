@@ -182,6 +182,8 @@ CLI initialize 不创建 fork JSONL；首次真实 user 输入才原生落盘，
 
 ## 接口证据与验证状态
 
+本节为历史接口证据，保留当时实际型号；当前测试使用 `claude-haiku-5-5` / low。
+
 2026-10-18：本机 PATH 及已配置的 shell 包装器都找不到 `claude`，
 因此没有声称验证本机已安装版本。为了核实接口，只在临时目录下载官方
 npm Claude Code **2.1.302** Linux 包并执行 `--version/--help`，

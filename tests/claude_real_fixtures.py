@@ -14,7 +14,7 @@ CLAUDE = None
 PROMPT = "Reply with the single word OK."
 
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 
 
 PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",

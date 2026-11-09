@@ -35,7 +35,7 @@ def fake():
             state = root.read_text()
             if state != previous:
                 text = frame(Path.cwd(), selected) if state == 'trust' else (
-                    '› \n\n  gpt-5.6-luna · test' if state == 'ready' else state)
+                    '› \n\n  gpt-6-luna · test' if state == 'ready' else state)
                 sys.stdout.write('\x1b[2J\x1b[H' + text.replace('\n', '\r\n')
                                  + ('\x1b[1;3H' if state == 'ready' else ''))
                 sys.stdout.flush()
@@ -63,7 +63,7 @@ def fake():
                 editor += data
                 # Enough native editor feedback for SEND's post-paste checkpoint.
                 text = editor.replace(b'\x1b[200~', b'').replace(b'\x1b[201~', b'').decode()
-                sys.stdout.write('\x1b[2J\x1b[H› ' + text + '\r\n\r\n  gpt-5.6-luna · test')
+                sys.stdout.write('\x1b[2J\x1b[H› ' + text + '\r\n\r\n  gpt-6-luna · test')
                 sys.stdout.flush()
     finally:
         termios.tcsetattr(0, termios.TCSANOW, original)

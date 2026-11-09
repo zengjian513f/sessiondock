@@ -3,7 +3,7 @@
 
 Requires an explicitly supplied, already authenticated temporary environment.
 No credentials/configuration are copied. The model must be explicitly selected
-as auto, claude-haiku-4.5 or qwen3-coder-next. --verify-permissions exercises external reads and
+from the native catalog (for example claude-haiku-5.5 when available). --verify-permissions exercises external reads and
 workspace writes without answering approval cards. --prepare-only
 opens the model picker without creating a native session or sending a prompt.
 The default validation sweep excludes this *_real_browser suite.
@@ -99,7 +99,7 @@ def exercise(page, base, work, evidence, prepare_only, model="auto", verify_perm
     # The real native terminal must replay the SDK answer on the same SID.
     page.wait_for_function(r'''reply => Array.from({length:T.term?.buffer?.active?.length||0}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString(true)||"").join("\n").replace(/\s+/g, '').includes(reply.replace(/\s+/g, ''))''', arg=reply, timeout=60000)
     terminal_text = page.evaluate('Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString(true)||"").join("\\n")')
-    assert {'auto': 'auto', 'claude-haiku-4.5': 'haiku', 'qwen3-coder-next': 'qwen'}[model] in terminal_text.lower(), terminal_text
+    assert ('haiku' if 'haiku' in model else 'qwen' if 'qwen' in model else model) in terminal_text.lower(), terminal_text
     page.screenshot(path=str(evidence / 'real-cli-resume.png'), full_page=True)
     stop_from_toolbar(page)
 
@@ -120,7 +120,7 @@ def main():
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--auth-environment', type=Path, required=True)
     parser.add_argument('--kiro', type=Path, required=True)
-    parser.add_argument('--model', choices=['auto', 'claude-haiku-4.5', 'qwen3-coder-next'], required=True)
+    parser.add_argument('--model', required=True)
     parser.add_argument('--proxy-environment', action='store_true', help='Pass only standard SSH proxy variables, without saving their values')
     parser.add_argument('--verify-permissions', action='store_true')
     parser.add_argument('--prepare-only', action='store_true')

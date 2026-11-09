@@ -148,7 +148,7 @@ def resume_worker():
     owns_login=not os.path.lexists(login)
     if owns_login:login.symlink_to(daily/auth_name)
     else:assert login.is_symlink() and login.resolve()==(daily/auth_name).resolve()
-    model='claude-haiku-4-5-20251001' if provider=='claude' else 'grok-4.6'
+    model='claude-haiku-5-5' if provider=='claude' else 'grok-4.6'
     env=dict(os.environ)
     if provider=='claude':
         env.update(HOME=str(home),CLAUDE_CONFIG_DIR=str(home))

@@ -247,6 +247,13 @@
 
 ## Validation stability
 
+- [ ] 修复测试型号更新时暴露的验收阻点：`draft_rotation_browser` 的 current_uid 断言、
+  `kiro_hub_browser` 的 SDK 连接等待均在未改测试上复现；`cli_menus_browser`、
+  `send_codex_attachments_browser`、`startup_question_browser` 和真实 Codex 冷启动
+  在客户端入口禁用处失败，`kiro_startup_browser` 等待响应超时。先修测试前提／定位
+  行为，不将本次型号替换记为这些套件通过。Kiro 原生目录尚未返回 Haiku 5.5；
+  Claude 真实套件缺少隔离测试所需的登录凭据，未完成新型号真实验收。
+
 - [ ] `codex_sdk_layout_browser.py` 在 125% 缩放、窄侧栏组合的 blocked 状态下，
   状态栏溢出 4px、额度区域宽度变成零。BUG-20261107-104739-ad88f6 排查中，
   当前前端与未修改的 `f124ba57` 均在同一断言、同一尺寸失败；100% 明暗主题

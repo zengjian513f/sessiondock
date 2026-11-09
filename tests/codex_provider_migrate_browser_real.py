@@ -2,7 +2,7 @@
 """Real Codex provider migration in a temporary home, through Chromium.
 
 No authentication is copied and no model input is submitted. Direct invocation
-only, or the real-suite validation flags. Uses gpt-5.6-luna at low effort.
+only, or the real-suite validation flags. Uses gpt-6-luna at low effort.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO/'deploy'))
 from codex_provider_migrate import migrate
 
 SID = '01a11d3f-7510-7d20-8f67-546a6975ebef'
-MODEL = 'gpt-5.6-luna'
+MODEL = 'gpt-6-luna'
 
 
 @contextmanager
@@ -132,7 +132,7 @@ base_url = "http://127.0.0.1:9/v1"
                     db.close()
                     page.get_by_title('启动 SDK会话', exact=True).click()
                     page.wait_for_function('CodexSdkView.connected', timeout=15000)
-                    page.wait_for_function('CodexSdkView.summary?.settings?.model === "gpt-5.6-luna"')
+                    page.wait_for_function('CodexSdkView.summary?.settings?.model === "gpt-6-luna"')
                     expect(page.locator('.sdk-history')).to_contain_text('preserved answer 1')
                     try:
                         migrate(home, SID, 'openai_catalog_cache', 'openai', root/'active-backup', True)

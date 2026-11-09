@@ -49,7 +49,7 @@ def main():
             'host_binary': str(REPO / 'target/debug/ptyhost'), 'host_dir': str(root / 'host'),
             'adapters': [], 'profiles': [{'id': 'codex-cli-v1', 'source': 'codex',
                 'executable': str(Path(sys.executable).resolve()),
-                'args': [str(cli), '--model', 'gpt-5.6-luna'],
+                'args': [str(cli), '--model', 'gpt-6-luna'],
                 'new_args': [], 'resume_args': ['resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',

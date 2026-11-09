@@ -38,7 +38,7 @@ def fake_main():
     if "--list-models" in sys.argv:
         print(json.dumps({"models": [
             {"model_id": "auto", "model_name": "Auto", "hasEffort": False},
-            {"model_id": "claude-haiku-4.5", "model_name": "Claude Haiku 4.5",
+            {"model_id": "claude-haiku-5.5", "model_name": "Claude Haiku 5.5",
              "efforts": ["low", "medium", "high"], "default_effort": "low"},
             {"model_id": "unknown-effort", "model_name": "No effort advertised"},
         ], "default_model": "auto"}))
@@ -92,7 +92,7 @@ def run(args):
 
                 # Both explicit false and absence of advertised choices must
                 # remain unavailable even after choosing high on another model.
-                choose_new("claude-haiku-4.5")
+                choose_new("claude-haiku-5.5")
                 page.locator("#new-effort").select_option("high")
                 choose_new("unknown-effort")
                 expect(page.locator("#new-effort")).to_be_disabled()
@@ -117,8 +117,8 @@ def run(args):
 
                 # A supported model can still set high. Switching back drops
                 # the formerly confirmed value in snapshots and the picker.
-                page.locator("#sdk-model").select_option("claude-haiku-4.5")
-                page.wait_for_function("window.__kiroSnapshot.model === 'claude-haiku-4.5'")
+                page.locator("#sdk-model").select_option("claude-haiku-5.5")
+                page.wait_for_function("window.__kiroSnapshot.model === 'claude-haiku-5.5'")
                 expect(page.locator("#sdk-effort")).to_be_visible()
                 expect(page.locator("#sdk-effort")).to_be_enabled()
                 page.locator("#sdk-effort").select_option("high")
@@ -144,8 +144,8 @@ def run(args):
                 page.locator("#sdk-send").click()
                 page.wait_for_function("window.__kiroSnapshot.items.some(item => item.text?.includes('Synthetic no-effort reply'))")
                 page.wait_for_function("!window.__kiroSnapshot.running")
-                page.locator("#sdk-model").select_option("claude-haiku-4.5")
-                page.wait_for_function("window.__kiroSnapshot.model === 'claude-haiku-4.5'")
+                page.locator("#sdk-model").select_option("claude-haiku-5.5")
+                page.wait_for_function("window.__kiroSnapshot.model === 'claude-haiku-5.5'")
                 expect(page.locator("#sdk-effort")).to_be_visible()
                 expect(page.locator("#sdk-effort")).to_have_value("max")
                 expect(page.locator("#sdk-model")).to_be_enabled()

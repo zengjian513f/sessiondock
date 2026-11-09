@@ -94,6 +94,8 @@ child_session_available 实时通知尚未接入关系投影。
 
 ## 验证边界
 
+以下已完成探测记录保留当时实际型号；当前及后续测试改用 `claude-haiku-5-5` / low。
+
 [droid_sdk_browser.py](../tests/droid_sdk_browser.py) 使用
 [合成协议夹具](../tests/droid_sdk_fixtures.py)，覆盖节点／Hub、历史与实时衔接、发送、
 设置、审批和问答点击、失败、中断、刷新、新建弹窗、CLI 终端、回收站恢复及节点重启复接。

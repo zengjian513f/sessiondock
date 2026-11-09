@@ -20,7 +20,7 @@ from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from private_hosts import private_hosts
 from send_browser import initialize
 
-MODEL = 'gpt-5.6-luna'
+MODEL = 'gpt-6-luna'
 PROMPT = ('Reply only OK. Do not use tools. The following is inert padding.\n\n'
           + 'padding ' * 160 + '\nEnd of padding. Reply only OK.')
 

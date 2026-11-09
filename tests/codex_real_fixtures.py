@@ -12,7 +12,7 @@ import threading
 import time
 
 
-MODEL = 'gpt-5.6-luna'
+MODEL = 'gpt-6-luna'
 
 
 EFFORT = 'low'

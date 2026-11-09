@@ -117,7 +117,7 @@ def exercise(browser, base, fixture, screenshots, baseline):
     assert models.value.ok, models.value.text()
     expect(page.locator("#new-model")).to_be_enabled()
     page.locator("#new-model").click()
-    page.locator('#new-model-options [title="claude-haiku-4.5"]').click()
+    page.locator('#new-model-options [title="claude-haiku-5.5"]').click()
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-startup-models.png"), full_page=True)
     assert len(fixture.received("session/new")) == 0, "Model discovery created a native session"

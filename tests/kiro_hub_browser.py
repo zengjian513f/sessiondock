@@ -142,7 +142,7 @@ def exercise(browser, base, fixture, disabled_fixture, width, theme, screenshots
     page.locator('label:has(input[name="new-source"][value="kiro"])').click()
     expect(page.locator("#new-model")).to_be_enabled()
     page.locator("#new-model").click()
-    page.locator('#new-model-options [title="claude-haiku-4.5"]').click()
+    page.locator('#new-model-options [title="claude-haiku-5.5"]').click()
     page.remove_listener("response", record_models)
     assert model_responses and all(response.ok for response in model_responses), [response.status for response in model_responses]
     assert any(response.request.post_data_json.get("_node") == page.evaluate("uid => nodeOf(uid)", uid) for response in model_responses)

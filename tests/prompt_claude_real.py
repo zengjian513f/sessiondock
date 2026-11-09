@@ -2,7 +2,7 @@
 """Real Claude CLI question-card acceptance, cheapest configuration.
 
 Like the former `send_claude_real.py` (isolated `CLAUDE_CONFIG_DIR` reusing the login
-read-only, throwaway cwd, `claude-haiku-4-5-20251001 --effort low`, everything
+read-only, throwaway cwd, `claude-haiku-5-5 --effort low`, everything
 deleted afterwards) but the launch profile additionally passes
 `--settings <bridge settings>` written by `sessiondock --write-bridge-settings`
 and restricts the tools to `AskUserQuestion`. One prompt asks Claude to pose a

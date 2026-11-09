@@ -51,7 +51,7 @@ GREY = "\x1b[38;2;90;90;90m"
 def parse(argv):
     options = {"sid": "", "delay": 0.0, "swallow": 0, "reply": False,
                "busy_footer": False, "no_turn_id": False, "duplicate": False,
-               "model": "gpt-5.6-luna"}
+               "model": "gpt-6-luna"}
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -136,8 +136,8 @@ class Fake:
         if self.model_menu:
             self.write('\x1b[2J\x1b[H' + '\r\n'.join([
                 '  Select Model and Effort', '',
-                '› 1. GPT-5.6-Luna (current)  Older fast and efficient model.',
-                '  2. GPT-6-Luna             Fast and affordable model.', '',
+                '› 1. GPT-6-Luna (current)    Fast and affordable model.',
+                '  2. GPT-5.6-Luna           Older fast and efficient model.', '',
                 '  enter select · esc back']))
             return
         if time.monotonic() < self.ready_at:

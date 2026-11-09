@@ -44,7 +44,7 @@ class KiroFixture:
             self.sid,
             str(self.work),
             "Synthetic Kiro V3 Session",
-            model="claude-haiku-4.5",
+            model="claude-haiku-5.5",
             effort="low",
         )
         (self.v3_dir / "messages.jsonl").write_text(
@@ -128,7 +128,7 @@ class KiroFixture:
         sid: str,
         cwd: str,
         title: str,
-        model: str = "claude-haiku-4.5",
+        model: str = "claude-haiku-5.5",
         effort: str = "low",
     ):
         doc = {
@@ -171,7 +171,7 @@ class FakeKiroAcp:
         self.sid = None
         self.session_dir = None
         self.cwd = None
-        self.model = "claude-haiku-4.5"
+        self.model = "claude-haiku-5.5"
         self.effort = "low"
         self.mode = "vibe"
         self.autopilot = "off"
@@ -212,7 +212,7 @@ class FakeKiroAcp:
                 "currentValue": self.model,
                 "options": [
                     {"value": "auto", "name": "auto", "description": "Auto model"},
-                    {"value": "claude-haiku-4.5", "name": "claude-haiku-4.5", "description": "Claude Haiku 4.5 (0.4x credit)"},
+                    {"value": "claude-haiku-5.5", "name": "claude-haiku-5.5", "description": "Claude Haiku 5.5 (0.06x through 100K tokens; 0.3x above)"},
                     {"value": "qwen3-coder-next", "name": "qwen3-coder-next", "description": "Qwen3 Coder Next (0.05x credit)"},
                 ],
             },
@@ -752,10 +752,10 @@ def main():
         sys.stdout.write(json.dumps({
             "models": [
                 {"model_id": "auto", "model_name": "Auto", "default_effort": "medium", "efforts": ["low", "medium", "high", "max"]},
-                {"model_id": "claude-haiku-4.5", "model_name": "Claude Haiku 4.5", "default_effort": "low", "efforts": ["low", "medium", "high", "max"]},
+                {"model_id": "claude-haiku-5.5", "model_name": "Claude Haiku 5.5", "default_effort": "low", "efforts": ["low", "medium", "high", "max"]},
                 {"model_id": "qwen3-coder-next", "model_name": "Qwen3 Coder Next", "default_effort": "low", "efforts": ["low", "medium", "high", "max"]},
             ],
-            "default_model": "claude-haiku-4.5",
+            "default_model": "claude-haiku-5.5",
         }) + "\n")
         sys.stdout.flush()
         return

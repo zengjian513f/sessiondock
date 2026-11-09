@@ -22,7 +22,7 @@
   smoke tests.
 - Real-CLI browser suites (`*_real`) run only with `--include-real`, `--real-only` (the
   release acceptance step, `docs/release.md`) or direct invocation. Use
-  Claude `claude-haiku-4-5-20251001`, Codex `gpt-5.6-luna`, or Grok `grok-4.6`
+  Claude `claude-haiku-5-5`, Codex `gpt-6-luna`, or Grok `grok-4.6`
   at low effort. Pass the model on the command line, assert the actual model,
   and use temporary homes. Never change everyday defaults or fall back to a
   costlier model. See `/lyra-share/agent-rules/references/cli-model-isolation.md`.

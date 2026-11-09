@@ -49,7 +49,7 @@ def rotation(browser, hub_mode):
             '            self.native_hold = open(path, "a")\n'
             '        if os.get_terminal_size().columns < 80:\n'
             '            shown = ("[Pasted Content %d chars]" % len(self.buffer)) if self.buffer else "\\x1b[2mAsk Codex to do anything\\x1b[0m"\n'
-            '            self.write("\\x1b[2J\\x1b[H› " + shown + "\\r\\n\\r\\ngpt-5.6-luna low · /test\\x1b[1;3H")\n'
+            '            self.write("\\x1b[2J\\x1b[H› " + shown + "\\r\\n\\r\\ngpt-6-luna low · /test\\x1b[1;3H")\n'
             '            return\n'
             '        return super().render(working)\n'
             'RotatingFake(parse(sys.argv[1:])).run()\n')
@@ -58,7 +58,7 @@ def rotation(browser, hub_mode):
             'host_binary': str(REPO / 'target/debug/ptyhost'), 'host_dir': str(root / 'host'),
             'adapters': [], 'profiles': [{'id': 'codex-cli-v1', 'source': 'codex',
                 'executable': str(executable),
-                'args': [str(cli), '--model', 'gpt-5.6-luna', '--reply'],
+                'args': [str(cli), '--model', 'gpt-6-luna', '--reply'],
                 'new_args': [], 'resume_args': ['resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                         'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',

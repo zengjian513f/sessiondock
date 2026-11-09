@@ -99,7 +99,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     v3_row = next(r for r in kiro_rows if r.get("sid") == fixture.sid)
     empty_row = next(r for r in kiro_rows if r.get("sid") == fixture.empty_sid)
     assert v3_row["title"] == "Synthetic Kiro V3 Session", v3_row
-    assert v3_row["model"] == "claude-haiku-4.5", v3_row
+    assert v3_row["model"] == "claude-haiku-5.5", v3_row
     assert empty_row["title"] == "新建 Kiro 会话", empty_row
     uid, empty_uid = v3_row["uid"], empty_row["uid"]
     assert any(r.get("params", {}).get("cursor") == "fixture-second-page" for r in fixture.received("session/list"))

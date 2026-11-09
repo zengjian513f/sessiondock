@@ -21,7 +21,7 @@ from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from private_hosts import private_hosts
 from send_browser import initialize
 
-MODEL = 'gpt-5.6-luna'
+MODEL = 'gpt-6-luna'
 DESCRIPTION = '原生命名后发送报告验收\nSynthetic test only. Reply OK without using tools.'
 
 

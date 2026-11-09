@@ -123,7 +123,7 @@ def exercise(browser, base, fixture, width, theme, shots, long=False):
     send('FAIL change settings');wait(15)
     # Use the existing model selector, not a direct backend mutation.
     current=page.locator('#sdk-model').input_value()
-    page.locator('#sdk-model').select_option('claude-haiku-4.5' if current=='auto' else 'auto')
+    page.locator('#sdk-model').select_option('claude-haiku-5.5' if current=='auto' else 'auto')
     page.wait_for_function('!SdkView.raw.retry')
     send('OTHER_ERROR')
     page.wait_for_function('SdkView.raw.error?.includes("authentication failed")')

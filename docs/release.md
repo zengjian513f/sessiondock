@@ -66,9 +66,9 @@ credits and need the operator's CLI logins.
 
 | Suite | CLI | Covers |
 | --- | --- | --- |
-| `prompt_claude_real` | Claude (`claude-haiku-4-5-20251001`) | AskUserQuestion card pushed to the page, answered in the browser, answer in the native record, card cleared |
-| `send_codex_startup_browser_real` | Codex (`gpt-5.6-luna`) | cold-start SEND from a new session: one exact native user message and a reply |
-| `bug_report_codex_browser_real` | Codex (`gpt-5.6-luna`) | report dialog, native rename and the worker's first task |
+| `prompt_claude_real` | Claude (`claude-haiku-5-5`) | AskUserQuestion card pushed to the page, answered in the browser, answer in the native record, card cleared |
+| `send_codex_startup_browser_real` | Codex (`gpt-6-luna`) | cold-start SEND from a new session: one exact native user message and a reply |
+| `bug_report_codex_browser_real` | Codex (`gpt-6-luna`) | report dialog, native rename and the worker's first task |
 | `send_grok_browser_real` | Grok (`grok-4.6`, low) | model and effort chosen in the picker, one composer SEND, one native user query and a reply |
 | `agy_real_browser` | Agy, loopback synthetic gateway | models/argv, composer, native binding and history, menu guards, stopped-session continuation |
 | `agy_interactions_real_browser` | Agy, loopback synthetic gateway | native approvals, questions, write-in answers and menu commands |

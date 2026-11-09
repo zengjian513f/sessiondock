@@ -183,7 +183,8 @@ DELTA：原生子代理调用失败时，按其调用 ID 将父会话保存的�
 
 以上套件使用合成 CLI，不能证明真实模型服务行为。
 [真实浏览器验收](../tests/kiro_sdk_real_browser.py)显式接收隔离登录环境、CLI 路径和
-显式 `--model auto`、`--model claude-haiku-4.5` 或`--model qwen3-coder-next`，默认验证扫描不运行它。
+显式 `--model <原生目录中的型号>`（例如可用时的 `claude-haiku-5.5`），默认验证扫描不运行它。
+本机目录若仍仅返回旧 Haiku，不能把目录缺失当作新型号已可用，也不自动回退到旧型号。
 `--verify-permissions` 通过真实网页发送工作区外读取、工作区内写入和 shell 请求，
 不点击授权按钮，以实际文件结果验证权限策略。Kiro CLI 2.24.1 已通过此真实网页
 验收（`qwen3-coder-next`），完成工作区外读取、写入与 `pwd`，未人工回答授权。2.24.1 已通过标准 Google

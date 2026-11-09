@@ -31,7 +31,7 @@ def main():
         root = Path(tmp); home = root/'codex'; home.mkdir(); cwd = root/'work'; cwd.mkdir()
         for name in ('claude','grok'): (root/name).mkdir()
         (home/'config.toml').write_text('''model_provider="openai_catalog_cache"
-model="gpt-5.6-luna"
+model="gpt-6-luna"
 model_reasoning_effort="low"
 [model_providers.openai_catalog_cache]
 name="Synthetic cache"
@@ -43,7 +43,7 @@ base_url="http://127.0.0.1:9/v1"
         fixture.SID = '01a11d3f-7510-7d20-8f67-546a6975ebea'
         second = fixture.seed(args.codex, home, cwd, 'openai_catalog_cache', 'cache provider history')
         wrapper = root/'bin'; wrapper.mkdir(); pidlog = root/'pids'
-        (wrapper/'codex').write_text('#!/bin/sh\necho $$ >> '+shlex.quote(str(pidlog))+'\nexec '+shlex.quote(str(args.codex.resolve()))+' -c \'model="gpt-5.6-luna"\' -c \'model_reasoning_effort="low"\' "$@"\n')
+        (wrapper/'codex').write_text('#!/bin/sh\necho $$ >> '+shlex.quote(str(pidlog))+'\nexec '+shlex.quote(str(args.codex.resolve()))+' -c \'model="gpt-6-luna"\' -c \'model_reasoning_effort="low"\' "$@"\n')
         (wrapper/'codex').chmod(0o700)
         env = {**environment(root,args.binary), 'HOME':str(root), 'CODEX_HOME':str(home),
                'PATH':str(wrapper)+os.pathsep+os.environ['PATH'],
@@ -107,7 +107,7 @@ base_url="http://127.0.0.1:9/v1"
                         open_dialog(page)
                         page.locator('input[name="new-source"][value="codex"]').check()
                         page.locator('#new-model').click()
-                        page.locator('[data-model-option][title="gpt-5.6-luna"]').click()
+                        page.locator('[data-model-option][title="gpt-6-luna"]').click()
                         page.locator('#new-effort').select_option('low')
                         page.locator('#new-cwd').fill(str(cwd))
                         page.locator('#new-session-go').click()
