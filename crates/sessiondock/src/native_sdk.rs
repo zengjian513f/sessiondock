@@ -760,7 +760,7 @@ impl NativeSdks {
             result["capabilities"]["input_queue"] = json!(true);
             result["capabilities"]["queue_cancel"] = json!(true);
             result["capabilities"]["queue_retry"] = json!(true);
-            if source == "kiro" {
+            if matches!(source, "kiro" | "droid") {
                 result["capabilities"]["queue_steer"] = json!(true);
             }
         }
@@ -914,7 +914,7 @@ impl NativeSdks {
         target: &Value,
         id: &str,
     ) -> Result<Value, String> {
-        if target["source"] != "kiro" {
+        if !matches!(target["source"].as_str(), Some("kiro" | "droid")) {
             return Err("此来源不支持将排队输入转为引导".into());
         }
         let _submission = self.submission(target, id).lock_owned().await;
@@ -928,15 +928,19 @@ impl NativeSdks {
                 if row.state != "queued" || row.input.is_none() {
                     return Err("此输入已不在待发送队列，不能改为引导。".into());
                 }
-                if row.input.as_ref().is_some_and(|input| {
-                    input["attachments"]
-                        .as_array()
-                        .is_some_and(|items| !items.is_empty())
-                }) {
+                if target["source"] == "kiro"
+                    && row.input.as_ref().is_some_and(|input| {
+                        input["attachments"]
+                            .as_array()
+                            .is_some_and(|items| !items.is_empty())
+                    })
+                {
                     return Err("Kiro 原生引导只支持文字；附件请保留普通排队发送。".into());
                 }
-                let (snapshot, _) =
-                    self.subscribe("kiro", target["uid"].as_str().unwrap_or_default())?;
+                let (snapshot, _) = self.subscribe(
+                    target["source"].as_str().unwrap_or_default(),
+                    target["uid"].as_str().unwrap_or_default(),
+                )?;
                 if snapshot["raw"]["running"] != true {
                     return Err("当前没有可引导的运行中任务；输入仍保留在普通队列。".into());
                 }

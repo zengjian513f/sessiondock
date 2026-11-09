@@ -9,20 +9,16 @@ impl Bridge {
         input: &Value,
     ) -> Result<Value, String> {
         if method == "fork"
-            && [
-                "before",
-                "before_turn_id",
-                "message_id",
-                "messageId",
-                "prompt_index",
-            ]
-            .iter()
-            .any(|key| input.get(*key).is_some_and(|v| !v.is_null()))
+            && ["before_turn_id", "message_id", "messageId", "prompt_index"]
+                .iter()
+                .any(|key| input.get(*key).is_some_and(|v| !v.is_null()))
         {
             return Err(
-                "droid_sdk_unsupported: native message-boundary fork is not connected".into(),
+                "droid_sdk_unsupported: message-boundary fork requires native before identity"
+                    .into(),
             );
         }
+        let boundary = method == "fork" && input.get("before").is_some_and(|v| !v.is_null());
         self.ensure(session).await?;
         let id = input["request_id"]
             .as_str()
@@ -47,6 +43,12 @@ impl Bridge {
         let params = match method {
             "rename" => {
                 json!({"title":input["title"].as_str().ok_or("droid_sdk: title must be a string")?})
+            }
+            "fork" if boundary => {
+                json!({"sessionId":session.sid,
+                    "messageId":input["before"].as_str().ok_or("droid_sdk: before must be a native message identity")?,
+                    "filesToRestore":[],"filesToDelete":[],
+                    "forkTitle":input["title"].as_str().unwrap_or("消息前分支")})
             }
             "fork" => {
                 let mut params = json!({});
@@ -75,7 +77,8 @@ impl Bridge {
             session.publish(&mut live);
         }
         let result = async {
-            let raw = session.control(json!({"method":format!("droid.{method}_session"),"params":params})).await?;
+            let native_method = if boundary { "droid.execute_rewind".into() } else { format!("droid.{method}_session") };
+            let raw = session.control(json!({"method":native_method,"params":params})).await?;
             if method == "rename" {
                 if raw["success"] == false { return Err("droid_sdk: native rename failed".into()); }
                 return Ok(json!({"uid":session.uid,"renamed":true,"title":input["title"],"native":raw}));
@@ -86,7 +89,7 @@ impl Bridge {
             }
             // A compaction handoff must not leave the old bridge addressing a
             // transport whose current native identity may have changed.
-            if method == "compact" {
+            if method == "compact" || boundary {
                 self.retire_action_runtime(session).await?;
             }
             let path = self.find_native_action_path(sid)?;
@@ -102,7 +105,7 @@ impl Bridge {
             lock(&self.state).sessions.entry(uid).or_insert(child);
             Ok(receipt)
         }.await;
-        if method == "compact"
+        if (method == "compact" || boundary)
             && result.as_ref().err().is_some_and(|error: &String| {
                 error.contains("timed out")
                     || error.contains("outcome unknown")
@@ -147,8 +150,8 @@ impl Bridge {
         if let Some(done) = done.as_mut() {
             tokio::time::timeout(Duration::from_secs(10), done.wait_for(|v| *v))
                 .await
-                .map_err(|_| "droid_sdk: compaction runtime stop has not been confirmed")?
-                .map_err(|_| "droid_sdk: compaction stop channel closed")?;
+                .map_err(|_| "droid_sdk: action runtime stop has not been confirmed")?
+                .map_err(|_| "droid_sdk: action stop channel closed")?;
         }
         Ok(())
     }

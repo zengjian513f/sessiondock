@@ -2244,7 +2244,7 @@ function sessionLiveStatus(uid) {
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const tmux = S.liveTmux.has(uid)
-    || (draft?.cli?.instance?.running === true && !!takenOver(uid));
+    || (draft?.cli?.instance?.running === true && typeof takenOver === 'function' && !!takenOver(uid));
   const sdk = S.liveSdk.has(uid) || (typeof SdkView !== 'undefined'
     && SdkView.uid === uid && !SdkView.agent && SdkView.connected === true);
   return {live: S.live.has(uid) || tmux || sdk, tmux, sdk};
@@ -7727,7 +7727,7 @@ function sessionModeActive(row, mode) {
   if (row.pending) return mode === 'cli' && sessionRunActive(row);
   const live = sessionLiveStatus(row.uid);
   return mode === 'sdk' ? live.sdk || sessionHasRunningSdk(row.uid)
-    : !!takenOver(row.uid) || live.tmux || live.live && !live.sdk;
+    : (typeof takenOver === 'function' && !!takenOver(row.uid)) || live.tmux || live.live && !live.sdk;
 }
 function sessionModesExclusive(row) {
   return ['claude', 'grok', 'agy', 'kiro', 'codebuddy', 'droid'].includes(row?.source);
@@ -7787,7 +7787,7 @@ function refreshSessionRunControls() {
 }
 function composerExternalCli(uid, agent = null) {
   const live = sessionLiveStatus(uid);
-  return !agent && live.live && !live.tmux && !live.sdk && !takenOver(uid);
+  return !agent && live.live && !live.tmux && !live.sdk && !(typeof takenOver === 'function' && takenOver(uid));
 }
 function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   if (!notice || !uid) return;

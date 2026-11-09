@@ -61,7 +61,7 @@ def fake_cli():
     def record(v):
         with log.open('a') as f:f.write(json.dumps(v)+'\n')
     record({'type':'spawn','args':sys.argv[2:],'pid':os.getpid()})
-    sid=None;path=None;pending={};context_used=12000;settings={'modelId':'fake-droid','reasoningEffort':'low','interactionMode':'auto','autonomyLevel':'off'}
+    sid=None;path=None;pending={};held=False;context_used=12000;settings={'modelId':'fake-droid','reasoningEffort':'low','interactionMode':'auto','autonomyLevel':'off'}
     models=[{'id':m,'displayName':name,'supportedReasoningEfforts':['low','high']} for m,name in [('fake-droid','Synthetic Droid'),('fake-droid-2','Synthetic Droid 2')]]
     def emit(v):print(json.dumps({'jsonrpc':'2.0','factoryApiVersion':'1.0.0',**v}),flush=True)
     def reply(v,result):emit({'id':v['id'],'type':'response','result':result})
@@ -102,6 +102,14 @@ def fake_cli():
             rows[0].update(id=child,parent=sid,title=p.get('title','Droid native fork'),forkedAtMessageId=messages[-1]['id'] if messages else None)
             path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
             reply(v,{'newSessionId':child})
+        elif method=='droid.execute_rewind':
+            assert p['sessionId']==sid and p['filesToRestore']==[] and p['filesToDelete']==[],p
+            rows=[json.loads(line) for line in path.read_text().splitlines()]
+            boundary=next(i for i,row in enumerate(rows) if row.get('id')==p['messageId'])
+            rows=rows[:boundary];child=str(uuid.uuid4())
+            rows[0].update(id=child,parent=sid,title=p.get('forkTitle') or 'Droid message fork',forkedAtMessageId=rows[-1].get('id') if len(rows)>1 else None)
+            path.with_name(child+'.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            reply(v,{'newSessionId':child,'restoredCount':0,'deletedCount':0,'failedRestoreCount':0,'failedDeleteCount':0})
         elif method=='droid.compact_session':
             context_used=8000
             child=sid
@@ -122,8 +130,20 @@ def fake_cli():
                 emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic settings failure'}});continue
             settings.update(p);reply(v,{});note({'type':'settings_updated','settings':settings})
         elif method=='droid.add_user_message':
+            assert p['queuePlacement']=='end_of_turn',p
+            if held:
+                while (log.parent/'steer-delay').exists():time.sleep(.02)
+                if p['text']=='reject steer':
+                    emit({'id':v['id'],'error':{'code':-32000,'message':'Synthetic steer rejected'}});continue
+                if p['text']=='unknown steer':os._exit(0)
+                reply(v,{})
+                while (log.parent/'steer-consume-delay').exists():time.sleep(.02)
+                msg(p['messageId'],'user',p['text'],v['id'])
+                note({'type':'assistant_text_delta','messageId':'held','blockIndex':0,'textDelta':' continuing after steer'})
+                continue
             msg(p['messageId'],'user',p['text'],v['id']);reply(v,{})
-            if p['text']=='hold':note({'type':'assistant_text_delta','messageId':'held','blockIndex':0,'textDelta':'Droid working'})
+            if p['text']=='hold':
+                held=True;note({'type':'assistant_text_delta','messageId':'held','blockIndex':0,'textDelta':'Droid working'})
             elif p['text']=='tool':
                 tool={'type':'tool_use','id':'tool-example','name':'Read','input':{'path':'synthetic.txt'}}
                 note({'type':'tool_call','toolUse':tool})
@@ -139,7 +159,7 @@ def fake_cli():
                     emit({'type':'request','id':key,'method':'droid.request_permission','params':{'toolUses':[{'toolUse':{'id':'tool-1','name':'Execute','input':{'command':'echo synthetic'}},'confirmationType':'exec','details':{'type':'exec','command':'echo synthetic'}}],'options':[{'label':'允许本次','value':'proceed_once'},{'label':'拒绝','value':'cancel'}]}})
                 else:emit({'type':'request','id':key,'method':'droid.ask_user','params':{'toolCallId':'question-1','questions':[{'index':1,'topic':'Choice','question':'Choose one?','options':['Alpha','Beta']}]}})
             else:finish(v['id'],p['text'])
-        elif method=='droid.interrupt_session':reply(v,{});note({'type':'agent_turn_completed','reason':'cancelled','tokenUsage':{}})
+        elif method=='droid.interrupt_session':held=False;reply(v,{});note({'type':'agent_turn_completed','reason':'cancelled','tokenUsage':{}})
         else:emit({'id':v['id'],'error':{'code':-32601,'message':'Unknown method'}})
 
 

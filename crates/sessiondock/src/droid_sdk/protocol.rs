@@ -77,6 +77,10 @@ fn message(live: &mut Live, n: &Value) {
         });
         let mut row = json!({"id":id,"native_id":id,"role":"user","text":text(&m["content"]),"content":text(&m["content"]),"native_echo":true,"timestamp":m["createdAt"]});
         if let Some(request) = request {
+            if let Some(receipt) = live.accepted.get_mut(&request) {
+                receipt["consumed"] = json!(true);
+                receipt["status"] = json!("native_received");
+            }
             row["request_id"] = json!(request);
         }
         upsert(live, row);
@@ -173,16 +177,28 @@ pub(super) fn observe_at(
             }
             if let Some(receipt) = live.accepted.get_mut(id) {
                 receipt["native_accepted"] = json!(frame["error"].is_null());
+                if !frame["error"].is_null() {
+                    receipt["status"] = json!("rejected");
+                    receipt["error"] = frame["error"]["message"].clone();
+                } else if receipt["consumed"] != true {
+                    receipt["status"] = json!("native_queued");
+                }
             }
             if let Some(tx) = live.controls.remove(id) {
                 let _ = tx.send(result);
             }
             if live.accepted.contains_key(id) && !frame["error"].is_null() {
                 live.turns.retain(|t| t != id);
-                live.native_running = false;
-                live.error = Some(text(&frame["error"]["message"]));
-                live.error_kind = Some("turn");
-                live.last_turn = json!({"status":"failed","error":live.error});
+                if live.accepted[id]["operation"] == "steer" {
+                    let message = live.accepted[id]["message_id"].clone();
+                    live.items
+                        .retain(|row| row["id"] != message || row["native_echo"] == true);
+                } else {
+                    live.native_running = false;
+                    live.error = Some(text(&frame["error"]["message"]));
+                    live.error_kind = Some("turn");
+                    live.last_turn = json!({"status":"failed","error":live.error});
+                }
             }
         } else {
             let method = frame["method"].as_str().unwrap_or("");

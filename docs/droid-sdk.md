@@ -26,11 +26,11 @@ JSON-RPC 模式的模型、强度必须通过请求传递，CLI 同名参数在�
 | 操作 | 原生协议 |
 | --- | --- |
 | 新建／恢复 | `droid.initialize_session` / `droid.load_session` |
-| 发送 | `droid.add_user_message {messageId,text,queuePlacement:"end_of_turn"}` |
+| 发送／运行中引导 | `droid.add_user_message {messageId,text,queuePlacement:"end_of_turn"}`；普通发送先经桥接 FIFO，引导直接提交原生 |
 | 中断 | `droid.interrupt_session`；结束以 `agent_turn_completed` 为证据 |
 | 模型／强度／模式／自主权限 | `droid.update_session_settings`；模式 auto/spec，自主权限 off/low/medium/high，显示原生通知确认值 |
 | 重命名 | `droid.rename_session {title}`，原生更新 session_start，不自行重写 JSONL |
-| 分支 | `droid.fork_session {title?}`，使用返回的 newSessionId，在新会话继续 |
+| 分支 | 全量用 `droid.fork_session {title?}`；消息前分支用 `droid.execute_rewind`，文件恢复／删除数组均为空；使用 newSessionId 在新会话继续 |
 | 压缩 | `droid.compact_session {customInstructions?}`；按返回 SID 刷新原会话或切换新会话 |
 | 模型目录 | `droid.list_models`，不创建会话或模型回合；强度按模型返回 |
 | 审批 | `droid.request_permission` 回送 `selectedOption`；展示原生允许本次／取消选项 |
@@ -42,7 +42,7 @@ SDK 不接管独立 TUI；Linux 使用现有进程/SID/原生路径占用检测�
 发送须收到原生响应才确认准入；失联无法确认时保留 unknown，不自动重发。
 `create_message.requestId` 或相同 messageId 的回显才作为原生消费证据。
 
-未开放按历史消息分支、对话回退、steer、子代理独立 SDK 控制及共享 daemon。
+未开放文件回退、原地对话回退、子代理独立 SDK 控制及共享 daemon。
 界面按能力隐藏相关操作，不把斜杠控制命令发给模型。附件沿用共用文件发布合同。
 
 DELTA：重命名、分支和压缩使用持久操作请求 ID；发送前保存意图，重复请求不重放
@@ -52,7 +52,16 @@ DELTA：重命名、分支和压缩使用持久操作请求 ID；发送前保存
 也不能推断一定新建。压缩后刷新历史与 ctx；若返回新 SID，先结束旧身份的传输，
 再转到原生新身份，避免后续输入串会话。分支保留源会话，原生文件决定子会话设置；
 原生可能迁移旧模型，界面显示实际模型，不承诺与源会话完全相同。操作取消不发送 RPC。
-按消息分支请求目前明确返回不支持，不静默退化为全量分支。
+消息前分支的 before 必须是原生消息 ID，截去选中消息及后文；原生创建新身份，
+源历史保留，结束原 SDK 传输后连接新身份，不修改工作目录文件。仍不提供文件恢复界面，
+也不把原生 execute_rewind 宣称为原地回退。
+
+DELTA：运行中 Ctrl+Enter、Ctrl 点击、移动长按及菜单引导复用持久输入提交；空闲时
+手势沿普通发送。已排队输入可用“立即引导”保留原投递身份，普通 FIFO 仍等待当前任务
+结束。引导不重置当前回合状态；原生拒绝不能结束正在运行的任务。原生响应只确认接收，
+create_message 的 requestId 或 messageId 匹配才确认已进入原生记录，不承诺模型已经执行。
+请求结果不确定时保留账本且不自动重发。引导附件沿普通输入发布为文件引用；不复制
+其他来源仅文字的限制。
 
 ## 记录与通知投影
 
@@ -90,7 +99,8 @@ child_session_available 实时通知尚未接入关系投影。
 设置、审批和问答点击、失败、中断、刷新、新建弹窗、CLI 终端、回收站恢复及节点重启复接。
 真实 1.6.0 探测确认模型查询、创建、恢复、用户回显、落盘与认证失败事件。
 用户授权的生产专用会话以 `claude-haiku-4-5-20251001` / low 验证真实回复、
-ctx、Token/Credits 和账户额度。工具执行、审批和问答仍只有合成验收；后续项见 [TODO](../TODO.md)。
+ctx、Token/Credits 和账户额度。隔离 HOME 已验证 Execute 的简单命令及运行中引导；
+审批和问答仍只有合成验收，后续项见 [TODO](../TODO.md)。
 
 官方参考：[Droid Exec](https://docs.factory.com/droid-exec/overview)、
 [TypeScript SDK](https://docs.factory.com/sdk/typescript)。
@@ -129,6 +139,9 @@ Credits、刷新失败保留、原生命令不推理及宽窄屏。
 [子代理历史回归](../tests/droid_children_browser.py) 覆盖父子导航、独立分支、孤儿与
 歧义父身份，不启动子代理写者。原生 1.6.0 独立 HOME 探测确认改名落盘、模式／权限
 通知、fork 新 SID、普通 compact 同 SID，以及 callingMetadata 的持久父身份。
+[Droid 引导回归](../tests/droid_steer_browser.py) 验证节点／Hub 的发送手势、队列转引导、
+附件、草稿、幂等及失联不重发。隔离 Haiku 4.5 / low 原生探测确认运行中引导进入同一
+回合并改变最终回复，以及 execute_rewind 的消息前新分支和零文件变更。
 
 生产专用探测会话经 Chromium 验证原生重命名、模式／自主权限回读及分支后的 SDK
 连接；分支实际模型由 Haiku 4.5 迁移为 Haiku 5.5，未向迁移后的模型发送推理请求。

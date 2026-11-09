@@ -97,7 +97,7 @@ const SdkUI = {
     view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
       if (PathCompletion.key(view.input, event, () => view.uid)) return;
-      if (['kiro','codex'].includes(view.uid.split(':')[0]) && event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.isComposing) {
+      if (this.canSteer(view) && event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.isComposing) {
         event.preventDefault(); void view.send('steer'); return;
       }
       ConversationUI.submitOnEnter(event, () => view.send());
@@ -118,13 +118,19 @@ const SdkUI = {
     }
   },
 
+  canSteer(view) {
+    const source=view.uid.split(':')[0];
+    return ['codex','kiro'].includes(source) || source==='droid' && !!view.capabilities?.steer;
+  },
+
   paintSend(view) {
     const button = view.pane?.querySelector('#sdk-send');
     if (!button || !view.steerSend) return;
     const active = view.uid.startsWith('codex:') ? !!view.turn : view.running;
-    const steer = active && (view.steerSend.ctrl || view.steerSend.held);
+    const supported = this.canSteer(view);
+    const steer = supported && active && (view.steerSend.ctrl || view.steerSend.held);
     const label = steer ? '引导' : active ? '排队' : '发送';
-    const title = steer ? '引导当前任务' : '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务';
+    const title = steer ? '引导当前任务' : supported ? '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务' : active ? '当前任务结束后发送；尚未投递的排队消息可撤销' : '开始新回合';
     // Keyboard events also arrive for ordinary typing. Replacing unchanged text
     // invalidates ancestor :has() rules and needlessly restyles long histories.
     if (button.textContent !== label) button.textContent = label;
@@ -132,7 +138,7 @@ const SdkUI = {
   },
 
   bindSteerSend(view) {
-    if (!['codex', 'kiro'].includes(view.uid.split(':')[0])) return;
+    if (!['codex', 'kiro', 'droid'].includes(view.uid.split(':')[0])) return;
     const button = view.pane.querySelector('#sdk-send'), generation = view.generation;
     const controller = new AbortController(), {signal} = controller;
     const state = view.steerSend = {ctrl:false, held:false, controller};
@@ -156,10 +162,10 @@ const SdkUI = {
     document.addEventListener('visibilitychange', () => { if (document.hidden) reset(); }, {signal});
     button.addEventListener('pointerdown', event => {
       consumed = false; cancel();
-      if (event.pointerType !== 'touch' || !event.isPrimary || button.disabled) return;
+      if (event.pointerType !== 'touch' || !event.isPrimary || button.disabled || !this.canSteer(view)) return;
       pointer = {id:event.pointerId, x:event.clientX, y:event.clientY};
       timer = setTimeout(() => {
-        if (!pointer || !current() || button.disabled) return;
+        if (!pointer || !current() || button.disabled || !this.canSteer(view)) return;
         consumed = true; state.held = true; this.paintSend(view);
         void view.send('steer');
       }, 500);
@@ -173,7 +179,7 @@ const SdkUI = {
     button.addEventListener('contextmenu', event => { if (pointer || consumed || event.pointerType === 'touch') event.preventDefault(); }, {signal});
     button.onclick = event => {
       if (consumed) { consumed = false; event.preventDefault(); return; }
-      if (current()) void view.send(event.ctrlKey || state.ctrl ? 'steer' : 'turn');
+      if (current()) void view.send(this.canSteer(view) && (event.ctrlKey || state.ctrl) ? 'steer' : 'turn');
     };
     this.paintSend(view);
   },

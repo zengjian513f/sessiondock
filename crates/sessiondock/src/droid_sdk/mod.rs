@@ -186,7 +186,7 @@ fn capabilities() -> Value {
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"mode":true,"fast_mode":false,
         "usage":true,"context_usage":true,"compact":true,"compact_creates_session":true,"rename":true,
-        "fork":true,"fork_before":false,"mcp_elicitation":false,"user_dialog":false})
+        "fork":true,"fork_before":true,"steer":true,"mcp_elicitation":false,"user_dialog":false})
 }
 fn normalize_models(models: &mut Value) {
     let Some(rows) = models.as_array_mut() else {
@@ -304,6 +304,7 @@ impl Session {
             "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
+            "steers":live.accepted.values().filter(|r|r["operation"]=="steer" && r["consumed"]!=true).collect::<Vec<_>>(),
             "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "capabilities":capabilities()}})
@@ -785,7 +786,8 @@ impl Bridge {
                     .map_err(|e| format!("droid_sdk_checkpoint: {e}"))?;
                 Ok(receipt)
             }
-            "turn" => {
+            "turn" | "steer" => {
+                self.ensure(&session).await?;
                 let request_id = input["request_id"]
                     .as_str()
                     .filter(|s| !s.is_empty())
@@ -793,13 +795,24 @@ impl Bridge {
                     .unwrap_or(uuid()?);
                 let dedup_key = request_id.clone();
                 if let Some(receipt) = lock(&session.live).accepted.get(&dedup_key).cloned() {
+                    if receipt
+                        .get("text")
+                        .is_some_and(|text| *text != input["text"])
+                        || receipt["operation"].as_str().unwrap_or("turn") != method
+                    {
+                        return Err(
+                            "droid_sdk: input request_id already used with different input".into(),
+                        );
+                    }
+                    if let Some(error) = receipt["error"].as_str() {
+                        return Err(error.into());
+                    }
                     return if receipt["native_accepted"] == true {
                         Ok(receipt)
                     } else {
                         Err("droid_sdk_write_uncertain: previous native admission is unknown; input not replayed".into())
                     };
                 }
-                self.ensure(&session).await?;
                 self.check_conflict(&session).await?;
                 let text = input["text"]
                     .as_str()
@@ -808,6 +821,11 @@ impl Bridge {
                 let (response, wait_response) = oneshot::channel();
                 {
                     let mut live = lock(&session.live);
+                    if method == "steer" && live.turns.is_empty() && !live.native_running {
+                        return Err(
+                            "droid_sdk_idle: no active turn to steer; input not sent".into()
+                        );
+                    }
                     let sender = live
                         .outbound
                         .clone()
@@ -817,18 +835,22 @@ impl Bridge {
                         &json!({"method":"droid.add_user_message",
                     "params":{"messageId":message_id,"text":text,"queuePlacement":"end_of_turn"}}),
                     );
-                    let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id,"sdkhost":live.host_key.is_some()});
+                    let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id,"sdkhost":live.host_key.is_some(),"operation":method,"text":text,"status":"dispatching"});
                     live.accepted.insert(dedup_key, receipt.clone());
                     live.controls.insert(request_id.clone(), response);
-                    live.turns.push_back(request_id.clone());
+                    if method == "turn" {
+                        live.turns.push_back(request_id.clone());
+                    }
                     live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id,"received_at":crate::sdk_message_time::now()}));
-                    live.compact = Value::Null;
-                    live.retry = Value::Null;
-                    live.error = None;
-                    live.error_kind = None;
-                    live.runtime_error = None;
-                    live.last_turn = Value::Null;
-                    live.interrupt_requested = false;
+                    if method == "turn" {
+                        live.compact = Value::Null;
+                        live.retry = Value::Null;
+                        live.error = None;
+                        live.error_kind = None;
+                        live.runtime_error = None;
+                        live.last_turn = Value::Null;
+                        live.interrupt_requested = false;
+                    }
                     session.publish(&mut live);
                     if let Some(err) = live.last_checkpoint_error.clone() {
                         return Err(err);
@@ -840,7 +862,16 @@ impl Bridge {
                 match tokio::time::timeout(Duration::from_secs(60), wait_response).await {
                     Ok(Ok(Ok(_))) => Ok(lock(&session.live).accepted[&request_id].clone()),
                     Ok(Ok(Err(error))) => Err(error),
-                    _ => Err("droid_sdk_write_uncertain: native admission unavailable; input not replayed".into()),
+                    _ => {
+                        let error = "droid_sdk_write_uncertain: native admission unavailable; input not replayed";
+                        let mut live = lock(&session.live);
+                        if let Some(receipt) = live.accepted.get_mut(&request_id) {
+                            receipt["status"] = json!("uncertain");
+                            receipt["error"] = json!(error);
+                        }
+                        session.publish(&mut live);
+                        Err(error.into())
+                    }
                 }
             }
             _ => Err(format!(

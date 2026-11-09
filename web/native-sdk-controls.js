@@ -317,7 +317,7 @@ const NativeSdkControls = {
       if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry',item.state==='unknown'?'重新发送':'重试');
       if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
       if(item.state==='queued')operation(body,item,'queue_cancel','撤回编辑',{},true);
-      if(item.state==='queued' && item.operation==='turn' && view.running && view.capabilities.queue_steer && !item.attachments?.length)operation(body,item,'queue_steer','立即引导');
+      if(item.state==='queued' && item.operation==='turn' && view.running && view.capabilities.queue_steer && (!item.attachments?.length || view.uid.startsWith('droid:')))operation(body,item,'queue_steer','立即引导');
       if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
     for(const item of nativeRows){const body=userCardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';
@@ -325,10 +325,22 @@ const NativeSdkControls = {
       for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]])if(view.capabilities[method] && !(method==='queue_update' && item.delivery==='steer'))operation(body,item,method,title,extra);
     }
     const steerLabels={dispatching:'正在提交引导',native_queued:'原生已接收引导',native_received:'原生已登记引导',rejected:'引导被拒绝',uncertain:'引导结果待核对',connection_closed:'引导连接已关闭'};
-    for(const item of steers){const body=cardFor({...item,id:item.id || item.request_id},steerLabels[item.status] || '引导回执');body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note','原生接收回执不能确认输入已被处理；临近任务结束时可能另开一轮。'));if(item.error)body.append(el('p','sdk-control-note',item.error));}
+    for(const item of steers){
+      if(view.uid.startsWith('droid:') && !['dispatching','native_queued'].includes(item.status))continue;
+      const id=item.request_id || item.id,title=steerLabels[item.status] || '引导回执';
+      const note='原生接收回执不能确认输入已被处理；临近任务结束时可能另开一轮。';
+      if(view.uid.startsWith('droid:') && id){
+        if(bridgeRows.some(row=>row.request_id===id || row.delivery_id===id))continue;
+        if(userDeliveries.has(id)){
+          const receipt=el('div','native-message-state',title);receipt.dataset.queueId=item.id || id;receipt.dataset.queueOrigin='steer';
+          receipt.title=[note,item.error].filter(Boolean).join('\n');holder.append(receipt);continue;
+        }
+      }
+      const body=cardFor({...item,id:item.id || item.request_id},title);body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note',note));if(item.error)body.append(el('p','sdk-control-note',item.error));
+    }
   },
   async action(view,method,body={}) {
-    if(method==='steer' && view.uid.startsWith('kiro:'))return view.send('steer');
+    if(method==='steer' && ['kiro','droid'].includes(view.uid.split(':')[0]))return view.send('steer');
     const generation=view.generation,droid=view.uid.startsWith('droid:');
     if(droid && view.nativeActionPending){view.setNotice('会话操作正在进行，请稍候。');return false;}
     if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setNotice('当前原生接口尚未提供按消息分支，输入已保留。','blocked');return false;}
@@ -343,7 +355,7 @@ const NativeSdkControls = {
           ? '回退并从所选轮次继续？新会话保留该轮及回复，原会话会隐藏。原会话内容和工作区文件保持不变。'
           : '从所选轮次创建分支？新会话保留该轮及回复，原会话保持不变。'
           : body.before!=null || body.prompt_index!=null
-            ? '从这条消息之前创建分支？原会话保持不变。'
+            ? droid ? '从这条消息之前创建分支？仅分支对话，原会话和工作区文件保持不变。' : '从这条消息之前创建分支？原会话保持不变。'
             : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
         if(!await appConfirm(text,{ok:kiro && body.hide_source?'回退':'分支'}))return false;
       }
@@ -378,11 +390,12 @@ const NativeSdkControls = {
       const sourceUid=view.uid;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
       if(!view.current(generation)){
-        // Inventory can select the compact continuation before its receipt arrives.
+        // Inventory can select a native continuation before its receipt arrives.
         // Finish only that already-selected handoff; never undo user navigation.
-        if(droid && method==='compact' && response.uid && response.uid!==sourceUid && S.sel===response.uid && SdkView.uid===response.uid && !SdkView.agent && (response.accepted ?? response.raw?.accepted)!==false){
+        if(droid && (method==='compact' || method==='fork' && body.before!=null) && response.uid && response.uid!==sourceUid && S.sel===response.uid && SdkView.uid===response.uid && !SdkView.agent && (response.accepted ?? response.raw?.accepted)!==false){
           await SdkView.startSession(response.uid);
           if(SdkView.uid===response.uid && !SdkView.openFailed)await SdkView.refreshHistory(SdkView.generation,true);
+          if(body.restore_text && SdkView.uid===response.uid)await CodexSdkActions.restoreInput(SdkView.active,body.restore_text);
         }
         return true;
       }

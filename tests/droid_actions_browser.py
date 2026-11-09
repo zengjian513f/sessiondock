@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Droid native session actions through real Node/Hub Chromium interfaces."""
 import argparse
+import json
 from contextlib import ExitStack
 from pathlib import Path
 import tempfile
@@ -136,8 +137,6 @@ def check(page, base, fixture, out, hub_mode):
     expect(page.locator('.sdk-history')).to_contain_text('earlier Droid answer')
     assert repeat(page, base, forked.value)['uid'] == fork['uid']
     repeat(page, base, forked.value, ok=False, changes={'title':'different duplicate payload'})
-    rejected_boundary = page.request.post(base + '/api/native-sdk/fork', data={'uid':uid, 'request_id':'unsupported-boundary', 'before':'seed-user-0'})
-    assert not rejected_boundary.ok, rejected_boundary.text()
     assert len(calls(fixture, 'droid.fork_session')) == 1
     send(page, 'continue fork')
     expect(page.locator('.native-sdk-pane')).to_contain_text('Droid final continue fork')
@@ -208,6 +207,41 @@ def check(page, base, fixture, out, hub_mode):
     repeat(page, base, rejected.value, ok=False)
     assert len(calls(fixture, 'droid.fork_session')) == 2
     capture(page, out, 'native-failure-wide-light')
+    (fixture.root / 'fork-fail').unlink()
+
+    # Native message rewind creates a branch before the selected message, without touching files.
+    source_path = fixture.path.with_name(continued['session_id'] + '.jsonl')
+    original_rows = [json.loads(line) for line in source_path.read_text().splitlines()]
+    selected = next(row for row in original_rows if row.get('message', {}).get('content') == [{'type':'text','text':'continue new compact'}])
+    bubble = page.locator('.sdk-history .msg[data-role="user"], .sdk-live .msg[data-role="user"]').filter(has_text='continue new compact')
+    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as rewound:
+        bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+        capture(page, out, 'message-fork-confirm-wide-light')
+        confirm(page, '分支')
+    assert rewound.value.ok, rewound.value.text()
+    partial = receipt(rewound.value.json())
+    wait_selected(page, partial['uid'])
+    expect(page.locator('#sdk-input')).to_have_value('continue new compact')
+    expect(page.locator('.sdk-history')).to_contain_text('Earlier conversation preserved as a compact summary')
+    expect(page.locator('.sdk-msgs')).not_to_contain_text('continue new compact')
+    native = calls(fixture, 'droid.execute_rewind')
+    assert len(native) == 1, native
+    params = native[0]['params']
+    assert params['sessionId'] == continued['session_id'] and params['messageId'] == selected['id'], params
+    assert params['filesToRestore'] == [] and params['filesToDelete'] == [], params
+    assert repeat(page, base, rewound.value)['uid'] == partial['uid']
+    repeat(page, base, rewound.value, ok=False, changes={'before':'different-message'})
+    assert len(calls(fixture, 'droid.execute_rewind')) == 1
+    child_rows = [json.loads(line) for line in fixture.path.with_name(partial['session_id'] + '.jsonl').read_text().splitlines()]
+    boundary = original_rows.index(selected)
+    assert child_rows[1:] == original_rows[1:boundary]
+    assert child_rows[0]['parent'] == continued['session_id']
+    assert child_rows[0]['forkedAtMessageId'] == original_rows[boundary - 1]['id']
+    assert [json.loads(line) for line in source_path.read_text().splitlines()] == original_rows
+    send(page, 'continue message fork')
+    expect(page.locator('.native-sdk-pane')).to_contain_text('Droid final continue message fork')
+    wait_snapshot(page, partial['uid'], lambda raw: not raw['running'])
+    capture(page, out, 'message-fork-wide-light')
     assert not any(frame.get('params', {}).get('text', '').startswith('/') for frame in fixture.frames())
     assert not errors, errors
 

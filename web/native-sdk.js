@@ -387,7 +387,7 @@ const NativeSdkView = {
     const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
     sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
-    if(this.uid.startsWith('kiro:'))send.title+='；Ctrl+Enter 引导当前任务';
+    if(SdkUI.canSteer(this))send.title+='；Ctrl+Enter 引导当前任务';
     SdkUI.paintSend(this);
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const scheduledRetry=raw.retry?.delay_seconds;
@@ -511,9 +511,10 @@ const NativeSdkView = {
 
   async send(operation = 'turn') {
     if (!this.input || !this.pane) return;
-    if (operation === 'steer' && this.uid.startsWith('kiro:') && !this.running) operation = 'turn';
+    const source=this.uid.split(':')[0], composerSteer=['kiro','droid'].includes(source);
+    if (operation === 'steer' && composerSteer && !this.running) operation = 'turn';
     const steer = operation === 'steer';
-    if (steer && (!this.uid.startsWith('kiro:') || !this.running || !this.capabilities.steer)) {
+    if (steer && (!composerSteer || !this.running || !this.capabilities.steer)) {
       this.setNotice('当前没有可引导的运行中任务；请用 Enter 开始新回合。', 'blocked'); return;
     }
     const generation = this.generation, button = this.pane.querySelector('#sdk-send');
@@ -526,10 +527,10 @@ const NativeSdkView = {
       if (!steer && await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
-      if (steer && payload.attachments.length) throw new Error('Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。');
+      if (steer && source==='kiro' && payload.attachments.length) throw new Error('Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。');
       const request_id = await CodexSdkCompose.submission(payload,null,null,this.agent,steer ? 'steer' : undefined);
       if(steer)steerRequest=request_id;
-      if(steer)browserAuditEvent('sdk.steer.requested',{source:'kiro'},{uid:payload.uid,requestId:request_id});
+      if(steer)browserAuditEvent('sdk.steer.requested',{source},{uid:payload.uid,requestId:request_id});
       const response = await this.request(`api/native-sdk/${operation}`,  {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
         request_id,draft_revision:payload.draft_revision});
       if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
@@ -539,10 +540,10 @@ const NativeSdkView = {
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this,payload);
-      if(steer)browserAuditEvent('sdk.steer.finished',{source:'kiro',outcome:'native_queued'},{uid:auditUid,requestId:steerRequest});
+      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'native_queued'},{uid:auditUid,requestId:steerRequest});
       if(steer && this.current(generation))this.setNotice('原生已接收引导；尚未确认处理。');
     } catch (error) {
-      if(steer)browserAuditEvent('sdk.steer.finished',{source:'kiro',outcome:'failed'},{uid:auditUid,requestId:steerRequest});
+      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'failed'},{uid:auditUid,requestId:steerRequest});
       if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
     }
     finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy');if(this.current(generation))sdkSyncSettings(this); }
@@ -807,7 +808,7 @@ const SdkView = new Proxy({
       const sdk = !unknown && state.sdk === true;
       // The cached live body can predate a just-started managed terminal; the
       // in-memory terminal list (no fetch) covers that until it refreshes.
-      const termName = typeof T === 'undefined' ? null : takenOver(uid);
+  const termName = typeof T === 'undefined' || typeof takenOver !== 'function' ? null : takenOver(uid);
       const termRow = (termName && (T.list || []).find(row => row.name === termName && row.running !== false && !row.stale))
         || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
       const console = !!termRow || (!unknown && state.known === true && state.tmux === true);

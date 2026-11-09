@@ -656,4 +656,5 @@ flow is covered by `session_selected_move_browser` and `session_transfer_sources
 Historical results in the incident ledger refer to the revision at which those suites ran.
 
 [Droid 高级操作](../tests/droid_actions_browser.py) covers rename, settings, fork and compact through Node/Hub Chromium.
+[Droid 引导](../tests/droid_steer_browser.py) covers Node/Hub running-turn steering, queue conversion, attachments, drafts and uncertain delivery without replay.
 [Droid 子代理历史](../tests/droid_children_browser.py) covers native parent identity, history navigation and fork separation.
