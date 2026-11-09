@@ -110,7 +110,7 @@ pub fn prepare(
     let batch_uid = text(raw.uid.as_ref(), UID_MAX);
     let batch_build = text(raw._build.as_ref(), ID_MAX);
     let batch_trace = text(raw._trace_id.as_ref(), ID_MAX);
-    let received_at = rfc3339(now);
+    let received_at = super::query::rfc3339(now);
     let client = client.to_string();
     let mut bytes = Vec::new();
     let mut events = 0u32;
@@ -249,19 +249,6 @@ fn secret_key(key: &str) -> bool {
         )
     };
     SECRET_KEYS.contains(&folded.as_ref())
-}
-
-fn rfc3339(now: SystemTime) -> String {
-    let nanos = now
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    chrono::DateTime::from_timestamp(
-        (nanos / 1_000_000_000) as i64,
-        (nanos % 1_000_000_000) as u32,
-    )
-    .unwrap_or_default()
-    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 pub fn utc_date(now: SystemTime) -> String {

@@ -40,15 +40,6 @@ pub struct DeliveryTarget {
     pub bound: Arc<BoundTarget>,
 }
 
-/// A browser page's own lease for the instance, as sent with the request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PageLease {
-    pub page: String,
-    pub token: String,
-    pub instance_id: String,
-    pub launch_id: Option<String>,
-}
-
 /// Verified conversation target under which one server operation performs its
 /// host requests without entering the browser lease registry.
 pub struct LeaseHandle {

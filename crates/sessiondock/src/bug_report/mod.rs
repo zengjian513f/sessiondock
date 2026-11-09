@@ -557,9 +557,6 @@ impl BugReportService {
                         data: created,
                     },
                     now,
-                )
-                .unwrap_or_else(
-                    || json!({"event": "bug_report.created", "data": {"report_id": report_id}}),
                 );
                 row["seq"] = Value::Null;
                 events.push(row);

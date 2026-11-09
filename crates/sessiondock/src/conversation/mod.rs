@@ -10,10 +10,7 @@ pub mod store;
 pub mod uploads;
 use crate::{
     delivery::{
-        driver::{
-            DeliveryTarget, HostTerminalDriver, LeaseHandle, PageLease, ScreenCapture,
-            TerminalDriver,
-        },
+        driver::{DeliveryTarget, HostTerminalDriver, LeaseHandle, ScreenCapture, TerminalDriver},
         target::{Failure, ManagedResolver, TargetResolver},
     },
     files::WriteService,
@@ -181,13 +178,12 @@ impl Conversations {
         {
             return Ok(state);
         }
-        let (_, state, _) = self.observe_screen(&identity, None, false).await?;
+        let (_, state, _) = self.observe_screen(&identity, false).await?;
         Ok(state)
     }
     async fn observe_screen(
         &self,
         identity: &Identity,
-        page: Option<&PageLease>,
         include_prompt: bool,
     ) -> Result<(cli_state::Observation, cli_state::CliState, Value), Failure> {
         let lock = self.lock(&identity.key);
@@ -197,7 +193,7 @@ impl Conversations {
         };
         let mut transcript = None;
         let mut prompt = Value::Null;
-        let observation: cli_state::Observation = match self.lease(identity, page, waited).await {
+        let observation: cli_state::Observation = match self.lease(identity, waited).await {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 if let Ok(frame) = &capture {
@@ -580,12 +576,7 @@ impl Conversations {
     pub fn upload_lock(&self, key: &str, id: &str) -> Arc<AsyncMutex<()>> {
         self.lock(&format!("upload:{key}\0{id}"))
     }
-    async fn lease(
-        &self,
-        identity: &Identity,
-        _page: Option<&PageLease>,
-        waited: bool,
-    ) -> Result<LeaseHandle, Failure> {
+    async fn lease(&self, identity: &Identity, waited: bool) -> Result<LeaseHandle, Failure> {
         if identity.uid.starts_with("tmux:") {
             let record = identity
                 .record
@@ -704,11 +695,10 @@ impl Conversations {
     pub async fn check(
         &self,
         uid: &str,
-        page: Option<&PageLease>,
     ) -> Result<(u64, InputStatus, cli_state::CliState, Value), Failure> {
         let identity = self.identity(uid).await?;
         self.remember_cli_identity(uid, &identity);
-        let (observation, state, prompt) = self.observe_screen(&identity, page, true).await?;
+        let (observation, state, prompt) = self.observe_screen(&identity, true).await?;
         // The recorded state may name a returned prompt more precisely.
         let status = state.input.unwrap_or(observation?.0);
         Ok((
@@ -848,8 +838,7 @@ impl Conversations {
             response["draft"] = serde_json::to_value(self.store.draft(&identity.key)).unwrap();
             return Ok(response);
         }
-        let page = page_lease(input.lease.as_ref());
-        let lease = self.lease(&identity, page.as_ref(), waited).await?;
+        let lease = self.lease(&identity, waited).await?;
         if !input.name.is_empty() && input.name != lease.name {
             return Err(Failure::new(
                 409,
@@ -1003,21 +992,6 @@ impl Conversations {
         response["draft"] = serde_json::to_value(self.store.draft(&identity.key)).unwrap();
         Ok(response)
     }
-}
-pub fn page_lease(value: Option<&Value>) -> Option<PageLease> {
-    let v = value?;
-    let page = v["page"].as_str()?;
-    let token = v["token"].as_str()?;
-    let instance = v["instance_id"].as_str()?;
-    Some(PageLease {
-        page: page.into(),
-        token: token.into(),
-        instance_id: instance.into(),
-        launch_id: v["launch_id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned),
-    })
 }
 fn driver_error(e: crate::delivery::driver::DriverError) -> Failure {
     Failure::new(e.status, e.code, e.message)

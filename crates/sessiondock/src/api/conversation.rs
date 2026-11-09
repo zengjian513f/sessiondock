@@ -1,6 +1,6 @@
 //! Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND.
 use crate::{
-    conversation::{Conversations, SendInput, page_lease, store::Upload},
+    conversation::{Conversations, SendInput, store::Upload},
     delivery::target::Failure,
     error::ApiError,
     state::AppState,
@@ -209,9 +209,7 @@ pub async fn check(
         return Ok(response);
     }
     let service = enabled(&s)?;
-    let page = page_lease(q.lease.as_ref());
-    let (draft_revision, input, cli, prompt) =
-        service.check(&q.uid, page.as_ref()).await.map_err(error)?;
+    let (draft_revision, input, cli, prompt) = service.check(&q.uid).await.map_err(error)?;
     let mut body = json!({"ok":input.ready(), "draft_revision":draft_revision, "input":input,
         "cli":cli.to_value(), "prompt":prompt});
     let status = if input.ready() {

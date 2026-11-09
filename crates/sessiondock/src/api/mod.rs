@@ -116,19 +116,10 @@ pub fn router() -> Router<AppState> {
         .route("/session/input-history", get(read::input_history))
         .route(
             "/session/conversation",
-            get(conversation::get).post(conversation::save).layer(
-                axum::extract::DefaultBodyLimit::max(request_body_limit(
-                    "/api/session/conversation",
-                )),
-            ),
+            get(conversation::get).post(conversation::save),
         )
         .route("/session/conversation/restart", post(conversation::restart))
-        .route(
-            "/session/conversation/send",
-            post(conversation::send).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/session/conversation/send"),
-            )),
-        )
+        .route("/session/conversation/send", post(conversation::send))
         .route("/session/conversation/check", post(conversation::check))
         .route(
             "/session/conversation/complete-path",
@@ -152,12 +143,7 @@ pub fn router() -> Router<AppState> {
             "/session/conversation/attachment/discard",
             post(conversation::discard),
         )
-        .route(
-            "/session/conversation/import",
-            post(conversation::import).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/session/conversation/import"),
-            )),
-        )
+        .route("/session/conversation/import", post(conversation::import))
         .route("/session/conversation/drafts", get(conversation::drafts))
         .route("/watch", get(read::watch))
         .route("/search", get(search::get))
@@ -203,18 +189,8 @@ pub fn router() -> Router<AppState> {
         .route("/session/clone/cancel", post(transfer::cancel_clone))
         .route("/session/clone/progress", post(transfer::clone_progress))
         .route("/term/list", get(terminal::list))
-        .route(
-            "/term/create",
-            post(lifecycle::create).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/term/create"),
-            )),
-        )
-        .route(
-            "/term/takeover",
-            post(lifecycle::takeover).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/term/takeover"),
-            )),
-        )
+        .route("/term/create", post(lifecycle::create))
+        .route("/term/takeover", post(lifecycle::takeover))
         .route("/term/complete-dir", get(lifecycle::complete_dir))
         .route(
             "/term/check-dirs",
@@ -229,58 +205,23 @@ pub fn router() -> Router<AppState> {
                 request_body_limit("/api/clients/update"),
             )),
         )
-        .route(
-            "/term/bind",
-            post(lifecycle::bind).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/term/bind",
-            ))),
-        )
+        .route("/term/bind", post(lifecycle::bind))
         // Drop a finished pending receipt from the sidebar;
         // never kills or deletes anything.
-        .route(
-            "/term/discard",
-            post(lifecycle::discard).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/term/discard"),
-            )),
-        )
-        .route(
-            "/term/kill",
-            post(lifecycle::cancel).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/term/kill"),
-            )),
-        )
+        .route("/term/discard", post(lifecycle::discard))
+        .route("/term/kill", post(lifecycle::cancel))
         .route("/session/freeze", post(lifecycle::freeze))
         // Stop the selected managed or precisely observed native CLI.
-        .route(
-            "/session/stop",
-            post(lifecycle::stop).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/stop",
-            ))),
-        )
-        .route(
-            "/term/claim",
-            post(terminal::claim).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/term/claim",
-            ))),
-        )
+        .route("/session/stop", post(lifecycle::stop))
+        .route("/term/claim", post(terminal::claim))
         .route("/term/attach", get(terminal::attach))
         // Grid-protocol scrollback paging under the page's own lease.
         .route("/term/grid/history", get(terminal::grid_history))
         // The final screen an exited session left (read-only, no lease).
         .route("/term/final", get(final_screen::get))
         // The host applies its decoded-input protocol limit after JSON parsing.
-        .route(
-            "/term/send",
-            post(terminal::send).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/term/send",
-            ))),
-        )
-        .route(
-            "/term/scroll",
-            post(terminal::scroll).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/term/scroll",
-            ))),
-        )
+        .route("/term/send", post(terminal::send))
+        .route("/term/scroll", post(terminal::scroll))
         // Codex SDK mode: the shared app-server daemon behind one connection.
         .route("/native-sdk/events", get(native_sdk::events))
         .route("/native-sdk/{method}", post(native_sdk::call))

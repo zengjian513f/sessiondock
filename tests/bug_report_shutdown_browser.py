@@ -7,6 +7,7 @@ the same report and worker. No model or production session is used.
 import json
 import argparse
 import os
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -50,6 +51,7 @@ os.execv({git!r}, [{git!r}, *sys.argv[1:]])
                     lifecycle_dir=root / 'ledger', launcher_config=config,
                     audit_dir=root / 'audit', extra_env=env) as (base, _):
                 context = browser.new_context(service_workers='block')
+                context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                 try:
                     page = context.new_page()
                     page.goto(base, wait_until='domcontentloaded')
@@ -87,11 +89,22 @@ os.execv({git!r}, [{git!r}, *sys.argv[1:]])
                         page.wait_for_function('uid => S.sel === uid', arg='tmux:' + result['worker']['name'])
                         ledger = json.loads((root / 'ledger/lifecycle-ledger.json').read_text())
                         assert len(ledger['records']) == 1, ledger
-                        assert len(list((root / 'reports').glob('BUG-*'))) == 1
+                        bundles = list((root / 'reports').glob('BUG-*'))
+                        assert len(bundles) == 1, bundles
+                        manifest = json.loads((bundles[0] / 'manifest.json').read_text())
+                        events = [json.loads(line) for line in (bundles[0] / 'events.jsonl').read_text().splitlines()]
+                        created = [row for row in events if row['event'] == 'bug_report.created'
+                                   and row['data'].get('report_id') == manifest['report_id']]
+                        assert len(created) == 1, created
+                        record = created[0]
+                        assert record['client'] == 'server' and record['client_ts'] is None, record
+                        assert record['category'] == 'bug-report' and record['severity'] == 'info', record
+                        assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', record['received_at']), record
+                        assert all(record[key] == manifest[key] for key in ['uid', 'page_id', 'trace_id', 'build']), record
                         draft = context.request.get(base + '/api/session/conversation', params={
                             'uid': 'tmux:' + result['worker']['name']}).json()['draft']['value']
                         assert draft['report_prompt'] and 'Report during deployment restart' in draft['text'], draft
-                        print('PASS restart: open retained worker, original report prompt, identical replay, one bundle/launch', flush=True)
+                        print('PASS restart: open retained worker, original report prompt, identical replay, one bundle/launch and complete creation audit row', flush=True)
                 finally:
                     context.close()
     finally:

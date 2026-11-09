@@ -10,6 +10,7 @@ sends nothing and the route stays 501. Synthetic corpus only; no CLI or model.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -194,7 +195,7 @@ def main():
                     for row in rows:
                         assert row["event"].startswith("browser."), row
                         assert row["client"] == "127.0.0.1", row
-                        assert row["received_at"].endswith("Z"), row
+                        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", row["received_at"]), row
                         assert isinstance(row["data"], dict), row
                         assert "content" not in row, row
                         assert row["severity"] in {"info", "warning", "error"}, row

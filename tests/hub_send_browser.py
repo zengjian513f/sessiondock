@@ -5,6 +5,7 @@ Private loopback fixtures only. No real model or native CLI home is used.
 The hub and node deliberately have different builds, and the hub is upgraded
 while a desktop tab survives. Also covers refresh, 390 px, retry/raw-input
 gates, metadata and forged hub headers on the ordinary browser listener.
+Large drafts are saved and restored through the ordinary and authenticated node listeners.
 """
 from browser_runtime import entry_asset
 import json
@@ -35,6 +36,37 @@ def send_from_composer(page, text):
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/conversation/send", timeout=20000) as sent:
         page.locator("#csend").click()
     return sent.value
+
+
+def check_large_draft(page, uid, label):
+    # Above Axum's default 2 MiB, below the Hub's existing 4 MiB JSON limit.
+    # Use real composer input so both browser and authenticated-node extractors
+    # are covered without injecting requests or bypassing the draft store.
+    text = "large draft " + "x" * (2 * 1024 * 1024 + 1024)
+    page.wait_for_function("uid => composerUid === uid && !composerDraft().loading", arg=uid)
+
+    def saved_text(response, expected):
+        return (response.request.method == "POST"
+                and urlsplit(response.url).path == "/api/session/conversation"
+                and response.request.post_data_json.get("value", {}).get("text") == expected)
+
+    with page.expect_response(lambda response: saved_text(response, text), timeout=20000) as saved:
+        page.locator("#cinput").fill(text)
+    response = saved.value
+    assert response.status == 200, (label, response.status)
+    body_bytes = len(response.request.post_data.encode("utf-8"))
+    assert 2 * 1024 * 1024 < body_bytes < 4 * 1024 * 1024, body_bytes
+    assert response.json()["draft"]["value"]["text"] == text
+    page.evaluate("async () => await composerDraftWrites")
+    page.reload(wait_until="domcontentloaded")
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    page.wait_for_function("value => document.querySelector('#cinput')?.value === value",
+                           arg=text, timeout=20000)
+    with page.expect_response(lambda response: saved_text(response, ""), timeout=20000) as cleared:
+        page.locator("#cinput").fill("")
+    assert cleared.value.status == 200, (label, cleared.value.status)
+    page.evaluate("async () => await composerDraftWrites")
+    print(f"PASS {label}: >2 MiB composer draft saved and restored after refresh", flush=True)
 
 
 def prepare(root):
@@ -71,6 +103,7 @@ def check_browser(browser, root, config):
                          lifecycle_dir=root / "ledger", launcher_config=config,
                          extra_env=node_env) as (local, _):
         context = browser.new_context(service_workers="block")
+        context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
         page = context.new_page()
         page.goto(local, wait_until="domcontentloaded")
         receipt = create_claude(page, local, root / "work")
@@ -103,6 +136,16 @@ def check_browser(browser, root, config):
         context.close()
         print("PASS setup: private fake Claude session ready", flush=True)
 
+        local_context = browser.new_context(service_workers="block")
+        local_context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
+        try:
+            local_page = local_context.new_page()
+            local_page.goto(local, wait_until="domcontentloaded")
+            local_page.locator(f'#side .item[data-uid="{uid}"]').click()
+            check_large_draft(local_page, uid, "direct node")
+        finally:
+            local_context.close()
+
         hub = Hub(REPO / "target/debug/sessiondock-hub", root / "hub", [node])
         web = root / "hub-web"
         shutil.copytree(frontend_dir(), web)
@@ -118,6 +161,7 @@ def check_browser(browser, root, config):
 
             def open_page(width):
                 ctx = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
+                ctx.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                 ctx.route("**/*", lambda route: route.continue_()
                           if route.request.url.startswith(base + "/") else route.abort())
                 p = ctx.new_page()
@@ -145,6 +189,7 @@ def check_browser(browser, root, config):
             assert build != node_build
             assert page.evaluate("BUILD_ID") == build
             assert not page.evaluate("staleBuildShown")
+            check_large_draft(page, hub_uid, "Hub to authenticated node")
 
             # A node's marker is minted after auth, never from browser headers.
             bodies = {

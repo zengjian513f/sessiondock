@@ -128,6 +128,7 @@ def main():
                     dialog_action = {'accept': True}
 
                     def watch(context):
+                        context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                         context.on("request", lambda request: sends.append(request.post_data_json)
                             if urlsplit(request.url).path == "/api/session/conversation/send" else None)

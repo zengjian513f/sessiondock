@@ -41,10 +41,7 @@ impl AuditService {
     /// Queue one server-side event without blocking. Returns whether the
     /// writer accepted it; a refused or dropped event is counted, never retried.
     pub fn record(&self, event: ServerEvent<'_>) -> bool {
-        let Some(record) = server_record(&event, SystemTime::now()) else {
-            return false;
-        };
-        let mut record = record;
+        let mut record = server_record(&event, SystemTime::now());
         record["seq"] = json!(self.shared.sequence.fetch_add(1, Ordering::Relaxed));
         let mut bytes = serde_json::to_vec(&record).expect("Value serializes");
         bytes.push(b'\n');
@@ -103,9 +100,9 @@ pub fn rfc3339(now: SystemTime) -> String {
 
 /// The stored shape of a server event: the browser record's fields with
 /// `client: "server"`, no client timestamp and the given category.
-pub fn server_record(event: &ServerEvent<'_>, now: SystemTime) -> Option<Value> {
+pub fn server_record(event: &ServerEvent<'_>, now: SystemTime) -> Value {
     let uid = bounded(event.uid, intake::UID_MAX);
-    Some(json!({
+    json!({
         "seq": 0,
         "received_at": rfc3339(now),
         "event": if event.event.is_empty() { "unknown".to_owned() } else { bounded(event.event, intake::EVENT_NAME_MAX) },
@@ -121,7 +118,7 @@ pub fn server_record(event: &ServerEvent<'_>, now: SystemTime) -> Option<Value> 
         "build": bounded(event.build, intake::ID_MAX),
         "client": "server",
         "data": intake::sanitize(&event.data, 0),
-    }))
+    })
 }
 
 /// Relevance test: any identity in common with
