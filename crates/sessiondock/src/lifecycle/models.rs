@@ -80,7 +80,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Agy => agy(profile),
         Source::Kiro => kiro(profile),
         Source::Codebuddy => codebuddy(profile),
-        Source::Shell => Catalog::default(),
+        Source::Droid | Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {
         catalog.efforts = merged_efforts(&catalog.models);

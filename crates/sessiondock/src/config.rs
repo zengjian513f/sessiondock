@@ -272,6 +272,7 @@ impl Default for Config {
                 agy: None,
                 kiro: None,
                 codebuddy: None,
+                droid: None,
             },
             codex_index: None,
             codex_app_server: None,
@@ -466,6 +467,32 @@ impl Config {
                     }
                 }),
         };
+        let droid = match env::var_os("SESSIONDOCK_DROID_ROOT") {
+            Some(value) if value.is_empty() => None,
+            Some(_) => root("SESSIONDOCK_DROID_ROOT", true)?,
+            None => env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| {
+                    let configured = [&claude, &codex, &grok, &opencode, &agy];
+                    let any_set = configured.iter().any(|r| r.is_some());
+                    !any_set
+                        || configured
+                            .iter()
+                            .filter_map(|r| r.as_deref())
+                            .any(|p| p.starts_with(home))
+                })
+                .and_then(|home| {
+                    let configured = home.join(".factory/sessions");
+                    match configured.canonicalize() {
+                        Ok(path) if path.is_dir() => Some(path),
+                        Ok(_) => None,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            std::path::absolute(configured).ok()
+                        }
+                        Err(_) => None,
+                    }
+                }),
+        };
         config.roots = SessionRoots {
             claude,
             codex,
@@ -474,6 +501,7 @@ impl Config {
             agy,
             kiro,
             codebuddy,
+            droid,
         };
         config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;

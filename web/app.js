@@ -7700,7 +7700,7 @@ function sessionModeActive(row, mode) {
     : !!takenOver(row.uid) || live.tmux || live.live && !live.sdk;
 }
 function sessionModesExclusive(row) {
-  return ['claude', 'grok', 'agy', 'kiro', 'codebuddy'].includes(row?.source);
+  return ['claude', 'grok', 'agy', 'kiro', 'codebuddy', 'droid'].includes(row?.source);
 }
 function currentSessionRunMode(row) {
   if (row?.pending || row?.source === 'shell') return 'cli';

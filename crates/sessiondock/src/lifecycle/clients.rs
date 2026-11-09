@@ -388,7 +388,7 @@ fn latest(profile: &CliProfile) -> Option<String> {
             )?,
             "version",
         ),
-        Source::Kiro | Source::Shell => None,
+        Source::Droid | Source::Kiro | Source::Shell => None,
     }
 }
 

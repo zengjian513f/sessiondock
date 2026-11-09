@@ -1132,6 +1132,7 @@ async fn build_list_value(
             crate::lifecycle::model::Source::Agy,
             crate::lifecycle::model::Source::Kiro,
             crate::lifecycle::model::Source::Codebuddy,
+            crate::lifecycle::model::Source::Droid,
             crate::lifecycle::model::Source::Shell,
         ];
         for source in sources {

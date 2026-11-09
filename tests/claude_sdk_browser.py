@@ -83,8 +83,12 @@ def start_sdk_if_needed(page):
 def open_sdk(page, fixture, expect, uid=None):
     uid = uid or fixture.uid
     card = page.locator(f'#side .item[data-uid="{uid}"]')
-    if not card.is_visible() and page.locator('#detail .mobile-back').is_visible():
-        page.locator('#detail .mobile-back').click()
+    expect(card).to_be_attached()
+    if not card.is_visible():
+        # Reload can restore the mobile detail before its back button renders.
+        back = page.locator('#detail .mobile-back')
+        expect(back).to_be_visible()
+        back.click()
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#a-sdk")).to_be_visible()
     page.locator("#a-sdk").click()

@@ -1639,7 +1639,8 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
       : efforts.includes('high') ? 'high'
       : efforts.includes(shown?.default_effort) ? shown.default_effort : efforts[0] || '';
-    const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
+    const droidCliDefault = source() === 'droid' && agentStartMode(source()) === 'cli';
+    const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : droidCliDefault ? 'CLI 默认模型' : '模型不可用';
     controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
     const options = variants ? [...(Object.hasOwn(variants, '') ? [''] : []), ...catalog.efforts] : efforts;
@@ -1649,6 +1650,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
       if (option.disabled) option.title = '该模型不提供此强度';
       return option;
     }));
+    if (droidCliDefault && !options.length) select.add(new Option('CLI 默认强度', ''));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';

@@ -247,7 +247,7 @@ fn choice_args(spec: &LaunchSpec) -> Vec<String> {
                 args.extend(["--reasoning-effort".into(), effort.into()]);
             }
         }
-        Source::Opencode | Source::Shell => {}
+        Source::Droid | Source::Opencode | Source::Shell => {}
     }
     args
 }
@@ -703,7 +703,7 @@ impl Launcher {
                 Launch::Resume { sid, .. } => {
                     let defaults: &[&str] = match spec.source() {
                         Source::Codex => &["resume", SID_PLACEHOLDER],
-                        Source::Claude | Source::Grok | Source::Codebuddy => {
+                        Source::Droid | Source::Claude | Source::Grok | Source::Codebuddy => {
                             &["--resume", SID_PLACEHOLDER]
                         }
                         Source::Opencode => &["--session", SID_PLACEHOLDER],

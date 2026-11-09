@@ -338,7 +338,11 @@ fn launch_for(entry: &Entry, resume: Option<(String, String)>) -> Launch {
     match resume {
         Some((sid, uid)) => Launch::Resume { sid, uid },
         None if !entry.profile || entry.source == Source::Shell => Launch::Fixed,
-        None if !matches!(entry.source, Source::Codex | Source::Agy | Source::Kiro) => {
+        None if !matches!(
+            entry.source,
+            Source::Codex | Source::Agy | Source::Kiro | Source::Droid
+        ) =>
+        {
             Launch::NewAssigned
         }
         None => Launch::NewPending,
@@ -595,6 +599,7 @@ fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
         "agy" => Some(Source::Agy),
         "kiro" => Some(Source::Kiro),
         "codebuddy" => Some(Source::Codebuddy),
+        "droid" => Some(Source::Droid),
         _ => None,
     }
 }
@@ -889,7 +894,7 @@ pub async fn takeover(
     }
     if matches!(
         source,
-        Source::Claude | Source::Grok | Source::Agy | Source::Codebuddy
+        Source::Claude | Source::Grok | Source::Agy | Source::Codebuddy | Source::Droid
     ) && state.native_sdks.loaded_uids().contains(&scope.uid)
     {
         return Err(ApiError::new(

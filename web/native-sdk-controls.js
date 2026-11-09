@@ -2,7 +2,7 @@
 
 // Native capabilities share presentation, never another provider's wire semantics.
 const NativeSdkControls = {
-  labels: Object.freeze({claude:'Claude',codex:'Codex',grok:'Grok',opencode:'OpenCode',agy:'Agy',kiro:'Kiro',codebuddy:'CodeBuddy'}),
+  labels: Object.freeze({claude:'Claude',codex:'Codex',grok:'Grok',opencode:'OpenCode',agy:'Agy',kiro:'Kiro',codebuddy:'CodeBuddy',droid:'Droid'}),
   badgeClass(source) { return `b-${source || 'unknown'}`; },
   formatReset(value) {
     if (value == null || value === '') return '';
@@ -219,7 +219,7 @@ const NativeSdkControls = {
     const modes=raw.modes?.availableModes || (Array.isArray(raw.modes)?raw.modes:null) || (source==='kiro' && (view.capabilities.mode || view.capabilities.settings) ? ['default','plan','auto'] : []);
     const definitions=[];
     if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.modes?.currentModeId || raw.settings?.mode]);
-    if(view.capabilities.permission_mode || view.capabilities.approval || (source==='kiro' && (view.capabilities.permissions || view.capabilities.settings)))definitions.push(['permission_mode','权限模式',raw.permission_modes || raw.approvals || (source==='kiro'?['default','autopilot']:['default','acceptEdits','plan','dontAsk','auto','bypassPermissions']),raw.permission_mode || raw.settings?.permission_mode || (typeof raw.autopilot==='boolean'?(raw.autopilot?'autopilot':'default'):raw.approval)]);
+    if(view.capabilities.permission_mode || (view.capabilities.approval && source !== 'droid') || (source==='kiro' && (view.capabilities.permissions || view.capabilities.settings)))definitions.push(['permission_mode','权限模式',raw.permission_modes || raw.approvals || (source==='kiro'?['default','autopilot']:['default','acceptEdits','plan','dontAsk','auto','bypassPermissions']),raw.permission_mode || raw.settings?.permission_mode || (typeof raw.autopilot==='boolean'?(raw.autopilot?'autopilot':'default'):raw.approval)]);
     if(view.capabilities.fast_mode)definitions.push(['fast_mode','Fast',['false','true'],raw.settings?.fast_mode==null?'':String(raw.settings.fast_mode)]);
     if(view.capabilities.settings && source==='opencode')definitions.push(['native_agent','代理',view.nativeAgents || raw.agents || [],raw.agent]);
     for(const definition of definitions){definition[3]=sdkSettingValue(view,definition[0],definition[3] || '');definition[4]=view.settingChoices.has(definition[0]);}
@@ -477,7 +477,7 @@ const NativeSdkControls = {
     if(source==='opencode')return item.native_id || (/^message:(.+)$/.exec(item.turn_id || '')?.[1]) || null;
     if(source==='kiro')return item.message_id || item.id || null;
     if(source==='claude')return item.native_id || item.turn_id || item.id || null;
-    if(source==='codebuddy')return item.native_id || null;
+    if(source==='codebuddy'||source==='droid')return item.native_id || null;
     return null;
   },
   decorate(view,node,item) {

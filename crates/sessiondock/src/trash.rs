@@ -207,6 +207,7 @@ impl TrashService {
                 agy: freeze(roots.agy),
                 kiro: freeze(roots.kiro),
                 codebuddy: freeze(roots.codebuddy),
+                droid: freeze(roots.droid),
             },
             lock: Mutex::new(()),
             tree_progress: Default::default(),

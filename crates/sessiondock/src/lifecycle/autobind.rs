@@ -252,6 +252,7 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                 super::model::Source::Agy => "agy",
                 super::model::Source::Kiro => "kiro",
                 super::model::Source::Codebuddy => "codebuddy",
+                super::model::Source::Droid => "droid",
                 super::model::Source::Shell => continue,
             };
             // Python's `before` set: a native record that already existed

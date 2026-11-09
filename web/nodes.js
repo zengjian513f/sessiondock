@@ -64,7 +64,7 @@ function newSdkEnabled(source) {
   return agentStartMode(source) === 'sdk' && agentSdkAvailable(source, newNodeId());
 }
 function anyNewSdkEnabled() {
-  return ['codex','claude','grok','opencode','agy','kiro','codebuddy'].some(newSdkEnabled);
+  return ['codex','claude','grok','opencode','agy','kiro','codebuddy','droid'].some(newSdkEnabled);
 }
 function sessionHasRunningSdk(uid) {
   if (!uid) return false;
@@ -119,7 +119,7 @@ function consoleUnavailableReason(uid, agent = null, lastError = true, allowMode
   if (T.listError) return T.listError;
   if (!T.listLoaded) return '正在读取控制台状态，请稍后重试。';
   const sourceOfUid = typeof sessionSourceOf === 'function' ? sessionSourceOf(uid) : String(uid).split(':')[0];
-  if (!allowModeSwitch && ['claude', 'grok', 'agy', 'kiro', 'codebuddy'].includes(sourceOfUid) && (S.liveSdk.has(uid) || sessionHasRunningSdk(uid)))
+  if (!allowModeSwitch && ['claude', 'grok', 'agy', 'kiro', 'codebuddy', 'droid'].includes(sourceOfUid) && (S.liveSdk.has(uid) || sessionHasRunningSdk(uid)))
     return sourceOfUid === 'kiro'
       ? 'SDK 会话运行中，请先停止 SDK 会话再切换到 CLI 终端'
       : '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。';

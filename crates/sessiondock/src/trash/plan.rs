@@ -77,6 +77,7 @@ impl Plan {
             "codex" => roots.codex.as_ref(),
             "grok" => roots.grok.as_ref(),
             "codebuddy" => roots.codebuddy.as_ref(),
+            "droid" => roots.droid.as_ref(),
             _ => None,
         }
         .ok_or_else(|| {
@@ -97,6 +98,21 @@ impl Plan {
             Ok(())
         };
         match source.as_str() {
+            "droid" => {
+                push(origin.clone(), FileRole::Data)?;
+                let settings = origin.with_extension("settings.json");
+                match fs::symlink_metadata(&settings) {
+                    Ok(_) => push(settings, FileRole::AgentMeta)?,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(_) => {
+                        return Err(TrashError::new(
+                            503,
+                            "stat_failed",
+                            "Droid 会话设置暂时不可检查",
+                        ));
+                    }
+                }
+            }
             "codebuddy" => {
                 // One transcript file; CodeBuddy has no subagent or sidecar files.
                 push(origin.clone(), FileRole::Data)?;

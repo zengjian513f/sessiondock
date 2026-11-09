@@ -19,6 +19,7 @@
   --agy: #2563eb;
   --kiro: #9333ea;
   --codebuddy: #0d9488;
+  --droid: #c66b32;
   --tool: #b7791f;
   --terminal-bg: #f4f6f8;
   --terminal-fg: #252a32;
@@ -64,6 +65,7 @@
     --agy: #93c5fd;
     --kiro: #a855f7;
     --codebuddy: #2dd4bf;
+    --droid: #f3a76d;
     --accent: #6d95ff;
     --brand-a: #8fb2ff;
     --brand-b: #d49aff;
@@ -2809,3 +2811,8 @@ header .btn[data-session-docked] { display: none; }
 
 /* Keep touch-hold steering on the send button out of native selection menus. */
 .sdk-steer-send { -webkit-touch-callout: none; user-select: none; touch-action: manipulation; }
+
+.new-source input[value="droid"] + span .ico { color: var(--droid); }
+.sd-session-card [data-source="droid"],
+.source-icon[data-source="droid"] { color: var(--droid, #c66b32); }
+.b-droid { --source-color: var(--droid); }

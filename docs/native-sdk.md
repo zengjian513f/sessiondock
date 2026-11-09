@@ -11,6 +11,7 @@ Grok、Agy、OpenCode、Claude 和 CodeBuddy 使用各自的原生机器接口�
 | OpenCode 2 | 原生服务 API，经 CLI `api` 调用 | [OpenCode SDK](opencode-sdk.md) |
 | Claude | 双向 stream-json | [Claude SDK](claude-sdk.md) |
 | CodeBuddy | 双向 stream-json | [CodeBuddy SDK](codebuddy-sdk.md) |
+| Droid | 原生 JSON-RPC stdio | [Droid SDK](droid-sdk.md) |
 | Codex | 共享 app-server | [Codex SDK](codex-sdk.md) |
 
 ## 配置与页面

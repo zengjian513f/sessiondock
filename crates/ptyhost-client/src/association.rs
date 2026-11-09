@@ -16,6 +16,7 @@ pub enum Source {
     Agy,
     Kiro,
     Codebuddy,
+    Droid,
 }
 
 impl Source {
@@ -29,6 +30,7 @@ impl Source {
             "agy" => Some(Self::Agy),
             "kiro" => Some(Self::Kiro),
             "codebuddy" => Some(Self::Codebuddy),
+            "droid" => Some(Self::Droid),
             _ => None,
         }
     }
@@ -43,6 +45,7 @@ impl Source {
             Self::Agy => "agy",
             Self::Kiro => "kiro",
             Self::Codebuddy => "codebuddy",
+            Self::Droid => "droid",
         }
     }
 }

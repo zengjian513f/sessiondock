@@ -4,6 +4,7 @@
 mod agy;
 mod claude;
 pub(crate) mod codebuddy;
+pub(crate) mod droid;
 pub(super) mod envelopes;
 mod grok;
 mod image_content;
@@ -300,6 +301,7 @@ fn parse_context<'a>(
             "agy" => parser.agy(record, *end),
             "kiro" => parser.kiro(record, *end),
             "codebuddy" => parser.codebuddy(record, *end),
+            "droid" => parser.droid(record, *end),
             _ => Err("未知原生数据源".to_owned()),
         };
         if let Err(reason) = result {
@@ -371,6 +373,9 @@ fn metadata(
     }
     if source == "codebuddy" {
         return codebuddy::metadata(path, records, fallback);
+    }
+    if source == "droid" {
+        return droid::metadata(path, records, fallback);
     }
     let filename = path
         .file_stem()

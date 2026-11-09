@@ -179,6 +179,7 @@ pub struct SessionRoots {
     pub kiro: Option<PathBuf>,
     /// CodeBuddy projects root (`~/.codebuddy/projects`, or `SESSIONDOCK_CODEBUDDY_ROOT`).
     pub codebuddy: Option<PathBuf>,
+    pub droid: Option<PathBuf>,
 }
 
 impl SessionRoots {

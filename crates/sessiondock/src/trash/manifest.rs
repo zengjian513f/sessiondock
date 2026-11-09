@@ -307,7 +307,7 @@ impl Manifest {
         }
         if !matches!(
             self.source.as_str(),
-            "claude" | "codex" | "grok" | "kiro" | "codebuddy"
+            "claude" | "codex" | "grok" | "kiro" | "codebuddy" | "droid"
         ) {
             return Err(invalid("回收站清单来源无效"));
         }

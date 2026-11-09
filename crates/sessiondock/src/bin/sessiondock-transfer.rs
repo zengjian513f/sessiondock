@@ -68,6 +68,7 @@ struct Roots {
     agy: Option<PathBuf>,
     kiro: Option<PathBuf>,
     codebuddy: Option<PathBuf>,
+    droid: Option<PathBuf>,
 }
 
 impl From<Roots> for SessionRoots {
@@ -80,6 +81,7 @@ impl From<Roots> for SessionRoots {
             agy: r.agy,
             kiro: r.kiro,
             codebuddy: r.codebuddy,
+            droid: r.droid,
         }
     }
 }

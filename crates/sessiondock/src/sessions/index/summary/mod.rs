@@ -17,6 +17,7 @@ pub(crate) mod agy;
 pub(super) mod claude;
 pub(crate) mod codebuddy;
 pub(super) mod codex;
+pub(crate) mod droid;
 pub(super) mod grok;
 pub mod kiro;
 pub(crate) mod opencode;
@@ -219,6 +220,7 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
         "agy" => agy::summarize(input),
         "kiro" => kiro::summarize(input),
         "codebuddy" => codebuddy::summarize(input),
+        "droid" => droid::summarize(input),
         _ => grok::summarize(input),
     }
 }

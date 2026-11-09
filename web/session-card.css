@@ -93,3 +93,5 @@
 /* Canonical status palette for all agent icons, including dark mode. */
 :root { --live-direct: #22c55e; --live-tmux: #0ea5e9; --turn-waiting: #d97706; }
 :root[data-theme="dark"] { --live-direct: #4ade80; --live-tmux: #38bdf8; --turn-waiting: #fbbf24; }
+
+.sd-session-card [data-source="droid"] { color: var(--droid, #c66b32); }

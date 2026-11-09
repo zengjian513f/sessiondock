@@ -9,6 +9,7 @@ const NATIVE_SDK_SOURCES = Object.freeze({
   agy: {source: 'agy', title: 'Agy', emptyTitle: '新建 Agy 会话', busyCode: 'native_sdk_session_busy'},
   kiro: {source: 'kiro', title: 'Kiro', emptyTitle: '新建 Kiro 会话', busyCode: 'kiro_sdk_session_busy'},
   codebuddy: {source: 'codebuddy', title: 'CodeBuddy', emptyTitle: '新建 CodeBuddy 会话', busyCode: 'native_sdk_session_busy'},
+  droid: {source: 'droid', title: 'Droid', emptyTitle: '新建 Droid 会话', busyCode: 'native_sdk_session_busy'},
 });
 
 // Copy JSON containers without copying immutable strings. UI-local queue or
@@ -72,7 +73,7 @@ const NativeSdkView = {
   uid: '', agent: null, pane: null, generation: 0, connected: false,
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
-    return !(agent && ['claude', 'kiro', 'codebuddy'].includes(source))
+    return !(agent && ['claude', 'kiro', 'codebuddy', 'droid'].includes(source))
       && (HUB_MODE ? hubSdkViewAvailable(source, nodeOf(uid)) : nativeSdkAvailable(source));
   },
   layoutToolbar() { NativeSdkControls.layout(this); },
@@ -943,4 +944,5 @@ Object.assign(globalThis, {
   NATIVE_SDK_SOURCES, NativeSdkView, SdkView, defaultSessionView, _sessionViewMode,
   KiroCli: NativeSdkView.create('kiro'),
   CodebuddyCli: NativeSdkView.create('codebuddy'),
+  DroidCli: NativeSdkView.create('droid'),
 });

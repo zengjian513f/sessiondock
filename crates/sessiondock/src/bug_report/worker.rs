@@ -287,6 +287,7 @@ impl Probe {
             | Source::Agy
             | Source::Kiro
             | Source::Codebuddy
+            | Source::Droid
             | Source::Shell => Self::Screen(ScreenProbe::default()),
         }
     }

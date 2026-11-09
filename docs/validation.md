@@ -37,6 +37,8 @@ order; `--jobs 1` runs everything serially in that order.
 [quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
 Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
 
+[droid_sdk_browser.py](../tests/droid_sdk_browser.py) covers Droid JSON-RPC, native history, settings, approvals/questions, errors, interruption, node restart and Hub access with an isolated synthetic peer.
+
 ## When to run which tier
 
 Validation scope and delivery requirements are defined in

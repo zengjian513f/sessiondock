@@ -78,6 +78,7 @@ pub fn source_label(source: Source) -> &'static str {
         Source::Agy => "Agy",
         Source::Kiro => "Kiro",
         Source::Codebuddy => "CodeBuddy",
+        Source::Droid => "Droid",
         Source::Shell => "SSH",
     }
 }
@@ -91,6 +92,7 @@ pub fn source_name(source: Source) -> &'static str {
         Source::Agy => "agy",
         Source::Kiro => "kiro",
         Source::Codebuddy => "codebuddy",
+        Source::Droid => "droid",
         Source::Shell => "shell",
     }
 }

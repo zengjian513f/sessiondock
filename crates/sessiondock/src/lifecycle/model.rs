@@ -18,10 +18,11 @@ pub enum Source {
     Agy,
     Kiro,
     Codebuddy,
+    Droid,
 }
 
 impl Source {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Claude,
         Self::Codex,
         Self::Grok,
@@ -30,6 +31,7 @@ impl Source {
         Self::Agy,
         Self::Kiro,
         Self::Codebuddy,
+        Self::Droid,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -42,6 +44,7 @@ impl Source {
             Self::Agy => "agy",
             Self::Kiro => "kiro",
             Self::Codebuddy => "codebuddy",
+            Self::Droid => "droid",
         }
     }
 
@@ -55,6 +58,7 @@ impl Source {
             "agy" => Some(Self::Agy),
             "kiro" => Some(Self::Kiro),
             "codebuddy" => Some(Self::Codebuddy),
+            "droid" => Some(Self::Droid),
             _ => None,
         }
     }
@@ -91,6 +95,7 @@ impl BindingSpec {
             Source::Agy => "agy:",
             Source::Kiro => "kiro:",
             Source::Codebuddy => "codebuddy:",
+            Source::Droid => "droid:",
             Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
@@ -188,7 +193,7 @@ impl Launch {
             Self::NewPending => {
                 matches!(
                     source,
-                    Source::Codex | Source::Opencode | Source::Agy | Source::Kiro
+                    Source::Codex | Source::Opencode | Source::Agy | Source::Kiro | Source::Droid
                 )
             }
             Self::NewAssigned => matches!(
@@ -215,6 +220,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Agy => "agy:",
         Source::Kiro => "kiro:",
         Source::Codebuddy => "codebuddy:",
+        Source::Droid => "droid:",
         Source::Shell => return false,
     };
     text.strip_prefix(prefix)
@@ -254,7 +260,10 @@ impl LaunchSpec {
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
         let launch = if source == Source::Shell {
             Launch::Fixed
-        } else if !matches!(source, Source::Codex | Source::Agy | Source::Kiro) {
+        } else if !matches!(
+            source,
+            Source::Codex | Source::Agy | Source::Kiro | Source::Droid
+        ) {
             Launch::NewAssigned
         } else {
             Launch::NewPending

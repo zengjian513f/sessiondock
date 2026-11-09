@@ -20,6 +20,7 @@ pub(crate) mod codex_sdk;
 pub mod config;
 pub(crate) mod conversation;
 pub(crate) mod delivery;
+pub(crate) mod droid_sdk;
 mod error;
 pub(crate) mod files;
 pub(crate) mod fingerprint;

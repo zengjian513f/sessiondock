@@ -174,7 +174,7 @@ pub fn prepare<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'a>,
         || !identifier(instance, 128)
         || !matches!(
             source,
-            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "codebuddy"
+            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "codebuddy" | "droid"
         )
         || metadata["instance_id"] != instance
         || metadata["source"] != source
@@ -259,7 +259,15 @@ fn prepare_launch<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'
         || !identifier(launch, 128)
         || !matches!(
             source,
-            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "codebuddy" | "shell"
+            "claude"
+                | "codex"
+                | "grok"
+                | "opencode"
+                | "agy"
+                | "kiro"
+                | "codebuddy"
+                | "droid"
+                | "shell"
         )
         || metadata["instance_id"] != instance
         || metadata["source"] != source

@@ -3,6 +3,13 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
+## Droid integration
+
+- [ ] 在隔离且已认证的 HOME 验证真实模型回复、工具、审批和问答；当前 1.6.0
+  已确认协议和原生认证失败路径，合成 Chromium 验证不能代替真实成功回合。
+- [ ] 补原生 rename/compact/fork/steer、权限设置、子代理／后台通知、非 Linux
+  恢复及 CLI 模型目录；现有能力边界见 [Droid SDK](docs/droid-sdk.md)。
+
 ## Kiro integration
 
 - [ ] BUG-20261108-114059-330a36 存量关系仍未恢复：Kiro

@@ -169,10 +169,15 @@ class CodebuddyCli extends SessionDockCli {
   }
 }
 
+class DroidCli extends SessionDockCli {
+  constructor() { super('droid', 'Droid', 'i-droid', 'var(--droid)'); }
+}
+
 const SESSIONDOCK_CLIS = Object.freeze({
   codex: new CodexCli(),
   kiro: new KiroCli(),
   codebuddy: new CodebuddyCli(),
+  droid: new DroidCli(),
   agy: new AgyCli(),
   grok: new GrokCli(),
   claude: new ClaudeCli(),
@@ -188,7 +193,7 @@ function sessionSourceOf(sourceOrUid) {
   const value = String(sourceOrUid || '');
   let source = value.split(':', 1)[0];
   if (source === 'tmux') {
-    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy|kiro|codebuddy)-/)?.[1] || source;
+    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy|kiro|codebuddy|droid)-/)?.[1] || source;
   }
   return source;
 }
@@ -203,7 +208,7 @@ function pendingLaunchSource(uid) {
 function sessionHasChatView(sourceOrUid) {
   let source = sessionSourceOf(sourceOrUid);
   if (source === 'tmux') source = pendingLaunchSource(sourceOrUid);
-  return !['kiro', 'codebuddy'].includes(source);
+  return !['kiro', 'codebuddy', 'droid'].includes(source);
 }
 
 function sessiondockCli(sourceOrUid) {
@@ -213,7 +218,7 @@ function sessiondockCli(sourceOrUid) {
 
 // 供 app.js、term.js 以及 headless 回归共同使用。
 Object.assign(globalThis, {
-  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, KiroCli, CodebuddyCli,
+  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, KiroCli, CodebuddyCli, DroidCli,
   SESSIONDOCK_CLIS, sessionSourceOf, sessionHasChatView, sessiondockCli,
 });
 if (typeof window !== 'undefined') {
@@ -224,3 +229,5 @@ if (typeof window !== 'undefined') {
   window.CodebuddyCli = typeof NativeSdkView !== 'undefined' && typeof NativeSdkView.create === 'function'
     ? NativeSdkView.create('codebuddy') : SESSIONDOCK_CLIS.codebuddy;
 }
+
+if (typeof window !== 'undefined') window.DroidCli = typeof NativeSdkView !== 'undefined' ? NativeSdkView.create('droid') : SESSIONDOCK_CLIS.droid;

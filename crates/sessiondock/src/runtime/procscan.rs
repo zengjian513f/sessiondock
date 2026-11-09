@@ -44,8 +44,16 @@ pub const ANCESTRY_DEPTH: usize = 16;
 /// CLI-ancestor and tmux-host walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
-const KEYWORDS: [&str; 6] = ["claude", "codex", "grok", "agy", "kiro", "codebuddy"];
-const CLI_NAMES: [&str; 10] = [
+const KEYWORDS: [&str; 7] = [
+    "claude",
+    "codex",
+    "grok",
+    "agy",
+    "kiro",
+    "codebuddy",
+    "droid",
+];
+const CLI_NAMES: [&str; 11] = [
     "claude",
     "codex",
     "grok",
@@ -56,6 +64,7 @@ const CLI_NAMES: [&str; 10] = [
     "codebuddy",
     "codebuddy-code",
     "cbc",
+    "droid",
 ];
 /// Environment identity a CLI sets for its tool children.
 const ENV_FAMILY: [(&str, &str); 3] = [
@@ -80,11 +89,12 @@ pub const SPAWN_ENV_KEYS: [&str; 5] = [
     "GROK_SESSION_ID",
     "CLAUDE_PID",
 ];
-const SESSION_FILE_MARKERS: [&str; 4] = [
+const SESSION_FILE_MARKERS: [&str; 5] = [
     "/.codex/sessions/",
     "/.claude/projects/",
     "/.grok/",
     "/.codebuddy/projects/",
+    "/.factory/sessions/",
 ];
 
 /// Where session files may live: the literal home markers plus the
@@ -180,6 +190,8 @@ pub fn cli_family(argv0: &str) -> Option<&'static str> {
         Some("agy")
     } else if head == "kiro" || head.starts_with("kiro-") {
         Some("kiro")
+    } else if head == "droid" {
+        Some("droid")
     } else if matches!(head.as_str(), "codebuddy" | "codebuddy-code" | "cbc") {
         Some("codebuddy")
     } else {

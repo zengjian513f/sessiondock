@@ -480,6 +480,7 @@ impl Index {
             agy: freeze(roots.agy),
             kiro: freeze(roots.kiro),
             codebuddy: freeze(roots.codebuddy),
+            droid: freeze(roots.droid),
         };
         Self {
             roots,
@@ -823,6 +824,7 @@ impl Index {
             ("agy", &self.roots.agy),
             ("kiro", &self.roots.kiro),
             ("codebuddy", &self.roots.codebuddy),
+            ("droid", &self.roots.droid),
         ] {
             let Some(root) = configured else { continue };
             let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
@@ -844,6 +846,7 @@ impl Index {
             match source {
                 "claude" => walk.claude(&dir)?,
                 "codebuddy" => walk.codebuddy(&dir)?,
+                "droid" => walk.droid(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
                 "opencode" | "agy" => walk.database_mirror(&dir, source)?,
                 "kiro" => walk.database_mirror(&dir, "kiro")?,
@@ -1082,6 +1085,49 @@ impl Walk<'_> {
                 let path = project_path.join(&name);
                 self.found.push(Discovered {
                     source: "codebuddy",
+                    root: self.root.to_path_buf(),
+                    data: path.clone(),
+                    path,
+                    summary_path: None,
+                    stamp: Some(stamp),
+                    summary_stamp: None,
+                    events_stamp: None,
+                    agent_id: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn droid(&mut self, root: &Dir) -> Result<(), SessionError> {
+        for (name, stamp) in files(root, self.root) {
+            if name.ends_with(".jsonl") && stamp.size > 0 {
+                let path = self.root.join(name);
+                self.found.push(Discovered {
+                    source: "droid",
+                    root: self.root.to_path_buf(),
+                    data: path.clone(),
+                    path,
+                    summary_path: None,
+                    stamp: Some(stamp),
+                    summary_stamp: None,
+                    events_stamp: None,
+                    agent_id: None,
+                });
+            }
+        }
+        for project in subdirectories(root, self.root) {
+            let project_path = self.root.join(&project);
+            let Ok(project_dir) = Dir::open_ambient_dir(&project_path, ambient_authority()) else {
+                continue;
+            };
+            for (name, stamp) in files(&project_dir, &project_path) {
+                if !name.ends_with(".jsonl") || stamp.size == 0 {
+                    continue;
+                }
+                let path = project_path.join(&name);
+                self.found.push(Discovered {
+                    source: "droid",
                     root: self.root.to_path_buf(),
                     data: path.clone(),
                     path,
