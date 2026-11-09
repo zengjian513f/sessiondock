@@ -24,7 +24,6 @@ pub use response::{FileBody, FileResponse, ReadOptions};
 pub use write::WriteService;
 pub(crate) use write::move_recycle_entry;
 
-pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
 pub const MAX_RAW_BYTES: u64 = 32 * 1024 * 1024;
 pub const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -130,17 +129,6 @@ impl FileService {
         Ok(directories.into_iter().collect())
     }
 
-    fn resolve(
-        &self,
-        scope: &FileScope<'_>,
-        index: &references::ReferenceIndex,
-        raw: &str,
-        directories: &[PathBuf],
-    ) -> Result<ResolvedTarget, FileError> {
-        let reference = clean_ref(raw)?;
-        self.resolve_reference(scope, index, &reference, directories)
-    }
-
     fn resolve_reference(
         &self,
         scope: &FileScope<'_>,
@@ -209,9 +197,9 @@ impl FileService {
     ) -> Result<ResolvedTarget, FileError> {
         references::validate_scope(scope)?;
         let index = references::ReferenceIndex::new(scope.messages)?;
-        let directories =
-            self.directories(scope, &index, !clean_ref(reference)?.contains(['/', '\\']))?;
-        let anchor = self.resolve(scope, &index, reference, &directories)?;
+        let reference = clean_ref(reference)?;
+        let directories = self.directories(scope, &index, !reference.contains(['/', '\\']))?;
+        let anchor = self.resolve_reference(scope, &index, &reference, &directories)?;
         let Some(raw) = navigation.filter(|value| !value.is_empty()) else {
             return Ok(anchor);
         };
@@ -239,9 +227,10 @@ impl FileService {
                 "一次最多解析 256 个文件引用",
             ));
         }
-        for reference in requested {
-            clean_ref(reference)?;
-        }
+        let references = requested
+            .iter()
+            .map(|reference| clean_ref(reference))
+            .collect::<Result<Vec<_>, _>>()?;
         if requested.is_empty() {
             return Ok(
                 json!({"resolved":{},"targets":[],"file_browser":true,"errors":[],"incomplete":false,"writable":false}),
@@ -251,7 +240,7 @@ impl FileService {
         let directories = self.directories(
             scope,
             &index,
-            requested
+            references
                 .iter()
                 .any(|reference| !reference.contains(['/', '\\'])),
         )?;
@@ -259,11 +248,11 @@ impl FileService {
         let mut targets = Vec::new();
         let mut errors = Vec::new();
         let mut seen = BTreeSet::new();
-        for reference in requested {
+        for (reference, normalized) in requested.iter().zip(&references) {
             if !seen.insert(reference) {
                 continue;
             }
-            match self.resolve(scope, &index, reference, &directories) {
+            match self.resolve_reference(scope, &index, normalized, &directories) {
                 Ok(target) => {
                     let path = boundary::wire_path(target.path())?;
                     resolved.insert(reference.clone(), json!(path));

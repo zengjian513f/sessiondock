@@ -104,21 +104,6 @@ impl TransferService {
         self.reuse_preview(uid, id, new_ids, moving)?
             .ok_or_else(|| TransferError::new("move_plan_stale", "操作已开始，不能更改操作类型"))
     }
-    pub fn plan_move(
-        &self,
-        uid: &str,
-        new_ids: bool,
-        snapshot: &SessionSnapshot,
-    ) -> Result<Operation, TransferError> {
-        let mut op = self.plan_copy(uid, new_ids, snapshot)?;
-        op.moving = true;
-        for (provider, root) in self.bundle_roots(&op)? {
-            op.storage_probes
-                .insert(provider, StorageProbe::create(&root)?);
-        }
-        self.save(&op)?;
-        Ok(op)
-    }
     /// Persist the decision before compensating the receiver. A concurrent or
     /// delayed switch can never succeed after this point, even after restart.
     pub fn abort_source(&self, id: &str, finished: bool) -> Result<Operation, TransferError> {

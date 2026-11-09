@@ -1,4 +1,4 @@
-use super::{FileError, MAX_PATH_BYTES};
+use super::FileError;
 use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::{
     ambient_authority,
@@ -381,11 +381,11 @@ pub(super) fn open_target(root: Arc<Root>, path: PathBuf) -> Result<ResolvedTarg
 }
 
 pub(super) fn validate_path_text(raw: &str) -> Result<(), FileError> {
-    if raw.is_empty() || raw.chars().count() > MAX_PATH_BYTES || raw.contains('\0') {
+    if raw.is_empty() || raw.contains('\0') {
         return Err(FileError::new(
             400,
             "file_path_invalid",
-            "路径为空、过长或包含空字符",
+            "路径为空或包含空字符",
         ));
     }
     Ok(())

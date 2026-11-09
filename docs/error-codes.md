@@ -97,7 +97,7 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - 文件目录需要标准绝对路径
 - 路径与打开的文件系统卷不一致
 - 路径组件无效
-- 路径为空、过长或包含空字符
+- 路径为空或包含空字符
 - 文件引用不能是 URL
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `absolute_path` L419
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `open` L142
@@ -111,7 +111,7 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 
 ### `file_reference_invalid`
 
-- 文件引用为空、过长或包含空字符
+- 文件引用为空或包含空字符
 - 文件引用不能为空
 - [`files/references.rs`](../crates/sessiondock/src/files/references.rs) `clean_ref` L106, L125
 

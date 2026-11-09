@@ -907,9 +907,6 @@ fn delete_receipt(db: &Connection, operation: &str) -> Result<(), TransferError>
 
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
-pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), TransferError> {
-    insert_with_prefix(native, operation, reuse, None)
-}
 pub fn insert_with_prefix(
     native: &Native,
     operation: &str,

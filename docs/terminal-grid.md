@@ -59,9 +59,8 @@ acknowledgement (`{"ok":true,"cols","rows"}`, plus `instance_guard` /
 and a `FRAME_EXIT` payload. Each grid `FRAME_DATA` is UTF-8 JSON **one
 object per `\n` line**. The Web service forwards those payloads as
 WebSocket **binary** frames, split at 32 KiB (`OUTPUT_CHUNK`). A line
-may straddle frames; the browser buffers across them (`LineDecoder`
-splits on byte `0x0A` so a UTF-8 character split across frames stays in
-the byte tail).
+may straddle frames; `GridTerm.write` uses a streaming `TextDecoder` to
+preserve split UTF-8 characters and buffers decoded text until a newline.
 
 Text frames are control notices from the Web service, not the host.
 Unknown text frames are ignored.
@@ -250,7 +249,7 @@ the console's `GridTerm`.
 
 | Module | Owns |
 | --- | --- |
-| `grid/wire.js` | `LineDecoder` (newline-delimited JSON, UTF-8-safe), `encodeResize`, grapheme `segmentText` (cache 256) |
+| `grid/wire.js` | grapheme `segmentText` (cache 256) |
 | `grid/model.js` | viewport, scrollback, cursor, modes, title, `seq`. Applies `snapshot`/`diff`. Materializes cells lazily. Default `scrollbackLimit` 100_000. **Does not reflow the viewport** (the host resends it) |
 | `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight * dpr) / dpr` (a whole device pixel, like the width) with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio` × effective ancestor CSS zoom; the context and cell alignment use that combined density. Zoom changes rebuild the backing store and repaint even when rows/columns stay unchanged or a keyboard prevents PTY resizing. Every row is painted inside a clip of its own box: glyphs taller than the em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) cannot spill into the neighbouring rows, which only repaint when dirty. Fit floor: 2 columns, 1 row |
 | `grid/input.js` | `InputEncoder`: keys, paste (newlines → CR; bracketed `\x1b[200~…\x1b[201~` when that mode is on), focus (`\x1b[I` / `\x1b[O`), mouse (SGR / UTF-8 / X10, default X10 clamped at 223), alt-screen wheel-as-arrows (3 lines). `KeyCapture` holds a hidden textarea |

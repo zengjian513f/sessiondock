@@ -452,15 +452,6 @@ impl TransferService {
                 && (op.phase != "exporting" || op.export_lease_until > super::bundle::now())
         }))
     }
-    pub fn plan_copy(
-        &self,
-        selected: &str,
-        new_ids: bool,
-        snapshot: &SessionSnapshot,
-    ) -> Result<Operation, TransferError> {
-        let group = self.group_in(selected, snapshot)?;
-        self.plan_group(selected, new_ids, group, None)
-    }
     pub fn plan_selection(
         &self,
         selected: &str,

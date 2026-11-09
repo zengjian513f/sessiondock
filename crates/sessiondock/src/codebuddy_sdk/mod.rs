@@ -6,6 +6,7 @@ mod hosted;
 mod protocol;
 mod transport;
 mod usage;
+use crate::sdk_common::save_atomic;
 use crate::sessions::native_json;
 
 use std::{
@@ -885,27 +886,6 @@ fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
         Some("interrupted") => Some("interrupted"),
         _ => None,
     })
-}
-pub(super) fn save_atomic(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
-    use std::io::Write;
-    let temporary = path.with_extension("tmp");
-    let result = (|| -> io::Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(&serde_json::to_vec(value).map_err(io::Error::other)?)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
 }
 impl Live {
     fn save_checkpoint(&mut self) -> io::Result<()> {

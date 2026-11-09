@@ -75,6 +75,8 @@ the drive-root separator (`X:\` or `X:/`).
 原生回复中的 `file://` 文档链接同样通过所选会话、所属节点的引用解析和文件接口
 打开，不交给浏览器访问本机文件。Markdown 标签保持原样，编码的空格与中文路径
 正常解码；文件必须仍有该会话的原生引用证据。
+文件引用不设应用层字符长度上限，路径是否可访问由节点操作系统决定；
+百分号编码后的 URI 长度不作为文件路径长度。
 
 Web addresses beginning with `http://`, `https://` or `www.` are clickable in
 ordinary prose, including bold and italic text. Emphasis markers and trailing

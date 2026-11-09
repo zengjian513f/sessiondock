@@ -1,4 +1,4 @@
-use super::{FileError, FileScope, MAX_PATH_BYTES};
+use super::{FileError, FileScope};
 use regex::Regex;
 use serde_json::Value;
 use std::{
@@ -86,11 +86,11 @@ pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
 }
 
 pub fn clean_ref(value: &str) -> Result<String, FileError> {
-    if value.is_empty() || value.chars().count() > MAX_PATH_BYTES || value.contains('\0') {
+    if value.is_empty() || value.contains('\0') {
         return Err(FileError::new(
             400,
             "file_reference_invalid",
-            "文件引用为空、过长或包含空字符",
+            "文件引用为空或包含空字符",
         ));
     }
     // Native agents use file:// links for artifacts on their own node. Keep

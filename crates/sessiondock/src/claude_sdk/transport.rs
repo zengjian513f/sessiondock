@@ -1,4 +1,5 @@
 use super::*;
+pub(super) use crate::sdk_common::{diagnostic_secrets, redact};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -426,43 +427,4 @@ async fn write_input(
     }
     let _ = stdin.shutdown().await;
     failed.cancel();
-}
-
-static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
-    [
-        r#"(?i)\bBearer\s+[^\s"']+"#,
-        r"\bsk-[A-Za-z0-9_-]+",
-        r"(?i)(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
-    ]
-    .into_iter()
-    .map(|pattern| regex::Regex::new(pattern).expect("valid claude redaction regex"))
-    .collect()
-});
-
-pub(super) fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
-    let mut secrets: Vec<String> = std::env::vars()
-        .chain(profile.env.clone())
-        .filter_map(|(name, value)| {
-            let name = name.to_ascii_uppercase();
-            (value.len() >= 4
-                && ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
-                    .iter()
-                    .any(|key| name.contains(key)))
-            .then_some(value)
-        })
-        .collect();
-    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-    secrets.dedup();
-    secrets
-}
-
-pub(super) fn redact(mut text: String, secrets: &[String]) -> String {
-    for secret in secrets {
-        text = text.replace(secret, "[redacted]");
-    }
-    // Unknown secret-shaped values in SDK/HTTP diagnostics are redacted too.
-    for regex in &*REDACT_PATTERNS {
-        text = regex.replace_all(&text, "[redacted]").into_owned();
-    }
-    text
 }

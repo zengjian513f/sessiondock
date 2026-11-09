@@ -43,6 +43,7 @@ pub(crate) mod polls;
 pub mod quota_statusline;
 pub(crate) mod quotas;
 pub(crate) mod runtime;
+mod sdk_common;
 mod sdk_message_time;
 pub(crate) mod search;
 mod security;

@@ -13,6 +13,7 @@ Selection/copy, scrollback, file paste and exit are covered by
 terminal_selection_browser, terminal_scrollback_browser and
 terminal_input_browser.
 """
+import argparse
 from contextlib import ExitStack
 import os
 from pathlib import Path
@@ -66,6 +67,11 @@ def open_console(page, uid):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     if os.name != "posix":
         raise SystemExit("This isolated real-shell acceptance currently requires POSIX.")
     ptyhost = BINARY.with_name("ptyhost")
@@ -160,6 +166,16 @@ def main():
                     type_line(second, "next")
                     wait_text(second, "RS_AFTER_RESTART")
                     print("PASS e: second page takes over after confirmation; first page closes", flush=True)
+
+                    if args.screenshots:
+                        for width, theme in [(1280, 'dark'), (390, 'light')]:
+                            second.set_viewport_size({'width': 1280, 'height': 900})
+                            second.locator('#settings').click()
+                            second.locator('#setting-theme').select_option(theme)
+                            second.keyboard.press('Escape')
+                            second.set_viewport_size({'width': width, 'height': 900})
+                            open_console(second, uid)
+                            second.screenshot(path=str(args.screenshots / f'grid-{width}-{theme}.png'), full_page=True)
 
                     assert process.poll() is None
                     assert corpus.paths[sid].read_bytes() == native

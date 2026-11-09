@@ -16,7 +16,10 @@ def main():
   state=corpus.root/'state';state.mkdir()
   # A retired grant store must not participate in startup or file resolution.
   obsolete_grants=state/'file-browser-grants.json';obsolete_grants.mkdir()
-  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`. **[完整报告]({file.as_uri()})**',cwd=str(directory))],[])
+  long_directory=directory.joinpath(*(['目录'*10]*30));long_directory.mkdir(parents=True)
+  long_file=long_directory/'报告.md';long_file.write_text('# long encoded path')
+  assert len(long_file.as_uri())>4096 and len(os.fsencode(long_file))<4096
+  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`. **[完整报告]({file.as_uri()})** [长路径报告]({long_file.as_uri()})',cwd=str(directory))],[])
   # A prior mention of another project's same-named file must not override cwd.
   current=directory/'SCREENING.md';current.write_text('# current project')
   other=directory/'other';other.mkdir();(other/current.name).write_text('# other project')
@@ -91,6 +94,10 @@ def main():
     with context.expect_page() as opened:page.locator('#msgs').get_by_role('link',name='完整报告',exact=True).click()
     expect(opened.value.locator('h1')).to_have_text('FileDock destination')
     assert destinations[-1]=={'node':[NODE],'path':[str(file)]},destinations
+    page.locator('#msgs').get_by_role('button',name='展开全文',exact=False).click()
+    with context.expect_page() as opened:page.locator('#msgs').get_by_role('link',name='长路径报告',exact=True).click()
+    expect(opened.value.locator('h1')).to_have_text('FileDock destination')
+    assert destinations[-1]=={'node':[NODE],'path':[str(long_file)]},destinations
     with context.expect_page() as opened:page.locator('#msgs a[data-file-ref="missing.txt"]').click()
     missing=opened.value;expect(missing.locator('#file-retry')).to_be_visible();assert 'FileDock destination' not in missing.locator('body').inner_text()
     direct=context.new_page();direct.goto(base+'/file.html?'+urlencode({'node':NODE,'path':str(directory)}));expect(direct.locator('h1')).to_have_text('FileDock destination');assert destinations[-1]['path']==[str(directory)]
