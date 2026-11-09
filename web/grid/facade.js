@@ -1,4 +1,4 @@
-// xterm.js-compatible facade over the grid model/renderer/input modules.
+// Console terminal interface over the grid model/renderer/input modules.
 // The constructor does not touch `document`; `open` creates the canvas and
 // helper textarea. Incoming `write` data is newline-delimited JSON text.
 
@@ -153,9 +153,7 @@ export class GridTerm {
     this._renderCallbacks = [];
     this._dataListeners = [];
     this._selectionListeners = [];
-    this._titleListeners = [];
     this._clipboardListeners = [];
-    this._resizeListeners = [];
     this._scrollListeners = [];
     this._customKeyHandler = null;
     this._customWheelHandler = null;
@@ -469,9 +467,6 @@ export class GridTerm {
       }
       if (this.model.cols > 0) this._cols = this.model.cols;
       if (this.model.rows > 0) this._rows = this.model.rows;
-      if (msg && (msg.t === 'diff' || msg.t === 'snapshot') && msg.title != null) {
-        emit(this._titleListeners, String(msg.title));
-      }
       // OSC 52：宿主模型解码后的剪贴板文本，交给页面的剪贴板策略。
       if (msg && msg.t === 'clipboard' && typeof msg.text === 'string') {
         emit(this._clipboardListeners, msg.text);
@@ -498,7 +493,6 @@ export class GridTerm {
     this.renderer.fit(cols * cw, rows * ch);
     this._stickFollow();
     this._paint();
-    emit(this._resizeListeners, {cols: this.cols, rows: this.rows});
   }
 
   reset() {
@@ -529,10 +523,6 @@ export class GridTerm {
     this._paint();
   }
 
-  clearTextureAtlas() {}
-
-  loadAddon() {}
-
   onData(listener) {
     return addListener(this._dataListeners, listener);
   }
@@ -543,14 +533,6 @@ export class GridTerm {
 
   onClipboard(listener) {
     return addListener(this._clipboardListeners, listener);
-  }
-
-  onTitleChange(listener) {
-    return addListener(this._titleListeners, listener);
-  }
-
-  onResize(listener) {
-    return addListener(this._resizeListeners, listener);
   }
 
   onScroll(listener) {
@@ -606,34 +588,6 @@ export class GridTerm {
 
   clearSelection() {
     this._clearSelection();
-  }
-
-  selectAll() {
-    const n = this.model.lineCount();
-    if (n <= 0) {
-      this._clearSelection();
-      return;
-    }
-    this._setSelection({
-      start: {line: 0, col: 0},
-      end: {line: n - 1, col: this.cols},
-    });
-    this._scheduleRender();
-  }
-
-  selectLines(start, end) {
-    let a = start | 0;
-    let b = end | 0;
-    if (a > b) {
-      const tmp = a;
-      a = b;
-      b = tmp;
-    }
-    const last = Math.max(0, this.model.lineCount() - 1);
-    a = Math.max(0, Math.min(last, a));
-    b = Math.max(0, Math.min(last, b));
-    this._setSelection({start: {line: a, col: 0}, end: {line: b, col: this.cols}});
-    this._scheduleRender();
   }
 
   scrollToBottom() {

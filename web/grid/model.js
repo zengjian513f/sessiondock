@@ -734,10 +734,6 @@ export class GridModel {
     if (typeof this.onLinesReplaced === 'function') this.onLinesReplaced(start, end, rows.length, map);
   }
 
-  _wrap(cells, cols) {
-    return this._wrapWithStarts(cells, cols).rows;
-  }
-
   /// 折行结果和每行在逻辑行里的起始列。
   _wrapWithStarts(cells, cols) {
     const starts = [];

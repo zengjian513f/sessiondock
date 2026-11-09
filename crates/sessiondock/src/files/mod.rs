@@ -87,17 +87,12 @@ pub struct FileScope<'a> {
     pub messages: &'a [Value],
 }
 
+#[derive(Default)]
 pub struct FileService {
     /// Media reference indexes keyed by view revision (`files/media.rs`).
     media_indexes: std::sync::Mutex<VecDeque<(String, std::sync::Arc<references::ReferenceIndex>)>>,
 }
 impl FileService {
-    pub fn open(_roots: Vec<PathBuf>) -> Result<Self, FileError> {
-        Ok(Self {
-            media_indexes: std::sync::Mutex::new(VecDeque::new()),
-        })
-    }
-
     fn candidate(&self, scope: &FileScope<'_>, raw: &str) -> Result<ResolvedTarget, FileError> {
         let path = boundary::absolute_path(raw, scope.cwd)?;
         boundary::open_target(boundary::volume_root(&path)?, path)

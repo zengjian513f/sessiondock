@@ -31,7 +31,12 @@ impl Sender {
             return Ok(());
         }
         entries.push(Entry { id, frame });
-        save_atomic(&self.path, &*entries).map_err(|e| format!("droid_sdk_outbox: {e}"))?;
+        if let Err(error) = save_atomic(&self.path, &*entries) {
+            // The writer reads this same queue: never expose an entry whose
+            // persistence failed, or let its retry look already accepted.
+            entries.pop();
+            return Err(format!("droid_sdk_outbox: {error}"));
+        }
         self.wake.notify_one();
         Ok(())
     }

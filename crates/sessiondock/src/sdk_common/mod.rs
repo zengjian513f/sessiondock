@@ -1,5 +1,6 @@
 //! Shared checkpoint writes and diagnostics for the native SDK adapters.
 
+pub(crate) mod projection;
 pub(crate) mod usage;
 
 use crate::lifecycle::launcher::CliProfile;

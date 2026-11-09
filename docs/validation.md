@@ -668,3 +668,7 @@ Historical results in the incident ledger refer to the revision at which those s
 [Droid CLI 设置与版本](../tests/droid_clients_browser.py) covers model/effort selection, process-local settings and native update checks in Node/Hub Chromium.
 [Droid 跨平台写者](../tests/droid_writers_browser.py) covers explicit resume identities, native log timestamps, unresolved cwd and conflicting writers through browser recovery.
 [Droid 跨机移动](../tests/droid_move_browser.py) runs explicitly with `--peer`, covering native session/settings/snapshot preservation and shared snapshot index merging through Chromium and an isolated SSH peer.
+
+[SDK 发送队列故障](../tests/sdk_outbox_browser.py)使用私有假 CLI，通过审批按钮验证
+Claude、CodeBuddy、Droid 的 outbox 落盘失败不会发送原生回答，审批保持待处理；
+恢复写入后重试只发送一次，重载保持回执。

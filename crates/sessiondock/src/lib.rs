@@ -287,9 +287,7 @@ fn build_app(
         })
         .transpose()?;
     let search_cache_dir = config.search_cache_dir.clone();
-    let files = Some(Arc::new(
-        files::FileService::open(config.file_roots).map_err(io::Error::other)?,
-    ));
+    let files = Some(Arc::new(files::FileService::default()));
     let files_write = if terminal.is_some() || !config.file_write_roots.is_empty() {
         Some(Arc::new(
             files::WriteService::open(config.file_write_roots, config.state_dir.clone())

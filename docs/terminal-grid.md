@@ -488,8 +488,8 @@ no xterm.js. A running host started before the grid protocol existed reports
 「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」 An exited
 row has no host and shows its final screen or explains itself. The hub
 registry has no per-machine renderer attribute ([hub](hub.md)).
-`web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
-object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
+`web/grid/facade.js` exports `GridTerm`, implementing the console
+interface (`write` of JSON-line text, `resize`, `buffer.active`, selection,
 `onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)
 built on the grid modules; `index.html` publishes it as
 `globalThis.GridTerm` from a module script placed before `term.js`.
