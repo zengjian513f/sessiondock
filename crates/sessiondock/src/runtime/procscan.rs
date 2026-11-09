@@ -34,6 +34,7 @@ use serde_json::Value;
 
 use super::process::ProcClock;
 mod activity;
+mod droid;
 mod kiro;
 
 /// Cache seconds after a scan completes; the TTL starts when the
@@ -649,6 +650,8 @@ pub struct Scan {
     /// Open session file → holders (`pid` main, `-pid` helper).
     pub paths: BTreeMap<String, BTreeSet<i64>>,
     pub bare_claude: BTreeMap<u32, BareClaude>,
+    /// Bare Droid uses the same cwd/start-time rule as Claude.
+    pub bare_droid: BTreeMap<u32, BareClaude>,
     /// OpenCode processes (cwd + start). OpenCode keeps no per-session file
     /// or id a process exposes, so only spawner discovery pairs them, by cwd
     /// and birth order.
@@ -719,6 +722,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     let mut sids: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut paths: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut bare_claude = BTreeMap::new();
+    let mut bare_droid = BTreeMap::new();
     let mut kiro_acp: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
     let mut opencode = BTreeMap::new();
     let mut stats = ScanStats::default();
@@ -834,12 +838,17 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             sids.entry(key).or_default().insert(holder);
         }
         let head = argv0.rsplit('/').next().unwrap_or(argv0);
-        if main && head == "claude" && cmd_sids.is_empty() {
+        if main && matches!(head, "claude" | "droid") && cmd_sids.is_empty() {
             let directory = tree.root().join(pid.to_string());
             if let Ok(target) = std::fs::read_link(directory.join("cwd"))
                 && let Some(started) = tree.started_at(pid)
             {
-                bare_claude.insert(
+                let bare = if head == "droid" {
+                    &mut bare_droid
+                } else {
+                    &mut bare_claude
+                };
+                bare.insert(
                     pid,
                     BareClaude {
                         cwd: resolve_path(&target.to_string_lossy()),
@@ -897,6 +906,10 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             }
         }
     }
+    for (pid, sid) in droid::identities(&tree, &bare_droid) {
+        sids.entry(sid).or_default().insert(i64::from(pid));
+        bare_droid.remove(&pid);
+    }
     if let Some(file) = grok_active {
         note_grok_sessions(&mut sids, file, &tree);
     }
@@ -906,6 +919,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         sids,
         paths,
         bare_claude,
+        bare_droid,
         opencode,
         stats,
         completed: Instant::now(),
@@ -1034,13 +1048,15 @@ impl Scan {
         found
     }
 
-    /// A bare `claude` in the session's cwd that
+    /// A bare Claude or Droid in the same-source session's cwd that
     /// started within 5 s before to 30 s after the session was created.
-    fn bare_claude_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
+    fn bare_session_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
-        if session.source != "claude" || self.bare_claude.is_empty() {
-            return found;
-        }
+        let processes = match session.source.as_str() {
+            "claude" => &self.bare_claude,
+            "droid" => &self.bare_droid,
+            _ => return found,
+        };
         let Some(cwd) = session.cwd.as_deref() else {
             return found;
         };
@@ -1048,7 +1064,7 @@ impl Scan {
             return found;
         };
         let cwd = resolve_path(&expand_user(cwd));
-        for (pid, bare) in &self.bare_claude {
+        for (pid, bare) in processes {
             let delta = created - bare.started;
             if bare.cwd == cwd && (-5.0..=30.0).contains(&delta) {
                 found.insert(i64::from(*pid));
@@ -1067,7 +1083,7 @@ impl Scan {
             found.extend(pids);
         }
         found.extend(self.session_path_pids(session));
-        found.extend(self.bare_claude_pids(session));
+        found.extend(self.bare_session_pids(session));
         if session.source == "codex" {
             // One app-server can hold many independent threads. Its file
             // descriptors never grant permission to terminate that daemon.
@@ -1091,7 +1107,7 @@ impl Scan {
         let sid = Self::identity_key(session);
         (!sid.is_empty() && self.sids.contains_key(&sid))
             || !self.session_path_pids(session).is_empty()
-            || !self.bare_claude_pids(session).is_empty()
+            || !self.bare_session_pids(session).is_empty()
     }
 
     fn identity_key(session: &SessionRow) -> String {

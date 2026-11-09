@@ -78,3 +78,17 @@ SDK 不接管独立 TUI；Linux 使用现有进程/SID/原生路径占用检测�
 
 官方参考：[Droid Exec](https://docs.factory.com/droid-exec/overview)、
 [TypeScript SDK](https://docs.factory.com/sdk/typescript)。
+
+## 外部 CLI 与接管
+
+DELTA：Linux 的 Droid 外部实例优先使用原生日志
+`.factory/logs/droid-log-single.log` 的 `process.pid`、`tags.sessionId` 和 TUI 标记
+关联当前会话。日志时间必须不早于该存活进程的启动时间；同进程使用最新的有效身份，
+忽略 PID 复用前的旧记录。日志路径取该进程的 `FACTORY_HOME_OVERRIDE` 或 HOME，
+不读取认证文件。无原生身份时，裸 `droid` 沿用 Claude 的同 cwd、创建时间相对进程
+启动 −5 至 +30 秒的识别规则；不能仅凭同目录认领所有历史会话。
+
+外部实例显示绿点；CLI 接管先确认，取消不结束进程，确认后复用既有 PID/start-time
+核对与 TERM/KILL 流程，结束外部实例再由 ptyhost `--resume`，受管实例显示蓝点。
+SDK 同样拒绝并行打开已识别的原生会话；同目录身份未解析的裸 Droid 沿用 Claude
+的占用检查。浏览器覆盖见 [外部实例测试](../tests/droid_external_browser.py)。

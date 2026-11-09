@@ -286,6 +286,7 @@ impl Bridge {
             let root = self.proc_root.clone();
             let native_root = self.root.clone();
             let sid = session.sid.to_ascii_lowercase();
+            let cwd = crate::runtime::procscan::resolve_path(&session.cwd.to_string_lossy());
             let path = session.path.to_string_lossy().into_owned();
             let own_pids: std::collections::BTreeSet<_> = lock(&self.state)
                 .sessions
@@ -321,11 +322,15 @@ impl Bridge {
                 holders
                     .filter_map(|pid| u32::try_from(pid.unsigned_abs()).ok())
                     .any(|pid| !own(pid))
+                    || scan
+                        .bare_droid
+                        .iter()
+                        .any(|(pid, process)| process.cwd == cwd && !own(*pid))
             })
             .await
             .map_err(|_| "droid_sdk: native writer observation failed")?;
             if conflict {
-                return Err("droid_sdk_session_busy: an independent Droid process owns this SID/path; this subprocess cannot share that runtime (shared_tui:false). Stop it explicitly before SDK resume; no takeover was attempted.".into());
+                return Err("droid_sdk_session_busy: an independent Droid process owns this SID/path or has unresolved identity in this cwd; this subprocess cannot share that runtime (shared_tui:false). Stop it explicitly before SDK resume; no takeover was attempted.".into());
             }
         }
         #[cfg(not(target_os = "linux"))]

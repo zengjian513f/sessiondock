@@ -90,6 +90,10 @@ sharing a helper keep it; a session named by the Grok active file is live
 without process-control PIDs, subject to the registry check above. `started_at[uid]` is the earliest start among the owned pids
 that are CLI main processes (`btime + starttime / CLK_TCK`, unrounded).
 
+DELTA：Droid 裸 CLI 沿用 Claude 的 cwd/start-time 匹配，并优先采用其原生日志中
+存活 PID、启动后时间和当前会话 ID。详情见 [Droid 外部 CLI](droid-sdk.md#外部-cli-与接管)。
+该身份同时驱动绿点、SDK 占用检查与确认后的 CLI 接管。
+
 ## `tmux_uids`: whose console a pane is
 
 `tmux_uids` are the live sessions that own a console: a `tmux*` ancestor
