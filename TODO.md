@@ -6,7 +6,7 @@
 ## Droid integration
 
 - [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
-  `c4665966`（含用量、外部实例识别与高级操作）：正式 SSH 尝试超时。
+  `1dd1680c`（含用量、外部实例识别、高级操作及引导／消息前分支）：正式 SSH 尝试超时。
   Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康；Lyra 已启用 Droid。
   三个资源代理不涉及本次组件，按范围排除。
 - [ ] 在隔离且已认证的 HOME 验证真实审批、问答及更多工具交互；当前 1.6.0
