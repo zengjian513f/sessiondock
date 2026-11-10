@@ -142,6 +142,9 @@ def synthetic(fixture,pw):
                record(202,40001,-30,-25,owner,True),record(203,40002,-30,-25,owner),
                record(204,40002,-29,-24,other),record(205,40003,-60,-55,owner),
                record(206,40003,-30,-25,None)]
+    stale = record(199,40000,-120,-110,other,True)
+    stale['closed_at'] = None
+    records.append(stale)
     # A long-running node retains closed SSH evidence for the whole boot.
     # Repeated report/catalog reads must not hold the sampler lock while
     # expanding this history into JSON (BUG-20261011-085825-aba2df).

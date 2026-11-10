@@ -23,7 +23,11 @@ tuple and first observation time. Bindings also expose a `launch_chain` (nearest
 launch first), retaining earlier launch identities across additional SSH hops
 and after an upstream launcher exits. An established attribution stays attached to
 that process incarnation; a later connection reusing the same ports cannot
-reassign old work.
+reassign old work. A later observed TCP connect on the same tuple and source
+node/boot bounds an older record whose close event is missing: that old record
+cannot explain remote launches at or after the new connect. Explicit overlapping
+closed spans, equal-time candidates and unknown/shared new clients remain
+ambiguous; this does not infer a missing close timestamp or rewrite evidence.
 
 Local CLI launches also enter this chain. A local edge identifies the launched
 CLI's process incarnation and names its observed `spawner`; an SSH edge retains

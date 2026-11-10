@@ -60,9 +60,9 @@ def opened(pid, start, at, port):
             f'1 10.0.0.1 {port} 10.0.0.2 50022')
 
 
-def recover_after_loss(root, boot):
+def recover_after_loss(root, boot, stale_port=50001):
     wait_report(root, lambda r: r.get('collector', {}).get('ssh_connections'))
-    emit(root, opened(201, 200, boot + 1, 50001))
+    emit(root, opened(201, 200, boot + 1, stale_port))
     wait_report(root, lambda r: any(c['process']['pid'] == 201
                                   for c in r.get('connections', [])))
     emit(root, 'lost 1 events')

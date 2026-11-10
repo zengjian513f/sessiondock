@@ -121,7 +121,9 @@ def main():
                     env=tracer(node.root) if node.name == 'a' else None, stdout=log,stderr=log)
                 stack.callback(lambda p=agent: (p.terminate(),p.wait(timeout=10)))
                 if node.name == 'a':
-                    recover_after_loss(node.root, boot)
+                    # A lost close from an earlier use of the same tuple must not
+                    # block the fresh Kiro launch (BUG-20261110-021424-a49181).
+                    recover_after_loss(node.root, boot, stale_port=50000)
         browser = pw.chromium.launch(headless=True); stack.callback(browser.close)
         hub_root = root/'hub'; hub_root.mkdir()
         hub = None

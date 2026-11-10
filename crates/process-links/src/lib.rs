@@ -160,6 +160,8 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
         start: f64,
         end: Option<f64>,
         eligible: bool,
+        superseded_at: Option<f64>,
+        observed_connect: bool,
     }
     let mut outgoing: BTreeMap<&Connection, Vec<Candidate<'_>>> = BTreeMap::new();
     for report in reports.iter().filter(|r| r.version == 1 && r.supported) {
@@ -181,6 +183,8 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                     chain: &edge.launch_chain,
                     start: edge.started_at,
                     end: None,
+                    superseded_at: None,
+                    observed_connect: false,
                     eligible: true,
                 });
         }
@@ -199,10 +203,36 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                     chain: &record.launch_chain,
                     start: record.opened_at,
                     end: record.closed_at,
+                    superseded_at: None,
+                    observed_connect: true,
                     eligible: record.ssh
                         && !record.shared
                         && (record.closed_at.is_some() || live_exclusive),
                 });
+        }
+    }
+    // A newly observed connect on the same TCP tuple proves that an older
+    // unfinished connection no longer owns it. Lost close events must not make
+    // restored/ambiguous records poison every later reuse for the whole boot.
+    // Keep explicit overlapping spans ambiguous, and never merge node clocks.
+    for candidates in outgoing.values_mut() {
+        for index in 0..candidates.len() {
+            if candidates[index].end.is_some() {
+                continue;
+            }
+            let old = &candidates[index];
+            let next = candidates
+                .iter()
+                .filter(|new| {
+                    new.observed_connect
+                        && new.source.node_id == old.source.node_id
+                        && new.source.boot_id == old.source.boot_id
+                        && new.start.is_finite()
+                        && new.start > old.start
+                })
+                .map(|new| new.start)
+                .min_by(f64::total_cmp);
+            candidates[index].superseded_at = next;
         }
     }
     reports
@@ -219,7 +249,8 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                     }
                     let mut candidates =
                         outgoing.get(&incoming.connection)?.iter().filter(|edge| {
-                            edge.start.is_finite()
+                            edge.superseded_at.is_none_or(|next| at < next)
+                                && edge.start.is_finite()
                                 && at + 2.0 >= edge.start
                                 && edge
                                     .end
