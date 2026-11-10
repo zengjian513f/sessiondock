@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pin toolbar options and use their ellipsis submenus in Chromium."""
 import argparse
+import json
 from copy import deepcopy
 from pathlib import Path
 import tempfile
@@ -28,6 +29,7 @@ def main():
                 for width in (1900, 390):
                     context = browser.new_context(viewport={'width': width, 'height': 900}, has_touch=width < 720,
                                                   service_workers='block')
+                    context.add_init_script("localStorage.setItem('sessiondock.theme', JSON.stringify('" + ('dark' if width < 720 else 'light') + "'))")
                     page = context.new_page()
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
@@ -46,8 +48,12 @@ def main():
                     expect(page.locator('#view button:visible')).to_have_count(2)
                     expect(page.locator('#view [data-v=directory]')).to_be_visible()
                     expect(page.locator('#view [data-v=date]')).to_be_visible()
-                    expect(page.locator('#chips button:visible')).to_have_count(3)
-                    expect(page.locator('#chips button[data-source=agy]')).to_be_hidden()
+                    expect(page.locator('#chips button:visible')).to_have_count(page.evaluate('Object.keys(SOURCES).length'))
+                    assert page.evaluate('S.view === "date" && S.childMode === "hidden" && S.off.size === 0')
+                    assert page.locator('#view button').evaluate_all('(buttons) => buttons.map(b => b.dataset.v)') == ['date', 'directory', 'group', 'tree']
+                    if args.screenshots_dir:
+                        page.screenshot(path=str(args.screenshots_dir / f'toolbar-defaults-{width}.png'), full_page=True)
+                    expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     expect(page.locator('#nest button:visible')).to_have_count(3)
 
                     # Pinning leaves the selected view intact; an unpinned current
@@ -59,7 +65,7 @@ def main():
                         page.screenshot(path=str(args.screenshots_dir / f'toolbar-view-{width}.png'))
                     tree.check()
                     expect(page.locator('#view [data-v=tree]')).to_be_visible()
-                    assert page.evaluate('S.view') == 'tree'
+                    assert page.evaluate('S.view') == 'date'
                     tree.uncheck()
                     menu.get_by_role('checkbox', name='在工具栏显示时间轴', exact=True).uncheck()
                     expect(menu).to_be_visible()
@@ -88,6 +94,7 @@ def main():
                     expect(source).to_have_attribute('aria-pressed', 'false')
                     expect(page.locator('#side .item')).to_have_count(before - 1)
                     pin = menu.get_by_role('checkbox', name='在工具栏显示Agy', exact=True)
+                    pin.uncheck()
                     pin.check()
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     assert page.evaluate("S.off.has('agy')")
@@ -120,7 +127,7 @@ def main():
                     for checkbox in menu.get_by_role('checkbox').all():
                         checkbox.uncheck()
                     expect(page.locator('#nest')).to_be_hidden()
-                    assert page.evaluate('S.childMode === "shown" && !S.nest')
+                    assert page.evaluate('S.childMode === "hidden" && !S.nest')
                     menu.locator('button[data-mode=nested]').click()
                     assert page.evaluate('S.nest')
                     page.reload(wait_until='networkidle')
@@ -195,6 +202,16 @@ def main():
                     assert not errors, errors
                     print(f'PASS toolbar options {width}px: defaults, independent pin/filter, submenus, persistence, keyboard, bounds', flush=True)
                     context.close()
+                # Saved legacy modes remain explicit choices, including false.
+                for nested in (True, False):
+                    context = browser.new_context(service_workers='block')
+                    context.add_init_script("localStorage.setItem('sessiondock.nest', " + json.dumps(json.dumps(nested)) + ")")
+                    page = context.new_page()
+                    page.goto(base, wait_until='networkidle')
+                    expect(page.locator('#nest-' + ('toggle' if nested else 'flat'))).to_have_attribute('aria-pressed', 'true')
+                    assert page.evaluate('S.childMode') == 'shown'
+                    context.close()
+                print('PASS saved legacy nesting preferences (true/false)', flush=True)
             finally:
                 browser.close()
 

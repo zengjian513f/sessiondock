@@ -33,8 +33,8 @@
 | `#side-toggle` | 收起/展开左栏。`setSideCollapsed`，键 `sideCollapsed`，默认展开 |
 | `#session-scope` | 「只显示活跃会话」/「显示全部会话」。计数在 `#session-active`、`#session-total`。`selectSessionScope`；`activeOnly` 默认关，且 `live` 能力为 false 时不按空集合筛选 |
 | `#sidebar-resources-toggle` | 见第 2 节资源列 |
-| `#nest` | 子会话三档：按需展开、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认平铺。 |
-| `#view` | 项目树 `tree`（默认）、会话分组 `group`、时间轴 `date`。`renderView` |
+| `#nest` | 子会话三档：按需展开、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认按需展开。 |
+| `#view` | 时间轴 `date`（默认）、目录聚合 `directory`、会话分组 `group`、项目树 `tree`。`renderView` |
 | `#node-chips` | 仅 Hub。见第 2 节 |
 | `#chips` | Codex / Kiro / Agy / Grok / Claude / OpenCode / SSH 筛选 |
 | `#new-session` | 新建。`terminal_create` 未开时保持隐藏 |
@@ -129,12 +129,12 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 ### 四种列表
 
-- **项目树**（默认）：按目录分组。路径过长时 `fitTimelineDirectories` 压缩。目录颜色见下文“目录配色”。
+- **项目树**：按机器与目录分组。路径过长时 `fitTimelineDirectories` 压缩。目录颜色见下文“目录配色”。
 - **按目录聚合**（DELTA）：只按完整工作目录路径分组，不同机器的相同路径放在一起；同名但路径不同的目录仍分开。组内沿用活动时间排序、筛选、折叠和嵌套，每行复用已有机器标识与目录样式。所选视图持久化。[`tests/hub_browser.py`](../tests/hub_browser.py)。
-- **时间轴**：按时间分组。
+- **时间轴**（默认）：按时间分组。
 - **会话分组**：只有 `metadata` 能力允许时，工具栏及列表视图菜单才提供会话分组。否则若存的是 `group` 会退回 `tree`。见下文分组。
 
-**DELTA：顶栏选项可自选常驻。**「⋯」始终可用，含「列表视图」「Agent 类型」「折叠方式」二级菜单。菜单复用工具栏的图标、选中状态与来源计数；点击选项执行原有切换或筛选，勾选框只控制是否显示在顶栏，取消勾选的选项仍可从二级菜单使用。视图默认常驻目录聚合和时间轴，Agent 默认常驻 Codex、Claude、Grok；折叠方式默认三项均常驻，也可逐项取消。常驻偏好与当前视图、来源筛选和子会话模式分别持久化；全部取消时隐藏该分段，仍能通过菜单使用。来源菜单保留零会话不可用原因、右键/长按只选、当前机器和会话范围计数；能力未声明的会话分组不出现在任何入口。二级菜单支持方向键、Home/End、Escape 返回上级和点击外部关闭，窄屏保持菜单边界与选项文字可读。[`tests/toolbar_options_browser.py`](../tests/toolbar_options_browser.py)。
+**DELTA：顶栏选项可自选常驻。** 新用户默认按需展开、时间轴及全部 Agent（BUG-20261110-154950-b63f40）；已有视图、折叠与筛选、常驻偏好继续生效。「⋯」始终可用，含「列表视图」「Agent 类型」「折叠方式」二级菜单。菜单复用工具栏的图标、选中状态与来源计数；点击选项执行原有切换或筛选，勾选框只控制是否显示在顶栏，取消勾选的选项仍可从二级菜单使用。视图默认常驻时间轴和目录聚合；工具栏与菜单顺序为时间轴、目录聚合、会话分组、项目树（机器×目录）。Agent 默认全部常驻，来源筛选默认全部开启；折叠方式默认三项均常驻，也可逐项取消。常驻偏好与当前视图、来源筛选和子会话模式分别持久化；全部取消时隐藏该分段，仍能通过菜单使用。来源菜单保留零会话不可用原因、右键/长按只选、当前机器和会话范围计数；能力未声明的会话分组不出现在任何入口。二级菜单支持方向键、Home/End、Escape 返回上级和点击外部关闭，窄屏保持菜单边界与选项文字可读。[`tests/toolbar_options_browser.py`](../tests/toolbar_options_browser.py)。
 
 分组头可折叠。普通浏览的折叠在 `closed`（持久）。搜索态用另一套 `searchClosed`，不写回 `closed`。[`tests/search_no_fold_browser.py`](../tests/search_no_fold_browser.py)。大量同名目录下点击折叠和筛选：[`tests/sidebar_path_performance_browser.py`](../tests/sidebar_path_performance_browser.py)。
 
@@ -204,7 +204,7 @@ DELTA（2026-10-08）：服务启动后及每隔 3 小时重新统计，关闭�
 
 ### 嵌套与附属
 
-`#nest` 用同组按钮选择「按需展开 / 层叠 / 平铺」，当前项使用 `aria-pressed`。偏好 `childMode` 保存所选档位（首档沿用 `hidden` 值）；旧 `nest` 偏好继续生效，首次默认平铺。按需模式初次仅加载主会话与 `child_count`，保留展开箭头；点击后用 `expanded` 父身份列表请求各展开分支的直接子会话与子代理，更深层仍折叠且未下载。展开态只存本页 `lazyOpen`，收起释放该分支及后代，刷新页面或重入首档恢复全收起。轮询和重新扫描保留本页展开的分支，失败保留列表和重试箭头，过期响应不能重新打开已收起分支。切回其他模式重新加载完整列表；已打开的子会话详情仍可继续使用。
+`#nest` 用同组按钮选择「按需展开 / 层叠 / 平铺」，当前项使用 `aria-pressed`。偏好 `childMode` 保存所选档位（首档沿用 `hidden` 值）；旧 `nest` 偏好继续生效，首次默认按需展开。按需模式初次仅加载主会话与 `child_count`，保留展开箭头；点击后用 `expanded` 父身份列表请求各展开分支的直接子会话与子代理，更深层仍折叠且未下载。展开态只存本页 `lazyOpen`，收起释放该分支及后代，刷新页面或重入首档恢复全收起。轮询和重新扫描保留本页展开的分支，失败保留列表和重试箭头，过期响应不能重新打开已收起分支。切回其他模式重新加载完整列表；已打开的子会话详情仍可继续使用。
 
 `S.nest` 默认关。层叠时，由会话发起的会话缩进在发起者下（`nestParentOf` / `nestTree`）。手动收起的发起者在 `nestClosed`（持久）。搜索态用 `searchNestClosed`，不写回。
 

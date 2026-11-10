@@ -85,6 +85,9 @@ def check_directory_view(browser, hub):
     context.route("**/api/sessions*", directories)
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
     page.wait_for_function("S.sessions.length === 3 && T.listLoaded")
+    assert page.evaluate('S.view === "date" && S.childMode === "hidden" && S.off.size === 0')
+    expect(page.locator('#side > .group')).to_have_count(2)
+    choose_toolbar_option(page, 'view', 'tree')
     expect(page.locator('#side > .group')).to_have_count(3)
     page.get_by_role('button', name='按目录聚合', exact=True).click()
     expect(page.locator('#side > .group')).to_have_count(2)
@@ -231,7 +234,7 @@ def check_page(page, nodes, hub):
       renderChips(); renderSide();
     }""")
     page.locator('#chips button[data-source="codex"]').click(button="right")
-    assert page.evaluate("[...S.off].sort()") == ["agy", "claude", "grok", "opencode", "shell"]
+    assert page.evaluate("[...S.off].sort()") == page.evaluate("Object.keys(SOURCES).filter(source => source !== 'codex').sort()")
     grok = page.locator('#chips button[data-source="grok"]')
     grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
                                         "button": 0, "clientX": 20, "clientY": 20})
@@ -239,8 +242,8 @@ def check_page(page, nodes, hub):
     grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
                                       "button": 0, "clientX": 20, "clientY": 20})
     grok.dispatch_event("click")
-    assert page.evaluate("[...S.off].sort()") == ["agy", "claude", "codex", "opencode", "shell"]
-    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["agy", "claude", "codex", "opencode", "shell"]
+    assert page.evaluate("[...S.off].sort()") == page.evaluate("Object.keys(SOURCES).filter(source => source !== 'grok').sort()")
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == page.evaluate("Object.keys(SOURCES).filter(source => source !== 'grok').sort()")
     page.evaluate("""() => {
       S.off.clear(); store.set('off', []); loadSessions(true);
     }""")
@@ -326,6 +329,8 @@ def check_node_chip_issue(page):
 
 
 def check_nesting(page, injector):
+    # This fixture injects a full tree; explicitly request the full-list mode.
+    page.locator("#nest-flat").click()
     injector.on = True
     page.evaluate("loadSessions(true)")
     page.wait_for_function("S.sessions.length === 6 && S.sessions.some(s => s.nest_parent)")

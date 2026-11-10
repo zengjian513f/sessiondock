@@ -111,6 +111,7 @@ def bound_launch_sidebar(browser, base, full, width):
         expect(page.locator('#detail h2')).to_contain_text('Grandchild C')
         expect(page.locator('#msgs')).to_contain_text('reply Grandchild C')
         expect(row).to_have_class(re.compile(r'\bsel\b'))
+        selected_url = page.url
         if width == 390:
             page.locator('#detail .mobile-back').click()
         root_uid = next(row['uid'] for row in full['sessions'] if row['sid'] == 'nest-root-a')
@@ -121,7 +122,7 @@ def bound_launch_sidebar(browser, base, full, width):
         expect(page.locator('#msgs')).to_contain_text('reply Grandchild C')
         # Exited confirmed receipts retain the association without a live pane.
         receipt.update(state='exited', running=False)
-        page.reload(wait_until='networkidle')
+        page.goto(selected_url, wait_until='networkidle')
         expect(page.locator('#side .item.pending')).to_have_count(0)
         # Reloading the native URL now reveals that child in the compact list.
         expect(page.locator('#side .item.sel')).to_have_attribute('data-uid', native['uid'])
@@ -156,13 +157,20 @@ def main():
                     page = context.new_page()
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    page.goto(base, wait_until='networkidle')
+                    with page.expect_response(lambda response: '/api/sessions?children=hidden' in response.url) as initial_request:
+                        page.goto(base, wait_until='networkidle')
+                    initial_hidden = initial_request.value.json()
+                    expect(page.locator('#side .item')).to_have_count(2)
+                    expect(page.locator('#nest-hidden')).to_have_attribute('aria-pressed', 'true')
+                    assert page.evaluate('S.view') == 'date'
+                    page.locator('#nest-flat').click()
                     expect(page.locator('#side .item')).to_have_count(7)
                     page.locator('#nest-toggle').click()
                     expect(page.locator('#side .item[data-depth="2"]')).to_have_count(1)
                     with page.expect_response(lambda response: '/api/sessions?children=hidden' in response.url) as request:
                         page.locator('#nest-hidden').click()
-                    hidden = request.value.json()
+                    hidden = initial_hidden
+                    assert request.value.ok
                     assert {row['sid'] for row in hidden['sessions']} == {'nest-root-a', 'nest-alone-e'}, hidden
                     assert all('agent_items' not in row for row in hidden['sessions'])
                     assert len(json.dumps(hidden)) < len(json.dumps(full))

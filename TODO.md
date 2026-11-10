@@ -263,6 +263,10 @@
 
 ## Validation stability
 
+- [ ] 更新 `header_fold_browser.py` 对已有前后导航按钮的折叠预期：780px 时菜单包含
+  `m-prev`、`m-next`，动作顺序断言遗漏二者；本次默认视图修改前的 `e6dffc16`
+  与修改后均在相同断言失败，尚未完成该套件全程验收。
+
 - [ ] 修复测试型号更新时暴露的验收阻点：`draft_rotation_browser` 的 current_uid 断言、
   `kiro_hub_browser` 的 SDK 连接等待均在未改测试上复现；`cli_menus_browser`、
   `send_codex_attachments_browser`、`startup_question_browser` 和真实 Codex 冷启动

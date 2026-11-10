@@ -18,7 +18,7 @@ const store = {
 };
 
 const toolbarPins = Object.fromEntries(Object.entries({
-  view: ['directory', 'date'], sources: ['codex', 'claude', 'grok'], nest: ['hidden', 'nested', 'flat'],
+  view: ['date', 'directory'], sources: Object.keys(SOURCES), nest: ['hidden', 'nested', 'flat'],
 }).map(([kind, defaults]) => {
   const saved = store.get(`toolbarPins.${kind}`, defaults);
   return [kind, new Set(Array.isArray(saved) ? saved : defaults)];
@@ -165,13 +165,17 @@ themeMedia.addEventListener('change', () => {
 applyTheme();
 applyFont();
 
+// Keep explicit legacy nesting preferences; fresh profiles start collapsed.
+const initialChildMode = store.get('childMode',
+  store.get('nest', null) === null ? 'hidden' : store.get('nest', false) ? 'nested' : 'flat');
+
 const S = {
   sessions: [],
-  view: store.get('view', 'tree'),
-  childMode: store.get('childMode', null) === 'hidden' ? 'hidden' : 'shown',
+  view: store.get('view', 'date'),
+  childMode: initialChildMode === 'hidden' ? 'hidden' : 'shown',
   lazyOpen: new Map(),  // 本页临时展开的父会话；刷新不预加载
   lazyPending: new Set(),
-  nest: store.get('childMode', null) === 'hidden' ? false : store.get('nest', false),
+  nest: initialChildMode === 'hidden' ? false : store.get('nest', false),
   nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
   off: new Set(store.get('off', [])),
   closed: new Set(store.get('closed', [])),
