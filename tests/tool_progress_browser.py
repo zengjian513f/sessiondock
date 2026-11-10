@@ -85,6 +85,12 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.tool-active-tail .tool-out')).to_be_visible()
         expect(group.locator('.tool-active-tail .tool-out')).to_contain_text('输出第 7 行')
         expect(group.locator('.tool-out:visible')).to_have_count(1)
+        diagnostics = page.evaluate('sdkDiagnosticState()')
+        if mode == 'sdk':
+            assert diagnostics['source'] == source and diagnostics['connected'], diagnostics
+            assert diagnostics['items'] == (6 if source == 'codex' else 7) and diagnostics['live_nodes'] > 0, diagnostics
+        else:
+            assert diagnostics is None, diagnostics
         name = f'{label}-{source}-{mode}-{width}-{theme}'
         def capture(state):
             if shots: page.screenshot(path=str(shots / f'{name}-{state}.png'), full_page=True)

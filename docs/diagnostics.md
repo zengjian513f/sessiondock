@@ -86,11 +86,26 @@ carries `duration_ms`, `blocking_ms`, `render_ms`, `style_layout_ms`,
 `heap_mb` (`[used, total, limit]`, Chromium only), `dom_nodes`, the selected
 view, visibility, the audit queue length and the terminal state.
 
+`data.work[]` adds application-side synchronous phase timings for SDK history,
+Codex snapshots/events/stream paints, other native SDK snapshots, conversation
+mutation/resize observers and syntax-result application. Only phases taking at
+least 50 ms are retained (the latest 64); a frame includes at most 16 overlapping
+samples. Each records its phase, starting UID/view, elapsed time and relevant
+counts, never message text. `start_ms` is relative to the frame start. Nested
+phases overlap, so their durations must not be summed. A later frame does not
+inherit earlier, unrelated samples. Both long frames and DOM snapshots include
+SDK connection/item/history counts and separate live/history DOM counts.
+
+An empty `scripts` array does not exclude application JavaScript: observer or
+asynchronous work can lack useful browser attribution. The phase samples cover
+only their instrumented synchronous calls, not all browser work. Missing samples
+therefore do not prove a GPU, extension, network or browser-engine fault.
+
 The record is sent with `sendBeacon` the moment the observer fires, not
 through the batched queue: the browser process owns the request as soon as it
 is queued, so the record survives even when the next frame never ends. A page
-that freezes for good therefore leaves its last few, progressively longer
-frames in the log with the function that ran in each. The page registers no
+that freezes for good can retain earlier completed long frames, but an unfinished
+frame cannot report its final duration or application phase. The page registers no
 service worker for the same reason: a navigation to the same origin would wait
 for a worker started inside the existing, possibly frozen, page process.
 

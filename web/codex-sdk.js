@@ -175,8 +175,13 @@ const CodexSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
-      if (packet.type === 'snapshot') { this.applySnapshot(packet.raw); return; }
-      this.applyEvent(packet.method, packet.raw || {});
+      if (packet.type === 'snapshot') {
+        measureBrowserWork('codex.snapshot', () => this.applySnapshot(packet.raw),
+          {items: packet.raw?.items?.length || 0});
+        return;
+      }
+      measureBrowserWork('codex.event', () => this.applyEvent(packet.method, packet.raw || {}),
+        {method: packet.method, items: this.items.size});
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
@@ -599,7 +604,8 @@ const CodexSdkView = {
         this.streamItems.add(target.id);
       }
       if ((this.streamItems.size || retrying) && !this.streamTimer)
-        this.streamTimer = setTimeout(() => this.flushStreamPaint(), 32);
+        this.streamTimer = setTimeout(() => measureBrowserWork('codex.stream',
+          () => this.flushStreamPaint(), {items: this.streamItems.size}), 32);
       return;
     }
     this.flushStreamPaint();

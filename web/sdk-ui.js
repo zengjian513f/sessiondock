@@ -554,7 +554,8 @@ const SdkUI = {
       this.historyEntry = entry;
       this.historyData = {messages: entry.msgs, partial: entry.partial,
         activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
-      this.paintHistory();
+      measureBrowserWork('sdk.history', () => this.paintHistory(),
+        {source: this.uid.split(':')[0], messages: entry.msgs.length});
       if(this.connected)this.paintStatus();
     },
 

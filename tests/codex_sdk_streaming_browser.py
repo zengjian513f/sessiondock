@@ -70,6 +70,10 @@ def main():
                               'status':'inProgress','aggregatedOutput':''}]:
                     emit('item/started', {'item': item})
                 chunks = [f'{i:04d} 流式文本\n' for i in range(600)]
+                # Writing to the fake peer's socket does not mean Chromium has
+                # consumed the SSE packets yet. Wait for the final item before
+                # inspecting the earlier group or counting subsequent work.
+                expect(page.locator('[data-sdk-item="dense-tool"]')).to_be_attached()
                 page.evaluate('''() => {
                     window.toolbarChanges = 0;
                     window.toolbarObserver = new MutationObserver(records => toolbarChanges += records.length);

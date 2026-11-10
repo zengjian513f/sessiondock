@@ -219,7 +219,8 @@ const NativeSdkView = {
       }
       if (packet.type === 'snapshot' || packet.method === 'snapshot') {
         this.seq = packet.seq ?? this.seq;
-        this.applySnapshot(packet.raw || {});
+        measureBrowserWork('native.snapshot', () => this.applySnapshot(packet.raw || {}),
+          {source: this.uid.split(':')[0], items: packet.raw?.items?.length || 0});
       }
     });
     es.onerror = () => {

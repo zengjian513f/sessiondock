@@ -463,6 +463,29 @@ function flushBrowserAuditBeacon() {
 const LONG_FRAME_MIN_MS = 1000;
 const LONG_FRAME_MAX_EVENTS = 60;
 let longFrameCount = 0;
+// LoAF does not always attribute promise continuations and observer callbacks.
+// Keep only slow, synchronous application phases; never retain message bodies.
+const browserWorkSamples = [];
+function measureBrowserWork(phase, run, counts = {}) {
+  if (!SessionDockCapabilities.allows('audit')) return run();
+  const start = performance.now(), uid = S.sel, view = SessionContentView.kind || 'chat';
+  try { return run(); }
+  finally {
+    const duration = performance.now() - start;
+    if (duration >= 50) {
+      browserWorkSamples.push({phase, start_ms: start, duration_ms: duration, uid, view, ...counts});
+      if (browserWorkSamples.length > 64) browserWorkSamples.shift();
+    }
+  }
+}
+function sdkDiagnosticState() {
+  if (typeof SdkView === 'undefined' || SessionContentView.kind !== 'sdk' || !SdkView.pane) return null;
+  return {source: String(SdkView.uid || '').split(':')[0], connected: !!SdkView.connected,
+    items: SdkView.items?.size ?? SdkView.raw?.items?.length ?? 0,
+    history_messages: SdkView.historyData?.messages?.length || 0,
+    live_nodes: SdkView.live?.getElementsByTagName('*').length || 0,
+    history_nodes: SdkView.history?.getElementsByTagName('*').length || 0};
+}
 function longFrameEvent(entry) {
   const base = APP_BASE.href;
   const scripts = [...(entry.scripts || [])].slice(0, 8).map(script => ({
@@ -486,10 +509,17 @@ function longFrameEvent(entry) {
       render_ms: entry.renderStart ? Math.round(end - entry.renderStart) : 0,
       style_layout_ms: entry.styleAndLayoutStart ? Math.round(end - entry.styleAndLayoutStart) : 0,
       scripts,
+      // Nested phases overlap: their durations must not be added together.
+      work: browserWorkSamples.filter(sample => sample.start_ms < end
+        && sample.start_ms + sample.duration_ms > entry.startTime).slice(-16).map(sample => ({
+          ...sample, start_ms: Math.round(sample.start_ms - entry.startTime),
+          duration_ms: Math.round(sample.duration_ms),
+        })),
       heap_mb: memory ? [memory.usedJSHeapSize, memory.totalJSHeapSize, memory.jsHeapSizeLimit]
         .map(bytes => Math.round(bytes / 1048576)) : null,
       dom_nodes: document.getElementsByTagName('*').length,
       selected: S.sel, agent: S.agent, visibility: document.visibilityState,
+      sdk: sdkDiagnosticState(),
       audit_queue: browserAuditQueue.length, terminal: term,
     },
     content: null,
@@ -551,7 +581,7 @@ function browserStateSnapshot(reason = '') {
         visual_height: window.visualViewport?.height},
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
         anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
-      dom_messages: nodes.length, terminal: termState,
+      dom_messages: nodes.length, terminal: termState, sdk: sdkDiagnosticState(),
       live_status: {aggregate: S.live.has(S.sel), aggregate_sdk: S.liveSdk.has(S.sel),
         ...sessionLiveStatus(S.sel), marker: $('#dlive')?.className || ''},
       cli: typeof queuedSendDiagnostics === 'function' ? queuedSendDiagnostics() : null,
@@ -6307,10 +6337,10 @@ function observeMessageLayout(box, onLayout = () => {}) {
   // 内容高度变化 (展开消息、渲染完成、字体加载…) 时跟随
   if (window.ResizeObserver) {
     disposeMessageObservers(box);
-    const ro = new ResizeObserver(entries => {
+    const ro = new ResizeObserver(entries => measureBrowserWork('conversation.resize', () => {
       for (const entry of entries) entry.target._refreshClip?.();
       onLayout();
-    });
+    }, {entries: entries.length}));
     ro.observe(box);
     // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
     // 位于很早的消息里，加载或窄屏重排也会改变总高度，必须额外观察。
@@ -6331,14 +6361,14 @@ function observeMessageLayout(box, onLayout = () => {}) {
     ConversationUI.refreshToolTails(box);
     observeRich(box);
     box._ro = ro;
-    const mo = new MutationObserver(ms => {
+    const mo = new MutationObserver(ms => measureBrowserWork('conversation.mutations', () => {
       for (const m of ms) for (const n of m.addedNodes) {
         if (n.nodeType === 1) observeRich(n);
       }
       syncTail();
       ConversationUI.refreshToolTails(box);
       onLayout();
-    });
+    }, {mutations: ms.length}));
     mo.observe(box, { childList: true, subtree: true });
     box._mo = mo;
   }
@@ -10393,7 +10423,8 @@ function scheduleSyntax() {
     };
     try {
       syntaxWorker ||= new Worker(SessionDockAssets.url('syntax-worker.js'), {type: 'module'});
-      syntaxWorker.onmessage = event => finish(event.data);
+      syntaxWorker.onmessage = event => measureBrowserWork('syntax.apply', () => finish(event.data),
+        {characters: source.length, html_characters: event.data?.html?.length || 0});
       syntaxWorker.onerror = failed;
       // Optional decoration must not hold up other blocks indefinitely. The
       // complete original text stays readable even when a grammar stalls.

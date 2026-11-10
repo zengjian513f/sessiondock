@@ -80,6 +80,15 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-audit-browser-") as temporary:
         corpus = build_corpus(Path(temporary))
+        branch = corpus.paths['claude-branch']
+        records = [json.loads(line) for line in branch.read_text().splitlines()]
+        for record in records:
+            if record.get('uuid') == 'a0':
+                record['message']['content'] = [
+                    {'type': 'thinking', 'thinking': 'Synthetic process trace'},
+                    {'type': 'text', 'text': 'Claude selected answer'},
+                ]
+        branch.write_text(''.join(json.dumps(record) + '\n' for record in records))
         native_before = {path: path.read_bytes() for path in corpus.paths.values()}
         audit = corpus.root / "audit"
         audit.mkdir(mode=0o700)
@@ -166,6 +175,37 @@ def main():
                         assert time.monotonic() < deadline, "the synthetic long frame was never reported"
                         page.wait_for_timeout(100)
                     seen.add("browser.main_thread.long_frame")
+                    # An observer stall often has no useful LoAF script stack.
+                    # Click the real process disclosure and delay its layout
+                    # observer once; the persisted frame must name that phase.
+                    page.evaluate("""() => {
+                      const original = ConversationUI.refreshToolTails;
+                      ConversationUI.refreshToolTails = function(box) {
+                        ConversationUI.refreshToolTails = original;
+                        const start = performance.now();
+                        while (performance.now() - start < 1300) {}
+                        return original.call(this, box);
+                      };
+                    }""")
+                    page.locator('#a-turns').click()
+                    deadline = time.monotonic() + 15
+                    while True:
+                        measured = [row for row in audit_lines(audit)
+                                    if row['event'] == 'browser.main_thread.long_frame'
+                                    and any(work['phase'] == 'conversation.mutations'
+                                            and work['duration_ms'] >= 1000
+                                            for work in row['data'].get('work', []))]
+                        if measured:
+                            break
+                        assert time.monotonic() < deadline, 'observer stall lost application attribution'
+                        page.wait_for_timeout(100)
+                    work = next(work for work in measured[-1]['data']['work']
+                                if work['phase'] == 'conversation.mutations')
+                    assert work['uid'] == uid and work['view'] == 'chat' and work['mutations'] > 0, work
+                    # A later unrelated frame cannot inherit an old phase.
+                    later = page.evaluate("""() => longFrameEvent({startTime:performance.now()+1,
+                        duration:1200, scripts:[]}).data.work""")
+                    assert later == [], later
                     # Navigating away fires pagehide: the page flushes through sendBeacon.
                     page.goto(base + "/?second=1", wait_until="networkidle")
                     seen |= wait_for_events(page, audit, {"browser.page.hidden"})
