@@ -523,6 +523,10 @@ pub async fn models(
     } else {
         None
     };
-    let value = sdk.models(thread.as_deref()).await.map_err(rpc)?;
+    let refresh = matches!(
+        query.get("refresh").map(String::as_str),
+        Some("1" | "true")
+    );
+    let value = sdk.models(thread.as_deref(), refresh).await.map_err(rpc)?;
     Ok(Json(json!({"ok": true, "raw": value})))
 }

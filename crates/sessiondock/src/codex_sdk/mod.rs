@@ -198,6 +198,7 @@ pub(crate) struct Inner {
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
     stopped: Mutex<HashSet<String>>,
     models: Mutex<HashMap<u64, (Instant, Value)>>,
+    model_cache_path: Option<PathBuf>,
     account_read: tokio::sync::Mutex<Option<(Instant, AccountRead)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
@@ -269,6 +270,9 @@ impl CodexSdk {
         shutdown: CancellationToken,
         state_dir: Option<PathBuf>,
     ) -> std::io::Result<Arc<Self>> {
+        let model_cache_path = state_dir
+            .as_ref()
+            .map(|dir| dir.join("models/codex-sdk.json"));
         let queue = queue::Queue::open(state_dir.clone())?;
         let receipts = receipts::Receipts::open(state_dir.clone())?;
         let retention = retention::Retention::open(state_dir, &endpoint.socket)?;
@@ -282,6 +286,7 @@ impl CodexSdk {
                 threads: Mutex::new(HashMap::new()),
                 stopped: Mutex::new(HashSet::new()),
                 models: Mutex::new(HashMap::new()),
+                model_cache_path,
                 account_read: tokio::sync::Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
@@ -477,19 +482,62 @@ impl CodexSdk {
             .await
     }
 
-    pub async fn models(&self, thread_id: Option<&str>) -> Result<Value, RpcError> {
+    pub async fn models(&self, thread_id: Option<&str>, refresh: bool) -> Result<Value, RpcError> {
+        let fp = crate::model_cache::endpoint_fingerprint(
+            &format!(
+                "{}:{}",
+                self.inner.endpoint.socket.display(),
+                self.inner.endpoint.explicit
+            ),
+            Some(std::path::Path::new("codex")),
+        );
+        if thread_id.is_none() && !refresh {
+            let live_gen = self
+                .inner
+                .providers
+                .lock()
+                .await
+                .get("openai")
+                .map(|c| c.generation())
+                .or_else(|| {
+                    self.inner
+                        .connection
+                        .try_lock()
+                        .ok()
+                        .and_then(|g| g.as_ref().map(|c| c.generation()))
+                });
+            if let Some(generation) = live_gen
+                && let Some((at, value)) = self
+                    .inner
+                    .models
+                    .lock()
+                    .expect("models")
+                    .get(&generation)
+                    .cloned()
+                && at.elapsed() < MODEL_CACHE
+            {
+                return Ok(value);
+            }
+            if let Some(path) = &self.inner.model_cache_path
+                && let Some((_, value)) = crate::model_cache::load(path, &fp)
+                && crate::model_cache::has_models(&value)
+            {
+                return Ok(value);
+            }
+        }
         let connection = if let Some(id) = thread_id {
             self.inner.thread_connection(id).await?
         } else {
             self.inner.provider_connection("openai", true).await?
         };
-        if let Some((at, value)) = self
-            .inner
-            .models
-            .lock()
-            .expect("models")
-            .get(&connection.generation())
-            .cloned()
+        if !refresh
+            && let Some((at, value)) = self
+                .inner
+                .models
+                .lock()
+                .expect("models")
+                .get(&connection.generation())
+                .cloned()
             && at.elapsed() < MODEL_CACHE
         {
             return Ok(value);
@@ -498,6 +546,13 @@ impl CodexSdk {
         let mut cache = self.inner.models.lock().expect("models");
         cache.retain(|_, (at, _)| at.elapsed() < MODEL_CACHE);
         cache.insert(connection.generation(), (Instant::now(), value.clone()));
+        drop(cache);
+        if thread_id.is_none()
+            && crate::model_cache::has_models(&value)
+            && let Some(path) = &self.inner.model_cache_path
+        {
+            let _ = crate::model_cache::save(path, &fp, &value);
+        }
         Ok(value)
     }
 }

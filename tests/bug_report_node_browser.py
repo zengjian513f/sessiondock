@@ -389,24 +389,27 @@ def check_report_layout(page):
       const row = box('.report-row'), select = box('#bug-report-node-label');
       const sources = box('#bug-report-source'), model = box('#bug-report-model');
       const effort = box('.report-row .new-effort');
+      const refresh = box('#bug-report-model-refresh');
       const send = box('#bug-report-go');
       const spans = [...document.querySelectorAll('#bug-report-source label > span')]
         .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; });
       return {
         titles: [...document.querySelectorAll('#bug-report-source label')].map(l => l.title),
-        tops: [select.top, sources.top, model.top, effort.top].map(Math.round),
-        order: select.right <= sources.left + 1 && sources.right <= model.left + 1 && model.right <= effort.left + 1,
+        tops: [select.top, sources.top, model.top, effort.top, refresh.top].map(Math.round),
+        order: select.right <= sources.left + 1 && sources.right <= model.left + 1
+          && model.right <= effort.left + 1 && effort.right <= refresh.left + 1,
         wrapped: select.right <= sources.left + 1 && model.right <= effort.left + 1
-          && Math.max(select.bottom, sources.bottom) <= Math.min(model.top, effort.top),
+          && effort.right <= refresh.left + 1
+          && Math.max(select.bottom, sources.bottom) <= Math.min(model.top, effort.top, refresh.top),
         select_width: select.width,
         joined: spans.every((s, i) => !i || Math.abs(s[0] - spans[i - 1][1]) <= 0.5),
-        send_align: Math.abs(send.right - effort.right), inside: effort.right <= row.right + 1,
+        send_align: Math.abs(send.right - refresh.right), inside: refresh.right <= row.right + 1,
       };
     }""")
-    assert wide["titles"] == ["Claude", "Codex", "Grok", "Agy", "OpenCode"], wide
+    assert wide["titles"] == ["Codex", "Kiro", "Agy", "Grok", "Claude", "OpenCode"], wide
     # Preserve the restored 600px legacy dialog: five CLI icons put the
-    # model/effort controls on the next aligned row.
-    assert wide["tops"][0] == wide["tops"][1] and wide["tops"][2] == wide["tops"][3], wide
+    # model/effort/refresh controls on the next aligned row.
+    assert wide["tops"][0] == wide["tops"][1] and wide["tops"][2] == wide["tops"][3] == wide["tops"][4], wide
     assert wide["order"] or wide["wrapped"], wide
     assert wide["joined"], wide
     assert wide["select_width"] <= 140 and wide["inside"] and wide["send_align"] <= 1, wide

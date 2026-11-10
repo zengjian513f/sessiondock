@@ -35,6 +35,7 @@ pub(crate) mod list_sync;
 pub mod log;
 pub(crate) mod media;
 pub(crate) mod metadata;
+pub(crate) mod model_cache;
 mod native_replay;
 pub(crate) mod native_sdk;
 mod observe;
@@ -128,6 +129,7 @@ pub async fn prepare_app(
                     config.roots.codex.as_deref(),
                 )
                 .and_then(|endpoint| endpoint.tui_remote());
+                launcher.model_cache_dir = config.state_dir.as_ref().map(|dir| dir.join("models"));
                 Some(launcher)
             }
             (None, None) => None,

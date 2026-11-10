@@ -63,8 +63,8 @@ reply using a private HOME and loopback synthetic gateway ([Agy](agy.md)).
 The worker is the source's one
 configured CLI, selected exactly as `POST /api/term/create` selects it
 (`LifecycleService::entry_for`). The dialog has the new-session picker's
-model and effort controls, listing the worker machine's own catalog
-(`GET /api/term/models`); an optional `model`/`effort` in the body is passed
+model, effort, and model-refresh (`#bug-report-model-refresh`) controls, listing the worker machine's cached/persisted catalog
+(`POST /api/native-sdk/models`, `GET /api/codex-sdk/models`, or `GET /api/term/models`, with explicit refresh via `{refresh:true}` / `?refresh=1`); an optional `model`/`effort` in the body is passed
 to the worker CLI exactly like a new session's
 ([lifecycle-http.md](lifecycle-http.md#model-and-effort)), absent means the
 CLI's own default. A chosen value joins the replay payload, so the same

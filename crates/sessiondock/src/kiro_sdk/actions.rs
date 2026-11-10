@@ -594,16 +594,36 @@ impl Bridge {
         })
     }
 
+    pub(crate) fn live_models_catalog(&self) -> Option<Value> {
+        let sessions: Vec<Arc<Session>> =
+            self.sessions.lock().unwrap().values().cloned().collect();
+        for s in sessions {
+            let st = s.state.lock().unwrap();
+            let (mut list, cur, _) =
+                extract_models_from_config_options(&st.config_options, &st.models);
+            if !list.is_empty() {
+                let default_model = cur.or_else(|| st.model.clone());
+                ensure_model_in_list(&mut list, default_model.as_deref());
+                return Some(json!({
+                    "models": list,
+                    "default_model": default_model,
+                    "current_model": default_model,
+                    "model": default_model,
+                }));
+            }
+        }
+        None
+    }
+
     pub(super) async fn catalog_or_probe_models(
         &self,
         refresh: bool,
     ) -> (Vec<Value>, Option<String>) {
-        // A running session's live config_options are the authoritative, always
-        // fresh catalog and carry per-model effort metadata the CLI's
-        // `--list-models` never reports. Prefer them even under `refresh`
-        // (which only exists to bypass the time-based cache below): this gives
-        // the new-session/bug-report picker real effort choices and skips the
-        // multi-second CLI probe whenever a session of this source is live.
+        // A running session's live config_options carry per-model effort
+        // metadata the CLI's `--list-models` never reports. Use them directly
+        // unless an explicit refresh was requested, and merge their effort
+        // metadata onto refreshed CLI results.
+        let mut live_found: Option<(Vec<Value>, Option<String>)> = None;
         {
             let sessions: Vec<Arc<Session>> =
                 self.sessions.lock().unwrap().values().cloned().collect();
@@ -612,12 +632,15 @@ impl Bridge {
                 let (list, cur, _) =
                     extract_models_from_config_options(&st.config_options, &st.models);
                 if !list.is_empty() {
-                    return (list, cur.or_else(|| st.model.clone()));
+                    live_found = Some((list, cur.or_else(|| st.model.clone())));
+                    break;
                 }
             }
         }
-
         if !refresh {
+            if let Some(found) = live_found {
+                return found;
+            }
             if let Some(cached) = self.models_cache.lock().unwrap().as_ref()
                 && cached.at.elapsed() < Duration::from_secs(600)
                 && !cached.models.is_empty()
@@ -633,10 +656,21 @@ impl Bridge {
             .await
             .unwrap_or_default();
         if !cat.models.is_empty() {
+            let live_by_id: std::collections::HashMap<String, Value> = live_found
+                .as_ref()
+                .map(|(rows, _)| {
+                    rows.iter()
+                        .filter_map(|r| Some((r["id"].as_str()?.to_owned(), r.clone())))
+                        .collect()
+                })
+                .unwrap_or_default();
             let list: Vec<Value> = cat
                 .models
                 .iter()
                 .map(|m| {
+                    if let Some(live_row) = live_by_id.get(&m.id) {
+                        return live_row.clone();
+                    }
                     let mut row = json!({
                         "id": m.id,
                         "name": m.name,
@@ -651,14 +685,20 @@ impl Bridge {
                     row
                 })
                 .collect();
+            let default_model = cat
+                .default_model
+                .or_else(|| live_found.and_then(|(_, dm)| dm));
             *self.models_cache.lock().unwrap() = Some(CachedModels {
                 at: Instant::now(),
                 models: list.clone(),
-                default_model: cat.default_model.clone(),
+                default_model: default_model.clone(),
             });
-            return (list, cat.default_model);
+            return (list, default_model);
         }
 
+        if let Some(found) = live_found {
+            return found;
+        }
         // CLI catalog failure must not create a native session merely to populate
         // a picker. Keep any previously confirmed catalog; otherwise show none.
         if let Some(cached) = self.models_cache.lock().unwrap().as_ref() {

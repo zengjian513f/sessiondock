@@ -1040,6 +1040,8 @@ pub async fn complete_dir(
 #[derive(Deserialize)]
 pub struct ModelsQuery {
     source: Source,
+    #[serde(default)]
+    refresh: Option<String>,
 }
 /// The new-session picker's model and effort choices for one source's CLI.
 pub async fn models(
@@ -1049,7 +1051,11 @@ pub async fn models(
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let Query(query) = query.map_err(|_| invalid())?;
-    let catalog = service.models(query.source).await.map_err(failure)?;
+    let refresh = query
+        .refresh
+        .as_deref()
+        .is_some_and(|v| matches!(v, "1" | "true"));
+    let catalog = service.models(query.source, refresh).await.map_err(failure)?;
     response(json!(catalog), permit).await
 }
 

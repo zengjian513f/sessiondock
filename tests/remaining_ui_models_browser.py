@@ -11,6 +11,7 @@ from private_hosts import private_hosts
 from new_session_model_browser import CODEX_CACHE,GROK_CACHE,OPENCODE_MODELS,open_dialog
 from bug_report_node_browser import open_report
 from browser_evidence_fixtures import run_with_evidence
+from session_start_fixtures import choose_mode
 
 
 def main():
@@ -29,7 +30,10 @@ def main():
    browser=pw.chromium.launch(headless=True)
    try:
     for width in [1280,390]:
-     context=browser.new_context(viewport={'width':width,'height':900});page=context.new_page();page.goto(base,wait_until='networkidle');open_dialog(page)
+     context=browser.new_context(viewport={'width':width,'height':900});page=context.new_page();page.goto(base,wait_until='networkidle');page.wait_for_function('T.listLoaded')
+     choose_mode(page,'claude','cli')
+     for s in ['codex','grok','opencode','agy']:page.locator(f'[data-agent-start-mode="{s}"]').select_option('cli')
+     page.locator('#settings-dialog .modal-close').click();open_dialog(page)
      for source in ['claude','codex','grok','opencode','agy','shell']:
       radio=page.locator(f'input[name=new-source][value={source}]');radio.locator("..").click();expect(radio).to_be_checked()
       if source=='shell':expect(page.locator('#new-model')).to_be_disabled()

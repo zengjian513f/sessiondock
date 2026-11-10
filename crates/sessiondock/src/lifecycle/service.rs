@@ -534,7 +534,7 @@ impl LifecycleService {
     }
     /// Model catalog for the new-session picker: reads CLI caches or runs
     /// the CLI's own list command, bounded, under the same admission.
-    pub async fn models(&self, source: Source) -> Result<super::models::Catalog, Error> {
+    pub async fn models(&self, source: Source, refresh: bool) -> Result<super::models::Catalog, Error> {
         if self.stop.is_cancelled() {
             return Err(Error::Closed);
         }
@@ -545,7 +545,7 @@ impl LifecycleService {
         let launcher = self.launcher.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            launcher.models(source)
+            launcher.models(source, refresh)
         })
         .await
         .map_err(|_| Error::WorkerFailed)

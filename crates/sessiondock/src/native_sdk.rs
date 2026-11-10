@@ -49,6 +49,10 @@ pub struct NativeSdks {
     path: Option<PathBuf>,
     bindings: Mutex<BTreeMap<String, Value>>,
     binding_path: Option<PathBuf>,
+    model_cache_dir: Option<PathBuf>,
+    profiles: BTreeMap<String, crate::lifecycle::launcher::CliProfile>,
+    model_catalogs: Mutex<BTreeMap<String, (String, Value)>>,
+    model_locks: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
     input_queue: input_queue::Journal,
     queue_workers: Mutex<BTreeSet<String>>,
     stopped: Mutex<BTreeSet<String>>,
@@ -154,6 +158,23 @@ impl NativeSdks {
             _ => BTreeMap::new(),
         };
         let input_queue = input_queue::Journal::open(config.state_dir.as_ref())?;
+        let mut profiles = config
+            .launcher_config
+            .as_deref()
+            .and_then(|p| crate::lifecycle::launcher::read_config(p).ok())
+            .map(|cfg| {
+                cfg.profiles
+                    .into_iter()
+                    .map(|p| (p.source.as_str().to_owned(), p))
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        if let Some(catalog) = &kiro_catalog {
+            profiles
+                .entry("kiro".to_owned())
+                .or_insert_with(|| catalog.profile.clone());
+        }
+        let model_cache_dir = config.state_dir.as_ref().map(|dir| dir.join("models"));
         let sdks = Arc::new(Self {
             providers,
             lifecycle,
@@ -164,6 +185,10 @@ impl NativeSdks {
             path,
             bindings: Mutex::new(bindings),
             binding_path,
+            model_cache_dir,
+            profiles,
+            model_catalogs: Mutex::new(BTreeMap::new()),
+            model_locks: Mutex::new(BTreeMap::new()),
             input_queue,
             queue_workers: Mutex::new(BTreeSet::new()),
             stopped: Mutex::new(BTreeSet::new()),
@@ -595,6 +620,11 @@ impl NativeSdks {
             .providers
             .get(source)
             .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
+        if method == "models"
+            && (target["uid"].as_str().is_none_or(str::is_empty) || source == "agy")
+        {
+            return self.cached_models(source, bridge, &target, &input).await;
+        }
         if matches!(method, "create" | "fork") || (source == "droid" && method == "compact") {
             let rows = self.receipts.lock().expect("SDK receipts");
             if let Some(row) = rows.values().find(|row| {
@@ -815,6 +845,224 @@ impl NativeSdks {
                 result["capabilities"]["queue_steer"] = json!(true);
             }
         }
+        if method == "models" {
+            self.observe_session_models(source, bridge, &target, &result);
+        }
+        Ok(result)
+    }
+
+    fn model_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.model_locks
+            .lock()
+            .expect("SDK model locks")
+            .entry(key.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    fn models_cache_key_and_fp(&self, source: &str, target: &Value) -> (String, String) {
+        let base = self
+            .profiles
+            .get(source)
+            .map(crate::model_cache::profile_fingerprint)
+            .unwrap_or_else(|| crate::model_cache::endpoint_fingerprint(source, None));
+        if source == "opencode" {
+            let cwd = target["cwd"].as_str().unwrap_or_default();
+            (format!("opencode:{cwd}"), format!("{base}:{cwd}"))
+        } else {
+            (source.to_owned(), base)
+        }
+    }
+
+    fn save_model_catalog(&self, key: &str, source: &str, fp: &str, value: &Value) {
+        if !crate::model_cache::has_models(value) {
+            return;
+        }
+        self.model_catalogs
+            .lock()
+            .expect("SDK model catalogs")
+            .insert(key.to_owned(), (fp.to_owned(), value.clone()));
+        if let Some(dir) = &self.model_cache_dir {
+            let _ = crate::model_cache::save(&dir.join(format!("sdk-{source}.json")), fp, value);
+        }
+    }
+
+    fn agy_sdk_catalog(cat: &crate::lifecycle::models::Catalog) -> Value {
+        let models: Vec<_> = cat
+            .models
+            .iter()
+            .map(|m| {
+                json!({
+                    "id": m.id,
+                    "model": m.id,
+                    "name": m.name,
+                    "displayName": m.name,
+                    "efforts": m.efforts,
+                })
+            })
+            .collect();
+        json!({
+            "models": models,
+            "data": models,
+            "capabilities": {
+                "send": true,
+                "create": true,
+                "resume": true,
+                "stream": true,
+                "rename": true,
+                "interrupt": cfg!(unix),
+                "respond": false,
+                "approvals": false,
+                "questions": false,
+                "models": true,
+                "model_per_turn": true,
+                "shared_tui": false,
+                "usage": true,
+                "settings": true,
+                "mode": true,
+            },
+        })
+    }
+
+    fn kiro_sdk_catalog(cat: &crate::lifecycle::models::Catalog) -> Value {
+        let mut list: Vec<Value> = cat
+            .models
+            .iter()
+            .map(|m| {
+                let mut row = json!({
+                    "id": m.id,
+                    "name": m.name,
+                    "displayName": m.name,
+                    "efforts": m.efforts,
+                    "supportedReasoningEfforts": m.efforts,
+                });
+                if let Some(ref de) = m.default_effort {
+                    row["default_effort"] = json!(de);
+                    row["defaultReasoningEffort"] = json!(de);
+                }
+                row
+            })
+            .collect();
+        if let Some(dm) = cat
+            .default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            && !list
+                .iter()
+                .any(|item| item["id"].as_str() == Some(dm) || item["name"].as_str() == Some(dm))
+        {
+            list.insert(
+                0,
+                json!({
+                    "id": dm,
+                    "name": dm,
+                    "displayName": dm,
+                    "efforts": [],
+                    "supportedReasoningEfforts": [],
+                }),
+            );
+        }
+        json!({
+            "models": list,
+            "default_model": cat.default_model,
+            "current_model": cat.default_model,
+            "model": cat.default_model,
+        })
+    }
+
+    fn observe_session_models(
+        &self,
+        source: &str,
+        bridge: &Provider,
+        target: &Value,
+        result: &Value,
+    ) {
+        let (key, fp) = self.models_cache_key_and_fp(source, target);
+        match (source, bridge) {
+            ("kiro", Provider::Kiro(kb)) => {
+                if let Some(live_val) = kb.live_models_catalog() {
+                    self.save_model_catalog(&key, source, &fp, &live_val);
+                }
+            }
+            ("claude" | "codebuddy" | "droid" | "grok", _) => {
+                self.save_model_catalog(&key, source, &fp, result);
+            }
+            _ => {}
+        }
+    }
+
+    async fn cached_models(
+        &self,
+        source: &str,
+        bridge: &Provider,
+        target: &Value,
+        input: &Value,
+    ) -> Result<Value, String> {
+        let refresh = input["refresh"] == true;
+        let (key, fp) = self.models_cache_key_and_fp(source, target);
+        if !refresh
+            && source == "kiro"
+            && let Provider::Kiro(kb) = bridge
+            && let Some(live_val) = kb.live_models_catalog()
+        {
+            self.save_model_catalog(&key, source, &fp, &live_val);
+            return Ok(live_val);
+        }
+        let lock = self.model_lock(&key);
+        let _guard = lock.lock().await;
+        if !refresh {
+            if let Some((saved_fp, value)) = self
+                .model_catalogs
+                .lock()
+                .expect("SDK model catalogs")
+                .get(&key)
+                .cloned()
+                && saved_fp == fp
+                && crate::model_cache::has_models(&value)
+            {
+                return Ok(value);
+            }
+            if let Some(dir) = &self.model_cache_dir
+                && let Some((_, value)) =
+                    crate::model_cache::load(&dir.join(format!("sdk-{source}.json")), &fp)
+                && crate::model_cache::has_models(&value)
+            {
+                self.model_catalogs
+                    .lock()
+                    .expect("SDK model catalogs")
+                    .insert(key.clone(), (fp, value.clone()));
+                return Ok(value);
+            }
+            if source == "agy"
+                && let Some(service) = &self.lifecycle
+                && let Ok(cat) = service
+                    .models(crate::lifecycle::model::Source::Agy, false)
+                    .await
+                && !cat.models.is_empty()
+            {
+                let value = Self::agy_sdk_catalog(&cat);
+                self.save_model_catalog(&key, source, &fp, &value);
+                return Ok(value);
+            }
+            if source == "kiro"
+                && let Some(service) = &self.lifecycle
+                && let Ok(cat) = service
+                    .models(crate::lifecycle::model::Source::Kiro, false)
+                    .await
+                && !cat.models.is_empty()
+            {
+                let value = Self::kiro_sdk_catalog(&cat);
+                self.save_model_catalog(&key, source, &fp, &value);
+                return Ok(value);
+            }
+        }
+        let result = dispatch!(
+            bridge,
+            bridge,
+            bridge.call("models", target.clone(), input.clone()).await
+        )?;
+        self.save_model_catalog(&key, source, &fp, &result);
         Ok(result)
     }
 

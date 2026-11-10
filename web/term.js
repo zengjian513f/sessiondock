@@ -1576,18 +1576,20 @@ function nativeSdkModelCatalog(raw, source) {
   return source==='agy'?agyModelCatalog(catalog):catalog;
 }
 
-function fetchModelCatalog(node, source) {
+function fetchModelCatalog(node, source, options = {}) {
+  const refresh = options?.refresh === true;
   const key = (HUB_MODE ? node + '|' : '') + source + '|' + agentStartMode(source);
+  if (refresh) modelCatalogs.delete(key);
   if (!modelCatalogs.has(key)) {
     modelCatalogs.set(key, (async () => {
       try {
-        const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
+        const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {}), ...(refresh ? {refresh: '1'} : {})});
         const sdk = agentStartMode(source) === 'sdk' && source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
           && (!HUB_MODE || Nodes.capabilities[node]?.codex_sdk === true);
         const native = agentStartMode(source) === 'sdk' && nativeSdkAvailable(source, node);
         const response = native
           ? await fetch(appUrl('api/native-sdk/models'),{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({source,...(HUB_MODE?{_node:node}:{})}),cache:'no-store'})
+            body:JSON.stringify({source,...(HUB_MODE?{_node:node}:{}),...(refresh?{refresh:true}:{})}),cache:'no-store'})
           : await fetch(appUrl(`${sdk ? 'api/codex-sdk/models' : 'api/term/models'}?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
         if(native)return data ? nativeSdkModelCatalog(data.raw || data,source) : null;
@@ -1613,6 +1615,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const el = name => document.getElementById(`${prefix}-${name}`);
   const button = el('model'), label = el('model-label'), menu = el('model-menu');
   const search = el('model-search'), box = el('model-options'), select = el('effort');
+  const refreshBtn = el('model-refresh');
   const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
   const info = id => picker.catalog?.models.find(model => model.id === id
     || model.variants && Object.values(model.variants).includes(id)) || null;
@@ -1621,6 +1624,14 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     label.classList.toggle('default', !enabled);
     button.title = title;
     button.disabled = !enabled;
+  };
+  const setRefreshState = ({busy = false, disabled = busy, title = '刷新模型列表'} = {}) => {
+    if (!refreshBtn) return;
+    refreshBtn.disabled = disabled;
+    if (busy) refreshBtn.setAttribute('aria-busy', 'true');
+    else refreshBtn.removeAttribute('aria-busy');
+    refreshBtn.title = title;
+    refreshBtn.setAttribute('aria-label', title);
   };
   picker.apply = (model, effort, persist = false) => {
     const catalog = picker.catalog, chosen = info(model);
@@ -1657,23 +1668,42 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model});
     if (persist && (effort || source() === 'agy') && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
   };
-  picker.refresh = async () => {
+  picker.refresh = async (options = {}) => {
+    const force = options?.force === true;
     const current = source(), where = node(), seq = ++picker.seq;
     picker.close();
-    picker.key = (HUB_MODE ? where + '|' : '') + current;
+    const nextKey = (HUB_MODE ? where + '|' : '') + current;
+    if (!current || current === 'shell') {
+      picker.key = nextKey;
+      picker.catalog = null;
+      picker.model = picker.effort = '';
+      picker.apply('', '');
+      controls('模型不可用', '终端会话不选择模型', false);
+      setRefreshState({busy: false, disabled: true, title: '终端会话不选择模型'});
+      return;
+    }
+    const prevCatalog = force && picker.key === nextKey ? picker.catalog : null;
+    const prevModel = force && picker.key === nextKey ? picker.model : '';
+    const prevEffort = force && picker.key === nextKey ? picker.effort : '';
+    picker.key = nextKey;
     picker.catalog = null;
     picker.model = picker.effort = '';
     picker.apply('', '');
-    if (!current || current === 'shell') {
-      controls('模型不可用', '终端会话不选择模型', false);
+    controls(force ? '刷新模型…' : '读取模型…',
+      force ? '正在重新探测并更新该 CLI 的模型列表' : '正在读取该 CLI 的模型列表', false);
+    setRefreshState({busy: force, disabled: true, title: force ? '正在刷新模型列表…' : '正在读取模型列表…'});
+    const catalog = await fetchModelCatalog(where, current, {refresh: force});
+    if (seq !== picker.seq) return;
+    if (!catalog?.models?.length && prevCatalog) {
+      picker.catalog = prevCatalog;
+      picker.apply(prevModel, prevEffort);
+      setRefreshState({busy: false, disabled: false, title: '刷新失败，已保留原模型列表；点击重试'});
       return;
     }
-    controls('读取模型…', '正在读取该 CLI 的模型列表', false);
-    const catalog = await fetchModelCatalog(where, current);
-    if (seq !== picker.seq) return;
+    setRefreshState({busy: false, disabled: false, title: '刷新模型列表'});
     picker.catalog = catalog;
     const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '');
+    picker.apply(prevModel || saved.model || '', prevEffort || undefined);
     if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
   /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
@@ -1796,6 +1826,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (option) choose(Number(option.dataset.modelOption));
   };
   select.onchange = e => picker.apply(picker.model, e.currentTarget.value, true);
+  if (refreshBtn) refreshBtn.onclick = () => picker.refresh({force: true});
   const dialog = button.closest('dialog');
   dialog.addEventListener('pointerdown', e => {
     if (!button.parentElement.contains(e.target)) picker.close();

@@ -22,6 +22,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from hub_fixtures import FakeNode, Hub
 from private_hosts import private_hosts
+from session_start_fixtures import choose_mode
 
 OPENCODE_MODELS = [f"prov/model-{index:02d}" for index in range(12)] + ["prov/zeta-1", "other/deep/nested-2"]
 CODEX_CACHE = {"models": [
@@ -53,6 +54,13 @@ def wait_argv(log, predicate, timeout=15):
             return found[-1]
         time.sleep(0.1)
     raise AssertionError(f"no matching argv in {argv_lines(log)}")
+
+
+def cli_sources(page, sources=("claude", "codex", "grok", "opencode")):
+    choose_mode(page, sources[0], "cli")
+    for source in sources[1:]:
+        page.locator(f'[data-agent-start-mode="{source}"]').select_option("cli")
+    page.locator("#settings-dialog .modal-close").click()
 
 
 def open_dialog(page):
@@ -136,7 +144,7 @@ def create(page, cwd):
 
 
 def row_geometry(page):
-    return page.evaluate("""() => ['.new-source', '#new-model', '#new-effort', '#new-cwd', '#new-cwd-options']
+    return page.evaluate("""() => ['.new-source', '#new-model', '#new-effort', '#new-model-refresh', '#new-cwd', '#new-cwd-options']
         .map(s => { const r = document.querySelector(s).getBoundingClientRect();
           return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })""")
 
@@ -161,6 +169,7 @@ def check_catalog_source_change(browser, base):
     try:
         page.goto(base, wait_until="networkidle")
         page.wait_for_function("T.listLoaded")
+        cli_sources(page)
         open_dialog(page)
         pick_source(page, "claude")
         expect(page.locator("#new-model-label")).to_have_text("claude current")
@@ -209,6 +218,7 @@ def check_shared_effort(browser, binary, root):
         page = context.new_page()
         page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
         page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
+        cli_sources(page, ("codex",))
         # Old machine-specific effort is not a model preference.
         page.evaluate("""nid => store.set('newModel.' + nid + '|codex',
             {model: 'shared-a', effort: 'low'})""", nodes[0].nid)
@@ -237,6 +247,129 @@ def check_shared_effort(browser, binary, root):
         hub.stop()
         for node in nodes:
             node.stop()
+
+
+def check_persisted_cache_and_refresh(browser, binary, root):
+    sub = root / "persisted-refresh"
+    agy_home = sub / "home/.gemini/antigravity-cli"
+    for name in ("host", "work", "ledger", "state", "home", "agy", "audit", "reports"):
+        (sub / name).mkdir(parents=True, mode=0o700)
+    (sub / "agy/cli").mkdir(parents=True, mode=0o700)
+    (agy_home / "conversations").mkdir(parents=True, mode=0o700)
+    log = sub / "argv.jsonl"
+    models_file = sub / "agy-models.tsv"
+    slow_flag = sub / "slow-models"
+    models_file.write_text("agy-alpha-medium\tAlpha (Medium)\nagy-alpha-high\tAlpha (High)\n", encoding="utf-8")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(sub / "home"), "TERM": "xterm-256color",
+           "LANG": "C.UTF-8", "SESSIONDOCK_TEST_ARGV_LOG": str(log),
+           "SESSIONDOCK_TEST_MODELS_FILE": str(models_file),
+           "SESSIONDOCK_TEST_MODELS_SLOW": str(slow_flag)}
+    executable = str(Path(sys.executable).resolve())
+    profiles = [{"id": f"{source}-cli-v1", "source": source, "executable": executable,
+                 "args": [str(REPO / "tests/fake_model_cli.py")], "env": env}
+                for source in ("agy",)]
+    launcher = sub / "launcher.json"
+    launcher.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
+                                    "host_dir": str(sub / "host"), "adapters": [], "profiles": profiles}))
+    launcher.chmod(0o600)
+    initialized = subprocess.run([str(binary), "--initialize-lifecycle", str(sub / "ledger")],
+                                 cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+    assert initialized.returncode == 0, initialized.stderr.decode()
+    extra_env = {"SESSIONDOCK_NATIVE_SDKS": "on",
+                 "SESSIONDOCK_AGY_ROOT": str(sub / "agy"),
+                 "SESSIONDOCK_AGY_HOME": str(agy_home),
+                 "SESSIONDOCK_BUG_REPORT_DIR": str(sub / "reports"),
+                 "SESSIONDOCK_BUG_REPORT_REPO": str(sub / "work"),
+                 "SESSIONDOCK_BUG_REPORT_WORKER": "true"}
+
+    def model_probe_count():
+        return sum(1 for argv in argv_lines(log) if argv[:1] == ["models"])
+
+    with isolated_server(Corpus(sub), binary, host_dir=sub / "host", lifecycle_dir=sub / "ledger",
+                         launcher_config=launcher, state_dir=sub / "state", audit_dir=sub / "audit",
+                         extra_env=extra_env) as (base, _):
+        context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+        context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
+        page = context.new_page()
+        page.goto(base, wait_until="networkidle")
+        page.wait_for_function("T.listLoaded")
+
+        open_dialog(page)
+        pick_source(page, "agy")
+        expect(page.locator("#new-model-label")).to_have_text("选择模型")
+        choose_model(page, "Alpha")
+        expect(page.locator("#new-model-label")).to_have_text("Alpha")
+        assert (sub / "state/models/sdk-agy.json").is_file()
+        page.keyboard.press("Escape")
+
+        # Remote model update without changing CLI executable/profile: reopening
+        # uses persisted/memory cache immediately (0 new subprocess probes).
+        probes_before = model_probe_count()
+        models_file.write_text("agy-alpha-medium\tAlpha (Medium)\nagy-alpha-high\tAlpha (High)\nagy-omega\tOmega\n", encoding="utf-8")
+        open_dialog(page)
+        pick_source(page, "agy")
+        expect(page.locator("#new-model-label")).to_have_text("Alpha")
+        page.locator("#new-model").click()
+        expect(page.locator("#new-model-options [role=option]")).to_have_count(1)
+        page.keyboard.press("Escape")
+        assert model_probe_count() == probes_before, argv_lines(log)
+
+        # Clicking #new-model-refresh forces a fresh probe and updates disk cache.
+        with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/models")
+                                  and r.request.post_data_json.get("refresh") is True) as refreshed:
+            page.locator("#new-model-refresh").click()
+        assert refreshed.value.ok, refreshed.value.text()
+        expect(page.locator("#new-model")).to_be_enabled()
+        expect(page.locator("#new-model-refresh")).to_be_enabled()
+        assert model_probe_count() == probes_before + 1, argv_lines(log)
+        choose_model(page, "Omega")
+        expect(page.locator("#new-model-label")).to_have_text("Omega")
+
+        # Transient refresh failure keeps the previously loaded catalog and choice.
+        models_file.unlink()
+        page.locator("#new-model-refresh").click()
+        expect(page.locator("#new-model-refresh")).to_be_enabled()
+        expect(page.locator("#new-model-label")).to_have_text("Omega")
+        assert "刷新失败" in (page.locator("#new-model-refresh").get_attribute("title") or "")
+        page.keyboard.press("Escape")
+
+        # Report-bug dialog shares the persisted cache and has its own refresh button.
+        models_file.write_text("agy-alpha-high\tAlpha (High)\nagy-omega\tOmega\nagy-gamma\tGamma\n", encoding="utf-8")
+        page.locator('[data-report-bug]:visible').first.click()
+        page.locator('#bug-report-form label:has(input[name="bug-report-source"][value="agy"])').click()
+        expect(page.locator("#bug-report-model")).to_be_enabled()
+        with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/models")
+                                  and r.request.post_data_json.get("refresh") is True) as bug_refreshed:
+            page.locator("#bug-report-model-refresh").click()
+        assert bug_refreshed.value.ok, bug_refreshed.value.text()
+        page.locator("#bug-report-model").click()
+        page.locator("#bug-report-model-options [role=option]", has_text="Gamma").click()
+        expect(page.locator("#bug-report-model-label")).to_have_text("Gamma")
+        page.locator("#bug-report-dialog .modal-close").click()
+        context.close()
+
+    # Cold restart of SessionDock reuses `<state_dir>/models/*.json` immediately,
+    # never blocking on a slow (15s) `agy models` subprocess probe.
+    slow_flag.touch()
+    probes_before_restart = model_probe_count()
+    with isolated_server(Corpus(sub), binary, host_dir=sub / "host", lifecycle_dir=sub / "ledger",
+                         launcher_config=launcher, state_dir=sub / "state", audit_dir=sub / "audit",
+                         extra_env=extra_env) as (base2, _):
+        context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+        context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base2 + "/") else route.abort())
+        page = context.new_page()
+        page.goto(base2, wait_until="networkidle")
+        page.wait_for_function("T.listLoaded")
+        started = time.monotonic()
+        open_dialog(page)
+        pick_source(page, "agy")
+        expect(page.locator("#new-model")).to_be_enabled()
+        assert time.monotonic() - started < 3, "Cold restart should load models from disk cache immediately"
+        page.locator("#new-model").click()
+        names = page.locator("#new-model-options [role=option] > span").all_inner_texts()
+        assert "Gamma" in names, names
+        assert model_probe_count() == probes_before_restart, "Disk cache hit should not spawn `models` on restart"
+        context.close()
 
 
 def main():
@@ -290,6 +423,7 @@ def main():
             shot = (lambda name: page.screenshot(path=os.path.join(shots, f"model-{name}.png"))) if shots else (lambda name: None)
             page.goto(base, wait_until="networkidle")
             page.wait_for_function("T.listLoaded")
+            cli_sources(page)
             check_drag_selection(page, work)
 
             # ---- Claude: aliases, no search at five rows, effort list, one row on desktop.
@@ -297,12 +431,13 @@ def main():
             pick_source(page, "claude")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             expect(page.locator("#new-effort")).to_have_value("high")
-            tops = page.evaluate("""() => ['.new-source', '#new-model', '.new-effort']
+            tops = page.evaluate("""() => ['.new-source', '#new-model', '.new-effort', '#new-model-refresh']
                 .map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))""")
             assert len(set(tops)) == 1, tops
             widths = page.evaluate("""() => ['.new-model', '.new-effort']
                 .map(s => document.querySelector(s).getBoundingClientRect().width)""")
             assert abs(widths[0] - widths[1]) <= 2, widths
+            expect(page.locator("#new-model-refresh")).to_be_enabled()
             page.locator("#new-model").click()
             expect(page.locator("#new-model-search")).to_be_hidden()
             expect(page.locator("#new-model-options [role=option]")).to_have_count(4)
@@ -335,11 +470,12 @@ def main():
             page.reload(wait_until="networkidle")
             page.wait_for_function("T.listLoaded")
             open_dialog(page)
+            pick_source(page, "claude")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             expect(page.locator("#new-effort")).to_have_value("high")
             before = row_geometry(page)
             page.evaluate("""() => { window.__rows = []; const sample = () => {
-                window.__rows.push(['.new-source', '#new-model', '#new-effort', '#new-cwd', '#new-cwd-options']
+                window.__rows.push(['.new-source', '#new-model', '#new-effort', '#new-model-refresh', '#new-cwd', '#new-cwd-options']
                   .map(s => { const r = document.querySelector(s).getBoundingClientRect();
                     return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; }));
                 if (!window.__stop) requestAnimationFrame(sample); }; requestAnimationFrame(sample); }""")
@@ -520,11 +656,12 @@ def main():
             data = json.loads(prepared[prepared.index("--data") + 1])
             assert data["model"] == {"providerID": "other", "id": "deep/nested-2"}, data
 
-            # ---- SSH has no model: both controls stay in place, disabled.
+            # ---- SSH has no model: all three controls stay in place, disabled.
             open_dialog(page)
             page.locator('#new-session-form label:has(input[value="shell"])').click()
             expect(page.locator("#new-model")).to_be_disabled()
             expect(page.locator("#new-effort")).to_be_disabled()
+            expect(page.locator("#new-model-refresh")).to_be_disabled()
 
             # ---- Phone: model and effort wrap together below the agents, nothing overflows.
             page.set_viewport_size({"width": 390, "height": 844})
@@ -561,8 +698,8 @@ def main():
                 if listed["sources"].get("claude") is False or time.monotonic() > deadline:
                     break
                 time.sleep(0.2)
-            assert listed["sources"] == {"claude": False, "codex": True, "grok": True,
-                                         "opencode": True, "agy": False, "shell": True}, listed["sources"]
+            assert {k: listed["sources"][k] for k in ("claude", "codex", "grok", "opencode", "agy", "shell")} == {
+                "claude": False, "codex": True, "grok": True, "opencode": True, "agy": False, "shell": True}, listed["sources"]
             assert listed["resume_sources"]["claude"] is False, listed["resume_sources"]
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -570,6 +707,7 @@ def main():
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
             page.wait_for_function("T.listLoaded")
+            cli_sources(page)
             open_dialog(page)
             claude = page.locator('input[name="new-source"][value="claude"]')
             expect(claude).to_be_disabled()
@@ -581,6 +719,7 @@ def main():
             assert not errors, errors
             context.close()
         check_shared_effort(browser, args.binary.resolve(), root)
+        check_persisted_cache_and_refresh(browser, args.binary.resolve(), root)
         browser.close()
         pw.stop()
     print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, per-model effort shared across nodes, "

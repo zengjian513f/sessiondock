@@ -50,7 +50,7 @@ def exercise(browser, base, fixture, screenshots, baseline):
     page.wait_for_function("SdkView.pane && !SdkView.historyReady")
     start = time.monotonic()
     with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open")) as opened:
-        page.locator("#sdk-input").click()
+        page.locator("#sdk-composer .composer-run-action").click()
     elapsed = time.monotonic() - start
     print(f"Large replay: {elapsed:.3f}s, HTTP {opened.value.status}", flush=True)
     if baseline:
@@ -62,9 +62,9 @@ def exercise(browser, base, fixture, screenshots, baseline):
     # Quiet stderr must not add a 250 ms host long-poll per 64 KiB of replay.
     assert elapsed < 3, f"Replay still blocks startup: {elapsed:.3f}s"
     page.wait_for_function("SdkView.connected && !SdkView.raw.loading")
-    # No lost or duplicated replay messages, including frames spanning host reads.
+    # Live snapshots bound transfer to MAX_TURNS=40 user turns (80 items) while keeping the tail intact.
     items = page.evaluate("SdkView.items.map(i => i.text || i.content)")
-    assert len(items) == 400, len(items)
+    assert len(items) == 80, len(items)
     assert "回放记录 399" in json.dumps(items, ensure_ascii=False)
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-startup-ready.png"), full_page=True)
@@ -85,7 +85,7 @@ def exercise(browser, base, fixture, screenshots, baseline):
     page.locator("#a-sdk").click()
     page.wait_for_function("SdkView.pane && !SdkView.historyReady")
     with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/open")) as slow:
-        page.locator("#sdk-input").click()
+        page.locator("#sdk-composer .composer-run-action").click()
         page.wait_for_function("SdkView.openRead && !SdkView.readOnly")
         if screenshots:
             page.screenshot(path=str(screenshots / "kiro-startup-waiting.png"), full_page=True)
@@ -97,15 +97,26 @@ def exercise(browser, base, fixture, screenshots, baseline):
     (fixture.sessions / "slow-open").unlink()
     print("Slow native open (>10s): PASS", flush=True)
 
-    # The real new-session picker forces fresh models (subscription changes).
-    # Even an eleven-second CLI catalog must not block another session's SSE.
+    # Opening the picker serves the persisted/warmed catalog immediately; an
+    # explicit refresh (>10s) still runs off Tokio workers without blocking SSE.
     from new_session_model_browser import open_dialog
     (fixture.sessions / "slow-models").touch()
-    open_dialog(page)
-    page.locator("#new-node").select_option(page.evaluate("uid => nodeOf(uid)", uid))
-    with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/models") and r.request.post_data_json.get("source") == "kiro", timeout=25000) as models:
-        page.locator('label:has(input[name="new-source"][value="kiro"])').click()
-        page.wait_for_function("document.querySelector('#new-model').disabled")
+    cached_started = time.monotonic()
+    with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/models") and r.request.post_data_json.get("source") == "kiro", timeout=5000) as cached_models:
+        open_dialog(page)
+        page.locator("#new-node").select_option(page.evaluate("uid => nodeOf(uid)", uid))
+        if not page.locator('input[name="new-source"][value="kiro"]').is_checked():
+            page.locator('label:has(input[name="new-source"][value="kiro"])').click()
+    assert cached_models.value.ok, cached_models.value.text()
+    assert time.monotonic() - cached_started < 3, "Persisted catalog should not block on slow CLI probe"
+    expect(page.locator("#new-model")).to_be_enabled()
+    expect(page.locator("#new-model-refresh")).to_be_enabled()
+
+    with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/models")
+                              and r.request.post_data_json.get("source") == "kiro"
+                              and r.request.post_data_json.get("refresh") is True, timeout=25000) as models:
+        page.locator("#new-model-refresh").click()
+        page.wait_for_function("document.querySelector('#new-model').disabled && document.querySelector('#new-model-refresh').getAttribute('aria-busy') === 'true'")
         health_ms = page.evaluate("""async uid => {
           const started = performance.now();
           const result = await fetch(appUrl('api/native-sdk/usage'), {method:'POST',
@@ -116,6 +127,7 @@ def exercise(browser, base, fixture, screenshots, baseline):
         assert health_ms < 2000, f"Catalog blocked SDK requests: {health_ms}ms"
     assert models.value.ok, models.value.text()
     expect(page.locator("#new-model")).to_be_enabled()
+    expect(page.locator("#new-model-refresh")).to_be_enabled()
     page.locator("#new-model").click()
     page.locator('#new-model-options [title="claude-haiku-5.5"]').click()
     if screenshots:

@@ -332,6 +332,20 @@ impl Bridge {
             return self.create(&target, &input).await;
         }
         if method == "models" && target["uid"].as_str().is_none() {
+            if input["refresh"] != true {
+                let cached = self.sessions.lock().unwrap().values().find_map(|s| {
+                    let live = s.live.lock().unwrap();
+                    live.models["availableModels"]
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty())
+                        .then(|| {
+                            json!({"models":live.models["availableModels"],"native":live.models,"capabilities":{"models":true}})
+                        })
+                });
+                if let Some(value) = cached {
+                    return Ok(value);
+                }
+            }
             let cwd = required(&target, "cwd")?;
             let live = Arc::new(Mutex::new(Live::new(String::new())));
             let connection = self.connection(cwd, live, None).await?;

@@ -41,6 +41,15 @@ def main():
                             {"value":"low","default":False}]}}]}}}}),flush=True)
         return 0
     if sys.argv[1:2] == ["models"]:
+        if os.environ.get("SESSIONDOCK_TEST_MODELS_SLOW") and os.path.exists(os.environ["SESSIONDOCK_TEST_MODELS_SLOW"]):
+            time.sleep(15)
+        models_file = os.environ.get("SESSIONDOCK_TEST_MODELS_FILE")
+        if models_file:
+            if not os.path.exists(models_file):
+                return 1
+            with open(models_file, encoding="utf-8") as source:
+                print(source.read(), end="")
+            return 0
         print(os.environ.get("SESSIONDOCK_TEST_MODELS", ""))
         return 0
     if sys.argv[1:2] == ["api"]:

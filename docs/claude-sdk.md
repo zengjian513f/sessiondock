@@ -33,7 +33,7 @@
 | `turn` | 把 `{type:"user",uuid,session_id,message:{role:"user",content:text}}` 写入原生 stdin；返回 `{accepted,request_id,session_id,message_id}` |
 | `interrupt` | 原生 `{subtype:"interrupt"}` 控制请求；回执说明原生控制已确认，实际结束由原生 result/state 事件更新；保留原生 `still_queued` 等结果于 `raw` |
 | `respond` | 按原生 request ID 回送一条 `control_response`；已取消或已回答的卡片返回 request-gone 错误 |
-| `models` | 使用 `initialize.response.models`；保留原生字段并添加 `id/name/efforts` 对应 `value/displayName/supportedEffortLevels`。无 uid 时用仅初始化的临时原生进程查询，之后清理该进程 |
+| `models` | 使用 `initialize.response.models`；保留原生字段并添加 `id/name/efforts` 对应 `value/displayName/supportedEffortLevels`。无 uid 时优先复用已打开会话或 `<SESSIONDOCK_STATE_DIR>/models/sdk-claude.json` 持久缓存；仅首次未命中或显式 `{refresh:true}` 时启动仅初始化的临时原生进程查询并清理该进程 |
 | `discard` | 仅空闲时释放桥接运行时与 pending create 缓存；保留所有原生历史 |
 | `settings` | 显式更新 `permission_mode/fast_mode/model/effort`；逐项等待原生确认，仅更新进程级设置。必填 `request_id`；相同请求不重放已尝试的控制 |
 | `usage` | 查询 `get_context_usage {detail:"summary"}` 和实验性 `get_usage {skip_behaviors:true}`；失败按字段降级并保留最近有效数据 |

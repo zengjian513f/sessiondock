@@ -3,7 +3,7 @@
 //! configured providers' models, Claude has no list and takes aliases. Nothing
 //! here is a policy: the chosen model is passed to the CLI, which decides.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     io::{BufRead, Read, Write},
@@ -40,21 +40,24 @@ const EFFORT_ORDER: [&str; 9] = [
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto",
 ];
 
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub efforts: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
 }
 
-#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Catalog {
+    #[serde(default)]
     pub models: Vec<Model>,
     /// Levels offered while the CLI's own default model stays selected.
+    #[serde(default)]
     pub efforts: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
 }
 
@@ -96,17 +99,24 @@ const CACHE_FRESH: Duration = Duration::from_secs(600);
 
 struct Cached {
     at: Instant,
+    stale: bool,
+    fingerprint: String,
     catalog: Catalog,
     refreshing: bool,
 }
 
+type CodexBundledEntry = (String, Option<serde_json::Value>, Option<String>);
+
 /// Catalogs of CLIs whose list command may contact the network (Agy,
-/// OpenCode) and take seconds. Cache-file catalogs stay uncached. An empty
-/// result (failure or timeout) never replaces a listed one.
+/// OpenCode) and take seconds. Persisted under `<SESSIONDOCK_STATE_DIR>/models/`
+/// when configured so restarts serve immediately without blocking on probes.
+/// An empty result (failure or timeout) never replaces a listed one.
 #[derive(Clone, Default)]
 pub struct CatalogCache {
     entries: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Cached>>>,
+    codex_bundled: std::sync::Arc<std::sync::Mutex<BTreeMap<String, CodexBundledEntry>>>,
     ready: std::sync::Arc<std::sync::Condvar>,
+    cache_dir: Option<PathBuf>,
 }
 
 fn slow(source: Source) -> bool {
@@ -122,17 +132,86 @@ fn slow(source: Source) -> bool {
 }
 
 impl CatalogCache {
+    pub fn new(cache_dir: Option<PathBuf>) -> Self {
+        Self {
+            cache_dir,
+            ..Self::default()
+        }
+    }
+
+    fn disk_path(&self, profile: &CliProfile) -> Option<PathBuf> {
+        self.cache_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("cli-{}.json", profile.source.as_str())))
+    }
+
+    fn load_disk_entry(&self, profile: &CliProfile, fingerprint: &str) -> Option<(bool, Catalog)> {
+        let path = self.disk_path(profile)?;
+        let (updated_at_ms, value) = crate::model_cache::load(&path, fingerprint)?;
+        let catalog: Catalog = serde_json::from_value(value).ok()?;
+        if catalog.models.is_empty() {
+            return None;
+        }
+        let fresh = crate::model_cache::now_ms().saturating_sub(updated_at_ms)
+            < CACHE_FRESH.as_millis() as u64;
+        Some((fresh, catalog))
+    }
+
     /// The profile's catalog: cached when present (refreshed in the
-    /// background once stale), otherwise listed now.
-    pub fn get(&self, profile: &CliProfile) -> Catalog {
+    /// background once stale), or forced fresh when `force_refresh` is true.
+    pub fn get(&self, profile: &CliProfile, force_refresh: bool) -> Catalog {
+        if profile.source == Source::Codex {
+            let mut cat = self.codex_cached(profile, force_refresh);
+            if cat.efforts.is_empty() {
+                cat.efforts = merged_efforts(&cat.models);
+            }
+            return cat;
+        }
         if !slow(profile.source) {
             return catalog(profile);
         }
+        if force_refresh {
+            return self.refresh(profile);
+        }
+        let fp = crate::model_cache::profile_fingerprint(profile);
+        let disk_seed = {
+            let needs_disk = self
+                .entries
+                .lock()
+                .ok()
+                .is_some_and(|entries| entries.get(&profile.id).is_none_or(|e| e.fingerprint != fp));
+            if needs_disk {
+                self.load_disk_entry(profile, &fp)
+            } else {
+                None
+            }
+        };
         let Ok(mut entries) = self.entries.lock() else {
             return catalog(profile);
         };
+        if entries.get(&profile.id).is_none_or(|e| e.fingerprint != fp)
+            && let Some((fresh, cat)) = disk_seed
+        {
+            entries.insert(
+                profile.id.clone(),
+                Cached {
+                    at: Instant::now(),
+                    stale: !fresh,
+                    fingerprint: fp.clone(),
+                    catalog: cat.clone(),
+                    refreshing: !fresh,
+                },
+            );
+            drop(entries);
+            if !fresh {
+                self.spawn_refresh(profile.clone());
+            }
+            return cat;
+        }
         loop {
-            if let Some(entry) = entries.get_mut(&profile.id) {
+            if let Some(entry) = entries.get_mut(&profile.id)
+                && entry.fingerprint == fp
+            {
                 // Join startup warming instead of launching a second network
                 // request. A previously listed catalog never needs to wait.
                 if entry.refreshing && entry.catalog.models.is_empty() {
@@ -142,7 +221,7 @@ impl CatalogCache {
                     };
                     continue;
                 }
-                if entry.at.elapsed() >= CACHE_FRESH && !entry.refreshing {
+                if (entry.stale || entry.at.elapsed() >= CACHE_FRESH) && !entry.refreshing {
                     entry.refreshing = true;
                     self.spawn_refresh(profile.clone());
                 }
@@ -152,6 +231,8 @@ impl CatalogCache {
                 profile.id.clone(),
                 Cached {
                     at: Instant::now(),
+                    stale: false,
+                    fingerprint: fp.clone(),
                     catalog: Catalog::default(),
                     refreshing: true,
                 },
@@ -166,19 +247,54 @@ impl CatalogCache {
     /// open after start-up reads memory.
     pub fn warm<'a>(&self, profiles: impl IntoIterator<Item = &'a CliProfile>) {
         for profile in profiles.into_iter().filter(|profile| slow(profile.source)) {
+            let fp = crate::model_cache::profile_fingerprint(profile);
+            let disk_seed = {
+                let needs_disk = self.entries.lock().ok().is_some_and(|entries| {
+                    entries.get(&profile.id).is_none_or(|e| e.fingerprint != fp)
+                });
+                if needs_disk {
+                    self.load_disk_entry(profile, &fp)
+                } else {
+                    None
+                }
+            };
             if let Ok(mut entries) = self.entries.lock() {
                 match entries.get_mut(&profile.id) {
-                    Some(entry) if entry.refreshing || entry.at.elapsed() < CACHE_FRESH => continue,
-                    Some(entry) => entry.refreshing = true,
-                    None => {
-                        entries.insert(
-                            profile.id.clone(),
-                            Cached {
-                                at: Instant::now(),
-                                catalog: Catalog::default(),
-                                refreshing: true,
-                            },
-                        );
+                    Some(entry)
+                        if entry.fingerprint == fp
+                            && (entry.refreshing
+                                || (!entry.stale && entry.at.elapsed() < CACHE_FRESH)) =>
+                    {
+                        continue;
+                    }
+                    Some(entry) if entry.fingerprint == fp => entry.refreshing = true,
+                    _ => {
+                        if let Some((fresh, cat)) = disk_seed {
+                            entries.insert(
+                                profile.id.clone(),
+                                Cached {
+                                    at: Instant::now(),
+                                    stale: !fresh,
+                                    fingerprint: fp,
+                                    catalog: cat,
+                                    refreshing: !fresh,
+                                },
+                            );
+                            if fresh {
+                                continue;
+                            }
+                        } else {
+                            entries.insert(
+                                profile.id.clone(),
+                                Cached {
+                                    at: Instant::now(),
+                                    stale: false,
+                                    fingerprint: fp,
+                                    catalog: Catalog::default(),
+                                    refreshing: true,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -194,14 +310,21 @@ impl CatalogCache {
     }
 
     fn refresh(&self, profile: &CliProfile) -> Catalog {
+        let fp = crate::model_cache::profile_fingerprint(profile);
         let listed = catalog(profile);
+        if !listed.models.is_empty()
+            && let Some(path) = self.disk_path(profile)
+            && let Ok(value) = serde_json::to_value(&listed)
+        {
+            let _ = crate::model_cache::save(&path, &fp, &value);
+        }
         let Ok(mut entries) = self.entries.lock() else {
             return listed;
         };
         let listed = if listed.models.is_empty() {
             entries
                 .get(&profile.id)
-                .filter(|entry| !entry.catalog.models.is_empty())
+                .filter(|entry| entry.fingerprint == fp && !entry.catalog.models.is_empty())
                 .map(|entry| entry.catalog.clone())
                 .unwrap_or(listed)
         } else {
@@ -211,12 +334,82 @@ impl CatalogCache {
             profile.id.clone(),
             Cached {
                 at: Instant::now(),
+                stale: false,
+                fingerprint: fp,
                 catalog: listed.clone(),
                 refreshing: false,
             },
         );
         self.ready.notify_all();
         listed
+    }
+
+    fn codex_cached(&self, profile: &CliProfile, force_refresh: bool) -> Catalog {
+        let home = cli_home(profile, "CODEX_HOME", ".codex");
+        let cache = read_json(&home.join("models_cache.json"));
+        let mut fp = crate::model_cache::profile_fingerprint(profile);
+        if let Some(test_bundled) = profile_env(profile, "SESSIONDOCK_TEST_CODEX_BUNDLED") {
+            let meta = std::fs::metadata(&test_bundled)
+                .ok()
+                .map(|m| {
+                    let ns = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    format!("{}:{ns}", m.len())
+                })
+                .unwrap_or_else(|| "missing".into());
+            fp.push('|');
+            fp.push_str(&meta);
+        }
+        let cached_pair = (!force_refresh)
+            .then(|| {
+                self.codex_bundled
+                    .lock()
+                    .ok()?
+                    .get(&profile.id)
+                    .filter(|(saved_fp, _, _)| saved_fp == &fp)
+                    .map(|(_, b, v)| (b.clone(), v.clone()))
+            })
+            .flatten();
+        let (bundled, version) = if let Some(pair) = cached_pair {
+            pair
+        } else {
+            let bundled = run_bounded(
+                profile,
+                &home,
+                &["debug", "models", "--bundled"],
+                Duration::from_secs(3),
+            )
+            .and_then(|output| serde_json::from_str::<serde_json::Value>(&output).ok())
+            .filter(|value| value.get("models").is_some_and(serde_json::Value::is_array));
+            let version = bundled
+                .as_ref()
+                .and_then(|_| run_bounded(profile, &home, &["--version"], Duration::from_secs(3)))
+                .and_then(|value| value.split_whitespace().nth(1).map(str::to_owned));
+            if let Ok(mut map) = self.codex_bundled.lock() {
+                map.insert(profile.id.clone(), (fp, bundled.clone(), version.clone()));
+            }
+            (bundled, version)
+        };
+        let selected = if let Some(bundled) = bundled {
+            if version.is_some()
+                && cache
+                    .as_ref()
+                    .and_then(|value| value.get("client_version"))
+                    .and_then(serde_json::Value::as_str)
+                    == version.as_deref()
+            {
+                cache
+            } else {
+                Some(bundled)
+            }
+        } else {
+            cache
+        };
+        codex_catalog(&home, selected)
     }
 }
 

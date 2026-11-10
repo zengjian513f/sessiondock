@@ -606,6 +606,18 @@ impl Bridge {
             return self.create(&target, &input);
         }
         if method == "models" && target["uid"].as_str().is_none() {
+            if input["refresh"] != true {
+                let cached = lock(&self.state).sessions.values().find_map(|s| {
+                    let models = lock(&s.live).models.clone();
+                    models
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty())
+                        .then_some(models)
+                });
+                if let Some(models) = cached {
+                    return Ok(json!({"models":models,"capabilities":capabilities()}));
+                }
+            }
             self.native_home()?;
             let cwd = target["cwd"]
                 .as_str()

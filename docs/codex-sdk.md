@@ -236,7 +236,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); no implicit steering |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
-| GET `/api/codex-sdk/models?uid=` | `model/list` on the selected provider connection (cached 5 minutes per connection) |
+| GET `/api/codex-sdk/models?uid=&refresh=` | `model/list` on the selected provider connection (cached 5 minutes per connection and persisted across restarts under `<SESSIONDOCK_STATE_DIR>/models/codex-sdk.json` when `uid` is omitted; `refresh=1` forces a fresh `model/list`) |
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
 | POST `/api/codex-sdk/turns` `{uid, cursor?}` | `thread/turns/list`, newest first, with summary items and native pagination |

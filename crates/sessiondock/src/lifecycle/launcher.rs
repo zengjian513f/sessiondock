@@ -77,6 +77,10 @@ pub struct Config {
     /// the file: managed Codex terminals join the shared daemon.
     #[serde(skip)]
     pub codex_remote: Option<crate::codex_sdk::TuiRemote>,
+    /// Private state subdirectory (`<SESSIONDOCK_STATE_DIR>/models`) for
+    /// persisted CLI model catalogs across service restarts.
+    #[serde(skip)]
+    pub model_cache_dir: Option<PathBuf>,
 }
 
 /// One real CLI installation. `args` is the fixed prefix. Legacy `new_args`
@@ -518,7 +522,7 @@ impl Launcher {
             entries,
             missing: std::sync::Mutex::new(missing),
             updates: super::clients::Updates::default(),
-            catalogs: super::models::CatalogCache::default(),
+            catalogs: super::models::CatalogCache::new(config.model_cache_dir),
             codex_remote: config.codex_remote,
         })
     }
@@ -578,13 +582,13 @@ impl Launcher {
     }
     /// The model catalog of the source's one CLI profile; empty when the
     /// source has no unique profile.
-    pub fn models(&self, source: Source) -> super::models::Catalog {
+    pub fn models(&self, source: Source, refresh: bool) -> super::models::Catalog {
         let mut profiles = self
             .profiles
             .values()
             .filter(|profile| profile.source == source);
         match (profiles.next(), profiles.next()) {
-            (Some(profile), None) => self.catalogs.get(profile),
+            (Some(profile), None) => self.catalogs.get(profile, refresh),
             _ => super::models::Catalog::default(),
         }
     }
@@ -1375,7 +1379,7 @@ fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
 /// that updated itself since the service started (Windows rewrites `claude.exe`
 /// in place, Unix re-targets `~/.local/bin/claude`) launches its current file;
 /// only a path that no longer names a usable executable is refused.
-pub(super) fn current_executable(configured: &Path) -> Result<PathBuf, Error> {
+pub(crate) fn current_executable(configured: &Path) -> Result<PathBuf, Error> {
     let resolved = resolved_executable(configured)?;
     check_executable(&resolved)?;
     Ok(resolved)
