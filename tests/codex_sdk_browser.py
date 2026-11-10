@@ -106,13 +106,15 @@ def server(corpus, binary, app_socket, extra_env=None):
 
 def open_sdk(page, corpus, expect):
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
-    expect(page.locator("#msgs")).to_contain_text("earlier synthetic answer")
     sdk = page.locator("#a-sdk")
     expect(sdk).to_be_visible()
-    sdk.click()
+    if sdk.get_attribute("aria-pressed") != "true":
+        expect(page.locator("#msgs")).to_contain_text("earlier synthetic answer")
+        sdk.click()
     expect(sdk).to_have_attribute("aria-pressed", "true")
     pane = page.locator("#session-content-view.sdk-pane")
     expect(pane).to_be_visible()
+    expect(pane.locator(".sdk-history")).to_contain_text("earlier synthetic answer")
     expect(page.locator("#composer")).to_be_hidden()
     return pane
 
@@ -185,6 +187,9 @@ def usage_opening_check(browser, corpus, base, expect, screenshots):
         expect(week.locator('b')).to_have_text('9%')
         expect(week).to_have_attribute('title', re.compile('上次记录'))
         expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text('20%')
+        deadline = time.time() + 5
+        while time.time() < deadline and not (limits and snapshots):
+            page.wait_for_timeout(10)
         assert limits and snapshots, 'the fresh read and live snapshot must still be pending'
         assert not page.evaluate('CodexSdkView.connected'), 'gauges must not claim a live connection'
         page.locator('#sdk-input').fill('Draft while account usage refresh is pending')
@@ -572,6 +577,14 @@ def browser_check(corpus, base, fake, screenshots=None):
             browser.close()
 
 
+class LoadedAppServer(FakeAppServer):
+    async def _handle(self, writer, message):
+        if message.get("method") == "thread/loaded/list":
+            await self.send(writer, {"id": message["id"], "result": {"data": [self.thread_id], "nextCursor": None}})
+            return
+        await super()._handle(writer, message)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -581,7 +594,7 @@ def main():
         root = Path(temporary)
         corpus = build(root)
         app_socket = root / "app-server.sock"
-        with FakeAppServer(app_socket, corpus.paths["sdk"], THREAD) as fake:
+        with LoadedAppServer(app_socket, corpus.paths["sdk"], THREAD) as fake:
             with server(corpus, args.binary, app_socket) as base:
                 browser_check(corpus, base, fake, args.screenshots)
     print("PASS Codex SDK view: history bubbles, model/effort override, streaming, approval across reload, "

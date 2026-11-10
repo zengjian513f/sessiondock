@@ -65,9 +65,9 @@ def main():
                     stack.callback(context.close)
                     page = context.new_page()
                     page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
-                    page.wait_for_function('S.sessions.length === 4')
                     if not page.evaluate('S.nest'):
                         page.locator("#nest-toggle").click()
+                    page.wait_for_function('S.sessions.length === 4')
                     def depth(uid, value):
                         page.wait_for_function('([uid, depth]) => document.querySelector(`#side .item[data-uid="${uid}"]`)?.dataset.depth === String(depth)', arg=[uid, value])
                     def action(uid, act):
@@ -102,9 +102,12 @@ def main():
                     # The hub forwards the compact mode to real nodes; cross-node children vanish too.
                     with page.expect_response(lambda response: '/api/sessions?children=hidden' in response.url) as compact:
                         page.locator('#nest-hidden').click()
-                    compact_rows = compact.value.json()['sessions']
-                    assert len(compact_rows) == 3 and all(row['uid'] != child for row in compact_rows)
+                    assert compact.value.ok
                     page.wait_for_function('S.sessions.length === 3')
+                    status, _, raw = hub.request('GET', '/api/sessions?children=hidden')
+                    assert status == 200, (status, raw)
+                    compact_rows = json.loads(raw)['sessions']
+                    assert len(compact_rows) == 3 and all(row['uid'] != child for row in compact_rows)
                     assert page.locator(f'#side .item[data-uid="{child}"]').count() == 0
                     # Remote child counts preserve its parent's arrow; expansion only opens that branch.
                     compact_parent = next(row for row in compact_rows if row['uid'] == (twin if restart else parent))

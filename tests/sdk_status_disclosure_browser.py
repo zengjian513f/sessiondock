@@ -67,6 +67,9 @@ def native(browser, base, source, events, shots):
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         context.route('**/api/native-sdk/open', lambda r: r.fulfill(json={'ok': True, 'capabilities': {}}))
+        context.route('**/api/native-sdk/list*', lambda r: r.fulfill(json={'ok': True, 'sessions': []}))
+        context.route('**/api/native-sdk/models*', lambda r: r.fulfill(json={'ok': True, 'raw': []}))
+        context.route('**/api/native-sdk/usage', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
         context.route('**/api/native-sdk/events?*', lambda r: r.continue_(url=events.url))
         states = [
             ({}, '就绪', None),
@@ -136,6 +139,7 @@ def native(browser, base, source, events, shots):
                 page.screenshot(path=str(shots / f'{source}-conversation-{width}-{theme}-{value}.png'))
             page.keyboard.press('Escape')
         assert not errors, errors
+        context.unroute_all(behavior='ignoreErrors')
         context.close()
     print(f'PASS {source}: SDK and conversation states, mouse/keyboard, widths/themes', flush=True)
 
@@ -157,6 +161,7 @@ def codex(browser, base, corpus, fake, shots):
         page = context.new_page()
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
+        context.route('**/api/codex-sdk/goal/*', lambda r: r.fulfill(json={'ok': True, 'raw': {'goal': None}}))
         select_source(page, base, 'codex')
         if not page.locator('#sdk-input').is_visible():
             page.locator('#a-sdk').click()
@@ -189,6 +194,7 @@ def codex(browser, base, corpus, fake, shots):
         check_status(page, status, menu, '处理中')
         page.screenshot(path=str(shots / f'codex-working-{width}-{theme}.png'))
         assert not errors, errors
+        context.unroute_all(behavior='ignoreErrors')
         context.close()
     print('PASS codex: states, error details, live dismissal, widths/themes', flush=True)
 

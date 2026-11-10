@@ -117,7 +117,7 @@ DELTA（BUG-20261020-155723-71869d）：四种原生 SDK 的新建回执缺少�
 | --- | --- |
 | POST `/api/native-sdk/create` | `{source, request_id, cwd, create_cwd?, model?, effort?}`；原生创建，返回 UID、SID、session 与能力 |
 | POST `/api/native-sdk/open` | `{uid, agent?}`；恢复原生会话，返回能力 |
-| GET `/api/native-sdk/events?uid=&agent=` | SSE `sdk` 事件：原子快照与订阅，之后持续发布快照；Kiro 可带 `snapshot_delta=1` 接收首次快照与后续增量；滞后时要求重连 |
+| GET `/api/native-sdk/events?uid=&agent=` | SSE `sdk` 事件：原子快照与订阅，之后持续发布快照；可带 `snapshot_delta=1` 接收首次快照与后续增量；滞后时要求重连 |
 | POST `/api/native-sdk/turn` | `{uid, agent?, request_id, text, attachments?, quotes?, model?, effort?}`；先持久排队再调用原生 |
 | POST `/api/native-sdk/stop` | `{uid, agent?}`；取消待投递输入并停止所选桥接，保留原生历史和共享服务 |
 | POST `/api/native-sdk/interrupt` | `{uid, agent?}`；原生中断，只针对桥接所属任务 |

@@ -250,14 +250,64 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+struct PreparedResources {
+    raw: Resources,
+    active_sessions: std::sync::OnceLock<Vec<Value>>,
+    inactive: std::sync::OnceLock<Resources>,
+}
+impl PreparedResources {
+    fn new(mut raw: Resources, report: &Report) -> Self {
+        let processes: BTreeSet<_> = raw.samples.iter().map(|sample| &sample.process).collect();
+        raw.bindings = report
+            .bindings
+            .iter()
+            .filter(|binding| processes.contains(&binding.process))
+            .cloned()
+            .collect();
+        raw.sessions.clear();
+        Self {
+            raw,
+            active_sessions: std::sync::OnceLock::new(),
+            inactive: std::sync::OnceLock::new(),
+        }
+    }
+    fn rebind(&self, report: &Report) -> Self {
+        Self::new(self.raw.clone(), report)
+    }
+    fn raw(&self) -> &Resources {
+        &self.raw
+    }
+    fn active_sessions(&self) -> &[Value] {
+        self.active_sessions
+            .get_or_init(|| process_links::resource_summary::sessions(&self.raw))
+    }
+    fn inactive(&self) -> &Resources {
+        self.inactive.get_or_init(|| {
+            let mut resources = self.raw.clone();
+            let unavailable = metric(Value::Null, "unavailable", "临时探测未开启或正在启动");
+            for sample in &mut resources.samples {
+                for (name, _, _, _) in IO_METRICS {
+                    sample.metrics.insert(name.into(), unavailable.clone());
+                }
+            }
+            for (name, _, _, _) in IO_METRICS {
+                resources
+                    .metric_availability
+                    .insert(name.into(), unavailable.clone());
+            }
+            resources.sessions = process_links::resource_summary::sessions(&resources);
+            resources
+        })
+    }
+}
+
 // Capture immutable snapshots under the attribution lock. Large boot-long
 // connection histories and resource aggregation must not hold up sampling.
 enum Response {
     Value(Value),
     Report(Arc<Report>),
     Resources {
-        resources: Arc<Resources>,
-        report: Arc<Report>,
+        resources: Arc<PreparedResources>,
         diagnostic: Value,
         io_active: bool,
     },
@@ -311,46 +361,50 @@ impl Response {
             )?,
             Self::Resources {
                 resources,
-                report,
                 diagnostic,
                 io_active,
             } => {
-                let mut resources = (*resources).clone();
-                let processes: BTreeSet<_> = resources
-                    .samples
-                    .iter()
-                    .map(|sample| &sample.process)
-                    .collect();
-                resources.bindings = report
-                    .bindings
-                    .iter()
-                    .filter(|binding| processes.contains(&binding.process))
-                    .cloned()
-                    .collect();
-                if !io_active {
-                    for sample in &mut resources.samples {
-                        for (name, _, _, _) in IO_METRICS {
-                            sample.metrics.insert(
-                                name.into(),
-                                metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
-                            );
-                        }
-                    }
-                    for (name, _, _, _) in IO_METRICS {
-                        resources.metric_availability.insert(
-                            name.into(),
-                            metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
-                        );
-                    }
+                #[derive(serde::Serialize)]
+                struct ResourcesWire<'a, M: serde::Serialize> {
+                    version: u32,
+                    node_id: &'a str,
+                    boot_id: &'a str,
+                    sampled_at: f64,
+                    availability: &'a str,
+                    method: &'a str,
+                    samples: &'a [Sample],
+                    unavailable: &'a [String],
+                    bindings: &'a [process_links::Binding],
+                    metric_availability: &'a BTreeMap<String, Value>,
+                    sessions: &'a [Value],
+                    session_measurements: &'a [M],
+                    diagnostic: &'a Value,
                 }
-                resources.sessions = process_links::resource_summary::sessions(&resources);
-                let mut value = json!(resources);
-                value["diagnostic"] = diagnostic;
+                let (view, sessions) = if io_active {
+                    (resources.raw(), resources.active_sessions())
+                } else {
+                    let inactive = resources.inactive();
+                    (inactive, inactive.sessions.as_slice())
+                };
                 serde_json::to_writer(
                     writer,
                     &Envelope {
                         ok: true,
-                        result: value,
+                        result: ResourcesWire {
+                            version: view.version,
+                            node_id: &view.node_id,
+                            boot_id: &view.boot_id,
+                            sampled_at: view.sampled_at,
+                            availability: &view.availability,
+                            method: &view.method,
+                            samples: &view.samples,
+                            unavailable: &view.unavailable,
+                            bindings: &view.bindings,
+                            metric_availability: &view.metric_availability,
+                            sessions,
+                            session_measurements: &view.session_measurements,
+                            diagnostic: &diagnostic,
+                        },
                     },
                 )?;
             }
@@ -375,7 +429,7 @@ struct State {
     engine: Engine,
     snapshot: Snapshot,
     report: Arc<Report>,
-    resources: Arc<Resources>,
+    resources: Arc<PreparedResources>,
     status: CollectorStatus,
     usage: PublishedUsage,
     forks: u64,
@@ -391,15 +445,16 @@ impl State {
             self.status.clone(),
         ));
         self.snapshot = snapshot;
-        self.resources = Arc::new(resources);
+        self.resources = Arc::new(PreparedResources::new(resources, &self.report));
         self.publish_report();
     }
     fn refresh(&mut self) {
         self.report = Arc::new(self.engine.update(
             &self.snapshot,
-            self.resources.sampled_at,
+            self.resources.raw().sampled_at,
             self.status.clone(),
         ));
+        self.resources = Arc::new(self.resources.rebind(&self.report));
         self.publish_report();
     }
     fn publish_report(&self) {
@@ -467,7 +522,6 @@ impl State {
                 let diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
                 Ok(Response::Resources {
                     resources: self.resources.clone(),
-                    report: self.report.clone(),
                     diagnostic: diagnostic.value(),
                     io_active: diagnostic.state == "active"
                         && diagnostic.deadline.is_some_and(|d| d > Instant::now()),
@@ -558,10 +612,28 @@ const IO_METRICS: [(&str, io_events::IoKind, &str, bool); 10] = [
     ),
 ];
 
+#[derive(Clone, Copy, Default)]
+struct IoBucket {
+    present: bool,
+    bytes_sum: f64,
+    operations_sum: f64,
+}
+
+fn io_kind_index(kind: io_events::IoKind) -> usize {
+    match kind {
+        io_events::IoKind::LocalRead => 0,
+        io_events::IoKind::LocalWrite => 1,
+        io_events::IoKind::TcpReceive => 2,
+        io_events::IoKind::TcpSend => 3,
+        io_events::IoKind::NfsRead => 4,
+        io_events::IoKind::NfsWrite => 5,
+    }
+}
+
 #[derive(Clone)]
 struct IoWindow {
     status: &'static str,
-    samples: Vec<io_events::IoSample>,
+    indexed: Arc<BTreeMap<Process, [IoBucket; 6]>>,
     received: Option<Instant>,
     sampled_at: f64,
     generation: Option<u64>,
@@ -572,7 +644,7 @@ impl IoWindow {
     fn new(enabled: bool) -> Self {
         Self {
             status: if enabled { "warming_up" } else { "unavailable" },
-            samples: Vec::new(),
+            indexed: Arc::default(),
             received: None,
             sampled_at: 0.0,
             generation: None,
@@ -585,13 +657,21 @@ impl IoWindow {
             io_events::Event::Ready => self.status = "warming_up",
             io_events::Event::Failed => {
                 self.status = "unavailable";
-                self.samples.clear();
+                self.indexed = Arc::default();
             }
             io_events::Event::Batch {
                 generation,
                 samples,
             } => {
-                self.samples = samples;
+                let mut map: BTreeMap<Process, [IoBucket; 6]> = BTreeMap::new();
+                for sample in samples {
+                    let slot =
+                        &mut map.entry(sample.process).or_default()[io_kind_index(sample.kind)];
+                    slot.present = true;
+                    slot.bytes_sum += sample.bytes as f64;
+                    slot.operations_sum += sample.operations as f64;
+                }
+                self.indexed = Arc::new(map);
                 self.status = "partial";
                 self.received = Some(Instant::now());
                 self.sampled_at = now();
@@ -663,24 +743,20 @@ impl IoWindow {
         }
         let value = process
             .map(|process| {
-                let rows: Vec<_> = self
-                    .samples
-                    .iter()
-                    .filter(|s| s.process == *process && s.kind == kind)
-                    .collect();
-                if lost > 0 && rows.is_empty() {
+                let bucket = self
+                    .indexed
+                    .get(process)
+                    .map(|buckets| buckets[io_kind_index(kind)])
+                    .unwrap_or_default();
+                if lost > 0 && !bucket.present {
                     Value::Null
                 } else {
-                    json!(
-                        rows.iter()
-                            .map(|s| if operations {
-                                s.operations as f64
-                            } else {
-                                s.bytes as f64
-                            })
-                            .sum::<f64>()
-                            / 2.0
-                    )
+                    let sum = if operations {
+                        bucket.operations_sum
+                    } else {
+                        bucket.bytes_sum
+                    };
+                    json!(sum / 2.0)
                 }
             })
             .unwrap_or(Value::Null);
@@ -698,10 +774,23 @@ impl IoWindow {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PriorSample {
+    cpu_seconds: f64,
+    read_bytes: Option<u64>,
+    write_bytes: Option<u64>,
+}
+
+struct PriorSnapshot {
+    boot_id: String,
+    at: Instant,
+    samples: BTreeMap<Process, PriorSample>,
+}
+
 #[derive(Default)]
 struct ResourceSampler {
     writes: crate::thread_writes::ThreadWrites,
-    previous: Option<(Resources, Instant)>,
+    previous: Option<PriorSnapshot>,
 }
 type PssCache = BTreeMap<Process, (Option<u64>, f64)>;
 #[derive(Clone, Default)]
@@ -733,13 +822,8 @@ impl ResourceSampler {
         let previous = self
             .previous
             .as_ref()
-            .filter(|(r, _)| r.boot_id == snapshot.boot_id);
-        let elapsed = previous.map(|(_, at)| sampled.duration_since(*at).as_secs_f64());
-        let previous: BTreeMap<_, _> = previous
-            .into_iter()
-            .flat_map(|(r, _)| &r.samples)
-            .map(|s| (&s.process, s))
-            .collect();
+            .filter(|prior| prior.boot_id == snapshot.boot_id);
+        let elapsed = previous.map(|prior| sampled.duration_since(prior.at).as_secs_f64());
         let observation = &slow_cache.gpu;
         let (gpu_status, gpu_reason) = if root != Path::new("/proc") {
             (
@@ -782,7 +866,7 @@ impl ResourceSampler {
                 continue;
             };
             sample.write_bytes = self.writes.sample(root, &entry.process);
-            let prior = previous.get(&sample.process).copied();
+            let prior = previous.and_then(|prior| prior.samples.get(&sample.process).copied());
             sample.metrics.insert(
                 "cpu_cores".into(),
                 rate(
@@ -1022,7 +1106,25 @@ impl ResourceSampler {
         if fresh {
             result.session_measurements = bandwidth.rows.clone();
         }
-        self.previous = Some((result.clone(), sampled));
+        let prior_samples = result
+            .samples
+            .iter()
+            .map(|sample| {
+                (
+                    sample.process.clone(),
+                    PriorSample {
+                        cpu_seconds: sample.cpu_seconds,
+                        read_bytes: sample.read_bytes,
+                        write_bytes: sample.write_bytes,
+                    },
+                )
+            })
+            .collect();
+        self.previous = Some(PriorSnapshot {
+            boot_id: result.boot_id.clone(),
+            at: sampled,
+            samples: prior_samples,
+        });
         result
     }
 }
@@ -1250,8 +1352,8 @@ pub fn run() -> io::Result<()> {
         published_report: published_report.clone(),
         engine,
         snapshot,
+        resources: Arc::new(PreparedResources::new(data, &report)),
         report,
-        resources: Arc::new(data),
         status,
         usage: published_usage.clone(),
         forks: 0,
@@ -1506,7 +1608,7 @@ pub fn run() -> io::Result<()> {
                 let resources = s.resources.clone();
                 let report = s.report.clone();
                 drop(s);
-                usage.observe(&resources, &report);
+                usage.observe(resources.raw(), &report);
                 sampled = Instant::now();
             }
             if saved_at.elapsed() >= Duration::from_secs(30) {

@@ -450,6 +450,9 @@ def main():
                 assert all(item.get("id") != "ghost" and item.get("title") != "Ghost child title"
                            and "agent-ghost" not in item.get("path", "")
                            for row in listed for item in row.get("agent_items") or [])
+                if page.evaluate('S.childMode') == 'hidden':
+                    page.locator("#nest-flat").click()
+                    page.wait_for_function("S.childMode === 'shown' && S.sessions.some(s => (s.agent_items || []).length)")
                 expect(page.locator("#side")).not_to_contain_text("Ghost child title")
                 for sid, question, answer, agents in owner_groups:
                     row = by_uid[corpus.uid(sid)]

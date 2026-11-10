@@ -113,13 +113,16 @@ const CodexSdkView = {
     if (!this.pane) return;
     const row = this.pane.querySelector('.sdk-status-row'), gauges = this.pane.querySelector('.sdk-gauges');
     this.toolbarWidth = width ?? row.clientWidth;
-    const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
+    const more = this.pane.querySelector('#sdk-more-menu');
     const usage = this.pane.querySelector('#sdk-usage-toggle');
-    row.insertBefore(gauges, usage);
-    row.insertBefore(this.pane.querySelector('.sdk-credits'),usage);
-    usage.hidden = true;
+    const credits = this.pane.querySelector('.sdk-credits');
+    if (gauges && (gauges.parentElement !== row || gauges.nextElementSibling !== credits)) row.insertBefore(gauges, usage);
+    if (credits && (credits.parentElement !== row || credits.nextElementSibling !== usage)) row.insertBefore(credits, usage);
+    if (!usage.hidden) usage.hidden = true;
     const buttons = ['fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
-    more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
+    const permissions = this.pane.querySelector('#sdk-permissions'), reset = this.pane.querySelector('.sdk-reset');
+    if (permissions && permissions.parentElement !== more) more.append(permissions);
+    if (reset && (reset.parentElement !== more || reset.previousElementSibling !== permissions)) more.append(reset);
     SdkUI.layoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
       .map(selector => this.pane.querySelector(selector))
       .concat([...this.pane.querySelectorAll('.sdk-policy')], buttons));
@@ -260,7 +263,7 @@ const CodexSdkView = {
       if(!this.current(generation) || this.connected)return;
       this.cachedUsage=data.usage;this.recordedAt=data.captured_at;this.recordedModel=data.model;
       const recorded=data.recorded_limits;
-      if(!this.limits && recorded?.rateLimits) {
+      if(!this.limitsFresh && !this.limits && recorded?.rateLimits) {
         this.limits=recorded.rateLimits;this.limitsRecordedAt=recorded.capturedAt || '';
       }
       this.paintGauges();this.paintPickers();
@@ -609,30 +612,119 @@ const CodexSdkView = {
       return;
     }
     this.flushStreamPaint();
-    SdkUI.ungroupTools(this);
+    if (method === 'bridge/stopped') {
+      SdkView.stopped(this.uid, this.agent);
+      return;
+    }
+    if (method === 'bridge/reset') {
+      this.setConnected(false);
+      queueUiChange({live: true});
+      this.setNotice('重连中', 'connecting');
+      this.es?.close();
+      this.scheduleReconnect();
+      return;
+    }
     // Do not move a disclosure away from the pointer between press and release.
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
-    const item = raw.item;
     switch (method) {
-      case 'bridge/stopped':
-        SdkView.stopped(this.uid, this.agent);
-        return;
       case 'bridge/capacityRetry':
         if (this.summary) this.summary.capacity_retry = raw.delay_seconds ? raw : null;
         this.paintStatus();
-        break;
+        return;
       case 'bridge/queue':
         if (this.summary) { this.summary.queue = raw.queue; this.summary.accepted = raw.accepted; }
         this.paintQueue();
-        break;
-      case 'bridge/reset':
-        this.setConnected(false);
-        queueUiChange({live: true});
-        this.setNotice('重连中', 'connecting');
-        this.es?.close();
-        this.scheduleReconnect();
+        CodexSdkQuestions.paint(this);
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        if (stick) this.scrollBottom();
         return;
-      case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
+      case 'thread/resumed':
+        this.summary = raw.summary || this.summary;
+        this.paintPickers();
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        return;
+      case 'thread/status/changed':
+        if (this.summary) this.summary.status = raw.status;
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        return;
+      case 'thread/goal/updated':
+        CodexSdkGoal.updated(this, raw.goal);
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        return;
+      case 'thread/goal/cleared':
+        CodexSdkGoal.updated(this, null);
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        return;
+      case 'thread/settings/updated':
+        if (this.summary) this.summary.settings = raw.threadSettings;
+        this.paintPickers();
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        return;
+      case 'thread/name/updated':
+        if (this.summary?.resume?.thread) this.summary.resume.thread.name = raw.threadName;
+        void loadSessions(true, true);
+        return;
+      case 'thread/tokenUsage/updated':
+        if (this.summary) this.summary.usage = raw.tokenUsage;
+        this.paintStatus();
+        return;
+      case 'account/rateLimits/updated':
+        // Inference notifications can keep a previous plan's quota scale even
+        // when their reset window matches the current account. Both increases
+        // and decreases must be confirmed; receipt time is not measurement time.
+        // Do not broadcast these sparse, unversioned measurements as snapshots.
+        if (raw.rateLimits && !this.limitsRetryTimer) void this.loadLimits();
+        return;
+      case 'error':
+        if (this.summary) {
+          this.summary.retry_error = raw.willRetry === true ? raw.error : null;
+          this.summary.last_error = raw.willRetry === true ? null : raw.error;
+        }
+        this.paintStatus();
+        return;
+    }
+    const item = raw.item;
+    if (method === 'item/started' || method === 'item/completed') {
+      const old = item?.id ? this.nodes.get(item.id) : null;
+      const preview = !item?.id || this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
+      if ((!old && !preview) || (old && preview && old._updateMessage && old.dataset.role === preview.role)) {
+        if (this.summary) this.summary.retry_error = null;
+        if (item?.type === 'contextCompaction')
+          item.status = method === 'item/started' ? 'inProgress' : 'completed';
+        if (item?.id) {
+          this.items.set(item.id, item);
+          if (old && preview) {
+            this.paintItem(item);
+            markMatches(old);
+            updateMatchNav();
+          }
+        }
+        CodexSdkQuestions.paint(this);
+        CodexSdkActions.paint(this);
+        CodexSdkControls.paint(this);
+        this.paintStatus();
+        if (stick) this.scrollBottom();
+        return;
+      }
+    }
+    if (!['turn/started', 'turn/completed', 'thread/reverted', 'item/started', 'item/completed',
+          'serverRequest/resolved'].includes(method) && !SDK_REQUEST_METHODS.has(method)) {
+      return;
+    }
+    SdkUI.ungroupTools(this);
+    switch (method) {
       case 'turn/started':
         this.turn = raw.turn; this.items.clear(); this.replayOmitted = new Set();
         if (this.summary) { this.summary.last_error = null; this.summary.retry_error = null; this.summary.last_turn = null; }
@@ -666,28 +758,6 @@ const CodexSdkView = {
         this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
         break;
       }
-      case 'thread/status/changed': if (this.summary) this.summary.status = raw.status; break;
-      case 'thread/goal/updated': CodexSdkGoal.updated(this, raw.goal); break;
-      case 'thread/goal/cleared': CodexSdkGoal.updated(this, null); break;
-      case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintPickers(); break;
-      case 'thread/name/updated':
-        if (this.summary?.resume?.thread) this.summary.resume.thread.name = raw.threadName;
-        void loadSessions(true, true);
-        break;
-      case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
-      case 'account/rateLimits/updated':
-        // Inference notifications can keep a previous plan's quota scale even
-        // when their reset window matches the current account. Both increases
-        // and decreases must be confirmed; receipt time is not measurement time.
-        // Do not broadcast these sparse, unversioned measurements as snapshots.
-        if (raw.rateLimits && !this.limitsRetryTimer) void this.loadLimits();
-        break;
-      case 'error':
-        if (this.summary) {
-          this.summary.retry_error = raw.willRetry === true ? raw.error : null;
-          this.summary.last_error = raw.willRetry === true ? null : raw.error;
-        }
-        break;
       default:
         if (SDK_REQUEST_METHODS.has(method)) {
           const request = {key: raw.key, method, params: raw.params || {}};
@@ -717,12 +787,15 @@ const CodexSdkView = {
     if (!this.pane) { this.streamItems.clear(); return; }
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
     const groups = new Set();
+    let mountedChanged = false;
     for (const id of this.streamItems) {
       const item = this.items.get(id);
-      const group = this.nodes.get(id)?.closest('.sdk-tool-group');
+      const before = this.nodes.get(id);
+      const group = before?.closest('.sdk-tool-group');
       if (group) groups.add(group);
       if (item) this.paintItem(item);
       const node = this.nodes.get(id);
+      if (Boolean(before) !== Boolean(node)) mountedChanged = true;
       if (node) markMatches(node);
     }
     this.streamItems.clear();
@@ -732,6 +805,7 @@ const CodexSdkView = {
       group._toolItems = [...group.querySelectorAll(':scope > [data-sdk-item]')].map(node => node._sdkToolMessage);
       group._refreshToolTail?.();
     }
+    if (mountedChanged) ConversationUI.refreshToolTails(this.box);
     updateMatchNav();
     if (this.streamStatusDirty) this.paintStatus();
     this.streamStatusDirty = false;

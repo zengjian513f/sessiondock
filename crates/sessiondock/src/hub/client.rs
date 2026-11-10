@@ -16,15 +16,17 @@
 //! `request_failure`) and never the URL, the token or upstream text.
 
 use std::{
+    collections::HashMap,
     fmt, io,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::TcpStream,
@@ -200,6 +202,105 @@ pub struct Request<'a> {
     pub idle: Duration,
 }
 
+const POOL_MAX_IDLE_PER_TARGET: usize = 4;
+const POOL_MAX_TARGETS: usize = 64;
+const POOL_IDLE_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PoolKey {
+    addr: SocketAddr,
+    tls: bool,
+    token_hash: [u8; 32],
+}
+
+impl PoolKey {
+    fn from_target(target: &Target) -> Self {
+        Self {
+            addr: target.addr,
+            tls: target.tls,
+            token_hash: Sha256::digest(target.token.as_bytes()).into(),
+        }
+    }
+}
+
+struct PooledEntry {
+    stream: UpstreamStream,
+    idle_since: Instant,
+}
+
+#[derive(Default)]
+struct ConnectionPool {
+    buckets: HashMap<PoolKey, Vec<PooledEntry>>,
+}
+
+impl fmt::Debug for ConnectionPool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectionPool")
+            .field("targets", &self.buckets.len())
+            .finish()
+    }
+}
+
+impl ConnectionPool {
+    fn evict_expired(&mut self, now: Instant) {
+        self.buckets.retain(|_, entries| {
+            entries.retain(|entry| now.saturating_duration_since(entry.idle_since) < POOL_IDLE_TTL);
+            !entries.is_empty()
+        });
+    }
+
+    fn checkout(&mut self, key: &PoolKey) -> Option<UpstreamStream> {
+        let now = Instant::now();
+        self.evict_expired(now);
+        let mut selected = None;
+        if let Some(entries) = self.buckets.get_mut(key) {
+            while let Some(mut entry) = entries.pop() {
+                if entry.stream.is_reusable_idle() {
+                    selected = Some(entry.stream);
+                    break;
+                }
+            }
+            if entries.is_empty() {
+                self.buckets.remove(key);
+            }
+        }
+        selected
+    }
+
+    fn checkin(&mut self, key: PoolKey, mut stream: UpstreamStream) {
+        if !stream.is_reusable_idle() {
+            return;
+        }
+        let now = Instant::now();
+        self.evict_expired(now);
+        if !self.buckets.contains_key(&key)
+            && self.buckets.len() >= POOL_MAX_TARGETS
+            && let Some(oldest_key) = self
+                .buckets
+                .iter()
+                .filter_map(|(k, v)| v.first().map(|entry| (k.clone(), entry.idle_since)))
+                .min_by_key(|(_, since)| *since)
+                .map(|(k, _)| k)
+        {
+            self.buckets.remove(&oldest_key);
+        }
+        let entries = self.buckets.entry(key).or_default();
+        if entries.len() >= POOL_MAX_IDLE_PER_TARGET {
+            entries.remove(0);
+        }
+        entries.push(PooledEntry {
+            stream,
+            idle_since: now,
+        });
+    }
+}
+
+/// Complete buffered response from a short Hub → node HTTP request.
+pub(crate) struct BufferedResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
 /// Timeouts every registry request uses; tests shorten them.
 #[derive(Clone, Debug)]
 pub struct Client {
@@ -212,6 +313,8 @@ pub struct Client {
     /// Shared admission for JSON decoding and fleet aggregation. The permit
     /// belongs to the actual blocking job, including after HTTP cancellation.
     jobs: Arc<tokio::sync::Semaphore>,
+    /// Bounded HTTP/1.1 keep-alive pool strictly for short buffered requests.
+    pool: Arc<Mutex<ConnectionPool>>,
 }
 
 impl Default for Client {
@@ -225,6 +328,7 @@ impl Default for Client {
                     .map_or(4, usize::from)
                     .clamp(2, 8),
             )),
+            pool: Arc::new(Mutex::new(ConnectionPool::default())),
         }
     }
 }
@@ -259,6 +363,83 @@ impl Client {
         .map_err(|_| ClientError::Invalid("hub worker failed"))
     }
 
+    fn pool_checkout(&self, key: &PoolKey) -> Option<UpstreamStream> {
+        self.pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .checkout(key)
+    }
+
+    fn pool_checkin(&self, key: PoolKey, stream: UpstreamStream) {
+        self.pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .checkin(key, stream);
+    }
+
+    /// Execute one short buffered HTTP/1.1 request up to `limit` body bytes,
+    /// reusing an idle pooled connection when safe and never sharing streams
+    /// with SSE/NDJSON/tar streams or WebSocket upgrades.
+    pub(crate) async fn request(
+        &self,
+        target: &Target,
+        request: Request<'_>,
+        limit: usize,
+    ) -> Result<BufferedResponse, ClientError> {
+        let caller_set_connection = request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("connection"));
+        let caller_wants_close = request.headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("connection") && value_has_token(value, "close")
+        });
+        let use_pool = !caller_wants_close;
+        let head = encode_head_mode(target, &request, !caller_set_connection)?;
+        let head_only = request.method.eq_ignore_ascii_case("HEAD");
+        let idempotent = head_only || request.method.eq_ignore_ascii_case("GET");
+        let pool_key = PoolKey::from_target(target);
+
+        let pooled = if use_pool {
+            self.pool_checkout(&pool_key)
+        } else {
+            None
+        };
+
+        let response = if let Some(stream) = pooled {
+            match send_and_read_response(stream, &head, request.body, request.idle, head_only).await
+            {
+                Ok(response) => response,
+                Err((ClientError::ConnectionClosed, false)) if idempotent => {
+                    let fresh = match timeout(request.connect, connect_stream(target)).await {
+                        Ok(result) => result?,
+                        Err(_) => return Err(ClientError::Timeout),
+                    };
+                    send_and_read_response(fresh, &head, request.body, request.idle, head_only)
+                        .await
+                        .map_err(|(error, _)| error)?
+                }
+                Err((error, _)) => return Err(error),
+            }
+        } else {
+            let fresh = match timeout(request.connect, connect_stream(target)).await {
+                Ok(result) => result?,
+                Err(_) => return Err(ClientError::Timeout),
+            };
+            send_and_read_response(fresh, &head, request.body, request.idle, head_only)
+                .await
+                .map_err(|(error, _)| error)?
+        };
+
+        let status = response.status;
+        let keep_alive_ok =
+            use_pool && response_allows_keep_alive(status, response.http11, &response.headers);
+        let (raw, reusable_stream) = response.body.read_to_end_pooled(limit).await?;
+        if keep_alive_ok && let Some(stream) = reusable_stream {
+            self.pool_checkin(pool_key, stream);
+        }
+        Ok(BufferedResponse { status, body: raw })
+    }
+
     /// `Registry.request`: one JSON round trip, `timeout` for connect and every
     /// read, body capped at `JSON_LIMIT`. Any status is returned with its
     /// parsed body; the caller decides what a non-200 means.
@@ -291,7 +472,7 @@ impl Client {
             &[]
         };
         let response = self
-            .open(
+            .request(
                 target,
                 Request {
                     method,
@@ -301,10 +482,11 @@ impl Client {
                     connect,
                     idle,
                 },
+                JSON_LIMIT,
             )
             .await?;
         let status = response.status;
-        let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
+        let raw = response.body;
         let value = self
             .work(move || {
                 serde_json::from_slice(&raw).map_err(|_| ClientError::Invalid("body is not JSON"))
@@ -370,11 +552,30 @@ impl Client {
     }
 }
 
+async fn send_and_read_response(
+    stream: UpstreamStream,
+    head: &[u8],
+    body: Option<&[u8]>,
+    idle: Duration,
+    head_only: bool,
+) -> Result<Response, (ClientError, bool)> {
+    let mut pending = Pending {
+        stream,
+        idle,
+        head_only,
+    };
+    pending.send(head).await.map_err(|error| (error, false))?;
+    if let Some(body) = body {
+        pending.send(body).await.map_err(|error| (error, false))?;
+    }
+    pending.response_tracked().await
+}
+
 /// `TlsConnector::new` uses the platform trust store and verifies both the
 /// certificate chain and the literal IP passed to `connect` (the registry never
 /// permits DNS). Loading the trust store is the expensive part, so one
-/// connector serves the whole process; every request still opens its own
-/// connection. A failed construction is retried by the next request.
+/// connector serves the whole process. A failed construction is retried by the
+/// next request.
 fn tls_connector() -> Result<&'static tokio_native_tls::TlsConnector, ClientError> {
     static CONNECTOR: std::sync::OnceLock<tokio_native_tls::TlsConnector> =
         std::sync::OnceLock::new();
@@ -391,18 +592,31 @@ async fn connect_stream(target: &Target) -> Result<UpstreamStream, ClientError> 
         .map_err(|error| ClientError::from_io(&error))?;
     let _ = stream.set_nodelay(true);
     if !target.tls {
-        return Ok(UpstreamStream::new(stream));
+        return Ok(UpstreamStream::plain(stream));
     }
+    #[cfg(unix)]
+    let raw_fd = std::os::fd::AsRawFd::as_raw_fd(&stream);
     let connector = tls_connector()?;
     let domain = target.addr.ip().to_string();
     let stream = connector
         .connect(&domain, stream)
         .await
         .map_err(|_| ClientError::ConnectionFailed)?;
-    Ok(UpstreamStream::new(stream))
+    #[cfg(unix)]
+    return Ok(UpstreamStream::tls(stream, raw_fd));
+    #[cfg(not(unix))]
+    return Ok(UpstreamStream::tls(stream));
 }
 
 fn encode_head(target: &Target, request: &Request<'_>) -> Result<Vec<u8>, ClientError> {
+    encode_head_mode(target, request, false)
+}
+
+fn encode_head_mode(
+    target: &Target,
+    request: &Request<'_>,
+    keep_alive: bool,
+) -> Result<Vec<u8>, ClientError> {
     fn clean(value: &str) -> bool {
         !value
             .bytes()
@@ -442,7 +656,7 @@ fn encode_head(target: &Target, request: &Request<'_>) -> Result<Vec<u8>, Client
             || name.eq_ignore_ascii_case("transfer-encoding");
         head.push_str(&format!("{name}: {value}\r\n"));
     }
-    if !connection {
+    if !connection && !keep_alive {
         head.push_str("Connection: close\r\n");
     }
     if !length {
@@ -463,15 +677,112 @@ fn encode_head(target: &Target, request: &Request<'_>) -> Result<Vec<u8>, Client
 trait HubIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> HubIo for T {}
 
-/// Plain TCP or TLS transport retained after a WebSocket upgrade.
+enum StreamInner {
+    Plain(TcpStream),
+    Tls(
+        Box<tokio_native_tls::TlsStream<TcpStream>>,
+        #[cfg(unix)] std::os::fd::RawFd,
+    ),
+    Custom(Box<dyn HubIo>),
+}
+
+/// Plain TCP or TLS transport retained after a WebSocket upgrade or keep-alive reuse.
 pub struct UpstreamStream {
-    inner: Box<dyn HubIo>,
+    inner: StreamInner,
 }
 
 impl UpstreamStream {
     fn new(stream: impl HubIo + 'static) -> Self {
         Self {
-            inner: Box::new(stream),
+            inner: StreamInner::Custom(Box::new(stream)),
+        }
+    }
+
+    fn plain(stream: TcpStream) -> Self {
+        Self {
+            inner: StreamInner::Plain(stream),
+        }
+    }
+
+    #[cfg(unix)]
+    fn tls(stream: tokio_native_tls::TlsStream<TcpStream>, raw_fd: std::os::fd::RawFd) -> Self {
+        Self {
+            inner: StreamInner::Tls(Box::new(stream), raw_fd),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn tls(stream: tokio_native_tls::TlsStream<TcpStream>) -> Self {
+        Self {
+            inner: StreamInner::Tls(Box::new(stream)),
+        }
+    }
+
+    fn is_reusable_idle(&mut self) -> bool {
+        #[cfg(unix)]
+        match &mut self.inner {
+            StreamInner::Plain(tcp) => {
+                use std::os::fd::AsRawFd;
+                let mut byte = 0_u8;
+                let rc = unsafe {
+                    libc::recv(
+                        tcp.as_raw_fd(),
+                        (&mut byte as *mut u8).cast(),
+                        1,
+                        libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                    )
+                };
+                if rc != -1 {
+                    return false;
+                }
+                let error = io::Error::last_os_error();
+                error.kind() == io::ErrorKind::WouldBlock
+                    || matches!(error.raw_os_error(), Some(libc::EAGAIN))
+            }
+            StreamInner::Tls(tls, raw_fd) => {
+                let mut byte = 0_u8;
+                let rc = unsafe {
+                    libc::recv(
+                        *raw_fd,
+                        (&mut byte as *mut u8).cast(),
+                        1,
+                        libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                    )
+                };
+                if rc == 0 {
+                    return false;
+                }
+                if rc < 0 {
+                    let error = io::Error::last_os_error();
+                    if error.kind() != io::ErrorKind::WouldBlock
+                        && !matches!(error.raw_os_error(), Some(libc::EAGAIN | libc::EINTR))
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+                let mut scratch = [0_u8; 1];
+                let mut read_buf = ReadBuf::new(&mut scratch);
+                let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+                matches!(
+                    Pin::new(tls.as_mut()).poll_read(&mut cx, &mut read_buf),
+                    Poll::Pending
+                )
+            }
+            StreamInner::Custom(_) => false,
+        }
+        #[cfg(not(unix))]
+        match &mut self.inner {
+            StreamInner::Plain(_) | StreamInner::Tls(_) => {
+                let mut scratch = [0_u8; 1];
+                let mut read_buf = ReadBuf::new(&mut scratch);
+                let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+                matches!(
+                    Pin::new(self).poll_read(&mut cx, &mut read_buf),
+                    Poll::Pending
+                )
+            }
+            StreamInner::Custom(_) => false,
         }
     }
 }
@@ -482,7 +793,14 @@ impl AsyncRead for UpstreamStream {
         cx: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut *self.inner).poll_read(cx, buffer)
+        match &mut self.inner {
+            StreamInner::Plain(tcp) => Pin::new(tcp).poll_read(cx, buffer),
+            #[cfg(unix)]
+            StreamInner::Tls(tls, _) => Pin::new(tls.as_mut()).poll_read(cx, buffer),
+            #[cfg(not(unix))]
+            StreamInner::Tls(tls) => Pin::new(tls.as_mut()).poll_read(cx, buffer),
+            StreamInner::Custom(custom) => Pin::new(custom.as_mut()).poll_read(cx, buffer),
+        }
     }
 }
 
@@ -492,18 +810,39 @@ impl AsyncWrite for UpstreamStream {
         cx: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut *self.inner).poll_write(cx, buffer)
+        match &mut self.inner {
+            StreamInner::Plain(tcp) => Pin::new(tcp).poll_write(cx, buffer),
+            #[cfg(unix)]
+            StreamInner::Tls(tls, _) => Pin::new(tls.as_mut()).poll_write(cx, buffer),
+            #[cfg(not(unix))]
+            StreamInner::Tls(tls) => Pin::new(tls.as_mut()).poll_write(cx, buffer),
+            StreamInner::Custom(custom) => Pin::new(custom.as_mut()).poll_write(cx, buffer),
+        }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut *self.inner).poll_flush(cx)
+        match &mut self.inner {
+            StreamInner::Plain(tcp) => Pin::new(tcp).poll_flush(cx),
+            #[cfg(unix)]
+            StreamInner::Tls(tls, _) => Pin::new(tls.as_mut()).poll_flush(cx),
+            #[cfg(not(unix))]
+            StreamInner::Tls(tls) => Pin::new(tls.as_mut()).poll_flush(cx),
+            StreamInner::Custom(custom) => Pin::new(custom.as_mut()).poll_flush(cx),
+        }
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut *self.inner).poll_shutdown(cx)
+        match &mut self.inner {
+            StreamInner::Plain(tcp) => Pin::new(tcp).poll_shutdown(cx),
+            #[cfg(unix)]
+            StreamInner::Tls(tls, _) => Pin::new(tls.as_mut()).poll_shutdown(cx),
+            #[cfg(not(unix))]
+            StreamInner::Tls(tls) => Pin::new(tls.as_mut()).poll_shutdown(cx),
+            StreamInner::Custom(custom) => Pin::new(custom.as_mut()).poll_shutdown(cx),
+        }
     }
 }
 
@@ -526,6 +865,10 @@ impl Pending {
     /// Read the status line and headers; `100 Continue` is skipped like
     /// `http.client`. Anything else, including 101, is the response.
     pub async fn response(self) -> Result<Response, ClientError> {
+        self.response_tracked().await.map_err(|(error, _)| error)
+    }
+
+    async fn response_tracked(self) -> Result<Response, (ClientError, bool)> {
         let mut body = Body {
             stream: self.stream,
             buffer: Vec::new(),
@@ -534,16 +877,23 @@ impl Pending {
             framing: Framing::UntilClose,
             idle: self.idle,
             closed: false,
+            received_any: false,
         };
         loop {
-            let head = body.read_head().await?;
-            let (status, headers) = parse_head(&head)?;
+            let head = match body.read_head().await {
+                Ok(head) => head,
+                Err(error) => return Err((error, body.received_any)),
+            };
+            let (http11, status, headers) =
+                parse_head(&head).map_err(|error| (error, body.received_any))?;
             if status == 100 {
                 continue;
             }
-            body.framing = framing(status, &headers, self.head_only)?;
+            body.framing =
+                framing(status, &headers, self.head_only).map_err(|error| (error, true))?;
             return Ok(Response {
                 status,
+                http11,
                 headers,
                 body,
             });
@@ -551,7 +901,9 @@ impl Pending {
     }
 }
 
-fn parse_head(head: &[u8]) -> Result<(u16, Vec<(String, String)>), ClientError> {
+type ParsedHead = (bool, u16, Vec<(String, String)>);
+
+fn parse_head(head: &[u8]) -> Result<ParsedHead, ClientError> {
     let text = std::str::from_utf8(head).map_err(|_| ClientError::Invalid("non-UTF-8 head"))?;
     let mut lines = text.split("\r\n");
     let status_line = lines.next().unwrap_or("");
@@ -561,6 +913,7 @@ fn parse_head(head: &[u8]) -> Result<(u16, Vec<(String, String)>), ClientError> 
     if !version.starts_with("HTTP/1.") || status.len() != 3 {
         return Err(ClientError::Invalid("bad status line"));
     }
+    let http11 = version == "HTTP/1.1";
     let status: u16 = status
         .parse()
         .map_err(|_| ClientError::Invalid("bad status line"))?;
@@ -580,7 +933,37 @@ fn parse_head(head: &[u8]) -> Result<(u16, Vec<(String, String)>), ClientError> 
             return Err(ClientError::Invalid("too many headers"));
         }
     }
-    Ok((status, headers))
+    Ok((http11, status, headers))
+}
+
+fn value_has_token(value: &str, expected: &str) -> bool {
+    value
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case(expected))
+}
+
+fn headers_have_token(headers: &[(String, String)], name: &str, token: &str) -> bool {
+    headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+        .any(|(_, value)| value_has_token(value, token))
+}
+
+fn response_allows_keep_alive(status: u16, http11: bool, headers: &[(String, String)]) -> bool {
+    if (100..200).contains(&status) {
+        return false;
+    }
+    if headers_have_token(headers, "connection", "close") {
+        return false;
+    }
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && !value.trim().eq_ignore_ascii_case("chunked")
+        {
+            return false;
+        }
+    }
+    http11 || headers_have_token(headers, "connection", "keep-alive")
 }
 
 /// `http.client` rules: no body for 1xx/204/304/HEAD, else chunked, else
@@ -630,6 +1013,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 pub struct Response {
     pub status: u16,
+    http11: bool,
     headers: Vec<(String, String)>,
     body: Body,
 }
@@ -688,6 +1072,7 @@ pub struct Body {
     framing: Framing,
     idle: Duration,
     closed: bool,
+    received_any: bool,
 }
 
 impl Body {
@@ -795,15 +1180,33 @@ impl Body {
     }
 
     /// The whole body; more than `limit` bytes is an invalid response.
-    pub async fn read_to_end(mut self, limit: usize) -> Result<Vec<u8>, ClientError> {
-        let mut out = Vec::new();
+    pub async fn read_to_end(self, limit: usize) -> Result<Vec<u8>, ClientError> {
+        let (out, _) = self.read_to_end_pooled(limit).await?;
+        Ok(out)
+    }
+
+    async fn read_to_end_pooled(
+        mut self,
+        limit: usize,
+    ) -> Result<(Vec<u8>, Option<UpstreamStream>), ClientError> {
+        let mut out = match self.framing {
+            Framing::Length(len) if len <= limit as u64 => Vec::with_capacity(len as usize),
+            _ => Vec::new(),
+        };
         while let Some(piece) = self.read().await? {
             out.extend_from_slice(&piece);
             if out.len() > limit {
                 return Err(ClientError::Invalid("节点响应过大"));
             }
         }
-        Ok(out)
+        let clean = !self.closed
+            && self.pending.is_empty()
+            && self.available() == 0
+            && matches!(
+                self.framing,
+                Framing::Empty | Framing::Length(0) | Framing::Chunked(Chunk::Done)
+            );
+        Ok((out, clean.then_some(self.stream)))
     }
 
     async fn read_head(&mut self) -> Result<Vec<u8>, ClientError> {
@@ -900,6 +1303,8 @@ impl Body {
         self.buffer.truncate(start + count);
         if count == 0 {
             self.closed = true;
+        } else {
+            self.received_any = true;
         }
         Ok(count > 0)
     }

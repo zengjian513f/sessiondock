@@ -1,15 +1,15 @@
-import hljs from './vendor/highlight/core.min.js';
-import python from './vendor/highlight/languages/python.min.js';
-import javascript from './vendor/highlight/languages/javascript.min.js';
-import typescript from './vendor/highlight/languages/typescript.min.js';
-import bash from './vendor/highlight/languages/bash.min.js';
-import json from './vendor/highlight/languages/json.min.js';
-import css from './vendor/highlight/languages/css.min.js';
-import xml from './vendor/highlight/languages/xml.min.js';
-import markdown from './vendor/highlight/languages/markdown.min.js';
-import sql from './vendor/highlight/languages/sql.min.js';
-import yaml from './vendor/highlight/languages/yaml.min.js';
-import diff from './vendor/highlight/languages/diff.min.js';
+import hljs from './vendor/highlight/core.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import python from './vendor/highlight/languages/python.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import javascript from './vendor/highlight/languages/javascript.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import typescript from './vendor/highlight/languages/typescript.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import bash from './vendor/highlight/languages/bash.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import json from './vendor/highlight/languages/json.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import css from './vendor/highlight/languages/css.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import xml from './vendor/highlight/languages/xml.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import markdown from './vendor/highlight/languages/markdown.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import sql from './vendor/highlight/languages/sql.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import yaml from './vendor/highlight/languages/yaml.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import diff from './vendor/highlight/languages/diff.min.js?v=__SESSIONDOCK_ASSET_VERSION__';
 
 const grammars = {python, javascript, typescript, bash, json, css, xml, markdown, sql, yaml, diff};
 for (const [name, grammar] of Object.entries(grammars)) hljs.registerLanguage(name, grammar);

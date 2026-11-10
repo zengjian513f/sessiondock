@@ -73,15 +73,29 @@ export function isLightBackground(css) {
   return Math.max(...rgb) + Math.min(...rgb) >= 255;
 }
 
+const LIGHT_COLOR_CACHE_LIMIT = 4096;
+const lightColorCache = new Map();
+const readableForegroundCache = new Map();
+
 function lightColor(css, background) {
+  const key = `${background ? 1 : 0}:${css}`;
+  const cached = lightColorCache.get(key);
+  if (cached !== undefined) return cached;
   const rgb = rgbChannels(css).map(v => v / 255);
   const hi = Math.max(...rgb), lo = Math.min(...rgb), l = (hi + lo) / 2;
-  if (background ? l >= .5 : l < .5) return css;
-  const reflected = 1 - l;
-  let target = .5 + Math.sign(reflected - .5) * .5 * Math.pow(Math.abs(reflected - .5) * 2, 1.35);
-  if (background) target = Math.min(target, .96);
-  const scale = hi === lo ? 0 : (1 - Math.abs(2 * target - 1)) / (1 - Math.abs(2 * l - 1));
-  return `rgb(${rgb.map(v => Math.round(255 * (target + (v - l) * scale))).join(',')})`;
+  let result;
+  if (background ? l >= .5 : l < .5) {
+    result = css;
+  } else {
+    const reflected = 1 - l;
+    let target = .5 + Math.sign(reflected - .5) * .5 * Math.pow(Math.abs(reflected - .5) * 2, 1.35);
+    if (background) target = Math.min(target, .96);
+    const scale = hi === lo ? 0 : (1 - Math.abs(2 * target - 1)) / (1 - Math.abs(2 * l - 1));
+    result = `rgb(${rgb.map(v => Math.round(255 * (target + (v - l) * scale))).join(',')})`;
+  }
+  if (lightColorCache.size >= LIGHT_COLOR_CACHE_LIMIT) lightColorCache.clear();
+  lightColorCache.set(key, result);
+  return result;
 }
 
 function luminance(rgb) {
@@ -92,21 +106,31 @@ function luminance(rgb) {
 // Saturated yellow/green and dim text can still be faint after HSL reflection.
 // Check the actual pair (including inverse and dim) before painting the glyph.
 function readableForeground(fg, bg, alpha) {
+  const key = `${fg}\0${bg}\0${alpha}`;
+  const cached = readableForegroundCache.get(key);
+  if (cached !== undefined) return cached;
   const ink = rgbChannels(fg), paper = rgbChannels(bg), lum = luminance(paper);
   const contrast = rgb => {
     const value = luminance(rgb.map((v, i) => v * alpha + paper[i] * (1 - alpha)));
     return (Math.max(value, lum) + .05) / (Math.min(value, lum) + .05);
   };
-  if (contrast(ink) >= 4.5) return fg;
-  const end = contrast([0, 0, 0]) >= contrast([255, 255, 255]) ? 0 : 255;
-  let low = 0, high = 1;
-  for (let i = 0; i < 10; i++) {
-    const amount = (low + high) / 2;
-    if (contrast(ink.map(v => v + (end - v) * amount)) < 4.5) low = amount;
-    else high = amount;
+  let result;
+  if (contrast(ink) >= 4.5) {
+    result = fg;
+  } else {
+    const end = contrast([0, 0, 0]) >= contrast([255, 255, 255]) ? 0 : 255;
+    let low = 0, high = 1;
+    for (let i = 0; i < 10; i++) {
+      const amount = (low + high) / 2;
+      if (contrast(ink.map(v => v + (end - v) * amount)) < 4.5) low = amount;
+      else high = amount;
+    }
+    const round = end === 0 ? Math.floor : Math.ceil;
+    result = `rgb(${ink.map(v => round(v + (end - v) * high)).join(',')})`;
   }
-  const round = end === 0 ? Math.floor : Math.ceil;
-  return `rgb(${ink.map(v => round(v + (end - v) * high)).join(',')})`;
+  if (readableForegroundCache.size >= LIGHT_COLOR_CACHE_LIMIT) readableForegroundCache.clear();
+  readableForegroundCache.set(key, result);
+  return result;
 }
 
 function currentDpr(canvas) {

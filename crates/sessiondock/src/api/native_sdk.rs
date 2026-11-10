@@ -489,9 +489,7 @@ pub async fn events(
 ) -> Result<Response, ApiError> {
     let target = target(&state, &query.uid, &query.agent).await?;
     let source = target["source"].as_str().unwrap_or_default();
-    let mut encoder = snapshot_delta::Encoder::new(
-        source == "kiro" && query.snapshot_delta.as_deref() == Some("1"),
-    );
+    let mut encoder = snapshot_delta::Encoder::new(query.snapshot_delta.as_deref() == Some("1"));
     let uid = target["uid"].as_str().unwrap_or(&query.uid);
     let key = if query.agent.is_empty() {
         uid.to_owned()

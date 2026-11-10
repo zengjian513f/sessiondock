@@ -167,9 +167,15 @@ impl Assets {
                         .replace("__SESSIONDOCK_ASSET_VERSION__", &build)
                         .replace(&marker, &injection)
                         .into_bytes();
-                } else if path.ends_with(".css") {
-                    // typography.css versions its font URLs the same way the pages
-                    // version their scripts, so fonts are immutable-cacheable too.
+                } else if path.ends_with(".css")
+                    || matches!(
+                        path.as_str(),
+                        "/grid/facade.js" | "/grid/model.js" | "/syntax.js" | "/syntax-worker.js"
+                    )
+                {
+                    // typography.css and ES module entrypoints version their sub-resource
+                    // URLs the same way the pages version their scripts, so fonts and
+                    // module graphs are immutable-cacheable too.
                     data = String::from_utf8_lossy(&data)
                         .replace("__SESSIONDOCK_ASSET_VERSION__", &build)
                         .into_bytes();

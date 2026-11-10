@@ -88,6 +88,9 @@ def main():
                                      extra_env={"SESSIONDOCK_PROC_SCAN": "1", "SESSIONDOCK_FILEDOCK_URL": "/file-manager/",
                                                 "SESSIONDOCK_NODE_ID_FILE": str(root / "node-id")}) as (base, _):
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                    context.add_init_script(
+                        "localStorage.setItem('sessiondock.agentStartMode.codex', JSON.stringify('cli'));"
+                    )
                     context.route("**/*", lambda route: route.continue_()
                                   if route.request.url.startswith(base + "/") else route.abort())
                     context.route("**/file-manager/?*", lambda route: route.fulfill(

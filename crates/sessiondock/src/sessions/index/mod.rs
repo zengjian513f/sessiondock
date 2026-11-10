@@ -77,7 +77,7 @@ mod native_state;
 pub mod summary;
 mod titles;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -88,6 +88,7 @@ use cap_fs_ext::{DirExt, MetadataExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, Metadata};
 use serde_json::{Value, json};
+use sha1::{Digest, Sha1};
 
 use super::{NativeCatalogEntry, SessionError, SessionRoots, hash, uid_for};
 use agent_stops::{StopScan, Stops};
@@ -370,15 +371,25 @@ impl IndexSnapshot {
 }
 
 /// Sort like today's list and wrap with a fresh signature and build time.
-pub fn signed_document(mut rows: Vec<Value>) -> Value {
-    rows.sort_by(|a, b| {
-        b["updated"]
-            .as_str()
-            .cmp(&a["updated"].as_str())
-            .then_with(|| a["uid"].as_str().cmp(&b["uid"].as_str()))
+pub fn signed_document(rows: Vec<Value>) -> Value {
+    let keys: Vec<(Option<&str>, Option<&str>)> = rows
+        .iter()
+        .map(|row| (row["updated"].as_str(), row["uid"].as_str()))
+        .collect();
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&i, &j| {
+        keys[j]
+            .0
+            .cmp(&keys[i].0)
+            .then_with(|| keys[i].1.cmp(&keys[j].1))
     });
-    let sig = hash(&serde_json::to_vec(&rows).expect("rows serialize"));
-    json!({"sessions": rows, "sig": sig, "built_at": epoch_now()})
+    let mut slots: Vec<Option<Value>> = rows.into_iter().map(Some).collect();
+    let sorted: Vec<Value> = order
+        .into_iter()
+        .map(|index| slots[index].take().expect("unique row index"))
+        .collect();
+    let sig = hash(&serde_json::to_vec(&sorted).expect("rows serialize"));
+    json!({"sessions": sorted, "sig": sig, "built_at": epoch_now()})
 }
 
 fn epoch_now() -> f64 {
@@ -419,16 +430,33 @@ struct CacheKey {
     events_stamp: Option<Stamp>,
 }
 
+type KiroIdentity = Arc<(String, Vec<String>)>;
+
 #[derive(Clone)]
 struct Cached {
     key: CacheKey,
     summary: Arc<RowSummary>,
     native_state: Option<native_state::Scan>,
+    kiro_identity: Option<KiroIdentity>,
+}
+
+struct CachedRow {
+    index: usize,
+    standalone: bool,
+    bytes: Arc<[u8]>,
+}
+
+struct AssembledRow {
+    uid: String,
+    standalone: bool,
+    row: Value,
+    bytes: Arc<[u8]>,
 }
 
 #[derive(Default)]
 struct State {
     cache: HashMap<PathBuf, Cached>,
+    rows: HashMap<String, CachedRow>,
     title_names: Option<Arc<names::NameIndex>>,
     /// (parent data path, parent stamp, cut) → boundary check outcome.
     cuts: HashMap<(PathBuf, Stamp, u64), CutCheck>,
@@ -567,39 +595,41 @@ impl Index {
             .map(|path| names::load(path, state.names.as_ref()))
             .transpose()?;
 
-        // Warm path: every unchanged stamp reuses its summary; only changed or
-        // new files are read, in parallel.
-        let mut pending = Vec::new();
-        let mut reused: HashMap<PathBuf, Cached> = HashMap::new();
-        for candidate in &discovered {
-            match state.cache.get(&candidate.path) {
-                Some(cached) if cached.key == candidate.key() => {
-                    reused.insert(
-                        candidate.path.clone(),
-                        Cached {
-                            key: cached.key,
-                            summary: cached.summary.clone(),
-                            native_state: cached.native_state.clone(),
-                        },
-                    );
-                }
-                _ => pending.push(candidate.clone()),
-            }
-        }
+        // Warm path: every unchanged stamp reuses its summary in place; only
+        // changed or new files are read, in parallel.
+        let pending: Vec<&Discovered> = discovered
+            .iter()
+            .filter(|candidate| {
+                state
+                    .cache
+                    .get(&candidate.path)
+                    .is_none_or(|cached| cached.key != candidate.key())
+            })
+            .collect();
         let results = self.read_all(&pending, &state.cache);
-        let mut cache = reused;
+        let live_paths: HashSet<&Path> = discovered
+            .iter()
+            .map(|candidate| candidate.path.as_path())
+            .collect();
+        state
+            .cache
+            .retain(|path, _| live_paths.contains(path.as_path()));
         let mut transient = Vec::new();
-        for (candidate, outcome) in pending.iter().zip(results) {
-            let Some(read) = outcome else { continue };
+        for (candidate, outcome) in pending.into_iter().zip(results) {
+            let Some(read) = outcome else {
+                state.cache.remove(&candidate.path);
+                continue;
+            };
             if read.transient {
                 transient.push(candidate.path.clone());
             }
-            cache.insert(
+            state.cache.insert(
                 candidate.path.clone(),
                 Cached {
                     key: read.key,
                     summary: read.summary,
                     native_state: read.native_state,
+                    kiro_identity: read.kiro_identity,
                 },
             );
         }
@@ -607,21 +637,20 @@ impl Index {
         let mut entries = BTreeMap::new();
         let mut aliases = BTreeMap::new();
         for candidate in discovered {
-            let Some(cached) = cache.get(&candidate.path) else {
+            let Some(cached) = state.cache.get(&candidate.path) else {
                 continue;
             };
             let uid = if candidate.source == "kiro" {
-                let Some((uid, old_uids)) =
-                    crate::sessions::kiro::identity_for_projection(&candidate.path)
-                else {
+                let Some(identity) = &cached.kiro_identity else {
                     continue;
                 };
+                let (uid, old_uids) = identity.as_ref();
                 for alias in old_uids {
                     if alias != uid {
-                        aliases.insert(alias, uid.clone());
+                        aliases.insert(alias.clone(), uid.clone());
                     }
                 }
-                uid
+                uid.clone()
             } else {
                 uid_for(candidate.source, &candidate.path)
             };
@@ -662,7 +691,33 @@ impl Index {
             next_cuts.insert(key, outcome);
             outcome
         };
-        let built = graph::build(&entries, &mut check, &stops);
+        let same_names = match (&state.names, &names) {
+            (None, None) => true,
+            (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+            _ => false,
+        };
+        let aliased_kiro: BTreeSet<&str> = aliases.values().map(String::as_str).collect();
+        let built = {
+            let prev_snapshot = state.snapshot.as_ref();
+            let prev_rows = &state.rows;
+            graph::build(&entries, &mut check, &stops, |uid, entry| {
+                (entry.source != "codex" || same_names)
+                    && (entry.source != "kiro" || !aliased_kiro.contains(uid))
+                    && prev_snapshot.is_some_and(|snap| {
+                        snap.candidates.get(uid).is_some_and(|prev_entry| {
+                            prev_entry.source == entry.source
+                                && prev_entry.path == entry.path
+                                && Arc::ptr_eq(&prev_entry.summary, &entry.summary)
+                        }) && prev_rows.get(uid).is_some_and(|cached| {
+                            cached.standalone
+                                && snap
+                                    .sessions()
+                                    .get(cached.index)
+                                    .is_some_and(|row| row["uid"].as_str() == Some(uid))
+                        })
+                    })
+            })
+        };
         state.cuts = next_cuts;
         let mut agents: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (agent, owner) in &built.owners {
@@ -685,11 +740,18 @@ impl Index {
                     .push(uid.clone());
             }
         }
-        let mut rows = built.rows;
-        if let Some(names) = &names {
-            names.enrich(&mut rows, &entries);
+        let mut fresh_meta = Vec::with_capacity(built.fresh_rows.len());
+        let mut fresh_values = Vec::with_capacity(built.fresh_rows.len());
+        for (uid, standalone, row) in built.fresh_rows {
+            let standalone =
+                standalone && (row["source"] != "kiro" || !aliased_kiro.contains(uid.as_str()));
+            fresh_meta.push((uid, standalone));
+            fresh_values.push(row);
         }
-        for row in &mut rows {
+        if let Some(names) = &names {
+            names.enrich(&mut fresh_values, &entries);
+        }
+        for row in &mut fresh_values {
             if row["source"] == "kiro" {
                 let uid = row["uid"].as_str().unwrap_or("");
                 let previous: Vec<&str> = aliases
@@ -701,10 +763,67 @@ impl Index {
                 }
             }
         }
-        let document = signed_document(rows);
+        let total_rows = built.reused_uids.len() + fresh_values.len();
+        let mut assembled = Vec::with_capacity(total_rows);
+        if let Some(snap) = &state.snapshot {
+            let prev_sessions = snap.sessions();
+            for uid in built.reused_uids {
+                let cached = &state.rows[&uid];
+                assembled.push(AssembledRow {
+                    uid,
+                    standalone: true,
+                    row: prev_sessions[cached.index].clone(),
+                    bytes: cached.bytes.clone(),
+                });
+            }
+        }
+        for ((uid, standalone), row) in fresh_meta.into_iter().zip(fresh_values) {
+            let bytes: Arc<[u8]> = serde_json::to_vec(&row).expect("row serialize").into();
+            assembled.push(AssembledRow {
+                uid,
+                standalone,
+                row,
+                bytes,
+            });
+        }
+        let keys: Vec<(Option<&str>, Option<&str>)> = assembled
+            .iter()
+            .map(|item| (item.row["updated"].as_str(), item.row["uid"].as_str()))
+            .collect();
+        let mut order: Vec<usize> = (0..assembled.len()).collect();
+        order.sort_by(|&i, &j| {
+            keys[j]
+                .0
+                .cmp(&keys[i].0)
+                .then_with(|| keys[i].1.cmp(&keys[j].1))
+        });
+        let mut slots: Vec<Option<AssembledRow>> = assembled.into_iter().map(Some).collect();
+        let mut hasher = Sha1::new();
+        hasher.update(b"[");
+        let mut rows = Vec::with_capacity(slots.len());
+        let mut next_rows = HashMap::with_capacity(slots.len());
+        for (index, slot_index) in order.into_iter().enumerate() {
+            let item = slots[slot_index].take().expect("unique row index");
+            if index > 0 {
+                hasher.update(b",");
+            }
+            hasher.update(&item.bytes);
+            rows.push(item.row);
+            next_rows.insert(
+                item.uid,
+                CachedRow {
+                    index,
+                    standalone: item.standalone,
+                    bytes: item.bytes,
+                },
+            );
+        }
+        hasher.update(b"]");
+        let sig = format!("{:x}", hasher.finalize());
+        let document = json!({"sessions": rows, "sig": sig, "built_at": epoch_now()});
         let snapshot = Arc::new(IndexSnapshot {
             document,
-            rollouts: graph::rollout_index(&entries),
+            rollouts: built.rollouts,
             candidates: entries,
             aliases,
             threads,
@@ -712,9 +831,9 @@ impl Index {
             catalog: built.catalog,
         });
         for path in transient {
-            cache.remove(&path);
+            state.cache.remove(&path);
         }
-        state.cache = cache;
+        state.rows = next_rows;
         state.names = names;
         state.snapshot = Some(snapshot.clone());
         state.checked = Some(Instant::now());
@@ -858,10 +977,10 @@ impl Index {
 
     fn read_all(
         &self,
-        pending: &[Discovered],
+        pending: &[&Discovered],
         cache: &HashMap<PathBuf, Cached>,
     ) -> Vec<Option<ReadOutcome>> {
-        parallel_map(self.workers, pending.iter().collect(), |candidate| {
+        parallel_map(self.workers, pending.to_vec(), |candidate| {
             read_candidate(
                 candidate,
                 cache
@@ -915,6 +1034,7 @@ struct ReadOutcome {
     key: CacheKey,
     summary: Arc<RowSummary>,
     native_state: Option<native_state::Scan>,
+    kiro_identity: Option<KiroIdentity>,
     /// An I/O failure (permissions, a link or directory where a file should
     /// be): published for this snapshot but not cached, so a fix that leaves
     /// the stamp unchanged (chmod) is noticed by the next refresh.
@@ -1189,16 +1309,11 @@ impl Walk<'_> {
                 if !summary.is_file() {
                     continue;
                 }
-                // Only a genuinely absent chat is an empty history.
-                let chat_path = path.join("chat_history.jsonl");
-                let chat = match std::fs::metadata(&chat_path) {
-                    Ok(metadata) if metadata.is_file() => {
-                        file_metadata(&chat_path).ok().map(|meta| Stamp::of(&meta))
-                    }
-                    // A missing,
-                    // inaccessible, or non-file chat is an empty history.
-                    _ => None,
-                };
+                // Only a genuinely absent, inaccessible, or non-file chat is an empty history.
+                let chat = file_metadata(&path.join("chat_history.jsonl"))
+                    .ok()
+                    .filter(|meta| meta.is_file())
+                    .map(|meta| Stamp::of(&meta));
                 let events_stamp = file_metadata(&path.join("events.jsonl"))
                     .ok()
                     .filter(|meta| meta.is_file())
@@ -1320,6 +1435,9 @@ fn directory_size_in(dir: &Dir, total: &mut u64) {
             if let Ok(child) = dir.open_dir_nofollow(entry.file_name()) {
                 directory_size_in(&child, total);
             }
+            continue;
+        }
+        if !kind.is_file() && !kind.is_symlink() {
             continue;
         }
         // A link counts its target like `Path.is_file()`/`stat()` do, as
@@ -1490,6 +1608,22 @@ fn read_sidecar(root: &Path, path: &Path, label: &str) -> SidecarRead {
     last.unwrap_or_else(|| SidecarRead::Failed(None, format!("{label}暂时不可读取")))
 }
 
+fn kiro_identity_from_bytes(bytes: &[u8]) -> Option<KiroIdentity> {
+    let info: Value = serde_json::from_slice(bytes).ok()?;
+    if info["format"] != crate::sessions::kiro::FORMAT {
+        return None;
+    }
+    let uid = info["uid"].as_str()?.to_owned();
+    let aliases = info["aliases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    Some(Arc::new((uid, aliases)))
+}
+
 /// Summarize one discovered candidate; `None` when its files vanished.
 fn read_candidate(
     candidate: &Discovered,
@@ -1505,10 +1639,15 @@ fn read_candidate(
             FileRead::Vanished => return None,
             FileRead::Unreadable => {
                 let summary = unreadable(candidate);
+                let kiro_identity = (candidate.source == "kiro")
+                    .then(|| crate::sessions::kiro::identity_for_projection(&candidate.path))
+                    .flatten()
+                    .map(Arc::new);
                 return Some(ReadOutcome {
                     key: candidate.key(),
                     summary: Arc::new(summary),
                     native_state: None,
+                    kiro_identity,
                     transient: true,
                 });
             }
@@ -1655,6 +1794,14 @@ fn read_candidate(
             FileRead::Vanished => events_stamp = None,
         }
     }
+    let kiro_identity = if candidate.source == "kiro" {
+        sidecar
+            .as_ref()
+            .and_then(|(bytes, _, _)| bytes.as_deref())
+            .and_then(kiro_identity_from_bytes)
+    } else {
+        None
+    };
     Some(ReadOutcome {
         key: CacheKey {
             events_stamp,
@@ -1663,6 +1810,7 @@ fn read_candidate(
         },
         summary: Arc::new(summary),
         native_state: turn_scan,
+        kiro_identity,
         transient,
     })
 }

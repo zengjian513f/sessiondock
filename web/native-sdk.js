@@ -21,6 +21,18 @@ function nativeSdkSnapshotCopy(value) {
   return value;
 }
 
+// Shallowly isolate top-level snapshot containers mutated by UI state while
+// preserving === object identity for unchanged raw.items[i] entries across deltas.
+function nativeSdkIsolateRaw(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw || {};
+  return {
+    ...raw,
+    ...(Array.isArray(raw.items) ? {items: raw.items.slice()} : {}),
+    ...(Array.isArray(raw.input_queue) ? {input_queue: raw.input_queue.slice()} : {}),
+    ...(raw.capabilities && typeof raw.capabilities === 'object' ? {capabilities: {...raw.capabilities}} : {}),
+  };
+}
+
 function nativeSdkSnapshotDelta(before, change) {
   if (change === null) return before;
   switch (change.kind) {
@@ -85,7 +97,9 @@ const NativeSdkView = {
     this.readOnly = readOnly;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     this.nativeActionResult = null; this.items = []; this.requests = new Map(); this.nodes = new Map();
-    this.liveTurns = new Map();
+    this.liveTurns = new Map(); this.itemCache = new WeakMap();
+    this.renderedItemIds = null; this.renderedTailComplete = null; this.renderedCompactTurns = null; this.historyMessageTimeRefreshed = null;
+    this.lastSnapshotAt = 0; this.clearPendingSnapshot();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
@@ -134,12 +148,37 @@ const NativeSdkView = {
     this.generation++;
     this.es?.close(); this.es = null;
     this.openRead?.abort(); this.openRead = null;
+    this.clearPendingSnapshot();
     clearTimeout(this.reconnectTimer); clearTimeout(this.historyTimer);
     disposeMessageObservers(this.box);
     this.uid = ''; this.agent = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.historyReady = this.historyData = this.historyEntry = null;
+    this.renderedItemIds = null; this.renderedTailComplete = null; this.renderedCompactTurns = null; this.historyMessageTimeRefreshed = null;
     this.historyFailed = this.openFailed = false;
+  },
+
+  clearPendingSnapshot() {
+    clearTimeout(this.snapshotTimer);
+    this.snapshotTimer = 0;
+    this.pendingSnapshot = null;
+  },
+
+  flushPendingSnapshot() {
+    if (!this.pendingSnapshot) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = 0;
+      return;
+    }
+    clearTimeout(this.snapshotTimer);
+    this.snapshotTimer = 0;
+    const pending = this.pendingSnapshot;
+    this.pendingSnapshot = null;
+    if (!this.current(pending.generation)) return;
+    this.seq = pending.seq ?? this.seq;
+    this.lastSnapshotAt = performance.now();
+    measureBrowserWork('native.snapshot', () => this.applySnapshot(pending.raw || {}),
+      {source: this.uid.split(':')[0], items: pending.raw?.items?.length || 0});
   },
 
   async start(generation, reconnecting = false) {
@@ -183,7 +222,7 @@ const NativeSdkView = {
 
   connectEvents(generation) {
     const query = new URLSearchParams({uid:this.uid,agent:this.agent || ''});
-    if (this.uid.startsWith('kiro:')) query.set('snapshot_delta', '1');
+    query.set('snapshot_delta', '1');
     const es = new EventSource(appUrl(`api/native-sdk/events?${query}`));
     let snapshotRaw, snapshotVersion;
     this.es = es;
@@ -191,9 +230,14 @@ const NativeSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
-      if (packet.method === 'bridge/stopped') { SdkView.stopped(this.uid, this.agent); return; }
+      if (packet.method === 'bridge/stopped') {
+        this.flushPendingSnapshot();
+        SdkView.stopped(this.uid, this.agent);
+        return;
+      }
       if (packet.method === 'bridge/reset') { this.reconnect(); return; }
       if (packet.type === 'input_queue') {
+        this.flushPendingSnapshot();
         const stick = this.nearBottom();
         this.raw.input_queue = packet.raw?.input_queue || [];
         NativeSdkControls.paintQueue(this);
@@ -206,7 +250,7 @@ const NativeSdkView = {
           if (snapshotRaw === undefined || packet.snapshot_base !== snapshotVersion) throw Error('SDK delta version');
           snapshotRaw = nativeSdkSnapshotDelta(snapshotRaw, packet.raw);
           snapshotVersion = packet.snapshot_version;
-          packet.raw = nativeSdkSnapshotCopy(snapshotRaw);
+          packet.raw = nativeSdkIsolateRaw(snapshotRaw);
           packet.type = 'snapshot';
         } catch {
           this.reconnect();
@@ -216,12 +260,29 @@ const NativeSdkView = {
         // Old nodes ignore the opt-in query and keep sending full snapshots.
         snapshotRaw = packet.snapshot_version === undefined ? undefined : packet.raw;
         snapshotVersion = packet.snapshot_version;
-        if (snapshotRaw !== undefined) packet.raw = nativeSdkSnapshotCopy(snapshotRaw);
+        if (snapshotRaw !== undefined) packet.raw = nativeSdkIsolateRaw(snapshotRaw);
       }
       if (packet.type === 'snapshot' || packet.method === 'snapshot') {
-        this.seq = packet.seq ?? this.seq;
-        measureBrowserWork('native.snapshot', () => this.applySnapshot(packet.raw || {}),
-          {source: this.uid.split(':')[0], items: packet.raw?.items?.length || 0});
+        const nextRaw = packet.raw || {};
+        const now = performance.now();
+        if (!nextRaw.running) {
+          this.clearPendingSnapshot();
+          this.seq = packet.seq ?? this.seq;
+          this.lastSnapshotAt = now;
+          measureBrowserWork('native.snapshot', () => this.applySnapshot(nextRaw),
+            {source: this.uid.split(':')[0], items: nextRaw.items?.length || 0});
+        } else if (!this.snapshotTimer && now - (this.lastSnapshotAt || 0) >= 16) {
+          this.seq = packet.seq ?? this.seq;
+          this.lastSnapshotAt = now;
+          measureBrowserWork('native.snapshot', () => this.applySnapshot(nextRaw),
+            {source: this.uid.split(':')[0], items: nextRaw.items?.length || 0});
+        } else {
+          this.pendingSnapshot = {generation, seq: packet.seq, raw: nextRaw};
+          if (!this.snapshotTimer) {
+            const delay = Math.max(1, Math.ceil(16 - (now - (this.lastSnapshotAt || 0))));
+            this.snapshotTimer = setTimeout(() => this.flushPendingSnapshot(), delay);
+          }
+        }
       }
     });
     es.onerror = () => {
@@ -231,8 +292,10 @@ const NativeSdkView = {
     };
   },
 
-  retryOpen() { if (this.openFailed) { this.es?.close(); this.es = null; void this.start(this.generation); } },
+  retryOpen() { if (this.openFailed) { this.clearPendingSnapshot(); this.es?.close(); this.es = null; void this.start(this.generation); } },
   reconnect() {
+    this.flushPendingSnapshot();
+    this.clearPendingSnapshot();
     this.es?.close(); this.es = null; this.seq = -1;
     clearTimeout(this.reconnectTimer);
     const generation = this.generation;
@@ -319,7 +382,6 @@ const NativeSdkView = {
   },
 
   applySnapshot(raw) {
-    SdkUI.ungroupTools(this);
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
@@ -345,42 +407,128 @@ const NativeSdkView = {
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     const source = String(this.uid).split(':')[0];
-    this.items = (this.uid.startsWith('kiro:')
+    const filteredRaw = this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
       : this.uid.startsWith('agy:')
       ? rawItems.filter(item => !(item?.role === 'system' && item.native_type === 'checkpoint'))
-      : rawItems).map(item => SdkUI.messageTime(this, nativeSdkMessage(item, source)));
+      : rawItems;
+    this.itemCache ||= new WeakMap();
+    const mappedItems = new Array(filteredRaw.length);
+    for (let i = 0; i < filteredRaw.length; i++) {
+      const rawItem = filteredRaw[i];
+      if (rawItem && typeof rawItem === 'object') {
+        let entry = this.itemCache.get(rawItem);
+        if (!entry || entry.source !== source) {
+          entry = {source, base: nativeSdkMessage(rawItem, source), history: null, uid: '', agent: null, mapped: null};
+          this.itemCache.set(rawItem, entry);
+        }
+        if (!entry.mapped || entry.history !== this.historyData || entry.uid !== this.uid || entry.agent !== this.agent) {
+          entry.mapped = SdkUI.messageTime(this, entry.base);
+          entry.history = this.historyData;
+          entry.uid = this.uid;
+          entry.agent = this.agent;
+        }
+        mappedItems[i] = entry.mapped;
+      } else {
+        mappedItems[i] = SdkUI.messageTime(this, nativeSdkMessage(rawItem, source));
+      }
+    }
+    this.items = mappedItems;
     this.setConnected(true);
     this.paintHistory();
-    const ids = new Set();
-    for (const item of this.items) {
-      const id = String(item.id); ids.add(id);
-      const old = this.nodes.get(id);
-      if (old?._updateMessage && old.dataset.role === item.role) { old._updateMessage(item); continue; }
-      // Every snapshot replays the whole item list. Rebuilding an unchanged
-      // tool would drop its async syntax colours until the worker repaints,
-      // so the live tail flickered between colour and plain text.
-      const shape = JSON.stringify(item);
-      if (old && old._sdkItemShape === shape) { old._sdkToolMessage = item; continue; }
-      const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
-      const node = msgNode(item); node.dataset.sdkItem = id;
-      node._sdkToolMessage = item; node._sdkItemShape = shape;
-      if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
-        // Keep partial stdout rendered, but never label a partial rawOutput as
-        // completed just because it already contains a default exit_code:0.
-        const status = node.querySelector('.tool-status') || el('div','tool-status');
-        status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
-        if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
-      }
-      NativeSdkControls.decorate(this,node,item);
-      if (old) old.replaceWith(node); else this.live.append(node);
-      ConversationUI.restoreToolState(node, toolState);
-      this.nodes.set(id, node);
-    }
-    for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
-    SdkUI.foldLiveTurns(this, this.items, {tailComplete: !this.running && !requests.size});
-    SdkUI.groupTools(this);
+    const tailComplete = !this.running && !requests.size;
+    const turnMetaKey = item => `${item.role || ''}\0${item.turn_id ?? ''}\0${item.phase || ''}\0${item.interrupted ? 1 : 0}\0${item.silent ? 1 : 0}\0${item.event_kind || ''}\0${item.subtask_outcome ? 1 : 0}`;
+    let canPatchInPlace = Array.isArray(this.renderedItemIds)
+      && this.renderedItemIds.length === mappedItems.length
+      && this.nodes.size === mappedItems.length
+      && this.renderedTailComplete === tailComplete
+      && this.renderedCompactTurns === S.compactTurns;
+    if (canPatchInPlace) {
+      for (let i = 0; i < mappedItems.length; i++) {
+        const item = mappedItems[i], rawItem = filteredRaw[i], id = String(item.id);
+        if (this.renderedItemIds[i] !== id) { canPatchInPlace = false; break; }
+        const old = this.nodes.get(id);
+        if (!old || !old.isConnected) { canPatchInPlace = false; break; }
+        if (rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) continue;
+        if (!old._updateMessage || old.dataset.role !== item.role
+            || old.parentElement !== this.live || old._sdkTurnMeta !== turnMetaKey(item)
+            || (i === 0 && !item.turn_id && this.liveTurns.size > 0)) {
+          canPatchInPlace = false;
+          break;
+        }
+      }
+    }
+    if (canPatchInPlace) {
+      let updatedAny = false;
+      for (let i = 0; i < mappedItems.length; i++) {
+        const item = mappedItems[i], rawItem = filteredRaw[i];
+        const old = this.nodes.get(String(item.id));
+        if (rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) continue;
+        old._updateMessage(item);
+        old._sdkRawItem = rawItem;
+        old._sdkItemTs = item.ts;
+        old._sdkItemShape = null;
+        markMatches(old);
+        updatedAny = true;
+      }
+      if (updatedAny) updateMatchNav();
+    } else {
+      SdkUI.ungroupTools(this);
+      const ids = new Set();
+      for (let i = 0; i < mappedItems.length; i++) {
+        const item = mappedItems[i], rawItem = filteredRaw[i];
+        const id = String(item.id); ids.add(id);
+        const old = this.nodes.get(id);
+        if (old && rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) {
+          if (old._sdkToolMessage) old._sdkToolMessage = item;
+          continue;
+        }
+        if (old?._updateMessage && old.dataset.role === item.role) {
+          old._updateMessage(item);
+          old._sdkRawItem = rawItem;
+          old._sdkItemTs = item.ts;
+          old._sdkTurnMeta = turnMetaKey(item);
+          old._sdkItemShape = null;
+          continue;
+        }
+        // Every snapshot replays the whole item list. Rebuilding an unchanged
+        // tool would drop its async syntax colours until the worker repaints,
+        // so the live tail flickered between colour and plain text.
+        if (old) {
+          const shape = JSON.stringify(item);
+          const oldShape = old._sdkItemShape ??= JSON.stringify(old._sdkToolMessage);
+          if (oldShape === shape) {
+            old._sdkToolMessage = item;
+            old._sdkRawItem = rawItem;
+            old._sdkItemTs = item.ts;
+            old._sdkTurnMeta = turnMetaKey(item);
+            continue;
+          }
+        }
+        const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
+        const node = msgNode(item); node.dataset.sdkItem = id;
+        node._sdkToolMessage = item; node._sdkItemShape = null;
+        node._sdkRawItem = rawItem; node._sdkItemTs = item.ts; node._sdkTurnMeta = turnMetaKey(item);
+        if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
+          // Keep partial stdout rendered, but never label a partial rawOutput as
+          // completed just because it already contains a default exit_code:0.
+          const status = node.querySelector('.tool-status') || el('div','tool-status');
+          status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
+          if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
+        }
+        NativeSdkControls.decorate(this,node,item);
+        if (old) old.replaceWith(node); else this.live.append(node);
+        ConversationUI.restoreToolState(node, toolState);
+        this.nodes.set(id, node);
+      }
+      for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
+      SdkUI.foldLiveTurns(this, this.items, {tailComplete});
+      SdkUI.groupTools(this);
+      this.renderedItemIds = mappedItems.map(item => String(item.id));
+      this.renderedTailComplete = tailComplete;
+      this.renderedCompactTurns = S.compactTurns;
+    }
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
     this.requests = requests;
@@ -440,7 +588,10 @@ const NativeSdkView = {
 
   paintHistory() {
     if (!this.history || !this.historyData) return;
-    SdkUI.refreshMessageTimes(this);
+    if (this.historyMessageTimeRefreshed !== this.historyData) {
+      SdkUI.refreshMessageTimes(this);
+      this.historyMessageTimeRefreshed = this.historyData;
+    }
     const fullMessages = this.historyData.messages || [];
     let messages = fullMessages;
     let cut = messages.length;

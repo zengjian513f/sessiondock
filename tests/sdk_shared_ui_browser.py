@@ -137,6 +137,8 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     context.route(f'**/api/{api}/limits*', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
     context.route(f'**/api/{api}/usage', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
     context.route(f'**/api/{api}/turn', lambda r: held.append(r))
+    if source == 'codex':
+        context.route('**/api/codex-sdk/goal/*', lambda r: r.fulfill(json={'ok': True, 'raw': {'goal': None}}))
     history = [
         {'role': 'user', 'text': '请审阅共享界面', 'turn_id': 'past'},
         {'role': 'thinking', 'text': '需要保留用户展开的分析过程。\n' * 10, 'turn_id': 'past'},
@@ -351,6 +353,7 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     expect(status).to_have_text('就绪')
     expect(status).to_be_disabled()
     assert not errors, errors
+    context.unroute_all(behavior='ignoreErrors')
     context.close()
     print(f'PASS {source} {width}/{theme}: history/tool expansion, editor focus/draft, Markdown queue, status/resize', flush=True)
 

@@ -2,9 +2,9 @@
 // The constructor does not touch `document`; `open` creates the canvas and
 // helper textarea. Incoming `write` data is newline-delimited JSON text.
 
-import {GridModel} from './model.js';
-import {GridRenderer, THEMES, isLightBackground} from './render.js';
-import {InputEncoder, KeyCapture} from './input.js';
+import {GridModel} from './model.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import {GridRenderer, THEMES, isLightBackground} from './render.js?v=__SESSIONDOCK_ASSET_VERSION__';
+import {InputEncoder, KeyCapture} from './input.js?v=__SESSIONDOCK_ASSET_VERSION__';
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;

@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from private_hosts import private_hosts
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -145,13 +146,13 @@ def main():
         env = {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
                'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_SCREEN': str(screen),
                'SESSIONDOCK_TEST_OPENCODE_DB': str(db)}
-        executable = str(Path(sys.executable).resolve())
+        executable = str(Path(shutil.which('python3', path='/usr/bin:/bin') or sys.executable).resolve())
         profiles = [{'id': 'opencode-cli-v1', 'source': 'opencode', 'executable': executable,
                      'args': [str(REPO / 'tests/fake_opencode_composer.py')],
                      'resume_args': ['--session', '{sid}'], 'env': env}]
         # The other CLIs only need to exist so the picker shows the configured sources.
         profiles += [{'id': f'{source}-cli-v1', 'source': source, 'executable': executable,
-                      'args': ['-c', 'import time; time.sleep(60)'], 'env': env}
+                      'args': ['-c', 'import sys, time; print("1.0") if {"--version", "-V", "version"} & set(sys.argv[1:]) else time.sleep(60)'], 'env': env}
                      for source in ('claude', 'codex', 'grok')]
         launcher = root / 'launcher.json'
         launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO / 'target/debug/ptyhost'),
@@ -172,6 +173,7 @@ def main():
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**options)
             context = browser.new_context(viewport={'width': 1280, 'height': 860}, service_workers='block')
+            context.add_init_script('localStorage.setItem("sessiondock.agentStartMode.opencode", "\\"cli\\"")')
             context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
             page = context.new_page()
             errors, dialogs = [], []
@@ -224,10 +226,10 @@ def main():
                 page.locator('#q').fill('')
                 page.locator('#q').press('Enter')
 
-                # ---- Picker: six sources, one labelled row on desktop, icons on a phone.
+                # ---- Picker: nine sources, one icon row on desktop and phone.
                 page.locator('#new-session').click()
                 labels = page.locator('#new-session-form .new-source label')
-                expect(labels).to_have_count(6)
+                expect(labels).to_have_count(9)
                 assert len(picker_rows(page)) == 1, picker_rows(page)
                 for label in labels.all():
                     scroll, client = label.locator('span').evaluate('e => [e.scrollWidth, e.clientWidth]')
@@ -316,7 +318,7 @@ def main():
                 page.locator('.dhead-actions [data-report-bug]').click()
                 expect(page.locator('#bug-report-dialog')).to_be_visible()
                 assert page.evaluate("[...document.querySelectorAll('#bug-report-source input')].map(i => i.value)") \
-                    == ['claude', 'codex', 'grok', 'agy', 'opencode']
+                    == ['codex', 'kiro', 'agy', 'grok', 'claude', 'opencode']
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 

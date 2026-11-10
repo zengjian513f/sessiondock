@@ -39,6 +39,7 @@ def main():
                     browser = pw.chromium.launch(**launch)
                     page = browser.new_page(service_workers='block')
                     page.goto(f'http://127.0.0.1:{hub.port}/')
+                    page.locator('#nest-flat').click()
                     expect(page.locator('#side .item')).to_have_count(1)
                     baseline = None
                     for revision in range(90):

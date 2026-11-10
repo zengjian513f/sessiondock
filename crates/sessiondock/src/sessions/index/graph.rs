@@ -56,16 +56,19 @@ pub struct CatalogSeed {
 }
 
 pub struct Built {
-    /// One row per top-level entry (owned agents are folded into
-    /// `agent_items`, orphan agents are absent), unsorted.
-    pub rows: Vec<Value>,
+    /// Freshly built top-level rows `(uid, standalone, row)` not satisfied by
+    /// `reuse` (owned agents are folded into `agent_items`, orphan agents are absent).
+    pub fresh_rows: Vec<(String, bool, Value)>,
+    /// Standalone top-level uids whose previous row/bytes were reused unchanged.
+    pub reused_uids: Vec<String>,
     /// Agent uid → root owner uid, for healthy agents only.
     pub owners: BTreeMap<String, String>,
     /// Agent uid → why it has no owner (409 ambiguous id, 501 broken or
     /// missing relation, 413 depth); the code an open of that uid answers
-    /// with. Orphans (owner not indexed) are only here, never in `rows`.
+    /// with. Orphans (owner not indexed) are only here, never in `fresh_rows`.
     pub agent_errors: BTreeMap<String, SessionError>,
     pub catalog: Vec<CatalogSeed>,
+    pub rollouts: BTreeMap<String, Vec<String>>,
 }
 
 fn unsupported(message: impl Into<String>) -> SessionError {
@@ -852,44 +855,64 @@ pub(super) fn history_link(entry: &CandidateRef) -> Result<Option<(&str, u64)>, 
 /// Build the rows, agent ownership and catalog seeds for one snapshot.
 /// `stops` are the Claude subagent stop notices per owner uid the index
 /// scanned for this snapshot (owners with an open-turn sidecar).
+/// `reuse` selects standalone main sessions whose row and serialized bytes
+/// can be carried forward from the previous snapshot without rebuilding.
 pub fn build(
     entries: &BTreeMap<String, CandidateRef>,
     check_cut: &mut dyn FnMut(&CandidateRef, u64) -> CutCheck,
     stops: &BTreeMap<String, Stops>,
+    reuse: impl Fn(&str, &CandidateRef) -> bool,
 ) -> Built {
     let graph = Graph::new(entries, check_cut, stops);
-    let mut rows: BTreeMap<String, Value> = BTreeMap::new();
+    let mut fresh_rows: BTreeMap<String, (bool, Value)> = BTreeMap::new();
+    let mut reused_uids = Vec::new();
     let mut owned: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut owners = BTreeMap::new();
     let mut agent_errors = BTreeMap::new();
-    for uid in entries.keys() {
-        if graph.agents.contains_key(uid) {
-            if graph.ambiguous_agent(uid) {
-                let error = SessionError::new(409, "Codex 子代理 ID 在索引中存在歧义");
-                let mut row = graph.row(uid);
-                mark_unsupported(&mut row, &error.message);
-                rows.insert(uid.clone(), row);
-                agent_errors.insert(uid.clone(), error);
-                continue;
-            }
-            match graph.ownership(uid) {
-                Ok((owner, _)) => {
-                    owned.entry(owner.clone()).or_default().push(uid.clone());
-                    owners.insert(uid.clone(), owner);
-                }
-                Err(Unowned::Missing(error)) => {
-                    agent_errors.insert(uid.clone(), error);
-                }
-                Err(Unowned::Broken(error)) => {
-                    let mut row = graph.row(uid);
-                    mark_unsupported(&mut row, &error.message);
-                    rows.insert(uid.clone(), row);
-                    agent_errors.insert(uid.clone(), error);
-                }
-            }
+    for uid in graph.agents.keys() {
+        if graph.ambiguous_agent(uid) {
+            let error = SessionError::new(409, "Codex 子代理 ID 在索引中存在歧义");
+            let mut row = graph.row(uid);
+            mark_unsupported(&mut row, &error.message);
+            fresh_rows.insert(uid.clone(), (false, row));
+            agent_errors.insert(uid.clone(), error);
             continue;
         }
-        rows.insert(uid.clone(), graph.row(uid));
+        match graph.ownership(uid) {
+            Ok((owner, _)) => {
+                owned.entry(owner.clone()).or_default().push(uid.clone());
+                owners.insert(uid.clone(), owner);
+            }
+            Err(Unowned::Missing(error)) => {
+                agent_errors.insert(uid.clone(), error);
+            }
+            Err(Unowned::Broken(error)) => {
+                let mut row = graph.row(uid);
+                mark_unsupported(&mut row, &error.message);
+                fresh_rows.insert(uid.clone(), (false, row));
+                agent_errors.insert(uid.clone(), error);
+            }
+        }
+    }
+    for (uid, entry) in entries {
+        if graph.agents.contains_key(uid) {
+            continue;
+        }
+        let standalone = !owned.contains_key(uid)
+            && (entry.source != "claude" || entry.summary.continued_in_sid.is_none())
+            && entry.summary.codex.as_ref().is_none_or(|codex| {
+                codex.history_base.is_null() && codex.forked_from_id.is_empty()
+            })
+            && (entry.source != "codex"
+                || graph
+                    .sids
+                    .get(&("codex", entry.summary.sid.as_str()))
+                    .is_none_or(|ids| ids.len() <= 1));
+        if standalone && reuse(uid, entry) {
+            reused_uids.push(uid.clone());
+        } else {
+            fresh_rows.insert(uid.clone(), (standalone, graph.row(uid)));
+        }
     }
     for (uid, mut agents) in owned {
         agents.sort_by(|left, right| {
@@ -902,7 +925,7 @@ pub fn build(
                     &graph.agents[right].id,
                 ))
         });
-        if let Some(row) = rows.get_mut(&uid) {
+        if let Some((_, row)) = fresh_rows.get_mut(&uid) {
             let items: Vec<Value> = agents
                 .iter()
                 .map(|agent| graph.agent_item(&uid, agent))
@@ -930,9 +953,14 @@ pub fn build(
         })
         .collect();
     Built {
-        rows: rows.into_values().collect(),
+        fresh_rows: fresh_rows
+            .into_iter()
+            .map(|(uid, (standalone, row))| (uid, standalone, row))
+            .collect(),
+        reused_uids,
         owners,
         agent_errors,
         catalog,
+        rollouts: graph.rollouts,
     }
 }

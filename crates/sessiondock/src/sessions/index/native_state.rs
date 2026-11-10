@@ -52,7 +52,44 @@ struct Payload {
     role: String,
 }
 
+impl Payload {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let str_or_default = |key: &str| match object.get(key) {
+            None => Some(String::new()),
+            Some(field) => field.as_str().map(str::to_owned),
+        };
+        Some(Self {
+            kind: str_or_default("type")?,
+            name: str_or_default("name")?,
+            error: object.get("error").cloned().unwrap_or(Value::Null),
+            model: object.get("model").cloned().unwrap_or(Value::Null),
+            role: str_or_default("role")?,
+        })
+    }
+}
+
 impl Record {
+    fn from_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let kind = object.get("type")?.as_str()?.to_owned();
+        let payload = match object.get("payload") {
+            None => Payload::default(),
+            Some(payload) => Payload::from_value(payload)?,
+        };
+        let message = match object.get("message") {
+            None => Payload::default(),
+            Some(message) => Payload::from_value(message)?,
+        };
+        Some(Self {
+            kind,
+            timestamp: object.get("timestamp").cloned().unwrap_or(Value::Null),
+            payload,
+            message,
+            sidechain: object.get("isSidechain").cloned().unwrap_or(Value::Null),
+        })
+    }
+
     fn codex_activity(&self) -> bool {
         match self.kind.as_str() {
             "response_item" => match self.payload.kind.as_str() {
@@ -160,13 +197,17 @@ pub(super) fn read(
                         pieces.clear();
                         Cow::Owned(raw)
                     };
-                    if (memchr::memmem::find(&raw, b"event_msg").is_some()
-                        || memchr::memmem::find(&raw, b"response_item").is_some()
-                        || memchr::memmem::find(&raw, b"assistant").is_some()
-                        || memchr::memmem::find(&raw, b"compacted").is_some()
-                        || memchr::memmem::find(&raw, b"turn_context").is_some())
-                        && let Ok(record) = serde_json::from_slice::<Record>(&raw)
-                    {
+                    let relevant = match source {
+                        "claude" => memchr::memmem::find(&raw, b"assistant").is_some(),
+                        "codex" => {
+                            memchr::memmem::find(&raw, b"event_msg").is_some()
+                                || memchr::memmem::find(&raw, b"response_item").is_some()
+                                || memchr::memmem::find(&raw, b"compacted").is_some()
+                                || memchr::memmem::find(&raw, b"turn_context").is_some()
+                        }
+                        _ => false,
+                    };
+                    if relevant && let Some(record) = parse_record(&raw) {
                         // Resuming an already running thread can append settings
                         // and telemetry without a new turn. Those writes must not
                         // make simply opening its history change sidebar order.
@@ -263,6 +304,35 @@ pub(super) fn read(
     })
 }
 
+fn parse_record(raw: &[u8]) -> Option<Record> {
+    match serde_json::from_slice::<Record>(raw) {
+        Ok(record) => Some(record),
+        Err(error) if error.classify() == serde_json::error::Category::Data => None,
+        Err(_) => {
+            let value = crate::sessions::records::decode_summary_record(raw.trim_ascii()).ok()?;
+            Record::from_value(&value)
+        }
+    }
+}
+
+fn scan_title_slice(bytes: &[u8], base: u64, committed: &mut u64) -> Option<String> {
+    let end = base.saturating_add(bytes.len() as u64);
+    while *committed >= base && *committed < end {
+        let rest = &bytes[(*committed - base) as usize..];
+        let Some(lf) = memchr::memchr(b'\n', rest) else {
+            break;
+        };
+        let line = &rest[..=lf];
+        *committed += line.len() as u64;
+        if let Ok(value) = crate::sessions::records::decode_summary_record(line.trim_ascii())
+            && let Ok(Some(title)) = super::summary::codex::user_title(&value)
+        {
+            return Some(title);
+        }
+    }
+    None
+}
+
 /// Scan forwards only until the first real input. Large injected preambles and
 /// record counts do not hide it; appends resume at the last complete line.
 /// Native explicit names (including report names) are still applied afterwards.
@@ -277,6 +347,25 @@ fn read_title(
     let mut committed = previous.map_or(0, |scan| scan.title_committed);
     if committed == data.stamp.size {
         return Ok((None, committed));
+    }
+    let prefix = if data.tail_start == 0 {
+        data.tail
+    } else {
+        data.head
+    };
+    if let Some(title) = scan_title_slice(prefix, 0, &mut committed) {
+        return Ok((Some(title), committed));
+    }
+    if prefix.len() as u64 >= data.stamp.size {
+        return Ok((None, committed));
+    }
+    if committed >= data.tail_start {
+        if let Some(title) = scan_title_slice(data.tail, data.tail_start, &mut committed) {
+            return Ok((Some(title), committed));
+        }
+        if data.tail_start.saturating_add(data.tail.len() as u64) >= data.stamp.size {
+            return Ok((None, committed));
+        }
     }
     let mut file = open()?;
     if file.stamp() != Some(data.stamp) {

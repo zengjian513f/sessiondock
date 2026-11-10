@@ -1066,6 +1066,9 @@ async fn aggregated(state: &HubState, path: &str, query: &Params) -> Result<Resp
         "/api/term/list" => aggregate::term_list(registry, client, query).await?,
         _ => aggregate::trash(registry, client, query).await?,
     };
+    if path == "/api/sessions" && value.get("unchanged") == Some(&Value::Bool(true)) {
+        return Ok(json_response(StatusCode::OK, &value));
+    }
     client
         .work(move || json_response(StatusCode::OK, &value))
         .await

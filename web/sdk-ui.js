@@ -631,47 +631,140 @@ const SdkUI = {
     const row = view.pane.querySelector('.sdk-status-row'), gauges = row.querySelector('.sdk-gauges');
     const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
     const trigger = view.pane.querySelector('#sdk-more');
-    const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
-      row.querySelector(':scope > .sdk-credits')?.textContent,
-      row.querySelector('.composer-run-action')?.hidden,
+    const list = controls.filter(Boolean);
+    const rowWidth = row.clientWidth;
+    const controlsMetaKey = JSON.stringify([rowWidth, row.querySelector('.composer-run-action')?.hidden,
       [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
-      controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
+      list.map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
+    const signature = JSON.stringify([view.notice.textContent, gauges.textContent,
+      row.querySelector(':scope > .sdk-credits')?.textContent, controlsMetaKey]);
+    const hadLayout = Boolean(row.dataset.footerLayout);
     if (row.dataset.footerLayout === signature) return;
     row.dataset.footerLayout = signature;
-    gauges.tabIndex = 0;
-    if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== row.clientWidth) view.closeToolbarMenus();
-    row.dataset.footerWidth = row.clientWidth;
-    // Start with status, usage and ⋯; optional controls never displace usage.
-    trigger.hidden = false;
-    const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
-    for (const control of controls.filter(Boolean)) overflow(control).append(control);
+    if (gauges.tabIndex !== 0) gauges.tabIndex = 0;
+    if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== rowWidth) view.closeToolbarMenus();
+    row.dataset.footerWidth = rowWidth;
+    const actionsBox = view.pane.querySelector('#sdk-actions');
+    const overflow = control => control.classList.contains('sdk-action') ? actionsBox : menu;
     const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
-    const anchor = pickers.querySelector('.sdk-fixed-action') || trigger;
-    for (const control of controls.filter(Boolean)) {
-      pickers.insertBefore(control, anchor);
-      if (!fits()) { overflow(control).append(control); break; }
+    const rowSlack = () => {
+      const style = getComputedStyle(row);
+      const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      const gap = parseFloat(style.columnGap) || 0;
+      let used = pad, count = 0;
+      for (const child of row.children) {
+        if (getComputedStyle(child).display === 'none') continue;
+        used += child.getBoundingClientRect().width;
+        count++;
+      }
+      if (count > 1) used += gap * (count - 1);
+      return row.clientWidth - used;
+    };
+    const prev = row._footerState;
+    if (hadLayout && prev && prev.controlsMetaKey === controlsMetaKey
+        && prev.nodes.length === list.length && prev.nodes.every((n, i) => n === list[i])
+        && list.every((n, i) => n.parentElement === (i < prev.keep ? pickers : overflow(n)))) {
+      if (fits()) {
+        const slack = (prev.keep === list.length && trigger.hidden) || prev.keep < list.length ? rowSlack() : 0;
+        if (prev.keep === list.length) {
+          if (!trigger.hidden || slack >= (prev.triggerReserve || 38)) return;
+        } else if (slack + 2 < prev.nextOverflowWidth) {
+          return;
+        }
+      }
     }
-    const overflowPickers=controls.filter(control=>control?.matches('.new-effort') && control.parentElement===menu);
-    menu.prepend(...overflowPickers);
-    for(const control of controls.filter(control=>control?.matches('.new-effort'))){
-      const inMenu=control.parentElement===menu,select=control.querySelector('select');
-      let label=control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
-      if(!label && select){label=el('span','',select.getAttribute('aria-label') || control.title);control.prepend(label);}
-      label?.classList.toggle('visually-hidden',!inMenu);label?.classList.toggle('sdk-picker-label',inMenu);
+    // Start with status, usage and ⋯; optional controls never displace usage.
+    if (trigger.hidden) trigger.hidden = false;
+    for (const control of list) {
+      if (!control.matches('.new-effort')) continue;
+      const select = control.querySelector('select');
+      let label = control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
+      if (!label && select) {
+        label = el('span', '', select.getAttribute('aria-label') || control.title);
+        control.prepend(label);
+      }
+      if (label) {
+        label.classList.add('visually-hidden');
+        label.classList.remove('sdk-picker-label');
+      }
+    }
+    const anchor = pickers.querySelector('.sdk-fixed-action') || trigger;
+    let cursor = anchor;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const control = list[i];
+      if (control.parentElement !== pickers || control.nextElementSibling !== cursor) {
+        pickers.insertBefore(control, cursor);
+      }
+      cursor = control;
+    }
+    let keep = list.length;
+    const widths = new Array(list.length).fill(0);
+    let pickersGap = 0;
+    const rCw = row.clientWidth, rSw = row.scrollWidth, gCw = gauges.clientWidth, gSw = gauges.scrollWidth;
+    const triggerReserve = Math.ceil((trigger.getBoundingClientRect().width || 24) + 14);
+    if (rSw > rCw + 1 || gSw > gCw + 1) {
+      pickersGap = parseFloat(getComputedStyle(pickers).columnGap) || 0;
+      for (let i = 0; i < list.length; i++) {
+        widths[i] = list[i].hidden ? 0 : list[i].getBoundingClientRect().width;
+      }
+      const excess = Math.max(0, rSw - rCw) + Math.max(0, gSw - gCw);
+      let saved = 0;
+      while (keep > 0 && saved < excess - 1) {
+        keep--;
+        if (widths[keep] > 0) saved += widths[keep] + pickersGap;
+      }
+      for (let i = keep; i < list.length; i++) overflow(list[i]).append(list[i]);
+      while (keep > 0 && !fits()) {
+        keep--;
+        const control = list[keep], target = overflow(control);
+        const nextSibling = list.slice(keep + 1).find(c => overflow(c) === target) || null;
+        target.insertBefore(control, nextSibling);
+      }
+      while (keep < list.length) {
+        const candidate = list[keep];
+        if (!candidate.hidden && saved - (widths[keep] + pickersGap) < excess - 2) break;
+        pickers.insertBefore(candidate, anchor);
+        if (!fits()) {
+          const target = overflow(candidate);
+          const nextSibling = list.slice(keep + 1).find(c => overflow(c) === target) || null;
+          target.insertBefore(candidate, nextSibling);
+          break;
+        }
+        if (widths[keep] > 0) saved -= widths[keep] + pickersGap;
+        keep++;
+      }
+    }
+    const overflowPickers = list.filter(control => control.matches('.new-effort') && control.parentElement === menu);
+    if (overflowPickers.length) menu.prepend(...overflowPickers);
+    for (const control of list) {
+      if (!control.matches('.new-effort')) continue;
+      const inMenu = control.parentElement === menu;
+      const label = control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
+      label?.classList.toggle('visually-hidden', !inMenu);
+      label?.classList.toggle('sdk-picker-label', inMenu);
     }
     // Empty wrappers and hidden reset cards are not menu contents. The same
     // contents decide both disclosure visibility and boundaries between groups.
     const hasContent = node => !node.hidden && (node.matches('button, input, select, textarea')
       || [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE
         ? !!child.textContent.trim() : child.nodeType === Node.ELEMENT_NODE && hasContent(child)));
+    const hasChildContent = parent => [...parent.childNodes].some(child =>
+      child.nodeType === Node.TEXT_NODE ? !!child.textContent.trim()
+        : child.nodeType === Node.ELEMENT_NODE && hasContent(child));
     for (const group of menu.querySelectorAll(':scope > #sdk-actions, :scope > #sdk-permissions')) {
-      group.hidden = false;
-      group.hidden = !hasContent(group);
+      const nextHidden = !hasChildContent(group);
+      if (group.hidden !== nextHidden) group.hidden = nextHidden;
     }
-    trigger.hidden = !hasContent(menu);
+    const nextTriggerHidden = !hasChildContent(menu);
+    if (trigger.hidden !== nextTriggerHidden) trigger.hidden = nextTriggerHidden;
     if (trigger.hidden && menu.matches(':popover-open')) {
       menu.hidePopover();
       view.input?.focus();
     }
+    let nextOverflowWidth = Infinity;
+    for (let i = keep; i < list.length; i++) {
+      if (!list[i].hidden) { nextOverflowWidth = (widths[i] || 0) + pickersGap; break; }
+    }
+    row._footerState = {controlsMetaKey, nodes: list, keep, nextOverflowWidth, triggerReserve};
   },
 };

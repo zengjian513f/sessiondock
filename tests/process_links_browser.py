@@ -428,6 +428,7 @@ def main():
                     if not restarted:
                         page = context.new_page()
                         page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
+                        page.locator('#nest-flat').click()
                         uid = scoped(nodes[1].nid, corpora[1].uid('child'))
                         parent = scoped(nodes[0].nid, corpora[0].uid('parent'))
                         page.wait_for_function('uid => S.sessions.some(s => s.uid === uid)', arg=uid)

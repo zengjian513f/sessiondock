@@ -25,7 +25,9 @@ use tokio::sync::{Semaphore, mpsc};
 use super::{
     client::Client,
     namespace::{self, NamespaceError, truthy},
-    registry::{Fetched, Node, Registry, SearchEvent},
+    registry::{
+        Fetched, MergedSessions, Node, Registry, SearchEvent, SessionsAggLookup, SessionsSlotKey,
+    },
 };
 
 /// Nodes queried at once (`ThreadPoolExecutor(max_workers=min(16, n))`).
@@ -133,6 +135,7 @@ struct Answer {
     node: Node,
     data: Arc<Value>,
     failure: Option<Value>,
+    cache_gen: Option<u64>,
 }
 
 impl Answer {
@@ -163,11 +166,14 @@ async fn gather(
 ) -> Vec<Answer> {
     futures_util::stream::iter(nodes)
         .map(|node| async move {
-            let Fetched { data, failure } = registry.fetch(client, &node, path, query, None).await;
+            let (Fetched { data, failure }, cache_gen) = registry
+                .fetch_with_gen(client, &node, path, query, None)
+                .await;
             Answer {
                 node,
                 data,
                 failure,
+                cache_gen,
             }
         })
         .buffered(FAN_OUT)
@@ -234,21 +240,141 @@ pub async fn sessions(
     query: &Params,
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
-    let mut answers = gather(registry, client, nodes, "/api/sessions", &upstream(query)).await;
-    for answer in &mut answers {
-        registry.relocate_nesting(std::sync::Arc::make_mut(&mut answer.data), &answer.node.id);
-    }
+    let upstream_query = upstream(query);
+    let mut answers = gather(registry, client, nodes, "/api/sessions", &upstream_query).await;
+    let (nesting_rev, move_records) = registry.nesting_snapshot();
     let nodes = registry.public();
     let known = first(query, "sig").unwrap_or("").to_owned();
+
+    if let Some(node_gens) = answers
+        .iter()
+        .map(|a| a.cache_gen)
+        .collect::<Option<Vec<u64>>>()
+    {
+        let slot_key = SessionsSlotKey {
+            node_ids: answers.iter().map(|a| a.node.id.clone()).collect(),
+            upstream_query: upstream_query
+                .iter()
+                .filter(|(k, _)| k != "force")
+                .cloned()
+                .collect(),
+        };
+        let errors: Vec<Value> = answers
+            .iter()
+            .filter_map(|answer| answer.failure.clone())
+            .collect();
+        let reduced_nodes = reduce_nodes(&nodes);
+        match registry.lookup_sessions_agg(
+            &slot_key,
+            &node_gens,
+            nesting_rev,
+            &reduced_nodes,
+            &errors,
+        ) {
+            SessionsAggLookup::Full { merged, sig } => {
+                if known == sig {
+                    return Ok(json!({
+                        "unchanged": true, "sig": sig,
+                        "nodes": nodes, "errors": errors,
+                    }));
+                }
+                return client
+                    .work(move || {
+                        let mut result = assemble_sessions_envelope(nodes, errors, &merged);
+                        result.insert("sig".into(), Value::String(sig));
+                        result.insert("built_at".into(), json!(now()));
+                        Value::Object(result)
+                    })
+                    .await
+                    .map_err(|_| invalid("Hub 聚合任务失败"));
+            }
+            SessionsAggLookup::MergedOnly(merged) => {
+                let errors_for_cache = errors.clone();
+                let (body, sig) = client
+                    .work(move || {
+                        let mut result = assemble_sessions_envelope(nodes, errors, &merged);
+                        let sig = signature(&result);
+                        let body = if known == sig {
+                            json!({
+                                "unchanged": true, "sig": sig,
+                                "nodes": result["nodes"], "errors": result["errors"],
+                            })
+                        } else {
+                            result.insert("sig".into(), Value::String(sig.clone()));
+                            result.insert("built_at".into(), json!(now()));
+                            Value::Object(result)
+                        };
+                        (body, sig)
+                    })
+                    .await
+                    .map_err(|_| invalid("Hub 聚合任务失败"))?;
+                registry.store_sessions_agg_sig(
+                    &slot_key,
+                    &node_gens,
+                    nesting_rev,
+                    reduced_nodes,
+                    errors_for_cache,
+                    sig,
+                );
+                return Ok(body);
+            }
+            SessionsAggLookup::Miss => {
+                for answer in &mut answers {
+                    registry.relocate_nesting_with_records(
+                        &mut answer.data,
+                        &answer.node.id,
+                        move_records.as_deref(),
+                    );
+                }
+                let errors_for_cache = errors.clone();
+                let (body, merged, sig) = client
+                    .work(move || {
+                        let merged = Arc::new(build_merged_sessions(&answers));
+                        let mut result = assemble_sessions_envelope(nodes, errors, &merged);
+                        let sig = signature(&result);
+                        let body = if known == sig {
+                            json!({
+                                "unchanged": true, "sig": sig,
+                                "nodes": result["nodes"], "errors": result["errors"],
+                            })
+                        } else {
+                            result.insert("sig".into(), Value::String(sig.clone()));
+                            result.insert("built_at".into(), json!(now()));
+                            Value::Object(result)
+                        };
+                        (body, merged, sig)
+                    })
+                    .await
+                    .map_err(|_| invalid("Hub 聚合任务失败"))?;
+                registry.store_sessions_agg(
+                    slot_key,
+                    node_gens,
+                    nesting_rev,
+                    merged,
+                    reduced_nodes,
+                    errors_for_cache,
+                    sig,
+                );
+                return Ok(body);
+            }
+        }
+    }
+
+    for answer in &mut answers {
+        registry.relocate_nesting_with_records(
+            &mut answer.data,
+            &answer.node.id,
+            move_records.as_deref(),
+        );
+    }
     client
         .work(move || sessions_body(nodes, &answers, &known))
         .await
         .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn sessions_body(nodes: Vec<Value>, answers: &[Answer], known: &str) -> Value {
-    let mut result = envelope(nodes, answers);
-    merge_rows(&mut result, answers, "sessions");
+fn build_merged_sessions(answers: &[Answer]) -> MergedSessions {
+    let mut rows = merged_rows(answers, "sessions");
     // Nodes omit deferred rows, but still publish counts for remote owners.
     let mut counts: HashMap<(&Value, &Value, &Value), u64> = HashMap::new();
     for count in answers
@@ -261,20 +387,55 @@ fn sessions_body(nodes: Vec<Value>, answers: &[Answer], known: &str) -> Value {
             .entry((&count["node_id"], &count["source"], &count["sid"]))
             .or_default() += count["count"].as_u64().unwrap_or(0);
     }
-    if let Some(rows) = result.get_mut("sessions").and_then(Value::as_array_mut) {
-        for row in rows {
-            let remote = counts
-                .get(&(&row["node_id"], &row["source"], &row["sid"]))
-                .copied()
-                .unwrap_or(0);
-            if remote > 0 {
-                row["child_count"] = json!(row["child_count"].as_u64().unwrap_or(0) + remote);
-            }
+    for row in &mut rows {
+        let remote = counts
+            .get(&(&row["node_id"], &row["source"], &row["sid"]))
+            .copied()
+            .unwrap_or(0);
+        if remote > 0 {
+            row["child_count"] = json!(row["child_count"].as_u64().unwrap_or(0) + remote);
         }
     }
-    if let Some(rows) = result.get_mut("sessions").and_then(Value::as_array_mut) {
-        crate::metadata::relations::decorate(rows);
+    crate::metadata::relations::decorate(&mut rows);
+    MergedSessions {
+        sessions: rows,
+        truncated: answers.iter().any(|answer| answer.flag("truncated")),
+        truncated_nodes: answers
+            .iter()
+            .filter(|answer| answer.flag("truncated"))
+            .map(|answer| Value::String(answer.node.id.clone()))
+            .collect(),
+        total_pool: sum(answers.iter().map(|answer| answer.data.get("total_pool"))),
     }
+}
+
+fn assemble_sessions_envelope(
+    nodes: Vec<Value>,
+    errors: Vec<Value>,
+    merged: &MergedSessions,
+) -> Map<String, Value> {
+    let partial = !errors.is_empty();
+    let mut result = Map::new();
+    result.insert("errors".into(), Value::Array(errors));
+    result.insert("partial".into(), Value::Bool(partial));
+    result.insert("nodes".into(), Value::Array(nodes));
+    result.insert("sessions".into(), Value::Array(merged.sessions.clone()));
+    result.insert("truncated".into(), Value::Bool(merged.truncated));
+    result.insert(
+        "truncated_nodes".into(),
+        Value::Array(merged.truncated_nodes.clone()),
+    );
+    result.insert("total_pool".into(), merged.total_pool.clone());
+    result
+}
+
+fn sessions_body(nodes: Vec<Value>, answers: &[Answer], known: &str) -> Value {
+    let errors: Vec<Value> = answers
+        .iter()
+        .filter_map(|answer| answer.failure.clone())
+        .collect();
+    let merged = build_merged_sessions(answers);
+    let mut result = assemble_sessions_envelope(nodes, errors, &merged);
     let sig = signature(&result);
     if known == sig {
         return json!({
@@ -297,7 +458,7 @@ pub async fn search(
     let nodes = selected(registry, query)?;
     let mut answers = gather(registry, client, nodes, "/api/search", &upstream(query)).await;
     for answer in &mut answers {
-        registry.relocate_nesting(std::sync::Arc::make_mut(&mut answer.data), &answer.node.id);
+        registry.relocate_nesting_cow(&mut answer.data, &answer.node.id);
     }
     let nodes = registry.public();
     client
@@ -619,7 +780,12 @@ pub fn search_stream(
                     if let Some(rows) = data.get("results").filter(|rows| truthy(rows)) {
                         yield line(&json!({"type": "matches", "results": rows}));
                     }
-                    answers.push(Answer { node, data, failure });
+                    answers.push(Answer {
+                        node,
+                        data,
+                        failure,
+                        cache_gen: None,
+                    });
                 }
             }
         }
@@ -863,6 +1029,15 @@ pub async fn purge_all(
 
 // ---- helpers ------------------------------------------------------------------
 
+fn reduce_nodes(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            let pick = |key: &str| row.get(key).cloned().unwrap_or(Value::Null);
+            json!({"id": pick("id"), "name": pick("name"), "online": pick("online")})
+        })
+        .collect()
+}
+
 /// The list signature: sha256 of the sorted-key JSON of the body with the
 /// node rows reduced to `{id, name, online}`, first 24 hex digits. Only ever
 /// compared with a value this hub produced.
@@ -870,14 +1045,7 @@ fn signature(result: &Map<String, Value>) -> String {
     let nodes: Vec<Value> = result
         .get("nodes")
         .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .map(|row| {
-                    let pick = |key: &str| row.get(key).cloned().unwrap_or(Value::Null);
-                    json!({"id": pick("id"), "name": pick("name"), "online": pick("online")})
-                })
-                .collect()
-        })
+        .map(|rows| reduce_nodes(rows))
         .unwrap_or_default();
     let nodes = Value::Array(nodes);
     let mut digest = Sha256::new();

@@ -1,7 +1,7 @@
 //! JSONL fields consumed by index/summary, including shared provider predicates.
-//! This projection is private to list summaries. Native history, search text,
-//! stop-evidence scans and the independent latest-model/turn scan keep their
-//! existing decoders. Summary sidecars also retain their existing decoder.
+//! This projection is private to list summaries and `native_state`'s title and
+//! deep-record fallback scans. Native history, search text and stop-evidence
+//! scans keep their existing decoders. Summary sidecars also retain their existing decoder.
 use serde_json::Value;
 
 use super::scanner::{self, Projection, ScanError};

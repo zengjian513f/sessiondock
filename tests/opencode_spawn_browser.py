@@ -148,6 +148,7 @@ def main():
                 browser = pw.chromium.launch(**launch)
                 for width in (1280, 390):
                     context = browser.new_context(viewport={"width": width, "height": 900})
+                    context.add_init_script("localStorage.setItem('sessiondock.childMode', '\"flat\"');")
                     context.route("**/*", lambda route: route.continue_()
                                   if route.request.url.startswith(base + "/") else route.abort())
                     page = context.new_page()

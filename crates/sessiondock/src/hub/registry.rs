@@ -15,13 +15,16 @@
 //! network I/O (a cold search must not serialize heartbeats and lists).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt, fs,
     io::{self, BufWriter, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -321,9 +324,53 @@ impl Fetched {
 
 type CacheKey = (String, String, String);
 
+const SESSIONS_AGG_SLOTS: usize = 4;
+
+fn next_cache_gen() -> u64 {
+    static NEXT_GEN: AtomicU64 = AtomicU64::new(1);
+    NEXT_GEN.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct SessionsSlotKey {
+    pub node_ids: Vec<String>,
+    pub upstream_query: Vec<(String, String)>,
+}
+
+pub(crate) struct MergedSessions {
+    pub sessions: Vec<Value>,
+    pub truncated: bool,
+    pub truncated_nodes: Vec<Value>,
+    pub total_pool: Value,
+}
+
+struct SessionsSigEntry {
+    reduced_nodes: Vec<Value>,
+    errors: Vec<Value>,
+    sig: String,
+}
+
+struct SessionsAggSlot {
+    key: SessionsSlotKey,
+    node_gens: Vec<u64>,
+    nesting_rev: u64,
+    merged: Arc<MergedSessions>,
+    sig_entry: Option<SessionsSigEntry>,
+}
+
+pub(crate) enum SessionsAggLookup {
+    Full {
+        merged: Arc<MergedSessions>,
+        sig: String,
+    },
+    MergedOnly(Arc<MergedSessions>),
+    Miss,
+}
+
 /// One cached public payload.
 #[derive(Clone)]
 struct Cached {
+    generation: u64,
     stamp: f64,
     data: Arc<Value>,
     /// The upstream list response `data` was rewritten from, and the node it
@@ -333,12 +380,22 @@ struct Cached {
     origin: Option<(Weak<Value>, Node)>,
     /// `stale_payload` of this entry, built on the first offline read. A new
     /// stamp replaces it.
-    stale: Arc<OnceLock<Arc<Value>>>,
+    stale: Arc<OnceLock<(u64, Arc<Value>)>>,
 }
 
 impl Cached {
     fn new(stamp: f64, data: Arc<Value>, origin: Option<(Weak<Value>, Node)>) -> Self {
+        Self::with_gen(next_cache_gen(), stamp, data, origin)
+    }
+
+    fn with_gen(
+        generation: u64,
+        stamp: f64,
+        data: Arc<Value>,
+        origin: Option<(Weak<Value>, Node)>,
+    ) -> Self {
         Self {
+            generation,
             stamp,
             data,
             origin,
@@ -346,10 +403,16 @@ impl Cached {
         }
     }
 
-    /// The offline copy, shared by every request until the entry changes.
-    fn stale(&self, path: &str) -> Arc<Value> {
+    /// The offline copy and its monotonic generation, shared by every request
+    /// until the entry changes.
+    fn stale_with_gen(&self, path: &str) -> (u64, Arc<Value>) {
         self.stale
-            .get_or_init(|| Arc::new(stale_payload(path, Some((self.stamp, &self.data)))))
+            .get_or_init(|| {
+                (
+                    next_cache_gen(),
+                    Arc::new(stale_payload(path, Some((self.stamp, &self.data)))),
+                )
+            })
             .clone()
     }
 }
@@ -389,6 +452,8 @@ pub struct Registry {
     wake: Notify,
     public_payload: PublicPayload,
     list_responses: crate::list_sync::RemoteCache,
+    nesting_state: Mutex<(u64, Arc<[crate::session_links::Record]>)>,
+    sessions_agg_cache: Mutex<VecDeque<SessionsAggSlot>>,
 }
 
 impl Registry {
@@ -419,6 +484,8 @@ impl Registry {
             wake: Notify::new(),
             public_payload: identity_payload,
             list_responses: Default::default(),
+            nesting_state: Mutex::new((1, Arc::from([]))),
+            sessions_agg_cache: Mutex::new(VecDeque::new()),
         };
         for node in &nodes {
             if !is_node_id(&node.id) {
@@ -804,6 +871,7 @@ impl Registry {
                     inner.nodes[index].enabled = Some(false);
                     inner.cache.retain(|key, _| key.0 != nid);
                     inner.health.remove(nid);
+                    self.clear_sessions_agg_cache();
                 }
             }
             self.save(&inner)?;
@@ -826,6 +894,7 @@ impl Registry {
         inner.nodes.retain(|node| node.id != nid);
         inner.cache.retain(|key, _| key.0 != nid);
         inner.health.remove(nid);
+        self.clear_sessions_agg_cache();
         self.drop_snapshot(nid);
         self.save(&inner)
     }
@@ -884,7 +953,7 @@ impl Registry {
             .and_then(|v| v["list_version"].as_str())
             .unwrap_or("new");
         let response = client
-            .open(
+            .request(
                 &target,
                 Request {
                     method: "GET",
@@ -894,10 +963,11 @@ impl Registry {
                     connect: timeout,
                     idle: timeout,
                 },
+                JSON_LIMIT,
             )
             .await?;
         let status = response.status;
-        let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
+        let raw = response.body;
         let responses = self.list_responses.clone();
         client
             .work(move || {
@@ -1071,6 +1141,20 @@ impl Registry {
         timeout: Duration,
         events: Option<&mpsc::Sender<SearchEvent>>,
     ) -> Fetched {
+        self.query_with_gen(client, node, path, query, timeout, events)
+            .await
+            .0
+    }
+
+    pub(crate) async fn query_with_gen(
+        &self,
+        client: &Client,
+        node: &Node,
+        path: &str,
+        query: &Query,
+        timeout: Duration,
+        events: Option<&mpsc::Sender<SearchEvent>>,
+    ) -> (Fetched, Option<u64>) {
         let encoded = encode_query(query);
         // A conditional signature selects a revision, not a different list.
         // Keeping it in the key retains up to 128 full historical snapshots.
@@ -1107,7 +1191,9 @@ impl Registry {
             _ => None,
         };
         let outcome = match (outcome, reused) {
-            (Ok((status, _)), Some(data)) => Ok((status, data, None, true)),
+            (Ok((status, _)), Some((generation, data))) => {
+                Ok((status, data, None, Some(generation)))
+            }
             (Ok((status, answer)), None) => {
                 let node = node.clone();
                 let path = path.to_owned();
@@ -1128,36 +1214,46 @@ impl Registry {
                             data
                         };
                         let origin = origin.map(|base| (Arc::downgrade(&base), node));
-                        (status, Arc::new(data), origin, false)
+                        (status, Arc::new(data), origin, None)
                     })
                     .await
             }
             (Err(error), _) => Err(error),
         };
         let (status, error) = match outcome {
-            Ok((status, data, origin, reused)) if status == 200 => {
+            Ok((status, data, origin, reused_gen)) if status == 200 => {
                 if !data.is_object() {
                     (Some(status), ClientError::Invalid("body is not an object"))
                 } else {
-                    let snapshot = {
+                    let (snapshot, cache_gen) = {
                         let mut inner = self.lock();
-                        if reused {
+                        let cache_gen = if let Some(generation) = reused_gen {
                             // Same payload, seen now: offline rows report this
-                            // read as their `last_seen`.
+                            // read as their `last_seen`, while the online `data`
+                            // retains its baseline generation.
                             if let Some(entry) = inner.cache.get_mut(&key)
                                 && Arc::ptr_eq(&entry.data, &data)
                             {
-                                *entry = Cached::new(stamp, data.clone(), entry.origin.take());
+                                *entry = Cached::with_gen(
+                                    generation,
+                                    stamp,
+                                    data.clone(),
+                                    entry.origin.take(),
+                                );
                             }
+                            (!search).then_some(generation)
                         } else if !search {
-                            inner
-                                .cache
-                                .insert(key.clone(), Cached::new(stamp, data.clone(), origin));
+                            let entry = Cached::new(stamp, data.clone(), origin);
+                            let generation = entry.generation;
+                            inner.cache.insert(key.clone(), entry);
                             // Bound variant caches (debug views / forced refreshes).
                             while inner.cache.len() > CACHE_LIMIT {
                                 inner.cache.shift_remove_index(0);
                             }
-                        }
+                            Some(generation)
+                        } else {
+                            None
+                        };
                         inner.health.insert(
                             node.id.clone(),
                             Health {
@@ -1167,15 +1263,21 @@ impl Registry {
                                 ..Health::default()
                             },
                         );
-                        canonical_sessions && self.snapshot_needed(&mut inner, &node.id, &data)
+                        (
+                            canonical_sessions && self.snapshot_needed(&mut inner, &node.id, &data),
+                            cache_gen,
+                        )
                     };
                     if snapshot {
                         self.write_snapshot(&node.id, stamp, &data).await;
                     }
-                    return Fetched {
-                        data,
-                        failure: None,
-                    };
+                    return (
+                        Fetched {
+                            data,
+                            failure: None,
+                        },
+                        cache_gen,
+                    );
                 }
             }
             Ok((status, ..)) => (Some(status), ClientError::Invalid("non-200 status")),
@@ -1217,9 +1319,12 @@ impl Registry {
             let cached = self.cached(&inner, &node.id, path, &key);
             (prior, cached)
         };
-        let mut data = match &cached {
-            Some(cached) => cached.stale(path),
-            None => Arc::new(stale_payload(path, None)),
+        let (cache_gen, mut data) = match &cached {
+            Some(cached) => {
+                let (generation, data) = cached.stale_with_gen(path);
+                ((!search).then_some(generation), data)
+            }
+            None => ((!search).then_some(0), Arc::new(stale_payload(path, None))),
         };
         if search && !found.is_empty() {
             // Search answers are never cached, so this copy is the small `{}`.
@@ -1227,24 +1332,32 @@ impl Registry {
             partial["results"] = Value::Array(found.into_values().collect());
             data = Arc::new(partial);
         }
-        Fetched {
-            data,
-            failure: Some(json!({
-                "node_id": node.id, "name": node.name,
-                "error": reason, "error_code": code, "last_seen": prior.last_seen,
-            })),
-        }
+        (
+            Fetched {
+                data,
+                failure: Some(json!({
+                    "node_id": node.id, "name": node.name,
+                    "error": reason, "error_code": code, "last_seen": prior.last_seen,
+                })),
+            },
+            cache_gen,
+        )
     }
 
     /// The cached payload a node read reporting `base` unchanged may reuse:
     /// rewritten from that exact upstream list for this exact node.
-    fn reusable(&self, key: &CacheKey, node: &Node, base: &Arc<Value>) -> Option<Arc<Value>> {
+    fn reusable(
+        &self,
+        key: &CacheKey,
+        node: &Node,
+        base: &Arc<Value>,
+    ) -> Option<(u64, Arc<Value>)> {
         let inner = self.lock();
         let entry = inner.cache.get(key)?;
         let (origin, from) = entry.origin.as_ref()?;
         // The weak reference keeps the allocation, so its address is not reused.
         (std::ptr::eq(origin.as_ptr(), Arc::as_ptr(base)) && from == node)
-            .then(|| entry.data.clone())
+            .then(|| (entry.generation, entry.data.clone()))
     }
 
     fn cached(&self, inner: &Inner, nid: &str, path: &str, key: &CacheKey) -> Option<Cached> {
@@ -1269,6 +1382,19 @@ impl Registry {
         query: &Query,
         events: Option<&mpsc::Sender<SearchEvent>>,
     ) -> Fetched {
+        self.fetch_with_gen(client, node, path, query, events)
+            .await
+            .0
+    }
+
+    pub(crate) async fn fetch_with_gen(
+        &self,
+        client: &Client,
+        node: &Node,
+        path: &str,
+        query: &Query,
+        events: Option<&mpsc::Sender<SearchEvent>>,
+    ) -> (Fetched, Option<u64>) {
         let nid = &node.id;
         let key: CacheKey = (nid.clone(), path.to_string(), encode_query(query));
         let (health, cached) = {
@@ -1282,20 +1408,199 @@ impl Registry {
         // otherwise serializes every node, heartbeat, list and creation response.
         if health.online != Some(false) {
             return self
-                .query(client, node, path, query, client.timeout, events)
+                .query_with_gen(client, node, path, query, client.timeout, events)
                 .await;
         }
-        Fetched {
-            data: match &cached {
-                Some(cached) => cached.stale(path),
-                None => Arc::new(stale_payload(path, None)),
+        let non_search = path != "/api/search";
+        let (cache_gen, data) = match &cached {
+            Some(cached) => {
+                let (generation, data) = cached.stale_with_gen(path);
+                (non_search.then_some(generation), data)
+            }
+            None => (non_search.then_some(0), Arc::new(stale_payload(path, None))),
+        };
+        (
+            Fetched {
+                data,
+                failure: Some(json!({
+                    "node_id": nid, "name": node.name,
+                    "error": health.error.clone().unwrap_or_else(|| "节点暂时离线".to_string()),
+                    "error_code": health.error_code.clone().unwrap_or_else(|| "connection_failed".to_string()),
+                    "last_seen": health.last_seen, "offline_since": health.offline_since,
+                })),
             },
-            failure: Some(json!({
-                "node_id": nid, "name": node.name,
-                "error": health.error.clone().unwrap_or_else(|| "节点暂时离线".to_string()),
-                "error_code": health.error_code.clone().unwrap_or_else(|| "connection_failed".to_string()),
-                "last_seen": health.last_seen, "offline_since": health.offline_since,
-            })),
+            cache_gen,
+        )
+    }
+
+    /// Monotonic revision and sorted completed move records for cross-node
+    /// nesting relocation (`transfer_links`).
+    pub(crate) fn nesting_snapshot(&self) -> (u64, Option<Arc<[crate::session_links::Record]>>) {
+        let Some(links) = self.transfer_links.get() else {
+            return (0, None);
+        };
+        let completed: Option<Vec<crate::session_links::Record>> = {
+            let guard = links.lock().unwrap_or_else(|error| error.into_inner());
+            if !guard
+                .values()
+                .any(|record| record.mode == "move" && record.phase == "complete")
+            {
+                None
+            } else {
+                Some(
+                    guard
+                        .values()
+                        .filter(|record| record.mode == "move" && record.phase == "complete")
+                        .cloned()
+                        .collect(),
+                )
+            }
+        };
+        let mut state = self
+            .nesting_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match completed {
+            None => {
+                if !state.1.is_empty() {
+                    state.0 += 1;
+                    state.1 = Arc::from([]);
+                }
+            }
+            Some(mut records) => {
+                records.sort_by(|a, b| (a.created_ms, &a.id).cmp(&(b.created_ms, &b.id)));
+                if !same_move_records(&state.1, &records) {
+                    state.0 += 1;
+                    state.1 = Arc::from(records);
+                }
+            }
+        }
+        (state.0, Some(state.1.clone()))
+    }
+
+    /// Copy-on-write nesting relocation: inspects `payload` first and only
+    /// clones the underlying `Value` tree via `Arc::make_mut` when at least
+    /// one row on `node` actually requires relocation mutation.
+    pub(crate) fn relocate_nesting_cow(&self, payload: &mut Arc<Value>, node: &str) {
+        let (_, records) = self.nesting_snapshot();
+        self.relocate_nesting_with_records(payload, node, records.as_deref());
+    }
+
+    pub(crate) fn relocate_nesting_with_records(
+        &self,
+        payload: &mut Arc<Value>,
+        node: &str,
+        records: Option<&[crate::session_links::Record]>,
+    ) {
+        let Some(records) = records else {
+            return;
+        };
+        if needs_nesting_relocation(payload, node, records) {
+            self.relocate_nesting(Arc::make_mut(payload), node);
+        }
+    }
+
+    fn clear_sessions_agg_cache(&self) {
+        self.sessions_agg_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    pub(crate) fn lookup_sessions_agg(
+        &self,
+        key: &SessionsSlotKey,
+        node_gens: &[u64],
+        nesting_rev: u64,
+        reduced_nodes: &[Value],
+        errors: &[Value],
+    ) -> SessionsAggLookup {
+        let mut cache = self
+            .sessions_agg_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(index) = cache.iter().position(|slot| &slot.key == key) else {
+            return SessionsAggLookup::Miss;
+        };
+        if index + 1 < cache.len()
+            && let Some(slot) = cache.remove(index)
+        {
+            cache.push_back(slot);
+        }
+        let Some(slot) = cache.back() else {
+            return SessionsAggLookup::Miss;
+        };
+        if slot.node_gens != node_gens || slot.nesting_rev != nesting_rev {
+            return SessionsAggLookup::Miss;
+        }
+        if let Some(sig_entry) = &slot.sig_entry
+            && sig_entry.reduced_nodes == reduced_nodes
+            && sig_entry.errors == errors
+        {
+            return SessionsAggLookup::Full {
+                merged: slot.merged.clone(),
+                sig: sig_entry.sig.clone(),
+            };
+        }
+        SessionsAggLookup::MergedOnly(slot.merged.clone())
+    }
+
+    pub(crate) fn store_sessions_agg_sig(
+        &self,
+        key: &SessionsSlotKey,
+        node_gens: &[u64],
+        nesting_rev: u64,
+        reduced_nodes: Vec<Value>,
+        errors: Vec<Value>,
+        sig: String,
+    ) {
+        let mut cache = self
+            .sessions_agg_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(slot) = cache.iter_mut().find(|slot| {
+            &slot.key == key && slot.node_gens == node_gens && slot.nesting_rev == nesting_rev
+        }) {
+            slot.sig_entry = Some(SessionsSigEntry {
+                reduced_nodes,
+                errors,
+                sig,
+            });
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn store_sessions_agg(
+        &self,
+        key: SessionsSlotKey,
+        node_gens: Vec<u64>,
+        nesting_rev: u64,
+        merged: Arc<MergedSessions>,
+        reduced_nodes: Vec<Value>,
+        errors: Vec<Value>,
+        sig: String,
+    ) {
+        let mut cache = self
+            .sessions_agg_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let next = SessionsAggSlot {
+            key,
+            node_gens,
+            nesting_rev,
+            merged,
+            sig_entry: Some(SessionsSigEntry {
+                reduced_nodes,
+                errors,
+                sig,
+            }),
+        };
+        if let Some(index) = cache.iter().position(|slot| slot.key == next.key) {
+            cache.remove(index);
+        }
+        cache.push_back(next);
+        while cache.len() > SESSIONS_AGG_SLOTS {
+            cache.pop_front();
         }
     }
 
@@ -1382,6 +1687,119 @@ impl Registry {
             })
             .ok_or_else(|| invalid("ids 必须是机器 id 列表"))?;
         self.reorder(&ids)
+    }
+}
+
+fn same_move_records(
+    left: &[crate::session_links::Record],
+    right: &[crate::session_links::Record],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right.iter()).all(|(a, b)| {
+            a.id == b.id
+                && a.created_ms == b.created_ms
+                && a.mode == b.mode
+                && a.phase == b.phase
+                && a.source_node == b.source_node
+                && a.target_node == b.target_node
+                && a.mappings == b.mappings
+        })
+}
+
+fn needs_nesting_relocation(
+    value: &Value,
+    node: &str,
+    records: &[crate::session_links::Record],
+) -> bool {
+    match value {
+        Value::Array(rows) => rows
+            .iter()
+            .any(|row| needs_nesting_relocation(row, node, records)),
+        Value::Object(row) => {
+            let owner = row.get("node_id").and_then(Value::as_str).unwrap_or(node);
+            if let Some(counts) = row.get("child_counts").and_then(Value::as_array) {
+                for count in counts {
+                    let Some(obj) = count.as_object() else {
+                        return true;
+                    };
+                    let orig_node = obj.get("node_id").and_then(Value::as_str);
+                    let start_loc = orig_node.unwrap_or(node);
+                    if records.is_empty() {
+                        if orig_node != Some(start_loc) {
+                            return true;
+                        }
+                    } else {
+                        let mut location = start_loc;
+                        let identity = format!(
+                            "{}:{}",
+                            obj.get("source").and_then(Value::as_str).unwrap_or(""),
+                            obj.get("sid").and_then(Value::as_str).unwrap_or("")
+                        );
+                        for record in records {
+                            if record.source_node == location
+                                && record.mappings.contains_key(&identity)
+                            {
+                                location = record.target_node.as_str();
+                            }
+                        }
+                        if orig_node != Some(location) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if let Some(parent) = row.get("nest_parent").and_then(Value::as_object) {
+                let orig_node = parent.get("node_id").and_then(Value::as_str);
+                let orig_source = parent.get("source").and_then(Value::as_str);
+                let orig_sid = parent.get("sid").and_then(Value::as_str);
+                let start_loc = orig_node.unwrap_or(owner);
+                if records.is_empty() {
+                    if orig_source.is_none_or(|s| s.contains(':')) || orig_sid.is_none() {
+                        return true;
+                    }
+                    if start_loc == owner {
+                        if parent.contains_key("node_id") {
+                            return true;
+                        }
+                    } else if orig_node != Some(start_loc) {
+                        return true;
+                    }
+                } else {
+                    let mut location = start_loc;
+                    let mut identity =
+                        format!("{}:{}", orig_source.unwrap_or(""), orig_sid.unwrap_or(""));
+                    for record in records {
+                        if record.source_node == location
+                            && let Some(next) = record.mappings.get(&identity)
+                        {
+                            location = record.target_node.as_str();
+                            identity = next.clone();
+                        }
+                    }
+                    if let Some((source, sid)) = identity.split_once(':') {
+                        if orig_source != Some(source) || orig_sid != Some(sid) {
+                            return true;
+                        }
+                        if location == owner {
+                            if parent.contains_key("node_id") {
+                                return true;
+                            }
+                        } else if orig_node != Some(location) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            for key in ["sessions", "results", "session", "meta"] {
+                if let Some(child) = row.get(key)
+                    && needs_nesting_relocation(child, owner, records)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 

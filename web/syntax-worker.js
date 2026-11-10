@@ -1,4 +1,4 @@
-import {highlight, highlightSegments, shellCommandHighlight} from './syntax.js';
+import {highlight, highlightSegments, shellCommandHighlight} from './syntax.js?v=__SESSIONDOCK_ASSET_VERSION__';
 
 self.onmessage = ({data}) => {
   const {source, kind, language, path} = data;

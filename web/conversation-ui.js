@@ -147,12 +147,20 @@ const ConversationUI = {
   },
 
   refreshToolTails(box) {
+    if (!box) return;
+    const groups = box.querySelectorAll('.grp');
+    if (!groups.length) return;
     // Use message order across history/live and turn wrappers, not execution state.
-    const messages = [...box.querySelectorAll('.msg, [data-sdk-item]')]
-      .filter(node => !node.closest('.silent-tool-result, .question-live-shadowed, [hidden], .hidden'));
-    const last = messages.at(-1);
-    const tailGroup = last?.closest('.grp');
-    for (const group of box.querySelectorAll('.grp')) group._setTailAtEnd?.(group === tailGroup);
+    const all = box.querySelectorAll('.msg, [data-sdk-item]');
+    let last = null;
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (!all[i].closest('.silent-tool-result, .question-live-shadowed, [hidden], .hidden')) {
+        last = all[i];
+        break;
+      }
+    }
+    const tailGroup = last?.closest('.grp') || null;
+    for (const group of groups) group._setTailAtEnd?.(group === tailGroup);
   },
 
   toolComplete(message) {

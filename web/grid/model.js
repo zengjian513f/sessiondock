@@ -5,7 +5,7 @@
 // the width it was wrapped at (`wcols`) until its logical line is rewrapped, the
 // owner reflows the visible window at once and the rest in cancellable slices.
 
-import {segmentText} from './wire.js';
+import {segmentText} from './wire.js?v=__SESSIONDOCK_ASSET_VERSION__';
 
 const FLAG_WIDE = 32;
 /// 分页结果末尾与本地最旧几行重叠，用来对齐接缝；再多带一段余量，宿主行号

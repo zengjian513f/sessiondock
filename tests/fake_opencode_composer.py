@@ -146,6 +146,12 @@ def history(session):
 def main():
     if sys.argv[1:2] == ["api"]:
         sys.exit(api(sys.argv[2:]))
+    if "--version" in sys.argv[1:]:
+        print("2.0.18")
+        return
+    if sys.argv[1:2] == ["models"]:
+        print("fake/fake-model")
+        return
     session = sys.argv[sys.argv.index("--session") + 1] if "--session" in sys.argv else None
     root = Path(os.environ['SESSIONDOCK_TEST_SCREEN'])
     old = termios.tcgetattr(0)

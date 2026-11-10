@@ -22,6 +22,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -165,35 +166,60 @@ impl SessionRoots {
     }
 }
 
-/// Basename without directories or `.exe`, lowercase.
-pub fn cli_name(argv0: &str) -> String {
+fn cli_head(argv0: &str) -> &str {
     let trimmed = argv0.trim();
     let head = trimmed.rsplit('/').next().unwrap_or(trimmed);
-    let head = head
-        .rsplit('\\')
-        .next()
-        .unwrap_or(head)
-        .to_ascii_lowercase();
-    head.strip_suffix(".exe")
-        .map_or(head.clone(), str::to_owned)
+    let head = head.rsplit('\\').next().unwrap_or(head);
+    if head
+        .as_bytes()
+        .get(head.len().wrapping_sub(4)..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(b".exe"))
+    {
+        &head[..head.len() - 4]
+    } else {
+        head
+    }
+}
+
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack
+        .as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
+
+fn contains_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || haystack
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// Basename without directories or `.exe`, lowercase.
+pub fn cli_name(argv0: &str) -> String {
+    cli_head(argv0).to_ascii_lowercase()
 }
 
 /// Which CLI family a command belongs to.
 pub fn cli_family(argv0: &str) -> Option<&'static str> {
-    let head = cli_name(argv0);
-    if head == "grok" || head.starts_with("grok-") {
+    let head = cli_head(argv0);
+    if head.eq_ignore_ascii_case("grok") || starts_with_ignore_ascii_case(head, "grok-") {
         Some("grok")
-    } else if head == "claude" || head.starts_with("claude-") {
+    } else if head.eq_ignore_ascii_case("claude") || starts_with_ignore_ascii_case(head, "claude-")
+    {
         Some("claude")
-    } else if head == "codex" || head.starts_with("codex-") {
+    } else if head.eq_ignore_ascii_case("codex") || starts_with_ignore_ascii_case(head, "codex-") {
         Some("codex")
-    } else if head == "agy" {
+    } else if head.eq_ignore_ascii_case("agy") {
         Some("agy")
-    } else if head == "kiro" || head.starts_with("kiro-") {
+    } else if head.eq_ignore_ascii_case("kiro") || starts_with_ignore_ascii_case(head, "kiro-") {
         Some("kiro")
-    } else if head == "droid" {
+    } else if head.eq_ignore_ascii_case("droid") {
         Some("droid")
-    } else if matches!(head.as_str(), "codebuddy" | "codebuddy-code" | "cbc") {
+    } else if head.eq_ignore_ascii_case("codebuddy")
+        || head.eq_ignore_ascii_case("codebuddy-code")
+        || head.eq_ignore_ascii_case("cbc")
+    {
         Some("codebuddy")
     } else {
         None
@@ -207,7 +233,7 @@ pub fn is_kiro_acp_cmd(cmd: &str) -> bool {
     let Some(argv0) = tokens.next() else {
         return false;
     };
-    if cli_family(argv0) != Some("kiro") && !cmd.to_ascii_lowercase().contains("kiro") {
+    if cli_family(argv0) != Some("kiro") && !contains_ignore_ascii_case(cmd.as_bytes(), b"kiro") {
         return false;
     }
     for token in tokens {
@@ -227,11 +253,15 @@ pub fn is_kiro_acp_cmd(cmd: &str) -> bool {
 
 /// The CLI main process itself, not a shell or ACP server it started.
 pub fn is_cli(cmd: &str) -> bool {
-    let head = cli_name(argv0_of(cmd));
-    if head == "kiro" || head.starts_with("kiro-") {
+    let head = cli_head(argv0_of(cmd));
+    if head.eq_ignore_ascii_case("kiro") || starts_with_ignore_ascii_case(head, "kiro-") {
         return !is_kiro_acp_cmd(cmd);
     }
-    CLI_NAMES.contains(&head.as_str()) || head.starts_with("codex-") || head.starts_with("claude-")
+    CLI_NAMES
+        .iter()
+        .any(|candidate| head.eq_ignore_ascii_case(candidate))
+        || starts_with_ignore_ascii_case(head, "codex-")
+        || starts_with_ignore_ascii_case(head, "claude-")
 }
 
 /// The command a process runs. CodeBuddy's npm package is a Node script, so
@@ -239,7 +269,8 @@ pub fn is_cli(cmd: &str) -> bool {
 fn argv0_of(cmd: &str) -> &str {
     let mut tokens = cmd.trim().split(' ');
     let first = tokens.next().unwrap_or("");
-    if matches!(cli_name(first).as_str(), "node" | "nodejs")
+    let first_head = cli_head(first);
+    if (first_head.eq_ignore_ascii_case("node") || first_head.eq_ignore_ascii_case("nodejs"))
         && let Some(script) = tokens.find(|token| !token.is_empty() && !token.starts_with('-'))
         && cli_family(script) == Some("codebuddy")
     {
@@ -377,10 +408,37 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).cmdlines.get(&pid) {
             return known.clone();
         }
-        let value = std::fs::read(self.pid_dir(pid).join("cmdline"))
-            .ok()
-            .map(|bytes| Arc::from(cmdline_text(&bytes)));
-        lock(&self.memo).cmdlines.insert(pid, value.clone());
+        let mut scratch = Vec::new();
+        self.cmdline_with_buf(pid, &mut scratch)
+    }
+
+    fn cmdline_with_buf(&self, pid: u32, scratch: &mut Vec<u8>) -> Option<Arc<str>> {
+        if let Some(known) = lock(&self.memo).cmdlines.get(&pid) {
+            return known.clone();
+        }
+        scratch.clear();
+        let (value, daemon) = match std::fs::File::open(self.pid_dir(pid).join("cmdline"))
+            .and_then(|mut file| file.read_to_end(scratch))
+        {
+            Ok(_) if scratch.is_empty() => (Some(empty_cmdline()), false),
+            Ok(_) => {
+                let daemon = parse_codex_app_server(scratch);
+                for byte in scratch.iter_mut() {
+                    if *byte == 0 {
+                        *byte = b' ';
+                    }
+                }
+                let text = match std::str::from_utf8(scratch) {
+                    Ok(valid) => Arc::from(valid),
+                    Err(_) => Arc::from(String::from_utf8_lossy(scratch).as_ref()),
+                };
+                (Some(text), daemon)
+            }
+            Err(_) => (None, false),
+        };
+        let mut memo = lock(&self.memo);
+        memo.cmdlines.insert(pid, value.clone());
+        memo.codex_app_servers.insert(pid, daemon);
         value
     }
 
@@ -391,34 +449,26 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).codex_app_servers.get(&pid) {
             return *known;
         }
-        let daemon = std::fs::read(self.pid_dir(pid).join("cmdline"))
-            .ok()
-            .is_some_and(|bytes| {
-                let mut args = bytes.split(|byte| *byte == 0);
-                if !args
-                    .next()
-                    .is_some_and(|exe| cli_family(&String::from_utf8_lossy(exe)) == Some("codex"))
-                {
-                    return false;
-                }
-                while let Some(arg) = args.next() {
-                    match arg {
-                        b"-c" | b"--config" | b"--enable" | b"--disable" => {
-                            if args.next().is_none() {
-                                return false;
-                            }
-                        }
-                        _ if arg.starts_with(b"--config=")
-                            || arg.starts_with(b"--enable=")
-                            || arg.starts_with(b"--disable=")
-                            || (arg.starts_with(b"-c") && arg.len() > 2) => {}
-                        _ => return arg == b"app-server",
-                    }
-                }
-                false
-            });
-        lock(&self.memo).codex_app_servers.insert(pid, daemon);
-        daemon
+        let mut scratch = Vec::new();
+        let _ = self.cmdline_with_buf(pid, &mut scratch);
+        lock(&self.memo)
+            .codex_app_servers
+            .get(&pid)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn load_stat(&self, pid: u32) -> (Option<Parent>, Option<f64>) {
+        let stat = std::fs::read_to_string(self.pid_dir(pid).join("stat")).ok();
+        let parent = stat.as_deref().and_then(parse_parent);
+        let started = self.clock.and_then(|clock| {
+            let ticks = parse_start_ticks(stat.as_deref()?)?;
+            Some(clock.boot_time as f64 + ticks as f64 / clock.ticks_per_second as f64)
+        });
+        let mut memo = lock(&self.memo);
+        memo.parents.insert(pid, parent.clone());
+        memo.starts.insert(pid, started);
+        (parent, started)
     }
 
     /// `(comm, ppid)`; `None` when the stat line is unreadable or malformed.
@@ -426,11 +476,7 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).parents.get(&pid) {
             return known.clone();
         }
-        let value = std::fs::read_to_string(self.pid_dir(pid).join("stat"))
-            .ok()
-            .and_then(|stat| parse_parent(&stat));
-        lock(&self.memo).parents.insert(pid, value.clone());
-        value
+        self.load_stat(pid).0
     }
 
     /// Unix seconds the process started, the
@@ -445,13 +491,11 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).starts.get(&pid) {
             return *known;
         }
-        let value = self.clock.and_then(|clock| {
-            let stat = std::fs::read_to_string(self.pid_dir(pid).join("stat")).ok()?;
-            let ticks = parse_start_ticks(&stat)?;
-            Some(clock.boot_time as f64 + ticks as f64 / clock.ticks_per_second as f64)
-        });
-        lock(&self.memo).starts.insert(pid, value);
-        value
+        if self.clock.is_none() {
+            lock(&self.memo).starts.insert(pid, None);
+            return None;
+        }
+        self.load_stat(pid).1
     }
 
     /// The `SPAWN_ENV_KEYS` present in the process environment with non-empty
@@ -462,16 +506,27 @@ impl ProcTree {
         }
         let mut found = BTreeMap::new();
         if let Ok(bytes) = std::fs::read(self.pid_dir(pid).join("environ")) {
-            for entry in String::from_utf8_lossy(&bytes).split('\0') {
-                if let Some((key, value)) = entry.split_once('=')
-                    && SPAWN_ENV_KEYS.contains(&key)
-                    && !value.trim().is_empty()
-                {
-                    found.insert(key.to_owned(), value.trim().to_owned());
+            for entry in bytes.split(|byte| *byte == 0) {
+                let Some(eq) = entry.iter().position(|byte| *byte == b'=') else {
+                    continue;
+                };
+                let Ok(key) = std::str::from_utf8(&entry[..eq]) else {
+                    continue;
+                };
+                if SPAWN_ENV_KEYS.contains(&key) {
+                    let value = String::from_utf8_lossy(&entry[eq + 1..]);
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        found.insert(key.to_owned(), trimmed.to_owned());
+                    }
                 }
             }
         }
-        let value = Arc::new(found);
+        let value = if found.is_empty() {
+            empty_spawn_env()
+        } else {
+            Arc::new(found)
+        };
         lock(&self.memo).spawn_env.insert(pid, value.clone());
         value
     }
@@ -482,11 +537,18 @@ impl ProcTree {
         let mut current = pid;
         for _ in 0..CLI_ANCESTOR_DEPTH {
             let parent = self.parent(current)?;
-            let comm = parent.name.to_ascii_lowercase();
-            if comm == "sdkhost" || comm.starts_with("sdkhost-") {
+            if parent.name.eq_ignore_ascii_case("sdkhost")
+                || starts_with_ignore_ascii_case(&parent.name, "sdkhost-")
+                || parent.name.eq_ignore_ascii_case("ptyhost")
+                || starts_with_ignore_ascii_case(&parent.name, "ptyhost-")
+                || parent.name.eq_ignore_ascii_case("sessiondock")
+                || starts_with_ignore_ascii_case(&parent.name, "sessiondock-")
+            {
                 return None;
             }
-            let is_main = if comm == "kiro" || comm.starts_with("kiro-") {
+            let is_main = if parent.name.eq_ignore_ascii_case("kiro")
+                || starts_with_ignore_ascii_case(&parent.name, "kiro-")
+            {
                 self.cmdline(current)
                     .is_none_or(|cmd| !is_kiro_acp_cmd(&cmd))
             } else {
@@ -507,22 +569,40 @@ impl ProcTree {
     }
 
     /// Whether `pid` or one of its ancestors within `ANCESTRY_DEPTH` is
-    /// `sdkhost` (which hosts Native SDK processes such as `kiro-cli acp`).
+    /// `sdkhost` (which hosts Native SDK processes such as `kiro-cli acp`),
+    /// stopping at an enclosing `ptyhost` or `sessiondock` host boundary.
     pub fn is_sdkhost_descendant(&self, pid: u32) -> bool {
         let mut current = pid;
         for _ in 0..ANCESTRY_DEPTH {
             if let Some(cmd) = self.cmdline(current) {
-                let argv0 = cli_name(argv0_of(&cmd));
-                if argv0 == "sdkhost" || argv0.starts_with("sdkhost-") {
+                let argv0 = cli_head(argv0_of(&cmd));
+                if argv0.eq_ignore_ascii_case("sdkhost")
+                    || starts_with_ignore_ascii_case(argv0, "sdkhost-")
+                {
                     return true;
+                }
+                if argv0.eq_ignore_ascii_case("ptyhost")
+                    || starts_with_ignore_ascii_case(argv0, "ptyhost-")
+                    || argv0.eq_ignore_ascii_case("sessiondock")
+                    || starts_with_ignore_ascii_case(argv0, "sessiondock-")
+                {
+                    return false;
                 }
             }
             let Some(parent) = self.parent(current) else {
                 break;
             };
-            let comm = parent.name.to_ascii_lowercase();
-            if comm == "sdkhost" || comm.starts_with("sdkhost-") {
+            if parent.name.eq_ignore_ascii_case("sdkhost")
+                || starts_with_ignore_ascii_case(&parent.name, "sdkhost-")
+            {
                 return true;
+            }
+            if parent.name.eq_ignore_ascii_case("ptyhost")
+                || starts_with_ignore_ascii_case(&parent.name, "ptyhost-")
+                || parent.name.eq_ignore_ascii_case("sessiondock")
+                || starts_with_ignore_ascii_case(&parent.name, "sessiondock-")
+            {
+                return false;
             }
             if parent.ppid <= 1 || parent.ppid == current {
                 break;
@@ -594,8 +674,43 @@ impl ProcTree {
     }
 }
 
-fn cmdline_text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).replace('\0', " ")
+fn empty_cmdline() -> Arc<str> {
+    static EMPTY: std::sync::OnceLock<Arc<str>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from("")).clone()
+}
+
+fn empty_spawn_env() -> Arc<BTreeMap<String, String>> {
+    static EMPTY: std::sync::OnceLock<Arc<BTreeMap<String, String>>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(BTreeMap::new())).clone()
+}
+
+fn parse_codex_app_server(bytes: &[u8]) -> bool {
+    let mut args = bytes.split(|byte| *byte == 0);
+    let Some(exe) = args.next() else {
+        return false;
+    };
+    let is_codex = match std::str::from_utf8(exe) {
+        Ok(text) => cli_family(text) == Some("codex"),
+        Err(_) => cli_family(&String::from_utf8_lossy(exe)) == Some("codex"),
+    };
+    if !is_codex {
+        return false;
+    }
+    while let Some(arg) = args.next() {
+        match arg {
+            b"-c" | b"--config" | b"--enable" | b"--disable" => {
+                if args.next().is_none() {
+                    return false;
+                }
+            }
+            _ if arg.starts_with(b"--config=")
+                || arg.starts_with(b"--enable=")
+                || arg.starts_with(b"--disable=")
+                || (arg.starts_with(b"-c") && arg.len() > 2) => {}
+            _ => return arg == b"app-server",
+        }
+    }
+    false
 }
 
 /// `pid (comm) state ppid …` → `(comm, ppid)`; comm may hold spaces/parens.
@@ -733,39 +848,45 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
         .collect();
     stats.processes = entries.len();
+    let mut cmd_buf = Vec::with_capacity(512);
     for pid in entries {
-        let Some(cmd) = tree.cmdline(pid) else {
+        let Some(cmd) = tree.cmdline_with_buf(pid, &mut cmd_buf) else {
             continue;
         };
-        if cli_name(argv0_of(&cmd)) == "opencode" {
+        if cmd.is_empty() {
+            continue;
+        }
+        let argv0 = argv0_of(&cmd);
+        if cli_head(argv0).eq_ignore_ascii_case("opencode") {
             let args: Vec<_> = cmd.split_ascii_whitespace().skip(1).collect();
             if let Some(sid) = process_links::linux::opencode_session(&args) {
                 sids.entry(format!("opencode:{}", sid.to_ascii_lowercase()))
                     .or_default()
                     .insert(i64::from(pid));
             }
+            if let Ok(target) = std::fs::read_link(tree.root().join(pid.to_string()).join("cwd"))
+                && let Some(started) = tree.started_at(pid)
+            {
+                opencode.insert(
+                    pid,
+                    BareClaude {
+                        cwd: resolve_path(&target.to_string_lossy()),
+                        started,
+                    },
+                );
+            }
         }
-        if cli_name(argv0_of(&cmd)) == "opencode"
-            && let Ok(target) = std::fs::read_link(tree.root().join(pid.to_string()).join("cwd"))
-            && let Some(started) = tree.started_at(pid)
+        let cmd_bytes = cmd.as_bytes();
+        if !KEYWORDS
+            .iter()
+            .any(|keyword| contains_ignore_ascii_case(cmd_bytes, keyword.as_bytes()))
         {
-            opencode.insert(
-                pid,
-                BareClaude {
-                    cwd: resolve_path(&target.to_string_lossy()),
-                    started,
-                },
-            );
-        }
-        let lower = cmd.to_ascii_lowercase();
-        if !KEYWORDS.iter().any(|keyword| lower.contains(keyword)) {
             continue;
         }
         if tree.is_sdkhost_descendant(pid) {
             continue;
         }
         let main = is_cli(&cmd);
-        let argv0 = argv0_of(&cmd);
         // V3 chat (including first headless launches without --resume-id)
         // delegates native execution to an ACP child. Its own open log names
         // the session; attribute that evidence to the enclosing Kiro CLI only.
@@ -859,14 +980,16 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         }
         let directory = tree.root().join(pid.to_string());
         if let Ok(bytes) = std::fs::read(directory.join("environ")) {
-            for entry in String::from_utf8_lossy(&bytes).split('\0') {
+            for entry in bytes.split(|byte| *byte == 0) {
                 let Some((prefix, family)) = ENV_FAMILY
                     .iter()
-                    .find(|(prefix, _)| entry.starts_with(prefix))
+                    .find(|(prefix, _)| entry.starts_with(prefix.as_bytes()))
                 else {
                     continue;
                 };
-                let env_sid = entry[prefix.len()..].trim().to_ascii_lowercase();
+                let env_sid = String::from_utf8_lossy(&entry[prefix.len()..])
+                    .trim()
+                    .to_ascii_lowercase();
                 // An inherited id only counts when a live CLI owns it: orphan
                 // helpers left by setsid/nohup after the CLI exited, and a
                 // `grok -p` carrying its parent Claude's id, count for nothing.

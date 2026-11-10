@@ -2133,15 +2133,15 @@ function watchSession(uid, agent = S.agent) {
   closeWatch();
   // SDK streams already carry live output. Keep the existing incremental
   // polling for persisted history without a third long-lived HTTP/1 connection.
+  const e = cache.get(viewKey(uid, agent));
+  // watch 从当前缓存游标开始，建立过程中不需要 tickSync 立刻再发一条相同
+  // 增量请求；SDK 视图虽然不建第三条 watch SSE，刚读完窗口后同样从此刻计时。
+  if (e && S.sel === uid && S.agent === agent) S.lastSync = Date.now();
   if (typeof SdkView !== 'undefined' && SdkView.pane
       && SdkView.uid === uid && SdkView.agent === agent) return;
   if (SessionDockNetwork.paused) return;
   if (migrationReadPaused(uid, agent)) { renderMigrationReadFailure(uid, agent); return; }
-  const e = cache.get(viewKey(uid, agent));
   if (!e || !window.EventSource) return;
-  // watch 从当前缓存游标开始，建立过程中不需要 tickSync 立刻再发一条相同
-  // 增量请求。否则 CONNECTING 尚未变 OPEN 的几百毫秒会产生一次竞争包。
-  if (S.sel === uid && S.agent === agent) S.lastSync = Date.now();
   const connectionId = requestId();
   const p = new URLSearchParams({ uid, start: e.end, head: e.version.head,
     anchor: e.anchor || '', page: AUDIT_PAGE_ID, connection: connectionId });
@@ -5603,6 +5603,10 @@ function renderSide(suppliedList = null) {
   globalThis.SessionDockGroups?.paintSidebar(side);
   if (side._windowed) layoutSidebarWindow({force: true, top});
   fitTimelineDirectories();
+  if (S.term && S.opts.regex && regexFailed) {
+    $('#stat').textContent = '正则匹配暂不可用，请按 Enter 重试或修改搜索内容。';
+    $('#stat').classList.add('err');
+  }
   side.scrollTop = top;
 }
 
@@ -5799,18 +5803,33 @@ function activeSearchBox() {
   return SessionContentView.kind === 'sdk' ? SdkView.box : $('#msgs');
 }
 
+let hasActiveSearchMarks = false, hasActiveSearchHashits = false;
+
 // Query changes only repaint annotations. Keep the opened conversation, its
 // disclosure choices and scroll position, including the hidden ordinary view.
 function refreshSearchHighlights() {
   S.cur = -1; S.autoOpen = 0; S.markCapped = false;
-  for (const box of document.querySelectorAll('#msgs, .sdk-msgs')) {
-    for (const mark of box.querySelectorAll('mark')) {
-      const parent = mark.parentNode;
-      mark.replaceWith(document.createTextNode(mark.textContent));
-      parent.normalize();
+  if (hasActiveSearchMarks || hasActiveSearchHashits || S.term) {
+    const boxes = document.querySelectorAll('#msgs, .sdk-msgs');
+    if (hasActiveSearchMarks || hasActiveSearchHashits) {
+      for (const box of boxes) {
+        if (hasActiveSearchMarks) {
+          for (const mark of box.querySelectorAll('mark')) {
+            const parent = mark.parentNode;
+            mark.replaceWith(document.createTextNode(mark.textContent));
+            parent.normalize();
+          }
+        }
+        if (hasActiveSearchHashits) {
+          box.querySelectorAll('.hashit').forEach(node => node.classList.remove('hashit'));
+        }
+      }
+      hasActiveSearchMarks = false;
+      hasActiveSearchHashits = false;
     }
-    box.querySelectorAll('.hashit').forEach(node => node.classList.remove('hashit'));
-    markMatches(box);
+    if (S.term) {
+      for (const box of boxes) markMatches(box);
+    }
   }
   updateMatchNav();
 }
@@ -5822,7 +5841,7 @@ function markMatches(root) {
   const re = reTerm(true);
   if (!re) return 0;
   const messageBox = root.closest('.msgs');
-  const existing = messageBox?.querySelectorAll('mark').length || 0;
+  const existing = hasActiveSearchMarks ? (messageBox?.querySelectorAll('mark').length || 0) : 0;
   const budget = Math.max(0, MARK_MAX - existing);
   // 只高亮正文: 折叠预览是正文副本, 高亮在那里会造成重复计数。
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -5850,6 +5869,7 @@ function markMatches(root) {
       const mk = document.createElement('mark');
       mk.textContent = m[0];
       frag.appendChild(mk);
+      hasActiveSearchMarks = true;
       last = m.index + m[0].length;
       if (++count >= budget) { S.markCapped = true; break; }
     }
@@ -5877,7 +5897,7 @@ async function markRegexMatches(root) {
     const ranges = await regexMatches(text);
     if (generation !== `${S.term}\0${JSON.stringify(S.opts)}` || !root.isConnected) return;
     if (!node.isConnected || node.nodeValue !== text || node.parentElement.closest('mark')) continue;
-    const budget = MARK_MAX - (root.closest('.msgs')?.querySelectorAll('mark').length || 0);
+    const budget = MARK_MAX - (hasActiveSearchMarks ? (root.closest('.msgs')?.querySelectorAll('mark').length || 0) : 0);
     if (budget <= 0) { S.markCapped = true; break; }
     if (!ranges.length) continue;
     const fragment = document.createDocumentFragment();
@@ -5887,6 +5907,7 @@ async function markRegexMatches(root) {
       const mark = document.createElement('mark');
       mark.textContent = text.slice(start, end);
       fragment.append(mark);
+      hasActiveSearchMarks = true;
       last = end;
     }
     fragment.append(text.slice(last));
@@ -5911,7 +5932,18 @@ function updateMatchNav({jump = false} = {}) {
   const c = $('#mcount');
   if (!c) return 0;
   c.parentElement.hidden = !S.term;
-  const hits = activeSearchBox()?.querySelectorAll('mark').length || 0;
+  if (!S.term && !hasActiveSearchMarks && !S.markCapped && S.autoOpen < AUTO_OPEN_MAX) {
+    if (c.textContent !== '本页无匹配') c.textContent = '本页无匹配';
+    c.classList.remove('capped');
+    c.removeAttribute('title');
+    if (!c._navBound) {
+      $('#m-prev').onclick = () => jumpMark(-1);
+      $('#m-next').onclick = () => jumpMark(1);
+      c._navBound = true;
+    }
+    return 0;
+  }
+  const hits = hasActiveSearchMarks ? (activeSearchBox()?.querySelectorAll('mark').length || 0) : 0;
   c.textContent = hits ? `${hits}${S.markCapped ? '+' : ''} 处匹配` : '本页无匹配';
   const capped = S.markCapped || S.autoOpen >= AUTO_OPEN_MAX;
   c.classList.toggle('capped', capped);
@@ -5922,6 +5954,7 @@ function updateMatchNav({jump = false} = {}) {
   }
   $('#m-prev').onclick = () => jumpMark(-1);
   $('#m-next').onclick = () => jumpMark(1);
+  c._navBound = true;
   if (jump && hits) jumpMark(1);
   return hits;
 }
@@ -6140,6 +6173,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
       end: data.end, anchor: data.anchor, activity: data.activity, bytes,
       prompt: data.prompt || null, cli: data.cli ?? null,
       total: data.message_total, partial: data.partial || null});
+    S.lastSync = Date.now();
     return result;
   });
   if (!follow) {
@@ -6359,18 +6393,35 @@ function observeMessageLayout(box, onLayout = () => {}) {
       for (let node = box.lastElementChild; node && tail.size < 30; node = node.previousElementSibling) tail.add(node);
       for (const node of ordinary) if (!tail.has(node)) { ordinary.delete(node); if (!rich.has(node)) ro.unobserve(node); }
       for (const node of tail) if (!ordinary.has(node)) { ordinary.add(node); ro.observe(node); }
-      for (const node of rich) if (!box.contains(node)) { rich.delete(node); ro.unobserve(node); }
     };
+    const pruneRich = () => {
+      for (const node of rich) if (!node.isConnected) { rich.delete(node); ro.unobserve(node); }
+    };
+    const isContainerTarget = target => target === box
+      || Boolean(target?.matches?.('.sdk-live, .sdk-history, .sdk-queue, .turn-process, .turn-process-body, .grp, .tool-group'));
     syncTail();
     ConversationUI.refreshToolTails(box);
     observeRich(box);
     box._ro = ro;
     const mo = new MutationObserver(ms => measureBrowserWork('conversation.mutations', () => {
-      for (const m of ms) for (const n of m.addedNodes) {
-        if (n.nodeType === 1) observeRich(n);
+      let boxChildrenChanged = false, hadRemovedElements = false, containerElementsChanged = false;
+      for (const m of ms) {
+        let addedEl = false, removedEl = false;
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1) { addedEl = true; observeRich(n); }
+        }
+        for (const n of m.removedNodes) {
+          if (n.nodeType === 1) { removedEl = true; break; }
+        }
+        if (removedEl) hadRemovedElements = true;
+        if (addedEl || removedEl) {
+          if (m.target === box) boxChildrenChanged = true;
+          if (isContainerTarget(m.target)) containerElementsChanged = true;
+        }
       }
-      syncTail();
-      ConversationUI.refreshToolTails(box);
+      if (boxChildrenChanged) syncTail();
+      if (hadRemovedElements && rich.size) pruneRich();
+      if (containerElementsChanged) ConversationUI.refreshToolTails(box);
       onLayout();
     }, {mutations: ms.length}));
     mo.observe(box, { childList: true, subtree: true });
@@ -7349,7 +7400,7 @@ const agentRunning = (uid, item) => !!item.active && S.live.has(uid);
 /** 主会话/子代理下拉的行：主会话固定在前，子代理按结束时间倒序，还在跑的没有结束时间、排最前并带绿点。 */
 function sessionViewRows(m) {
   const row = S.sessions.find(s => s.uid === m.uid);
-  const items = [...((row || m).agent_items || [])];
+  const items = [...(row?.agent_items || m.agent_items || [])];
   const running = a => agentRunning(m.uid, a);
   const when = value => Date.parse(value || '') || 0;
   items.sort((a, b) => (running(b) - running(a)) || (when(b.updated) - when(a.updated)));
@@ -9126,7 +9177,7 @@ function turnProcessNode(turn, initiallyOpen = false) {
     jumpWithinConversation(target);
   };
   const found = items.some(m => SEARCH_ROLES.has(m.role) && hasTerm(m.text));
-  if (found && S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
+  if (found && S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); hasActiveSearchHashits = true; }
   if (initiallyOpen || (found && S.autoOpen < AUTO_OPEN_MAX)) open();
   else fold();
   if (S.term && S.opts.regex && !found) {
@@ -9136,7 +9187,7 @@ function turnProcessNode(turn, initiallyOpen = false) {
         if (!n.isConnected) return;
         n._applyRegexMatch = null;
         if (generation !== regexGeneration || !results.some(r => r.matched)) return;
-        if (S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
+        if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); hasActiveSearchHashits = true; }
         else open();
       };
       n._applyRegexMatch();
@@ -9790,15 +9841,19 @@ function messageBodyNode(m) {
   const hit = found && S.autoOpen < AUTO_OPEN_MAX;
   if (hit && long) S.autoOpen++;
   // 对话内容从不整泡折叠；长内容只在泡内提供“展开全文”。
-  const n = el('div', 'msg' + (long && found && !hit ? ' hashit' : ''));
+  const initialHashit = Boolean(long && found && !hit);
+  if (initialHashit) hasActiveSearchHashits = true;
+  const n = el('div', 'msg' + (initialHashit ? ' hashit' : ''));
   n.dataset.role = m.role;
   if (m.native_type) n.dataset.nativeType = m.native_type;
   if (m.counted === false) n.dataset.counted = 'false';
-  const body = el('div', 'mb content-preview');
+  const body = el('div', collapsible ? 'mb content-preview' : 'mb');
   const linkContext = {uid: S.sel, agent: S.agent, attachments: m.role === 'user'};
+  const mdCache = {prefix: '', html: ''};
   const render = full => {
     const attachmentRefs = new Set();
-    return md(m.text, full, m.media, {...linkContext, attachmentRefs})
+    const cache = full && !linkContext.attachments && !m.media?.length ? mdCache : null;
+    return md(m.text, full, m.media, {...linkContext, attachmentRefs}, cache)
       + mediaGallery(m.media?.filter(item => !attachmentRefs.has(item.ref)), m.media_more);
   };
   const paint = full => {
@@ -9867,7 +9922,7 @@ function messageBodyNode(m) {
         n._applyRegexMatch = null;
         if (generation !== regexGeneration || !ranges.matched) return;
         if (long) {
-          if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
+          if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); hasActiveSearchHashits = true; return; }
           S.autoOpen++;
           full();
         }
@@ -10189,8 +10244,6 @@ function observedConversationActivity(activity, uid, agent = null) {
 function renderActivity(activity) {
   const box = $('#msgs');
   if (!box) return;
-  $('#activity')?.remove();
-  $('#conversation-idle-status')?.remove();
   let row = $('#conversation-status');
   if (!row) {
     row = el('div', 'sdk-status-row');
@@ -10201,6 +10254,9 @@ function renderActivity(activity) {
     row.append(gauges);
     box.after(row);
   }
+  for (const stale of document.querySelectorAll('#activity, #conversation-idle-status')) {
+    if (stale.parentElement !== row) stale.remove();
+  }
   row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
   const observed = observedConversationActivity(activity, S.sel, S.agent);
   activity = observed.activity;
@@ -10208,16 +10264,6 @@ function renderActivity(activity) {
   const labels = {working: '处理中', waiting: '待回答', aborted: '已中断', failed: '执行失败'};
   const label = compacting ? '压缩中' : labels[activity?.state]
     || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行');
-  const n = el('button', 'sdk-status');
-  n.type = 'button';
-  n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
-  n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
-    || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
-  n.classList.toggle('blocked', activity?.state === 'failed');
-  const summary = el('span', '', label);
-  summary.setAttribute('role', 'status'); summary.setAttribute('aria-live', 'polite');
-  n.append(summary);
-  n.title = activity?.error || activity?.reason || label;
   let details = row.querySelector('#conversation-status-menu');
   if (!details) {
     details = el('div', 'new-model-menu sdk-toolbar-menu sdk-status-menu');
@@ -10225,9 +10271,26 @@ function renderActivity(activity) {
     details.setAttribute('role', 'dialog'); details.setAttribute('aria-label', '完整状态');
     row.append(details);
   }
+  let n = row.querySelector(':scope > .sdk-status');
+  if (!n) {
+    n = el('button', 'sdk-status');
+    n.type = 'button';
+    const summary = el('span', '');
+    summary.setAttribute('role', 'status'); summary.setAttribute('aria-live', 'polite');
+    n.append(summary);
+    ConversationUI.bindPopover(n, details, row);
+    row.prepend(n);
+  } else if (row.firstElementChild !== n) {
+    row.prepend(n);
+  }
+  n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
+  n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
+    || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
+  n.classList.toggle('blocked', activity?.state === 'failed');
+  n.hidden = false;
+  n.querySelector('[role=status]').textContent = label;
+  n.title = activity?.error || activity?.reason || label;
   details.textContent = n.title;
-  ConversationUI.bindPopover(n, details, row);
-  row.prepend(n);
   renderConversationUsage(row, S.sel);
   paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);
@@ -10460,10 +10523,20 @@ function paintSyntax(root = document) {
 }
 
 // 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
-function md(text, full, media = [], context = {}) {
-  const source = full ? text : clipText(text);
+function md(text, full, media = [], context = {}, cache = null) {
+  const canCache = Boolean(cache && full && !context.attachments && !media?.length);
+  const reuse = canCache && cache.prefix && text.length >= cache.prefix.length && text.startsWith(cache.prefix);
+  const baseOffset = reuse ? cache.prefix.length : 0;
+  if (canCache && !reuse) { cache.prefix = ''; cache.html = ''; }
+  const source = reuse ? text.slice(baseOffset) : (full ? text : clipText(text));
   const lines = source.split('\n');
-  const output = [], prose = [];
+  const lineStarts = canCache ? new Array(lines.length) : null;
+  if (lineStarts) {
+    let pos = baseOffset;
+    for (let k = 0; k < lines.length; k++) { lineStarts[k] = pos; pos += lines[k].length + 1; }
+  }
+  const output = reuse ? [cache.html] : [], prose = [];
+  let hadUnclosedFence = false;
   const flush = () => {
     if (!prose.length) return;
     output.push(blocks(prose.join('\n'), media, context));
@@ -10493,6 +10566,7 @@ function md(text, full, media = [], context = {}) {
     // 未闭合围栏只在“展开全文”预览恰好截断时按代码处理；
     // 原文本本身未闭合时保留原样，不再把整条消息误判为代码。
     if (close === lines.length && (full || text.length <= CLIP)) {
+      hadUnclosedFence = true;
       prose.push(lines[i++]);
       continue;
     }
@@ -10501,6 +10575,10 @@ function md(text, full, media = [], context = {}) {
     const language = info.match(/^[\w+.-]+/)?.[0] || '';
     const code = lines.slice(i + 1, close).join('\n');
     output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${esc(code)}</code></pre>`);
+    if (canCache && !hadUnclosedFence && close < lines.length - 1) {
+      cache.prefix = text.slice(0, lineStarts[close + 1]);
+      cache.html = output.join('');
+    }
     i = close < lines.length ? close + 1 : close;
   }
   flush();
@@ -10610,7 +10688,46 @@ function blocks(src, media = [], context = {}) {
 }
 
 const RE_MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s*\)/g;
-const RE_CODE_SPAN = /(^|[^`])(`+)(?!`)([^\n]*?)(?<!`)\2(?!`)/g;
+
+function replaceInlineCodeSpans(s, onSpan) {
+  if (!s.includes('`')) return s;
+  let out = '', lineStart = 0;
+  for (let nl = 0; nl <= s.length; nl++) {
+    if (nl < s.length && s.charCodeAt(nl) !== 10) continue;
+    const runs = [];
+    const byLen = new Map();
+    for (let p = lineStart; p < nl;) {
+      if (s.charCodeAt(p) !== 96) { p++; continue; }
+      let end = p + 1;
+      while (end < nl && s.charCodeAt(end) === 96) end++;
+      const len = end - p, idx = runs.length;
+      runs.push({start: p, end, len});
+      let bucket = byLen.get(len);
+      if (!bucket) { bucket = {indices: [], pos: 0}; byLen.set(len, bucket); }
+      bucket.indices.push(idx);
+      p = end;
+    }
+    if (runs.length < 2) {
+      out += s.slice(lineStart, nl);
+    } else {
+      let cursor = lineStart;
+      for (let r = 0; r < runs.length;) {
+        const open = runs[r], bucket = byLen.get(open.len);
+        while (bucket.pos < bucket.indices.length && bucket.indices[bucket.pos] <= r) bucket.pos++;
+        if (bucket.pos >= bucket.indices.length) { r++; continue; }
+        const closeIdx = bucket.indices[bucket.pos];
+        const close = runs[closeIdx];
+        out += s.slice(cursor, open.start) + onSpan(s.slice(open.end, close.start));
+        cursor = close.end;
+        r = closeIdx + 1;
+      }
+      out += s.slice(cursor, nl);
+    }
+    if (nl < s.length) out += '\n';
+    lineStart = nl + 1;
+  }
+  return out;
+}
 
 const RE_REFERENCE = /(?<![A-Za-z0-9_@/\\:.-])(?:(?:https?:\/\/|www\.)[^\s<>"'`\u0000，。；、！？]+|[A-Za-z]:[/\\][^\s<>"'`\u0000，。；、！？()[\]{}]*|(?:~\/|\.\.?\/|\/|[A-Za-z0-9_.-]+\/)[^\s<>"'`\u0000，。；、！？()[\]{}]+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)?)/gi;
 // Prose web addresses also link outside parentheses. Keep Markdown emphasis
@@ -10784,7 +10901,7 @@ fileMenu.addEventListener('click', async event => {
 function inline(s, media = [], context = {}) {
   s = String(s).replace(/\u0000/g, '');
   const codeSpans = [], codeLabels = [], codeText = [];
-  s = s.replace(RE_CODE_SPAN, (_, prefix, _ticks, raw) => {
+  s = replaceInlineCodeSpans(s, raw => {
     // Markdown 代码跨度允许内容中出现更长的反引号串，例如用单反引号
     // 包住 ```python。先占位再处理图片/粗体，避免代码内容被二次解析。
     const content = raw.startsWith(' ') && raw.endsWith(' ') && /\S/.test(raw)
@@ -10793,7 +10910,7 @@ function inline(s, media = [], context = {}) {
     codeText.push(content);
     codeLabels.push(code);
     codeSpans.push(code);
-    return `${prefix}\u0000CODE${codeSpans.length - 1}\u0000`;
+    return `\u0000CODE${codeSpans.length - 1}\u0000`;
   });
   const images = [];
   s = s.replace(RE_MD_IMAGE, (_, alt, raw) => {
