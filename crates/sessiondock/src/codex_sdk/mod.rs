@@ -228,7 +228,7 @@ impl Drop for SubscriberGuard {
 impl CodexSdk {
     /// A live subscription proves this exact thread belongs to our shared
     /// daemon. A terminal joining the same socket adds a client, not a writer.
-    pub async fn shares_thread(&self, thread_id: &str, _socket: &std::path::Path) -> bool {
+    pub async fn shares_thread(&self, thread_id: &str) -> bool {
         self.loaded_threads().await.iter().any(|id| id == thread_id)
     }
 

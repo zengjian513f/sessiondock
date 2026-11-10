@@ -1,5 +1,6 @@
 //! Restartable stream transport. Only this adapter interprets Claude frames.
 use super::*;
+use crate::sdk_common::private_dir;
 use sdkhost_client::{Client, Stream};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -43,11 +44,6 @@ impl Sender {
         self.wake.notify_one();
         Ok(())
     }
-}
-fn private_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 fn error(error: impl std::fmt::Display) -> String {
     format!("claude_sdk_host: {error}")

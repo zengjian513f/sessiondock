@@ -6,8 +6,7 @@ mod hosted;
 mod protocol;
 mod transport;
 mod usage;
-use crate::sdk_common::save_atomic;
-use crate::sessions::native_json;
+use crate::sdk_common::{hosted_error_kind, save_atomic};
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -171,16 +170,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 fn parse_json(text: &str) -> Result<Value, String> {
-    serde_json::from_str(text)
-        .or_else(|_| {
-            native_json::scan_value(
-                text.as_bytes(),
-                native_json::Limits {
-                    inline_string_bytes: text.len(),
-                },
-            )
-        })
-        .map_err(|_| "codebuddy_sdk: invalid native JSON".into())
+    crate::sdk_common::parse_json(text).map_err(|_| "codebuddy_sdk: invalid native JSON".into())
 }
 
 fn capabilities() -> Value {
@@ -219,20 +209,8 @@ fn normalize_models(models: &mut Value) {
 }
 
 fn uuid() -> Result<String, String> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes)
-        .map_err(|_| "codebuddy_sdk: random identity unavailable".to_owned())?;
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    ))
+    crate::sdk_common::uuid_v4()
+        .map_err(|_| "codebuddy_sdk: random identity unavailable".to_owned())
 }
 
 /// CodeBuddy 2.175.0 project directory name. Observed from real sessions:
@@ -875,17 +853,6 @@ impl Bridge {
 
 fn live_events() -> broadcast::Sender<Arc<str>> {
     broadcast::channel(128).0
-}
-fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<&'static str>, D::Error> {
-    let value = <Option<String> as serde::Deserialize>::deserialize(d)?;
-    Ok(match value.as_deref() {
-        Some("transport") => Some("transport"),
-        Some("turn") => Some("turn"),
-        Some("interrupted") => Some("interrupted"),
-        _ => None,
-    })
 }
 impl Live {
     fn save_checkpoint(&mut self) -> io::Result<()> {

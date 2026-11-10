@@ -464,7 +464,7 @@ impl Bridge {
         cwd: &str,
         target: &Value,
         refresh: bool,
-    ) -> Result<Value, String> {
+    ) -> Value {
         let observed_from_target = target["observed_model"]
             .as_str()
             .map(str::trim)
@@ -531,14 +531,14 @@ impl Bridge {
                 }
             }
             ensure_model_in_list(&mut list, cur_model.as_deref());
-            return Ok(json!({
+            return json!({
                 "models": list,
                 "current_model": cur_model,
                 "model": cur_model,
                 "model_observed": model_observed,
                 "effort": cur_effort,
                 "configOptions": config_options,
-            }));
+            });
         }
 
         // 2. Use confirmed official catalog metadata when no SDK process is running.
@@ -581,23 +581,23 @@ impl Bridge {
             let model_observed = catalog_model.is_some();
             let chosen_model = catalog_model.or(default_model);
             ensure_model_in_list(&mut list, chosen_model.as_deref());
-            return Ok(json!({
+            return json!({
                 "models": list,
                 "current_model": chosen_model,
                 "model": chosen_model,
                 "model_observed": model_observed,
                 "effort": catalog_effort,
-            }));
+            });
         }
 
         // 3. UID-less models request for new-session modal picker
         ensure_model_in_list(&mut list, default_model.as_deref());
-        Ok(json!({
+        json!({
             "models": list,
             "default_model": default_model,
             "current_model": default_model,
             "model": default_model,
-        }))
+        })
     }
 
     pub(super) async fn catalog_or_probe_models(

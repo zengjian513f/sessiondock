@@ -4,7 +4,54 @@ pub(crate) mod projection;
 pub(crate) mod usage;
 
 use crate::lifecycle::launcher::CliProfile;
+use crate::sessions::native_json;
 use std::{io, path::Path};
+
+pub(crate) fn parse_json(text: &str) -> Result<serde_json::Value, native_json::ScanError> {
+    serde_json::from_str(text).or_else(|_| {
+        native_json::scan_value(
+            text.as_bytes(),
+            native_json::Limits {
+                inline_string_bytes: text.len(),
+            },
+        )
+    })
+}
+
+pub(crate) fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<&'static str>, D::Error> {
+    let value = <Option<String> as serde::Deserialize>::deserialize(d)?;
+    Ok(match value.as_deref() {
+        Some("transport") => Some("transport"),
+        Some("turn") => Some("turn"),
+        Some("interrupted") => Some("interrupted"),
+        _ => None,
+    })
+}
+
+#[cfg(unix)]
+pub(crate) fn private_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+pub(crate) fn uuid_v4() -> Result<String, getrandom::Error> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
+}
 
 pub(crate) fn save_atomic(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
     use std::io::Write;

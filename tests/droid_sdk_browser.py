@@ -2,6 +2,7 @@
 """Droid read-model and SDK flow through Chromium, using an isolated JSON-RPC peer."""
 import argparse
 import tempfile
+import uuid
 from pathlib import Path
 from droid_sdk_fixtures import DroidFixture
 from history_fixtures import BINARY
@@ -59,9 +60,12 @@ def check(fixture,base,screenshots):
         with page.expect_response(lambda r:r.url.endswith('/api/native-sdk/create')) as creation:page.locator('#new-session-go').click()
         assert creation.value.ok,creation.value.text()
         created=creation.value.json()
+        identity=uuid.UUID(created['session_id'])
+        assert str(identity)==created['session_id'] and identity.version==4 and identity.variant==uuid.RFC_4122,created
         post(page,'open',{'uid':created['uid']})
         post(page,'turn',{'uid':created['uid'],'request_id':'first-turn','text':'new Droid'})
         wait_snapshot(page,created['uid'],lambda r:not r['running'] and bool(r['items']))
+        assert any(f.get('method')=='droid.initialize_session' and f['params']['sessionId']==created['session_id'] for f in fixture.frames())
         post(page,'turn',{'uid':created['uid'],'request_id':'first-turn','text':'new Droid'})
         assert sum(f.get('method')=='droid.add_user_message' and f['params']['text']=='new Droid' for f in fixture.frames())==1
         assert sum(f.get('method')=='droid.add_user_message' and f['params']['text']=='hold' for f in fixture.frames())==1

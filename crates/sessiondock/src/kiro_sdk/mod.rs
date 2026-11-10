@@ -63,14 +63,12 @@ pub fn new(
     config: &Config,
     shutdown: CancellationToken,
     catalog: Option<Arc<Catalog>>,
-) -> io::Result<Option<Arc<Bridge>>> {
+) -> Option<Arc<Bridge>> {
     if !config.native_sdk_enabled {
-        return Ok(None);
+        return None;
     }
-    let Some(catalog) = catalog else {
-        return Ok(None);
-    };
-    let bridge = Arc::new(Bridge {
+    let catalog = catalog?;
+    Some(Arc::new(Bridge {
         profile: catalog.profile.clone(),
         root: catalog.root.clone(),
         catalog,
@@ -86,8 +84,7 @@ pub fn new(
         starting: Mutex::new(HashSet::new()),
         models_cache: Mutex::new(None),
         shutdown,
-    });
-    Ok(Some(bridge))
+    }))
 }
 
 impl Bridge {
@@ -286,7 +283,7 @@ impl Bridge {
             "respond" => self.respond(uid, &payload).await,
             "models" => {
                 let refresh = payload["refresh"] == true;
-                self.models_action(uid, &cwd, &target, refresh).await
+                Ok(self.models_action(uid, &cwd, &target, refresh).await)
             }
             "settings" => {
                 let session = self.get_session(uid)?;

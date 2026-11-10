@@ -1,5 +1,6 @@
 //! Restartable stream transport. Only this adapter interprets Droid frames.
 use super::*;
+use crate::sdk_common::private_dir;
 use sdkhost_client::{Client, Stream};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -40,11 +41,6 @@ impl Sender {
         self.wake.notify_one();
         Ok(())
     }
-}
-fn private_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 fn error(error: impl std::fmt::Display) -> String {
     format!("droid_sdk_host: {error}")
@@ -289,7 +285,6 @@ impl Bridge {
             transport::diagnostic_secrets(&self.profile),
         ));
         wait_catchup.await.map_err(error)??;
-        protocol::restore_initial_requests(session);
         if lock(&session.live).outbound.is_none() {
             if allow_launch && lock(&session.live).host_key.is_none() {
                 return Box::pin(self.attach_hosted(session, true)).await;
@@ -403,9 +398,7 @@ async fn run(
                     && let Some(id) = entry.frame["id"].as_str()
                 {
                     let mut live = lock(&session.live);
-                    if let Some(card) = live.requests.remove(id) {
-                        protocol::retire_dialog(&mut live, &card);
-                    }
+                    live.requests.remove(id);
                     live.save_checkpoint().map_err(error)?;
                 }
                 sent += 1;

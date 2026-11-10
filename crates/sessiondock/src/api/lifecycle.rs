@@ -937,7 +937,7 @@ pub async fn takeover(
         .collect();
     let entry = select_entry(service, source, true)?.clone();
     let shared_sdk = match (&state.codex_sdk, service.codex_remote_socket(&entry)) {
-        (Some(sdk), Some(socket)) => sdk.shares_thread(&scope.session_id, socket).await,
+        (Some(sdk), Some(_)) => sdk.shares_thread(&scope.session_id).await,
         _ => false,
     };
     if !external.is_empty() && !processes.hosted && !shared_sdk && !body.force {

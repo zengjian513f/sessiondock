@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import uuid
 
 from codebuddy_sdk_fixtures import SECRET, CodebuddyFixture, native_uid, project_key
 from claude_sdk_browser import post, receipt, snapshot, wait_snapshot, open_sdk, send
@@ -176,6 +177,8 @@ def browser_check(fixture, base, screenshots):
         # New sessions get a client-minted UUID and the native project directory naming.
         created = receipt(post(page, "create", {"source": "codebuddy", "request_id": "create-one", "cwd": str(fixture.cwd),
                                                 "model": "fake-buddy", "effort": "low"}))
+        identity = uuid.UUID(created["session_id"])
+        assert str(identity) == created["session_id"] and identity.version == 4 and identity.variant == uuid.RFC_4122, created
         path = fixture.projects / project_key(fixture.cwd) / (created["session_id"] + ".jsonl")
         assert created["uid"] == native_uid(path) and not path.exists(), created
         again = receipt(post(page, "create", {"source": "codebuddy", "request_id": "create-one", "cwd": str(fixture.cwd),

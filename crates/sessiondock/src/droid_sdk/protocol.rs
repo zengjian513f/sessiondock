@@ -352,8 +352,6 @@ fn usage(v: &Value) -> Value {
         "tokens":{"total_tokens":total,"input":v["inputTokens"],"output":v["outputTokens"],"reasoning":v["thinkingTokens"],
         "cache":{"read":v["cacheReadTokens"],"write":v["cacheCreationTokens"]}}})
 }
-pub(super) fn restore_initial_requests(_session: &Session) {}
-pub(super) fn retire_dialog(_live: &mut Live, _card: &Value) {}
 pub(super) fn permission_result(card: &Value, result: &Value) -> Result<Value, String> {
     if card["method"] == "droid.ask_user" {
         if result["behavior"] == "deny" {

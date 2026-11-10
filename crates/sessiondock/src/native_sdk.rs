@@ -132,14 +132,8 @@ impl NativeSdks {
         register!("claude", claude_sdk, Claude);
         register!("codebuddy", codebuddy_sdk, Codebuddy);
         register!("droid", droid_sdk, Droid);
-        match crate::kiro_sdk::new(config, shutdown.clone(), kiro_catalog.clone()) {
-            Ok(Some(bridge)) => {
-                providers.insert("kiro", Provider::Kiro(bridge));
-            }
-            Ok(None) => {}
-            Err(error) => {
-                unavailable.insert("kiro", error.to_string());
-            }
+        if let Some(bridge) = crate::kiro_sdk::new(config, shutdown.clone(), kiro_catalog.clone()) {
+            providers.insert("kiro", Provider::Kiro(bridge));
         }
         let path = config
             .state_dir

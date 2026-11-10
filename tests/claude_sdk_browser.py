@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import tempfile
 import time
+import uuid
 
 from claude_sdk_fixtures import ClaudeFixture, MonotonicClock, native_uid, project_key
 from history_fixtures import BINARY
@@ -332,6 +333,8 @@ def browser_check(fixture, base, screenshots):
         # Creation has a native UUID and real path-derived UID, but no placeholder.
         created = receipt(post(page, "create", {"source": "claude", "request_id": "create-one", "cwd": str(fixture.cwd),
             "model": "fake-claude", "effort": "low"}))
+        identity = uuid.UUID(created["session_id"])
+        assert str(identity) == created["session_id"] and identity.version == 4 and identity.variant == uuid.RFC_4122, created
         path = fixture.projects / project_key(fixture.cwd) / (created["session_id"] + ".jsonl")
         assert created["uid"] == native_uid(path) and not path.exists(), created
         again = receipt(post(page, "create", {"source": "claude", "request_id": "create-one", "cwd": str(fixture.cwd),

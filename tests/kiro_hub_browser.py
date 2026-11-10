@@ -36,6 +36,7 @@ def fake_main():
 
 def exercise(browser, base, fixture, disabled_fixture, width, theme, screenshots, missing=False):
     from playwright.sync_api import expect
+    from sdk_ui_fixtures import start_sdk
     context = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme,
                                   service_workers="block")
     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -89,8 +90,8 @@ def exercise(browser, base, fixture, disabled_fixture, width, theme, screenshots
 
     header_pair()
     page.locator("#a-sdk").click()
-    page.wait_for_function("SdkView.pane && !SdkView.historyReady")
-    page.locator("#sdk-input").click()
+    # Viewing history and focusing the composer do not start an idle SDK.
+    start_sdk(page)
     page.wait_for_function("SdkView.connected && !SdkView.readOnly")
     page.locator("#sdk-input").fill("请确认这条消息能正常到达当前会话。")
     page.locator("#sdk-send").click()
