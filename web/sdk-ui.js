@@ -548,6 +548,7 @@ const SdkUI = {
         const observedChanged = data.observedActivity?.state !== observed?.state
           || data.observedActivity?.reason !== observed?.reason;
         data.observedActivity = observed;
+        if (observedChanged && !this.connected) this.paintHistory();
         if (this.connected && (activityChanged || observedChanged)) this.paintStatus();
         return;
       }

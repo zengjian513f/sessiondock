@@ -88,7 +88,7 @@ const NativeSdkView = {
     this.liveTurns = new Map();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
-    this.historyRenderedData = null; this.historyCut = null;
+    this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
     this.nativeModel = this.nativeEffort = null;
     const generation = ++this.generation;
     const source = String(uid).split(':')[0];
@@ -176,6 +176,7 @@ const NativeSdkView = {
           this.setNotice(`无法打开 SDK 模式：${error.message}`, 'blocked');
           if (reconnecting || error.code === 'native_sdk_session_busy') this.reconnect();
         }
+        this.paintHistory();
       }
     } finally { if (this.openRead === read) this.openRead = null; }
   },
@@ -346,6 +347,8 @@ const NativeSdkView = {
     const source = String(this.uid).split(':')[0];
     this.items = (this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
+      : this.uid.startsWith('agy:')
+      ? rawItems.filter(item => !(item?.role === 'system' && item.native_type === 'checkpoint'))
       : rawItems).map(item => SdkUI.messageTime(this, nativeSdkMessage(item, source)));
     this.setConnected(true);
     this.paintHistory();
@@ -375,9 +378,9 @@ const NativeSdkView = {
       this.nodes.set(id, node);
     }
     for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
-    SdkUI.foldLiveTurns(this, this.items, {tailComplete: !this.running});
-    SdkUI.groupTools(this);
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
+    SdkUI.foldLiveTurns(this, this.items, {tailComplete: !this.running && !requests.size});
+    SdkUI.groupTools(this);
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
     this.requests = requests;
@@ -438,7 +441,8 @@ const NativeSdkView = {
   paintHistory() {
     if (!this.history || !this.historyData) return;
     SdkUI.refreshMessageTimes(this);
-    let messages = this.historyData.messages || [];
+    const fullMessages = this.historyData.messages || [];
+    let messages = fullMessages;
     let cut = messages.length;
     const first = this.items?.find(item => item.role === 'user');
     if (first) {
@@ -447,11 +451,21 @@ const NativeSdkView = {
         && NativeSdkControls.messageIdentity(this, message) === identity);
       if (at >= 0) { cut = at; messages = messages.slice(0, at); }
     }
+    const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent).activity;
+    const childLive = !!(this.agent && S.liveSdk.has(`${this.uid}:${this.agent}`));
+    const livePending = SdkView.discovering || this.externalObserved
+      || (!this.readOnly && !this.openFailed)
+      || (observed ? ['working', 'waiting'].includes(observed.state)
+        : S.live.has(this.uid) || S.liveSdk.has(this.uid) || S.liveExternalSdk.has(this.uid) || childLive);
+    const tailComplete = cut < fullMessages.length
+      || (this.connected ? !this.running && !(this.requests?.size || this.raw?.requests?.length) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
-    if (this.historyRenderedData === this.historyData && this.historyCut === cut && this.historyActions===actions) return;
+    if (this.historyRenderedData === this.historyData && this.historyCut === cut
+        && this.historyActions===actions && this.historyTailComplete === tailComplete) return;
     this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
-    SdkUI.paintHistory(this, messages, {actions, decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
+    this.historyTailComplete = tailComplete;
+    SdkUI.paintHistory(this, messages, {tailComplete, actions, decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
   },
 
   requestCard(request) {
@@ -642,34 +656,111 @@ function nativeToolPresentation(item, summarize) {
   return presentation;
 }
 
+function agyToolPresentation(item) {
+  const name = item.name || item.tool_name || 'tool';
+  const input = item.input ?? item.tool_input ?? item.arguments ?? null;
+  const text = typeof item.text === 'string' ? item.text
+    : typeof input === 'string' ? input
+    : input != null ? JSON.stringify(input, null, 2) : '';
+  if (typeof item.summary === 'string' && item.summary) return {name, summary: item.summary, text};
+  const clip = value => {
+    const s = String(value || '').replace(/\s+/g, ' ').trim();
+    return s.length > 200 ? `${s.slice(0, 199)}…` : s;
+  };
+  const obj = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+  const str = (...keys) => {
+    for (const key of keys) if (obj && typeof obj[key] === 'string' && obj[key].trim()) return obj[key];
+    return '';
+  };
+  const toolSummary = () => str('toolSummary') ? clip(str('toolSummary')) : '';
+  let summary = '';
+  if (name === 'run_command') {
+    const cmd = str('CommandLine', 'command', 'cmd');
+    summary = cmd ? clip(`$ ${cmd.trim()}`) : toolSummary();
+  } else if (name === 'read_file' || name === 'view_file') {
+    const path = str('Path', 'AbsolutePath', 'file_path', 'path');
+    if (path) {
+      const start = Number.isInteger(obj?.StartLine) ? obj.StartLine : null;
+      const end = Number.isInteger(obj?.EndLine) ? obj.EndLine : null;
+      const span = start != null
+        ? (end != null && end >= start ? ` ⌖${start}+${end - start + 1}` : ` ⌖${start}`)
+        : '';
+      summary = clip(`读 ${path}${span}`);
+    } else summary = toolSummary();
+  } else if (name === 'edit_file' || name === 'replace_file_content' || name === 'write_file' || name === 'write_to_file') {
+    const verb = name === 'write_file' || name === 'write_to_file' ? '写入' : '修改';
+    const path = str('Path', 'TargetFile', 'file_path', 'path');
+    summary = path ? clip(`${verb} ${path}`) : toolSummary();
+  } else if (name === 'search_web') {
+    const query = str('query', 'q');
+    summary = query ? clip(`搜索 ${query}`) : toolSummary();
+  } else if (name === 'read_url_content') {
+    const url = str('Url', 'url');
+    summary = url ? clip(`抓 ${url}`) : toolSummary();
+  } else {
+    summary = toolSummary();
+    if (!summary && obj) {
+      const pairs = Object.entries(obj)
+        .filter(([, v]) => (typeof v === 'string' && v.trim()) || typeof v === 'number' || typeof v === 'boolean')
+        .slice(0, 4)
+        .map(([k, v]) => `${k}=${v}`);
+      if (pairs.length) summary = clip(pairs.join('  '));
+    }
+  }
+  return {name, summary, text};
+}
+
+function agyToolResultText(result) {
+  if (typeof result === 'string') {
+    if (result.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(result);
+        if (parsed?.type === 'TOOL_ERROR' && typeof parsed.message === 'string' && parsed.message) return parsed.message;
+      } catch { /* keep raw string */ }
+    }
+    return result;
+  }
+  if (result && typeof result === 'object' && result.type === 'TOOL_ERROR' && typeof result.message === 'string' && result.message)
+    return result.message;
+  return JSON.stringify(result, null, 2);
+}
+
 function nativeSdkMessage(item, source) {
   const message = {...item,text:item.text ?? item.content ?? ''};
   if (typeof message.text !== 'string') message.text = JSON.stringify(message.text,null,2);
+  const isAgy = source === 'agy' || item.source === 'agy';
+  if (isAgy && item.role === 'tool') {
+    if (item.status === 'ACTIVE') message.status = 'in_progress';
+    else if (item.status === 'DONE') message.status = 'completed';
+    else if (item.status === 'ERROR') message.status = 'failed';
+  }
   if (item.role === 'tool') {
-    // Kiro delivers raw argument/output envelopes; the other native sources
-    // already carry a readable result object. Only build summaries and unwrap
-    // the result envelope for Kiro so other suites' presentation is untouched.
+    // Kiro and Agy deliver raw argument/output envelopes; the other native
+    // sources already carry a readable result object. Scope summary/envelope
+    // normalization so other suites' presentation is untouched.
     const isKiro = source === 'kiro' || item.source === 'kiro';
-    const presentation = nativeToolPresentation(item, isKiro);
+    const presentation = isAgy ? agyToolPresentation(item) : nativeToolPresentation(item, isKiro);
     message.name = presentation.name;
     message.summary = presentation.summary;
     message.text = presentation.text;
     const result = item.result ?? item.tool_result;
+    const failed = !!item.error || !!item.is_error || message.status === 'failed';
     if (result != null && typeof result === 'object' && result.role === 'tool_result') {
       message.result = result;
     } else if (result != null) {
-      // Kiro: unwrap the raw rawOutput envelope to its readable text + exit
-      // code. Other sources keep the previous pretty-JSON of their result.
+      // Kiro/Agy: unwrap raw output/TOOL_ERROR envelopes to readable text.
+      // Other sources keep the previous pretty-JSON of their result.
       const parsed = isKiro ? nativeToolResultText(result) : null;
       message.result = {role:'tool_result',
-        text: parsed ? parsed.text : (typeof result === 'string' ? result : JSON.stringify(result,null,2)),
+        text: parsed ? parsed.text : isAgy ? agyToolResultText(result)
+          : (typeof result === 'string' ? result : JSON.stringify(result,null,2)),
         exit_code: parsed?.exitCode,
-        error:!!item.error || !!item.is_error || item.status === 'failed'};
-    } else if (item.tool_content || item.status === 'failed') {
+        error: failed};
+    } else if (item.tool_content || message.status === 'failed') {
       const parsed = isKiro ? nativeToolResultText(item.tool_content) : null;
       message.result = {role:'tool_result',
         text: parsed ? parsed.text : (typeof item.content === 'string' ? item.content : JSON.stringify(item.tool_content)),
-        error:!!item.error};
+        error: failed};
     }
   }
   return message;
@@ -856,7 +947,9 @@ const SdkView = new Proxy({
   pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
     const view = this.active;
-    if (view.observeExternal?.()) return;
+    const external = view.observeExternal?.();
+    if (view.pane && !view.connected) view.paintHistory?.();
+    if (external) return;
     const childSdk = view.agent && String(view.uid).startsWith('droid:') && view.agent===S.agent && S.liveSdk.has(`${view.uid}:${view.agent}`);
     if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || (!childSdk && (view.agent || S.agent)) || view.uid !== S.sel
         || SessionContentView.kind !== 'sdk' || !(childSdk || S.liveSdk.has(view.uid))) return;
