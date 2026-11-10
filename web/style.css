@@ -814,7 +814,6 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .item-status.frozen { padding: 0; }
 .item-status.frozen > .ui-icon { width: 12px; height: 12px; flex: none; }
 .item-status.input-attention.counted { width: auto; }
-.item.live .t { font-weight: 600; }
 
 main { display: flex; flex: 1; min-height: 0; }
 
@@ -995,7 +994,6 @@ body.dragging #drag { will-change: transform; }
 .agent-mark .ui-icon { width: 9px; height: 9px; }
 .item.sel .agent-mark, .item:hover .agent-mark { background: var(--sel); }
 .item.agent .t { font-size: 12.5px; }
-.item.agent.live .t { font-weight: 600; }
 .item-star {
   flex: none; align-self: flex-start; width: 25px; height: 25px; margin: -2px -5px 0 0; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;

@@ -172,6 +172,8 @@ DELTA：SDK／普通会话的状态栏与 composer 始终显示，通过状态�
 
 运行角标：`paintItemStatus` / `paintStatusMarker`。冻结用暂停图标。有未读时显示数字；等待回答时是 `?`，标题带「等待回答」。颜色按当前 tmux/运行态现算，不把旧计数的颜色写进存储。后台命令的呼吸点：[`tests/process_activity_browser.py`](../tests/process_activity_browser.py)。
 
+DELTA（BUG-20261110-141013-958813）：所有来源的主会话与子代理标题统一使用普通字重，运行状态变化不再加粗标题；运行状态继续由图标角标表示。[`tests/sidebar_title_browser.py`](../tests/sidebar_title_browser.py) 覆盖来源筛选、活跃筛选、目录与时间轴、状态更新和刷新，以及宽窄屏明暗主题。
+
 星标：`toggleSessionStar` → `POST api/session/star`。忙碌时不重复发，避免多页面乱序。需要 `metadata`。父会话可见性：`POST api/sessions/fork-visibility`。Codex 回退后的父会话默认从左栏隐藏，标题栏有父会话链菜单（`renderForkChainMenu`）：打开、显示、隐藏。记录不存在时显示「记录已不存在」。
 
 点已选中的行不改它的子树折叠；只有三角切换折叠。刷新后恢复选中的父行，保留它自己的折叠。深链目标被折叠挡住时，只展开能看见它的祖先，并清掉会把它藏住的筛选。
