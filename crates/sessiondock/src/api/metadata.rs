@@ -142,7 +142,7 @@ pub(super) fn update(
     events: &EventBus,
     work: impl FnOnce(&MetadataStore) -> Result<Arc<MetadataSnapshot>, ApiError>,
 ) -> Result<Arc<MetadataSnapshot>, ApiError> {
-    let previous = metadata.snapshot()?;
+    let previous = metadata.snapshot();
     let snapshot = work(metadata)?;
     // No-op catalog synchronization retains the same immutable snapshot.
     // Publish here, before any later response read can fail, and inside the
@@ -167,7 +167,7 @@ pub struct GroupRequest {
 pub async fn groups(State(state): State<AppState>) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     write(state, move |_, _| {
-        Ok(json!(metadata.snapshot()?.group_catalog()))
+        Ok(json!(metadata.snapshot().group_catalog()))
     })
     .await
 }
@@ -427,7 +427,7 @@ pub async fn nest(
                     "目标会话缺少来源或会话 id",
                 ));
             }
-            let snapshot = metadata.snapshot()?;
+            let snapshot = metadata.snapshot();
             if nest_would_cycle(&body.uid, &parent_uid, rows, &snapshot) {
                 return Err(ApiError::new(
                     StatusCode::CONFLICT,

@@ -197,7 +197,7 @@ impl Bridge {
     pub(super) fn command(&self, cwd: &str) -> Command {
         self.catalog.command(cwd)
     }
-    pub(super) fn resolve_sid(&self, uid: &str, _target: &Value, _payload: &Value) -> String {
+    pub(super) fn resolve_sid(&self, uid: &str) -> String {
         self.catalog
             .resolve_uid(uid)
             .map(|e| e.sid)
@@ -244,7 +244,7 @@ impl Bridge {
                         .host
                         .as_deref()
                         .ok_or("kiro_sdk_recovery_unknown: no host directory")?;
-                    let sid = self.resolve_sid(uid, &target, &payload);
+                    let sid = self.resolve_sid(uid);
                     let session =
                         Session::attach_existing(dir, &key, uid, &sid, &cwd, self.shutdown.clone())
                             .await?;
@@ -269,10 +269,10 @@ impl Bridge {
             }
             "create" => self.create_session(&cwd, &payload).await,
             "open" => {
-                let session = self.ensure_open(uid, &cwd, &payload).await?;
+                let session = self.ensure_open(uid, &payload).await?;
                 Ok(session.snapshot())
             }
-            "turn" => self.turn(uid, &cwd, &target, &payload).await,
+            "turn" => self.turn(uid, &cwd, &payload).await,
             "interrupt" => {
                 let lock = self.lock_for(uid);
                 let _guard = lock.lock().await;
@@ -283,7 +283,7 @@ impl Bridge {
             "respond" => self.respond(uid, &payload).await,
             "models" => {
                 let refresh = payload["refresh"] == true;
-                Ok(self.models_action(uid, &cwd, &target, refresh).await)
+                Ok(self.models_action(uid, &target, refresh).await)
             }
             "settings" => {
                 let session = self.get_session(uid)?;
@@ -329,10 +329,10 @@ impl Bridge {
             }
             "compact" => {
                 self.cancel_model_retry(uid);
-                self.compact(uid, &cwd, &target).await
+                self.compact(uid).await
             }
-            "rename" => self.rename_session(uid, &target, &payload).await,
-            "fork" => self.fork_session(uid, &cwd, &target, &payload).await,
+            "rename" => self.rename_session(uid, &payload).await,
+            "fork" => self.fork_session(uid, &cwd, &payload).await,
             "discard" => self.delete_session(uid).await,
             "stop" | "close" => {
                 self.stop(uid).await?;
@@ -785,7 +785,6 @@ impl Bridge {
     pub(super) async fn ensure_open(
         &self,
         uid: &str,
-        _cwd: &str,
         payload: &Value,
     ) -> Result<Arc<Session>, String> {
         let lock = self.lock_for(uid);
@@ -864,19 +863,13 @@ impl Bridge {
             .ok_or_else(|| format!("kiro session {uid} is not open"))
     }
 
-    async fn turn(
-        &self,
-        uid: &str,
-        cwd: &str,
-        _target: &Value,
-        payload: &Value,
-    ) -> Result<Value, String> {
+    async fn turn(&self, uid: &str, cwd: &str, payload: &Value) -> Result<Value, String> {
         let session = if uid.is_empty() {
             let snap = self.create_session(cwd, payload).await?;
             let new_uid = snap["uid"].as_str().unwrap_or("").to_string();
             self.get_session(&new_uid)?
         } else {
-            self.ensure_open(uid, cwd, payload).await?
+            self.ensure_open(uid, payload).await?
         };
 
         let lock = self.lock_for(&session.uid());

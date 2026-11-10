@@ -54,17 +54,11 @@ impl Bridge {
             .ok_or("droid_sdk_host: state directory unavailable")?
             .join("sdk-adapters/droid");
         private_dir(&root).map_err(error)?;
-        let identity = if session.uid.is_empty() {
-            &session.sid
-        } else {
-            &session.uid
-        };
-        let key: String = identity
-            .as_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        Ok(root.join(format!("{key}.json")))
+        Ok(crate::sdk_common::checkpoint_file(
+            &root,
+            &session.uid,
+            &session.sid,
+        ))
     }
     pub(super) async fn reattach_hosted(
         self: &Arc<Self>,

@@ -241,6 +241,29 @@ def restart_check(fixture, binary):
         browser.close()
 
 
+def direct_check(fixture, binary):
+    from playwright.sync_api import sync_playwright, expect
+
+    with fixture.server(binary, hosted=False) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page()
+        page.goto(base, wait_until="networkidle")
+        open_sdk(page, fixture, expect)
+        for prompt in ("direct first turn", "direct second turn"):
+            send(page, prompt)
+            expect(page.locator(".sdk-live")).to_contain_text("CodeBuddy synthetic final " + prompt)
+            wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])
+            assert len(user_prompts(fixture, prompt)) == 1
+        assert len(fixture.frames("spawn")) == 1, "direct writer did not survive the first result"
+        assert not (fixture.root / "state/sdkhost").exists(), "test unexpectedly used persistent sdkhost"
+        send(page, "hold")
+        wait_snapshot(page, fixture.uid, lambda raw: raw["running"])
+        page.locator("#sdk-stop").click()
+        wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])
+        assert any(f["request"].get("subtype") == "interrupt" for f in fixture.frames("control_request"))
+        browser.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -252,6 +275,8 @@ def main():
             browser_check(fixture, base, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-restart-") as temporary:
         restart_check(CodebuddyFixture(Path(temporary)), args.binary)
+    with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-direct-") as temporary:
+        direct_check(CodebuddyFixture(Path(temporary)), args.binary)
     print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, approval/question answers, create naming, unsupported controls, writer conflict, restart re-attach")
 
 

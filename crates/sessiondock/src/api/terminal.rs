@@ -938,7 +938,7 @@ pub(super) fn collect_sdk_sessions(state: &AppState) -> Result<Vec<Value>, ApiEr
         .unwrap_or_default();
     sdk_sessions.extend(state.native_sdks.pending());
     if let Some(metadata) = &state.metadata {
-        metadata.snapshot()?.enrich(&mut sdk_sessions);
+        metadata.snapshot().enrich(&mut sdk_sessions);
     }
     Ok(sdk_sessions)
 }

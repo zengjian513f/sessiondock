@@ -7,6 +7,55 @@ use crate::lifecycle::launcher::CliProfile;
 use crate::sessions::native_json;
 use std::{io, path::Path};
 
+pub(crate) async fn write_input(
+    mut stdin: tokio::process::ChildStdin,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
+    failed: tokio_util::sync::CancellationToken,
+) {
+    use tokio::io::AsyncWriteExt;
+    while let Some(frame) = rx.recv().await {
+        let mut line = frame.to_string();
+        line.push('\n');
+        if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+            failed.cancel();
+            return;
+        }
+    }
+    let _ = stdin.shutdown().await;
+    failed.cancel();
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn process_owned(
+    tree: &crate::runtime::procscan::ProcTree,
+    pid: u32,
+    own_pids: &std::collections::BTreeSet<u32>,
+) -> bool {
+    let mut current = pid;
+    let mut visited = std::collections::BTreeSet::new();
+    while current > 1 && visited.insert(current) {
+        if own_pids.contains(&current) {
+            return true;
+        }
+        let Some(parent) = tree.parent(current) else {
+            break;
+        };
+        current = parent.ppid;
+    }
+    false
+}
+
+#[cfg(unix)]
+pub(crate) fn checkpoint_file(root: &Path, uid: &str, sid: &str) -> std::path::PathBuf {
+    let identity = if uid.is_empty() { sid } else { uid };
+    let key: String = identity
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    root.join(format!("{key}.json"))
+}
+
 pub(crate) fn parse_json(text: &str) -> Result<serde_json::Value, native_json::ScanError> {
     serde_json::from_str(text).or_else(|_| {
         native_json::scan_value(

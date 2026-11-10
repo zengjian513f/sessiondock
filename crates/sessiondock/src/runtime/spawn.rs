@@ -229,7 +229,7 @@ pub fn record(
     sessions: &[SessionRow],
     owned: &IndexMap<String, Vec<i64>>,
 ) -> Result<(), MetadataError> {
-    let snapshot = metadata.snapshot()?;
+    let snapshot = metadata.snapshot();
     let by_key: HashMap<_, _> = sessions
         .iter()
         .map(|row| ((row.source.as_str(), row.sid.as_str()), row))

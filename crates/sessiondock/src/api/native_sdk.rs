@@ -88,7 +88,7 @@ pub async fn call(
             }
         }
         if let (Some(metadata), Some(row)) = (&state.metadata, result.0.get_mut("session")) {
-            metadata.snapshot()?.enrich(std::slice::from_mut(row));
+            metadata.snapshot().enrich(std::slice::from_mut(row));
         }
         Ok(result)
     })

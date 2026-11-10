@@ -347,10 +347,10 @@ impl Transfers {
     }
     /// Startup recovery and successful saves keep this view current without
     /// reopening completed journals or waiting for the operation's mutation gate.
-    pub fn pending(&self) -> Result<Value, TransferError> {
+    pub fn pending(&self) -> Value {
         let unfinished = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
         let pending: Vec<_> = unfinished.values().map(Self::public).collect();
-        Ok(json!({"operations":pending}))
+        json!({"operations":pending})
     }
     pub async fn progress(
         &self,

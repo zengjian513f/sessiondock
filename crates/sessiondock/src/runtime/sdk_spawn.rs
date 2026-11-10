@@ -103,7 +103,7 @@ pub fn record(
     initiator: Option<Initiator>,
 ) -> Result<(), ApiError> {
     if let Some(store) = &state.metadata {
-        let previous = store.snapshot()?;
+        let previous = store.snapshot();
         let updated = if let Some(mut initiator) = initiator {
             initiator
                 .identities

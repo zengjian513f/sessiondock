@@ -428,7 +428,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new() -> Result<Self, OwnershipError> {
+    pub fn new() -> Self {
         Self::with_clock(Arc::new(SystemClock {
             origin: Instant::now(),
         }))
@@ -436,11 +436,11 @@ impl Registry {
 
     /// A supplied clock must be cheap and non-blocking. It is sampled outside
     /// the mutex; monotonic regressions are clamped under the mutex.
-    pub fn with_clock(clock: Arc<dyn Clock>) -> Result<Self, OwnershipError> {
-        Ok(Self {
+    pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self {
             clock,
             state: Mutex::new(State::default()),
-        })
+        }
     }
 
     fn sample(&self) -> Result<ClockSample, OwnershipError> {

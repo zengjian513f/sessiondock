@@ -187,7 +187,7 @@ async fn create_owned(
         .into_iter()
         .find(|row| row["uid"] == uid);
     if let (Some(metadata), Some(row)) = (&state.metadata, session.as_mut()) {
-        metadata.snapshot()?.enrich(std::slice::from_mut(row));
+        metadata.snapshot().enrich(std::slice::from_mut(row));
     }
     Ok(Json(
         json!({"ok":true,"uid":uid,"session":session,"cwd":cwd,"thread_id":result["thread"]["id"],"raw":result}),

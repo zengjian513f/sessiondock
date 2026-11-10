@@ -294,7 +294,7 @@ impl TerminalService {
             directory,
             limits,
             client,
-            registry: Arc::new(Registry::new()?),
+            registry: Arc::new(Registry::new()),
             gates: Mutex::new(BTreeMap::new()),
         })
     }

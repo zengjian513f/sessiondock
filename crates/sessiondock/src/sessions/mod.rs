@@ -630,7 +630,7 @@ impl SessionStore {
             .transpose()
             .map_err(|error| SessionError::new(error.status, error.message))?
             .unwrap_or_default();
-        let metadata = self.metadata_snapshot()?;
+        let metadata = self.metadata_snapshot();
         let revision = metadata.as_ref().map(|snapshot| snapshot.revision());
         if let Some(previous) = &state.published {
             if Arc::ptr_eq(&previous.index, &index)
@@ -1149,12 +1149,8 @@ impl SessionStore {
         views::claude_rewind_target(&snapshot.view.parsed, target)
     }
 
-    fn metadata_snapshot(&self) -> Result<Option<Arc<MetadataSnapshot>>, SessionError> {
-        self.metadata
-            .as_ref()
-            .map(|store| store.snapshot())
-            .transpose()
-            .map_err(|error| SessionError::new(error.status, error.message))
+    fn metadata_snapshot(&self) -> Option<Arc<MetadataSnapshot>> {
+        self.metadata.as_ref().map(|store| store.snapshot())
     }
 }
 

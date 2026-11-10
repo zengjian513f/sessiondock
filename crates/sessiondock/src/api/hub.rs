@@ -620,10 +620,7 @@ async fn handle(
         );
     }
     if method == Method::GET && path == "/api/session/transfers" {
-        return match state.transfers.pending() {
-            Ok(value) => ok(&value),
-            Err(e) => Ok(error_json(StatusCode::CONFLICT, &e.message, &e.code)),
-        };
+        return ok(&state.transfers.pending());
     }
     if method == Method::GET && path == "/api/groups" {
         return ok(&state.groups.sync(registry, client, None).await);

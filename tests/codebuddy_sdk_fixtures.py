@@ -89,7 +89,7 @@ class CodebuddyFixture:
         return [row for row in rows if kind is None or row.get("type") == kind]
 
     @contextmanager
-    def server(self, binary, extra_env=None, *, preserve_sdkhosts=False):
+    def server(self, binary, extra_env=None, *, preserve_sdkhosts=False, hosted=True):
         from frontend_paths import frontend_dir
         from send_browser import initialize
         if not self.lifecycle_initialized:
@@ -106,6 +106,8 @@ class CodebuddyFixture:
             SESSIONDOCK_LIFECYCLE_DIR=str(self.root / "lifecycle"), SESSIONDOCK_STATE_DIR=str(self.root / "state"),
             SESSIONDOCK_CODEX_APP_SERVER="off", HOME=str(self.home))
         env.update(extra_env or {})
+        if not hosted:
+            env.pop("SESSIONDOCK_STATE_DIR", None)
         base = f"http://127.0.0.1:{port}"
         opener = build_opener(ProxyHandler({}))
         with tempfile.TemporaryFile() as log:

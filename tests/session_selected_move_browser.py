@@ -199,6 +199,12 @@ def main():
                 assert response.ok, response.text()
                 result = response.json()
             assert result['mode'] == 'move' and result['new_ids'] is False, result
+            pending = page.evaluate("""async () => {
+                const response = await fetch('/api/session/transfers');
+                return {status: response.status, body: await response.json()};
+            }""")
+            assert pending['status'] == 200, pending
+            assert isinstance(pending['body']['operations'], list), pending
             expect(dialog).not_to_be_visible(timeout=30000)
             return result
 

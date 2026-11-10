@@ -1,7 +1,8 @@
 use super::*;
+use crate::sdk_common::write_input;
 pub(super) use crate::sdk_common::{diagnostic_secrets, redact};
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Clone)]
 pub(super) enum Outbound {
@@ -338,20 +339,7 @@ impl Bridge {
                     None,
                     &SessionRoots::new([native_root.as_path()]),
                 );
-                let own = |pid: u32| {
-                    let mut current = pid;
-                    let mut visited = std::collections::BTreeSet::new();
-                    while current > 1 && visited.insert(current) {
-                        if own_pids.contains(&current) {
-                            return true;
-                        }
-                        let Some(parent) = scan.tree.parent(current) else {
-                            break;
-                        };
-                        current = parent.ppid;
-                    }
-                    false
-                };
+                let own = |pid| crate::sdk_common::process_owned(&scan.tree, pid, &own_pids);
                 let holders = scan
                     .sids
                     .get(&sid)
@@ -384,21 +372,4 @@ impl Bridge {
         }
         Ok(())
     }
-}
-
-async fn write_input(
-    mut stdin: tokio::process::ChildStdin,
-    mut rx: mpsc::UnboundedReceiver<Value>,
-    failed: CancellationToken,
-) {
-    while let Some(frame) = rx.recv().await {
-        let mut line = frame.to_string();
-        line.push('\n');
-        if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
-            failed.cancel();
-            return;
-        }
-    }
-    let _ = stdin.shutdown().await;
-    failed.cancel();
 }

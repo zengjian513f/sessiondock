@@ -21,17 +21,12 @@ pub struct HealthResponse {
 pub async fn get_health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
     if let Some(metadata) = state.metadata {
         // snapshot() can wait on an admitted fsync transaction's mutex. Keep
-        // that wait off the reactor, and surface an uncertain commit as 503.
+        // that wait off the reactor.
         state
             .reader
             .run(move |_| {
-                metadata
-                    .snapshot()
-                    .map(|_| ())
-                    .map_err(|error| crate::sessions::SessionError {
-                        status: error.status,
-                        message: error.message,
-                    })
+                metadata.snapshot();
+                Ok(())
             })
             .await?;
     }

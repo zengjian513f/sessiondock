@@ -584,9 +584,7 @@ impl TransferService {
             .unwrap();
         op.target_uid = Some(self.planned_target_uid(&op, selected_file)?);
         if let Some(metadata) = &self.metadata {
-            let snapshot = metadata
-                .snapshot()
-                .map_err(|e| TransferError::new(e.code, e.message))?;
+            let snapshot = metadata.snapshot();
             let members = op.group().members.clone();
             for member in &members {
                 let before = snapshot.row(&member.uid);
@@ -746,9 +744,7 @@ impl TransferService {
             }
         }
         if let Some(metadata) = &self.metadata {
-            let snapshot = metadata
-                .snapshot()
-                .map_err(|e| TransferError::new(e.code, e.message))?;
+            let snapshot = metadata.snapshot();
             for (uid, row) in &op.metadata_before {
                 if snapshot.row(uid) != *row {
                     return Err(TransferError::new(
@@ -1037,9 +1033,7 @@ impl TransferService {
         if !op.new_ids()
             && let Some(metadata) = &self.metadata
         {
-            let current = metadata
-                .snapshot()
-                .map_err(|e| TransferError::new(e.code, e.message))?;
+            let current = metadata.snapshot();
             op.metadata_replaced.clear();
             let portable = [
                 "starred",

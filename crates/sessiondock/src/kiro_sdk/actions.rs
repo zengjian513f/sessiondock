@@ -458,13 +458,7 @@ impl Bridge {
         Ok(())
     }
 
-    pub(super) async fn models_action(
-        &self,
-        uid: &str,
-        cwd: &str,
-        target: &Value,
-        refresh: bool,
-    ) -> Value {
+    pub(super) async fn models_action(&self, uid: &str, target: &Value, refresh: bool) -> Value {
         let observed_from_target = target["observed_model"]
             .as_str()
             .map(str::trim)
@@ -496,7 +490,7 @@ impl Bridge {
             };
 
             if cur_model.is_none() {
-                let sid = self.resolve_sid(uid, target, &Value::Null);
+                let sid = self.resolve_sid(uid);
                 if let Some(metadata) = self.catalog.resolve_sid(&sid).map(|entry| entry.metadata) {
                     cur_model = metadata["_meta"]["kiro"]["modelId"]
                         .as_str()
@@ -524,7 +518,7 @@ impl Bridge {
             }
 
             if list.is_empty() {
-                let (catalog_list, default_m) = self.catalog_or_probe_models(cwd, refresh).await;
+                let (catalog_list, default_m) = self.catalog_or_probe_models(refresh).await;
                 list = catalog_list;
                 if cur_model.is_none() {
                     cur_model = default_m;
@@ -542,9 +536,9 @@ impl Bridge {
         }
 
         // 2. Use confirmed official catalog metadata when no SDK process is running.
-        let (mut list, default_model) = self.catalog_or_probe_models(cwd, refresh).await;
+        let (mut list, default_model) = self.catalog_or_probe_models(refresh).await;
         if !uid.is_empty() {
-            let sid = self.resolve_sid(uid, target, &Value::Null);
+            let sid = self.resolve_sid(uid);
             let mut catalog_model = None;
             let mut catalog_effort = None;
             if let Some(metadata) = self.catalog.resolve_sid(&sid).map(|entry| entry.metadata) {
@@ -602,7 +596,6 @@ impl Bridge {
 
     pub(super) async fn catalog_or_probe_models(
         &self,
-        _cwd: &str,
         refresh: bool,
     ) -> (Vec<Value>, Option<String>) {
         // A running session's live config_options are the authoritative, always
@@ -840,12 +833,7 @@ impl Bridge {
         Ok(session.snapshot())
     }
 
-    pub(super) async fn compact(
-        &self,
-        uid: &str,
-        _cwd: &str,
-        _target: &Value,
-    ) -> Result<Value, String> {
+    pub(super) async fn compact(&self, uid: &str) -> Result<Value, String> {
         let session = self.get_session(uid)?;
         if !session
             .state
@@ -891,12 +879,7 @@ impl Bridge {
         }
     }
 
-    pub(super) async fn rename_session(
-        &self,
-        uid: &str,
-        _target: &Value,
-        payload: &Value,
-    ) -> Result<Value, String> {
+    pub(super) async fn rename_session(&self, uid: &str, payload: &Value) -> Result<Value, String> {
         let title = payload["title"]
             .as_str()
             .map(str::trim)
@@ -906,7 +889,7 @@ impl Bridge {
             .as_str()
             .filter(|s| !s.is_empty())
             .ok_or("Kiro 改名请求缺少稳定 request_id")?;
-        let session = self.ensure_open(uid, "", payload).await?;
+        let session = self.ensure_open(uid, payload).await?;
         let sid = session.session_id.lock().unwrap().clone();
         // The official 2.24.1 TUI uses this extension even though initialize
         // omits it from extensionMethods. Never submit /rename as a prompt.
@@ -938,7 +921,6 @@ impl Bridge {
         &self,
         uid: &str,
         cwd: &str,
-        _target: &Value,
         payload: &Value,
     ) -> Result<Value, String> {
         if ["before", "nth_user", "turn_index", "prompt_index"]

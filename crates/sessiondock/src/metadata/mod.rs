@@ -81,13 +81,13 @@ impl MetadataStore {
         self.disk.directory()
     }
 
-    pub fn snapshot(&self) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+    pub fn snapshot(&self) -> Arc<MetadataSnapshot> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.reload(&mut state);
-        Ok(state.snapshot.clone())
+        state.snapshot.clone()
     }
 
     /// Re-read the file and keep the current `Arc` when the content hash matches.
