@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **214** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -1339,10 +1339,6 @@ Scanned `crates/sessiondock/src`: **215** (status, code) pairs.
 - [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L205
 - [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `turn` L274 → `POST /api/codex-sdk/turn`
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `enabled` L27
-
-### `file_mode_not_implemented`
-
-- 文件服务尚未实现此模式 — [`files/mod.rs`](../crates/sessiondock/src/files/mod.rs) `unsupported` L58
 
 ### `files_disabled`
 

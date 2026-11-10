@@ -50,10 +50,6 @@ impl FileError {
         self.details = details;
         self
     }
-    pub fn unsupported(mode: &str) -> Self {
-        let _ = mode; // Do not reflect untrusted mode text into diagnostics.
-        Self::new(501, "file_mode_not_implemented", "文件服务尚未实现此模式")
-    }
     pub(super) fn changed() -> Self {
         Self::new(
             409,
@@ -110,7 +106,7 @@ impl FileService {
         scope: &FileScope<'_>,
         index: &references::ReferenceIndex,
         needed: bool,
-    ) -> Result<Vec<PathBuf>, FileError> {
+    ) -> Vec<PathBuf> {
         let mut directories = BTreeSet::new();
         if needed {
             for raw in &index.directories {
@@ -121,7 +117,7 @@ impl FileService {
                 }
             }
         }
-        Ok(directories.into_iter().collect())
+        directories.into_iter().collect()
     }
 
     fn resolve_reference(
@@ -191,9 +187,9 @@ impl FileService {
         navigation: Option<&str>,
     ) -> Result<ResolvedTarget, FileError> {
         references::validate_scope(scope)?;
-        let index = references::ReferenceIndex::new(scope.messages)?;
+        let index = references::ReferenceIndex::new(scope.messages);
         let reference = clean_ref(reference)?;
-        let directories = self.directories(scope, &index, !reference.contains(['/', '\\']))?;
+        let directories = self.directories(scope, &index, !reference.contains(['/', '\\']));
         let anchor = self.resolve_reference(scope, &index, &reference, &directories)?;
         let Some(raw) = navigation.filter(|value| !value.is_empty()) else {
             return Ok(anchor);
@@ -231,14 +227,14 @@ impl FileService {
                 json!({"resolved":{},"targets":[],"file_browser":true,"errors":[],"incomplete":false,"writable":false}),
             );
         }
-        let index = references::ReferenceIndex::new(scope.messages)?;
+        let index = references::ReferenceIndex::new(scope.messages);
         let directories = self.directories(
             scope,
             &index,
             references
                 .iter()
                 .any(|reference| !reference.contains(['/', '\\'])),
-        )?;
+        );
         let mut resolved = serde_json::Map::new();
         let mut targets = Vec::new();
         let mut errors = Vec::new();

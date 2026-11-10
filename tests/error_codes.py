@@ -11,9 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC, OUT = ROOT / "crates/sessiondock/src", ROOT / "docs/error-codes.md"
 UNAVAIL = "Rust 后端尚未迁移此能力：{cap}。当前是只读开发阶段。"
-FIXED = {"unsupported": (501, "file_mode_not_implemented",
-                         "只读文件服务尚未实现此模式；不会伪造空任务或成功结果"),
-         "changed": (409, "file_changed", "文件或父目录在读取期间已变化，请刷新后重试")}
+FIXED = {"changed": (409, "file_changed", "文件或父目录在读取期间已变化，请刷新后重试")}
 STATUS = dict(BAD_REQUEST=400, FORBIDDEN=403, NOT_FOUND=404, CONFLICT=409, GONE=410,
               PAYLOAD_TOO_LARGE=413, URI_TOO_LONG=414, TOO_MANY_REQUESTS=429,
               INTERNAL_SERVER_ERROR=500, NOT_IMPLEMENTED=501, SERVICE_UNAVAILABLE=503)

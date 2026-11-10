@@ -40,7 +40,7 @@ impl FileService {
         let index = match revision.and_then(|revision| self.cached_media_index(revision)) {
             Some(index) => index,
             None => {
-                let index = Arc::new(references::ReferenceIndex::media(messages, native_refs)?);
+                let index = Arc::new(references::ReferenceIndex::media(messages, native_refs));
                 if let Some(revision) = revision {
                     self.retain_media_index(revision, index.clone());
                 }

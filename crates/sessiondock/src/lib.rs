@@ -290,8 +290,7 @@ fn build_app(
     let files = Some(Arc::new(files::FileService::default()));
     let files_write = if terminal.is_some() || !config.file_write_roots.is_empty() {
         Some(Arc::new(
-            files::WriteService::open(config.file_write_roots, config.state_dir.clone())
-                .map_err(io::Error::other)?,
+            files::WriteService::open(config.state_dir.clone()).map_err(io::Error::other)?,
         ))
     } else {
         None

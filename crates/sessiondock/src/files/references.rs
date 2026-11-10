@@ -132,20 +132,20 @@ pub(super) struct ReferenceIndex {
     media: bool,
 }
 impl ReferenceIndex {
-    pub fn new(messages: &[Value]) -> Result<Self, FileError> {
+    pub fn new(messages: &[Value]) -> Self {
         Self::build(messages, false, &[])
     }
     pub(super) fn media<'a>(
         messages: impl IntoIterator<Item = &'a Value>,
         native_refs: &[&str],
-    ) -> Result<Self, FileError> {
+    ) -> Self {
         Self::build(messages, true, native_refs)
     }
     fn build<'a>(
         messages: impl IntoIterator<Item = &'a Value>,
         media: bool,
         native_refs: &[&str],
-    ) -> Result<Self, FileError> {
+    ) -> Self {
         let mut index = Self {
             refs: BTreeSet::new(),
             basenames: BTreeMap::new(),
@@ -168,22 +168,22 @@ impl ReferenceIndex {
                 continue;
             }
             if let Some(text) = message["text"].as_str() {
-                index.scan(text)?;
+                index.scan(text);
                 if native_role == "tool"
                     && let Ok(value) = serde_json::from_str::<Value>(text)
                 {
-                    index.scan_value(&value)?;
+                    index.scan_value(&value);
                 }
             }
             if native_role == "tool" {
-                index.scan_value(&message["args"])?;
+                index.scan_value(&message["args"]);
             }
         }
         for reference in native_refs {
             // Exact typed refs from the selected native view, not fake text
             // fed through the token scanner. Invalid refs cannot grant access;
             // image(ref) reports their precise error if actually selected.
-            index.insert(reference)?;
+            index.insert(reference);
         }
         for reference in &index.refs {
             let basename = reference.rsplit(['/', '\\']).next().unwrap_or(reference);
@@ -196,13 +196,13 @@ impl ReferenceIndex {
                 index.directories.push(reference.clone());
             }
         }
-        Ok(index)
+        index
     }
-    fn insert(&mut self, value: &str) -> Result<(), FileError> {
+    fn insert(&mut self, value: &str) {
         if value.to_ascii_lowercase().starts_with("http://")
             || value.to_ascii_lowercase().starts_with("https://")
         {
-            return Ok(());
+            return;
         }
         if let Ok(reference) = if self.media {
             normalize_media_ref(value)
@@ -211,17 +211,16 @@ impl ReferenceIndex {
         } {
             self.refs.insert(reference);
         }
-        Ok(())
     }
-    fn scan(&mut self, value: &str) -> Result<(), FileError> {
+    fn scan(&mut self, value: &str) {
         // SEND writes one complete path per numbered line. Tokenizing those
         // lines by whitespace loses filenames with spaces and Windows paths.
         for capture in ATTACHMENT.captures_iter(value) {
-            self.insert(&capture[1])?;
+            self.insert(&capture[1]);
         }
         if self.media {
             for url in FILE_URL.find_iter(value) {
-                self.insert(url.as_str().trim_end_matches(['.', ',', ';', '!']))?;
+                self.insert(url.as_str().trim_end_matches(['.', ',', ';', '!']));
             }
         }
         if value.starts_with(['/', '\\'])
@@ -230,7 +229,7 @@ impl ReferenceIndex {
             || value.starts_with("../")
             || (value.as_bytes().get(1) == Some(&b':'))
         {
-            self.insert(value)?;
+            self.insert(value);
         }
         for capture in QUOTED.captures_iter(value) {
             let raw = capture.get(1).or_else(|| capture.get(2)).unwrap().as_str();
@@ -241,7 +240,7 @@ impl ReferenceIndex {
             } else {
                 raw
             };
-            self.insert(raw)?;
+            self.insert(raw);
         }
         let tokens = if self.media { &*MEDIA_TOKEN } else { &*TOKEN };
         for capture in tokens.find_iter(value) {
@@ -253,21 +252,19 @@ impl ReferenceIndex {
                 capture
                     .as_str()
                     .trim_end_matches(['.', ',', ';', ':', '!', '?']),
-            )?;
+            );
         }
-        Ok(())
     }
 
-    fn scan_value(&mut self, value: &Value) -> Result<(), FileError> {
+    fn scan_value(&mut self, value: &Value) {
         let mut pending = vec![value];
         while let Some(value) = pending.pop() {
             match value {
-                Value::String(value) => self.scan(value)?,
+                Value::String(value) => self.scan(value),
                 Value::Array(values) => pending.extend(values.iter()),
                 Value::Object(values) => pending.extend(values.values()),
                 _ => {}
             }
         }
-        Ok(())
     }
 }

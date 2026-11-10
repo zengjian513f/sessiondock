@@ -23,7 +23,7 @@ pub struct WriteService {
 }
 impl WriteService {
     /// `state_dir` is private: attachments and recycled entries never land in it.
-    pub fn open(_roots: Vec<PathBuf>, state_dir: Option<PathBuf>) -> Result<Self, FileError> {
+    pub fn open(state_dir: Option<PathBuf>) -> Result<Self, FileError> {
         let private_root = state_dir
             .as_ref()
             .map(|path| path.canonicalize().map_err(FileError::io))
