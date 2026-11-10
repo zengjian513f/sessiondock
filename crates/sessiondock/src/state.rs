@@ -51,7 +51,6 @@ pub struct AppState {
     pub proc_scan: Option<Arc<crate::runtime::procscan::ProcScanner>>,
     /// Spawner recording (needs the scan and the metadata store).
     pub reader: Reader,
-    pub watchers: Arc<Semaphore>,
     pub observations: Arc<crate::observe::WatchHub>,
     pub searches: Arc<Semaphore>,
     /// Search-text cache and parse budget; search never

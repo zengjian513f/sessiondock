@@ -4,7 +4,6 @@
 mod descriptors;
 mod discovery;
 mod file_media;
-mod formats;
 mod native_media;
 pub(crate) use descriptors::MediaTicket;
 pub(crate) use discovery::discover;
@@ -126,8 +125,8 @@ pub struct NativeImage {
     source: Arc<ImageSource>,
 }
 impl NativeImage {
-    pub fn from_block(block: &Value) -> Result<Option<Self>, String> {
-        Ok(Self::parse(block).ok().flatten())
+    pub fn from_block(block: &Value) -> Option<Self> {
+        Self::parse(block).ok().flatten()
     }
     fn parse(block: &Value) -> Result<Option<Self>, MediaError> {
         for object in [block.get("source"), block.get("file"), Some(block)]
@@ -349,6 +348,32 @@ impl MediaStore {
     pub fn new() -> Self {
         Self::with_limits(CACHE_ITEMS, MAX_CACHE_BYTES)
     }
+    /// Evict retained blobs under the caller's cache lock; live responses may
+    /// keep the budget above its retention target. Charge also covers decoding.
+    fn reserve_blob(&self, cache: &mut Cache, length: usize) -> Charge {
+        while cache.entries.len() >= self.maximum_items
+            || self
+                .budget
+                .used
+                .load(Ordering::Acquire)
+                .saturating_add(length)
+                > self.budget.maximum
+        {
+            let victim = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(token, _)| token.clone());
+            let Some(victim) = victim else { break };
+            cache.entries.remove(&victim);
+        }
+        self.budget.used.fetch_add(length, Ordering::AcqRel);
+        Charge {
+            budget: self.budget.clone(),
+            bytes: length,
+        }
+    }
+
     fn with_limits(maximum_items: usize, bytes: usize) -> Self {
         Self {
             descriptors: Mutex::new(descriptors::Descriptors::new(1024)),
@@ -373,7 +398,7 @@ fn inspect(mime: Mime, bytes: &[u8]) -> Result<(u32, u32), MediaError> {
     match mime {
         Mime::Png => png(bytes),
         Mime::Jpeg => jpeg(bytes),
-        mime => formats::inspect(mime.text(), bytes),
+        _ => Err(MediaError::Unsupported),
     }
 }
 fn tick(cache: &mut Cache) -> u64 {
@@ -418,12 +443,6 @@ fn crc32(bytes: &[u8]) -> u32 {
 }
 /// PNG container/header validation, not zlib decompression or pixel decoding.
 fn png(bytes: &[u8]) -> Result<(u32, u32), MediaError> {
-    png_base(bytes, false)
-}
-/// Only the private APNG wrapper may ignore animation chunks, after validating
-/// their complete ordering, frame budgets and CRCs. Borrow the original buffer:
-/// ignored chunks must not terminate a run of IDAT chunks as filtering did not.
-fn png_base(bytes: &[u8], animation_validated: bool) -> Result<(u32, u32), MediaError> {
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err(MediaError::Invalid);
     }
@@ -450,10 +469,6 @@ fn png_base(bytes: &[u8], animation_validated: bool) -> Result<(u32, u32), Media
         let payload = &bytes[position + 8..end - 4];
         if crc32(&bytes[position + 4..end - 4]) != be32(&bytes[end - 4..end]) {
             return Err(MediaError::Invalid);
-        }
-        if animation_validated && matches!(kind, b"acTL" | b"fcTL" | b"fdAT") {
-            position = end;
-            continue;
         }
         if size.is_none() && kind != b"IHDR" {
             return Err(MediaError::Invalid);

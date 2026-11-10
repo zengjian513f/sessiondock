@@ -15,6 +15,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
+from media_fixtures import expand_media_tools
 from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 from media_browser import TOKEN, image, native_bytes, route, uid
 from popups import on_popup  # noqa: E402
@@ -124,8 +125,7 @@ def main():
                 page.goto(base, wait_until="networkidle")
 
                 def verify_images():
-                    for toggle in page.locator("#msgs .turn-process.folded .fold-toggle").all():
-                        toggle.click()
+                    expand_media_tools(page)
                     images = page.locator("#msgs img")
                     expect(images).to_have_count(6)
                     for item in images.all():

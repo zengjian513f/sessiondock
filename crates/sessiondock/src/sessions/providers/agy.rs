@@ -245,7 +245,7 @@ impl Parser<'_> {
                 if let Some(uri) = item["uri"].as_str()
                     && let Some(image) = crate::media::NativeImage::from_block(
                         &json!({"type":"image_url","image_url":{"url":uri}}),
-                    )?
+                    )
                 {
                     media.push(image);
                 }

@@ -542,7 +542,7 @@ pub(super) fn sanitize_output_with_media(
                 if text_block {
                     continue;
                 }
-                if let Some(image) = super::image_content::native_image(part, context)? {
+                if let Some(image) = super::image_content::native_image(part, context) {
                     media.push(image);
                 } else {
                     output_text(part)?;

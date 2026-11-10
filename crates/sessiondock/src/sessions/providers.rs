@@ -887,7 +887,7 @@ impl Parser<'_> {
             _ => return Err("原生 content 类型无效".to_owned()),
         };
         for part in items {
-            if let Some(image) = image_content::native_image(part, self.media.as_ref())? {
+            if let Some(image) = image_content::native_image(part, self.media.as_ref()) {
                 let mut extra = json!({});
                 if let Some(phase) = phase {
                     extra["phase"] = json!(phase);

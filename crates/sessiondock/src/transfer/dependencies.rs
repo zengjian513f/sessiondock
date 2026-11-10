@@ -35,7 +35,7 @@ fn image(value: &Value, paths: &mut BTreeSet<String>) {
                 .is_some_and(|s| s.starts_with("image/"))
         }));
     if typed
-        && let Ok(Some(image)) = crate::media::NativeImage::from_block(value)
+        && let Some(image) = crate::media::NativeImage::from_block(value)
         && let Some(path) = image.file_ref()
     {
         paths.insert(path.into());

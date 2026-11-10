@@ -6,9 +6,9 @@ use serde_json::Value;
 pub(super) fn native_image(
     value: &Value,
     context: Option<&MediaContext<'_>>,
-) -> Result<Option<NativeImage>, String> {
+) -> Option<NativeImage> {
     if let Some(image) = context.and_then(|context| context.lookup(value)) {
-        return Ok(Some(image));
+        return Some(image);
     }
     NativeImage::from_block(value)
 }
@@ -29,18 +29,13 @@ pub(super) fn image_shape(value: &Value) -> bool {
             }))
 }
 
-fn push(media: &mut Vec<NativeImage>, image: NativeImage) -> Result<(), String> {
-    media.push(image);
-    Ok(())
-}
-
 pub(super) fn parts_with_media(
     value: &Value,
     context: Option<&MediaContext<'_>>,
     skipped: &mut Skipped,
 ) -> Result<(String, Vec<NativeImage>), String> {
     let had_image = contains_image(value);
-    let (value, media) = sanitize_with_media(value, context)?;
+    let (value, media) = sanitize_with_media(value, context);
     let text = super::text_parts(&value, skipped)?;
     Ok((
         if text.is_empty() && had_image {
@@ -74,7 +69,7 @@ pub(super) fn codex_parts_with_media(
         // Visit the original image nodes, not a cloned content array: lazy
         // image spans are keyed to these nodes and carry media authority.
         if !wrappers.contains(&i)
-            && let Some(part) = clean(part, &mut media, context)?
+            && let Some(part) = clean(part, &mut media, context)
         {
             cleaned.push(part);
         }
@@ -101,10 +96,10 @@ pub(super) fn placeholder(text: String, media: &[NativeImage]) -> String {
 fn sanitize_with_media(
     value: &Value,
     context: Option<&MediaContext<'_>>,
-) -> Result<(Value, Vec<NativeImage>), String> {
+) -> (Value, Vec<NativeImage>) {
     let mut media = Vec::new();
-    let cleaned = clean(value, &mut media, context)?.unwrap_or_else(|| Value::Array(Vec::new()));
-    Ok((cleaned, media))
+    let cleaned = clean(value, &mut media, context).unwrap_or_else(|| Value::Array(Vec::new()));
+    (cleaned, media)
 }
 
 pub(super) fn tool_wrapper(value: &Value) -> bool {
@@ -135,10 +130,10 @@ pub(super) fn sanitize_tool_with_media(
     context: Option<&MediaContext<'_>>,
 ) -> Result<(Value, Vec<NativeImage>), String> {
     if !tool_wrapper_with_media(value, context) {
-        return sanitize_with_media(value, context);
+        return Ok(sanitize_with_media(value, context));
     }
     let had_image = contains_image(&value["content"]);
-    let (mut content, media) = sanitize_with_media(&value["content"], context)?;
+    let (mut content, media) = sanitize_with_media(&value["content"], context);
     if content.as_array().is_some_and(Vec::is_empty) && (!media.is_empty() || had_image) {
         // Retain the recognized MCP wrapper after removing its image-only
         // content. An ordinary business {content:[]} is still not a wrapper.
@@ -156,40 +151,37 @@ fn clean(
     value: &Value,
     media: &mut Vec<NativeImage>,
     context: Option<&MediaContext<'_>>,
-) -> Result<Option<Value>, String> {
+) -> Option<Value> {
     // Only native block boundaries carry media authority. Text (including JSON
     // tutorials and literal data URLs) and arbitrary object fields are data.
     if matches!(
         value["type"].as_str(),
         Some("text" | "input_text" | "output_text" | "summary_text")
     ) {
-        return Ok(Some(value.clone()));
+        return Some(value.clone());
     }
-    if let Some(image) = native_image(value, context)? {
-        push(media, image)?;
+    if let Some(image) = native_image(value, context) {
+        media.push(image);
         // Images are private typed payloads, not additional text lines. The
         // public message adds one placeholder only if no real text remains.
-        return Ok(None);
+        return None;
     }
     if image_shape(value) {
-        return Ok(None);
+        return None;
     }
     match value {
         Value::Array(items) => {
             let before = media.len();
             let cleaned = items
                 .iter()
-                .map(|item| clean(item, media, context))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
+                .filter_map(|item| clean(item, media, context))
                 .collect::<Vec<_>>();
             if cleaned.is_empty() && media.len() > before {
-                Ok(None)
+                None
             } else {
-                Ok(Some(Value::Array(cleaned)))
+                Some(Value::Array(cleaned))
             }
         }
-        _ => Ok(Some(value.clone())),
+        _ => Some(value.clone()),
     }
 }

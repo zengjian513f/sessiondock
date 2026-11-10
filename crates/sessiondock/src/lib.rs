@@ -637,7 +637,6 @@ fn build_app(
         proc_scan,
         observations: observe::WatchHub::new(reader.clone(), shutdown.clone()),
         reader,
-        watchers: Arc::new(Semaphore::new(32)),
         searches: Arc::new(Semaphore::new(2)),
         search,
         hostname: config.hostname.into(),

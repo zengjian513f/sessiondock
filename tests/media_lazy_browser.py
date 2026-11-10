@@ -197,9 +197,17 @@ def main():
                         body=page.locator('#msgs').inner_text()
                         assert body.count('LAZY SSE AFTER RELOAD')==1
                         assert body.index('LAZY SSE AFTER RELOAD')>body.index('LAZY ROW 1399'),"reset render placed SSE before its older history"
-                        expect(page.locator('#activity')).to_contain_text('执行失败')
+                        expect(page.locator('#activity')).to_contain_text('未运行')
+                        expect(page.locator('#activity')).to_have_attribute('title', '执行失败')
+                        page.locator('#activity').click()
+                        expect(page.locator('#conversation-status-menu')).to_be_visible()
+                        expect(page.locator('#conversation-status-menu')).to_have_text('执行失败')
+                        page.keyboard.press('Escape')
                     else:
                         expect(page.locator('#activity')).to_have_count(0)
+                        expect(page.locator('#conversation-idle-status')).to_contain_text('未运行')
+                        expect(page.locator('#conversation-idle-status')).to_have_attribute('title', '未运行')
+                        expect(page.locator('#conversation-status-menu')).to_have_text('未运行')
                     assert state()["cursor"]==live,"reset render rolled back accepted SSE cursor"
                     expect(page.locator(".media-load-error")).to_have_count(0)
                     assert any('/api/messages/' in url and 'window=1' in url for url in requests[start:])
@@ -249,7 +257,7 @@ def main():
                 # gallery components; its recovery controls must work too.
                 mode['status']=503
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-inline")}"]').click()
-                inline_toggle=page.locator('#msgs .msg[data-role="user"] > .more[aria-expanded]')
+                inline_toggle=page.locator('#msgs .msg[data-role="user"] .more[aria-expanded]')
                 expect(inline_toggle).to_have_attribute('aria-expanded','false')
                 expect(page.locator('#msgs img')).to_have_count(0)
                 inline_toggle.click()

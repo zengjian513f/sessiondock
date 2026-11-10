@@ -291,27 +291,7 @@ impl MediaStore {
         if length == 0 {
             return Err(error(MediaError::Limit));
         }
-        while cache.entries.len() >= self.maximum_items
-            || self
-                .budget
-                .used
-                .load(Ordering::Acquire)
-                .saturating_add(length)
-                > self.budget.maximum
-        {
-            let victim = cache
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(token, _)| token.clone());
-            let Some(victim) = victim else { break };
-            cache.entries.remove(&victim);
-        }
-        self.budget.used.fetch_add(length, Ordering::AcqRel);
-        let charge = Charge {
-            budget: self.budget.clone(),
-            bytes: length,
-        };
+        let charge = self.reserve_blob(&mut cache, length);
         drop(cache);
         let mut verified = Verified::new(reader, span);
         if span.encoded_offset != 0 {

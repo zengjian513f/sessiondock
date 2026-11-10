@@ -19,6 +19,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
+from media_fixtures import expand_media_tools
 from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 
 # Generated with Pillow from solid RGB pixels; Chromium below independently
@@ -186,8 +187,7 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text(marker)
 
                 def images(dimensions):
-                    for toggle in page.locator("#msgs .turn-process.folded .fold-toggle").all():
-                        toggle.click()
+                    expand_media_tools(page)
                     found = page.locator("#msgs img")
                     try:
                         expect(found).to_have_count(len(dimensions))

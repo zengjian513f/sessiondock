@@ -248,27 +248,7 @@ impl MediaStore {
             entry.used = used;
             return Ok(entry.blob.clone());
         }
-        while cache.entries.len() >= self.maximum_items
-            || self
-                .budget
-                .used
-                .load(Ordering::Acquire)
-                .saturating_add(length)
-                > self.budget.maximum
-        {
-            let victim = cache
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(token, _)| token.clone());
-            let Some(victim) = victim else { break };
-            cache.entries.remove(&victim);
-        }
-        self.budget.used.fetch_add(length, Ordering::AcqRel);
-        let charge = Charge {
-            budget: self.budget.clone(),
-            bytes: length,
-        };
+        let charge = self.reserve_blob(&mut cache, length);
         drop(cache);
         let (bytes, mime, _width, _height) = prepared.read_checked(length).map_err(error)?;
         let blob = Arc::new(MediaBlob {
