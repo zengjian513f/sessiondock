@@ -102,6 +102,37 @@ fn scope<'a>(view: &'a Value, uid: &'a str, agent: &'a str) -> Result<FileScope<
         messages: view["messages"].as_array().ok_or_else(invalid)?,
     })
 }
+// Publication is server evidence, independent of whether the CLI has consumed
+// the queued input. Draft paths and client-supplied attachment metadata are not.
+fn published_references(
+    view: &mut Value,
+    uid: &str,
+    agent: &str,
+    conversations: Option<&crate::conversation::Conversations>,
+) {
+    if !agent.is_empty() {
+        return;
+    }
+    let Some(conversations) = conversations else {
+        return;
+    };
+    let cwd = std::path::PathBuf::from(view["meta"]["cwd"].as_str().unwrap_or(""));
+    let Some(messages) = view["messages"].as_array_mut() else {
+        return;
+    };
+    for mut attachment in conversations.store.published_attachments(uid) {
+        let Some(path) = attachment["path"].as_str() else {
+            continue;
+        };
+        let relative = attachment["relative_path"].as_str().unwrap_or("");
+        // A changed cwd must not redirect a published relative reference.
+        if cwd.join(relative) != std::path::Path::new(path) {
+            attachment["relative_path"] = json!("");
+        }
+        messages.push(json!({"role":"user", "text":crate::conversation::build_prompt("", &[attachment], &[])}));
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ResolveRequest {
     uid: String,
@@ -128,14 +159,16 @@ pub async fn resolve(
     })?;
     validate_scope(&body.uid)?;
     let lease = admission(&state).await?;
+    let conversations = state.conversations.clone();
     work(&state, lease, move |store| {
-        let view = store.messages(
+        let mut view = store.messages(
             &body.uid,
             &MessageQuery {
                 agent: body.agent.clone(),
                 ..Default::default()
             },
         )?;
+        published_references(&mut view, &body.uid, &body.agent, conversations.as_deref());
         Ok(JsonBytes::new(&files.resolve_many(
             &scope(&view, &body.uid, &body.agent)?,
             &body.refs,
@@ -202,14 +235,21 @@ async fn get(
     };
     let head = method == Method::HEAD;
     let lease = admission(&state).await?;
+    let conversations = state.conversations.clone();
     let prepared = work(&state, lease.clone(), move |store| {
-        let view = store.messages(
+        let mut view = store.messages(
             &query.uid,
             &MessageQuery {
                 agent: query.agent.clone(),
                 ..Default::default()
             },
         )?;
+        published_references(
+            &mut view,
+            &query.uid,
+            &query.agent,
+            conversations.as_deref(),
+        );
         let scope = scope(&view, &query.uid, &query.agent)?;
         let target = files.target(&scope, &query.r#ref, query.path.as_deref())?;
         if query.mode == "info" {

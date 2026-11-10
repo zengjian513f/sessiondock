@@ -67,6 +67,10 @@ SessionDock exposes session-reference reads and multipart attachment publication
 It does not load or persist the retired directory-browser grant store; file reads
 resolve references from the currently selected session.
 
+DELTA (BUG-20261110-164720-cc1f8f): published composer attachments also count as references in that session’s main
+view before native consumption, using only the server publication ledger. Draft
+paths, unpublished uploads and another session’s attachments do not grant reads.
+
 Conversation links recognize absolute Windows drive paths (`X:\project\file.md`
 and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive
 letters are file references rather than URL schemes. Resolution remains scoped

@@ -1748,6 +1748,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .media-link.inline { display: inline-block; max-width: 100%; margin: 7px 0; vertical-align: top; }
 .media-link.inline img { max-height: 620px; }
 .media-link:hover img { border-color: var(--accent); }
+.queued-send .media-link img { max-height: 96px; }
 .media-load { display: block; min-width: 0; max-width: 100%; }
 .media-load.inline { display: inline-block; vertical-align: top; }
 .media-load .media-link[hidden] { display: none; }

@@ -274,11 +274,12 @@ const NativeSdkControls = {
     const unknownReason=item=>item.observed_consumed || item.consumption==='observed'
       ? '原生已读取这条输入，但执行结果尚未确认。'
       : '尚未确认原生是否收到或处理了这条输入。';
-    const cardFor=(item,title)=>{const card=el('div','msg sdk-request'),body=el('div','mb');card.dataset.queueId=item.id;body.append(el('p','sdk-request-title',title),el('pre','',item.text || item.prompt?.text || item.id));card.append(body);holder.append(card);return body;};
+    const inputText=item=>item.edit_text ?? item.text ?? item.prompt?.text ?? item.id;
+    const cardFor=(item,title)=>{const card=el('div','msg sdk-request'),body=el('div','mb');card.dataset.queueId=item.id;body.append(el('p','sdk-request-title',title),el('pre','',inputText(item)));card.append(body);holder.append(card);return body;};
     // Admission/delivery progress belongs to the user's message, like Codex's
     // queue. It is not an assistant request and does not prove consumption.
     const userCardFor=(item,title)=>{
-      const {card,body}=ConversationUI.queuedMessage(item.text || item.prompt?.text || item.id,title,
+      const {card,body}=ConversationUI.queuedMessage(inputText(item),title,
         {uid,agent:view.agent,className:'sdk-queued'});
       card.dataset.queueId=item.id;holder.append(card);return body;
     };
@@ -318,7 +319,7 @@ const NativeSdkControls = {
       if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
       if(item.state==='queued')operation(body,item,'queue_cancel','撤回编辑',{},true);
       if(item.state==='queued' && item.operation==='turn' && view.running && view.capabilities.queue_steer && (!item.attachments?.length || view.uid.startsWith('droid:')))operation(body,item,'queue_steer','立即引导');
-      if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
+      if(['failed','unknown'].includes(item.state) && (item.edit_text ?? item.text)){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,inputText(item)].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
     for(const item of nativeRows){const body=userCardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';
       if(view.capabilities.queue_cancel)operation(body,item,'queue_cancel','撤回编辑',{},true);

@@ -64,7 +64,7 @@ const ConversationUI = {
     const card = el('div', `msg queued-send ${className}`.trim());
     card.dataset.role = 'user';
     const body = el('div', 'mb');
-    body.innerHTML = md(String(text || ''), true, [], {uid, agent});
+    body.innerHTML = md(String(text || ''), true, [], {uid, agent, attachments:true});
     const foot = el('div', 'queued-send-foot'), status = el('span', 'queued-send-state', state);
     const actions = el('span', 'sdk-queue-actions');
     foot.append(status, actions); card.append(body, foot);

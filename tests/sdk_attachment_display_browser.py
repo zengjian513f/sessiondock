@@ -7,7 +7,7 @@ and history coverage lives in codex_sdk_compose_browser.py.
 import argparse
 from pathlib import Path
 import tempfile
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 
 from playwright.sync_api import expect, sync_playwright
 from codex_sdk_compose_browser import attach, saved
@@ -51,7 +51,7 @@ def check(page, selector):
         preview.close()
 
 
-def exercise(browser, base, source, screenshots):
+def exercise(browser, base, source, screenshots, peer):
     context = browser.new_context(viewport={'width': 1280, 'height': 900},
                                   color_scheme='light', service_workers='block')
     context.route('**/*', lambda route: route.continue_()
@@ -71,6 +71,10 @@ def exercise(browser, base, source, screenshots):
         page.locator('#a-session-toggle').click()
         expect(page.locator('#sdk-input')).to_be_enabled()
         uid = page.evaluate('S.sel')
+        if source == 'agy':
+            page.locator('#sdk-input').fill('hold:attachment-queue')
+            page.locator('#sdk-send').click()
+            expect(page.locator('.sdk-live')).to_contain_text('Agy running attachment-queue')
         page.locator('#sdk-input').fill('附件展示回归：请查看图片和项目文件。')
         image_data = page.screenshot()
         attach(page, 'image', '屏幕截图.png', 'image/png', image_data)
@@ -78,6 +82,28 @@ def exercise(browser, base, source, screenshots):
         saved(page, uid, '附件展示回归：请查看图片和项目文件。')
         page.locator('#sdk-send').click()
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(0)
+        if source == 'agy':
+            check(page, '.sdk-queue .msg[data-role="user"]')
+            page.screenshot(path=str(screenshots/'agy-queued-attachments.png'))
+            (peer.work/'unpublished.png').write_bytes(image_data)
+            ref = page.locator('.sdk-queue .media-link').get_attribute('data-file-ref')
+            # Publication grants this exact attachment, not arbitrary cwd files
+            # or a branch/other session supplied by the browser.
+            for query in ({'uid': uid, 'ref': './unpublished.png'},
+                          {'uid': uid, 'ref': ref, 'agent': 'unrelated-agent'}):
+                response = page.request.get(base+'/api/session/file?'+urlencode(query))
+                assert not response.ok, (query, response.status)
+            page.reload(wait_until='networkidle')
+            check(page, '.sdk-queue .msg[data-role="user"]')
+            queued = page.locator('.sdk-queue .msg').filter(has_text='附件展示回归')
+            queued.get_by_role('button', name='撤回编辑', exact=True).click()
+            page.wait_for_function("document.querySelector('#sdk-input').value.includes('屏幕截图.png')")
+            recalled = page.locator('#sdk-input').input_value()
+            assert '项目 notes.txt' in recalled
+            assert not [row for row in peer.inputs() if '附件展示回归' in row['text']]
+            page.locator('#sdk-send').click()
+            check(page, '.sdk-queue .msg[data-role="user"]')
+            peer.release('attachment-queue')
         expect(page.locator('#sdk-stop')).to_be_hidden()
         page.wait_for_function("() => NativeSdkView.historyData?.messages.some(message => message.role === 'user' && message.text.includes('附件展示回归'))")
         for width, theme in ((1280, 'light'), (390, 'dark'), (1280, 'dark'), (390, 'light')):
@@ -125,8 +151,8 @@ def main():
             for source in args.sources:
                 root = Path(tmp)/source
                 root.mkdir()
-                with provider(source, root, args.binary) as (base, _, _):
-                    exercise(browser, base, source, args.screenshots)
+                with provider(source, root, args.binary) as (base, peer, _):
+                    exercise(browser, base, source, args.screenshots, peer)
         finally:
             browser.close()
     print('PASS four SDK attachment previews: upload/SEND, reload/chat, downloads, wide/narrow light/dark')

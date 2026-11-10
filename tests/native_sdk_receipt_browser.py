@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Native SDK submissions stay user bubbles through queue and delivery states."""
 import argparse
+import base64
 from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
+from media_browser import PNG
 from history_fixtures import BINARY
 from native_sdk_rename_browser import native
 from sdkhost_fixtures import stop_private_sdkhosts
@@ -57,6 +59,30 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         expect(receipt.locator('.sdk-request-title')).to_have_count(0)
         expect(page.locator('.sdk-msgs').get_by_text(TEXT, exact=True)).to_have_count(1)
         expect(receipt.get_by_role('button', name='撤销', exact=True)).to_have_count(1 if state == 'queued' else 0)
+    # The queue's draft excludes published paths; edit_text is the actual input.
+    prepared = TEXT + '\n\n附件1: ./sessiondock_attachments/1/pasted.png'
+    context.route('**/api/session/file?*', lambda route: route.fulfill(
+        content_type='image/png', body=base64.b64decode(PNG)))
+    raw['input_queue'][0].update(edit_text=prepared)
+    for state in ('queued', 'sending'):
+        raw['input_queue'][0]['state'] = state
+        publish()
+        image = receipt.locator('.media-link img')
+        expect(image).to_have_count(1)
+        image.scroll_into_view_if_needed()
+        expect(image).to_have_js_property('naturalWidth', 2)
+        expect(receipt).to_contain_text('附件1: pasted.png')
+        if screenshots:
+            page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-attachment-{state}.png'), full_page=True)
+    raw['input_queue'][0]['state'] = 'failed'
+    publish()
+    expect(receipt).to_contain_text('附件1: ./sessiondock_attachments/1/pasted.png')
+    receipt.get_by_role('button', name='恢复文字', exact=True).click()
+    expect(page.locator('#sdk-input')).to_have_value(prepared)
+    page.locator('#sdk-input').fill('')
+    del raw['input_queue'][0]['edit_text']
+    raw['input_queue'][0]['state'] = 'sending'
+    publish()
     # Kiro broadcasts begin_turn before the native write/queue receipt finishes.
     # Changing only items must invalidate the queue's render cache as well.
     delivery = raw['input_queue'][0]['delivery_id']

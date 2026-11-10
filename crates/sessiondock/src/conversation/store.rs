@@ -619,6 +619,16 @@ impl Store {
             Ok(())
         })
     }
+    /// Only server-published attachments are references before native consumption.
+    pub fn published_attachments(&self, uid: &str) -> Vec<Value> {
+        let doc = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let key = doc.aliases.get(uid).map(String::as_str).unwrap_or(uid);
+        doc.uploads
+            .values()
+            .filter(|upload| upload.key == key)
+            .filter_map(|upload| upload.published.clone())
+            .collect()
+    }
     pub fn published(&self, key: &str, id: &str, value: Value) -> Result<()> {
         self.update(|doc| {
             let row = doc
