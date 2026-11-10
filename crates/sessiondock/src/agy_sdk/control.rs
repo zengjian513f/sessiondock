@@ -99,6 +99,26 @@ impl Control {
         .await
     }
 
+    pub async fn steer(
+        &self,
+        pid: u32,
+        sid: &str,
+        request_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        self.request(
+            pid,
+            "SendUserCascadeMessage",
+            json!({
+                "cascadeId": sid,
+                "items": [{"text": text}],
+                "deliveryStrategy": "MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION",
+                "clientMessageId": request_id,
+            }),
+        )
+        .await
+    }
+
     async fn request(&self, pid: u32, method: &str, body: serde_json::Value) -> Result<(), String> {
         let log = tokio::fs::read_to_string(&self.log).await.map_err(
             |_| "agy_sdk_control_unavailable: 无法取得本实例的原生管理接口；任务继续运行。",
@@ -170,14 +190,27 @@ impl Control {
         })
         .await
         .map_err(|_| "agy_sdk_control_timeout: 原生请求超时；未终结运行时，请核对操作结果。")?
-        .map_err(
-            |_| "agy_sdk_control_failed: 原生响应未完整到达；未终结运行时，请核对操作结果。",
-        )?;
-        if outcome.0 != 200 || serde_json::from_slice::<serde_json::Value>(&outcome.1).is_err() {
+        .map_err(|error| match error {
+            crate::hub::client::ClientError::ConnectionRefused
+            | crate::hub::client::ClientError::Unreachable
+            | crate::hub::client::ClientError::ConnectionFailed => {
+                "agy_sdk_control_unavailable: 无法连接本实例的原生管理接口；任务继续运行。"
+            }
+            _ => {
+                "agy_sdk_control_transport: 原生响应未完整到达；未终结运行时，请核对操作结果。"
+            }
+        })?;
+        if outcome.0 != 200 {
             return Err(format!(
                 "agy_sdk_control_failed: 原生接口拒绝 {method}（HTTP {}）；任务继续运行。",
                 outcome.0
             ));
+        }
+        if serde_json::from_slice::<serde_json::Value>(&outcome.1).is_err() {
+            return Err(
+                "agy_sdk_control_transport: 原生响应格式无法确认；未终结运行时，请核对操作结果。"
+                    .into(),
+            );
         }
         Ok(())
     }

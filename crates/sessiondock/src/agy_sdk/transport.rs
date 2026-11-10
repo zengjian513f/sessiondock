@@ -669,6 +669,13 @@ impl Native {
         control.cancel(self.pid, &self.sid, turn).await
     }
 
+    pub async fn steer(&mut self, request_id: &str, text: &str) -> Result<(), String> {
+        let control = self.control.as_ref().ok_or(
+            "agy_sdk_steer_unavailable: 此旧运行实例没有原生管理接口授权；请待任务完成后重新启动 SDK。",
+        )?;
+        control.steer(self.pid, &self.sid, request_id, text).await
+    }
+
     pub async fn terminate(&mut self) {
         crate::log::transition(
             "warn",

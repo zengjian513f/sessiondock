@@ -841,7 +841,7 @@ impl NativeSdks {
             result["capabilities"]["input_queue"] = json!(true);
             result["capabilities"]["queue_cancel"] = json!(true);
             result["capabilities"]["queue_retry"] = json!(true);
-            if matches!(source, "kiro" | "droid") {
+            if matches!(source, "kiro" | "droid" | "agy") {
                 result["capabilities"]["queue_steer"] = json!(true);
             }
         }
@@ -1213,7 +1213,7 @@ impl NativeSdks {
         target: &Value,
         id: &str,
     ) -> Result<Value, String> {
-        if !matches!(target["source"].as_str(), Some("kiro" | "droid")) {
+        if !matches!(target["source"].as_str(), Some("kiro" | "droid" | "agy")) {
             return Err("此来源不支持将排队输入转为引导".into());
         }
         let _submission = self.submission(target, id).lock_owned().await;

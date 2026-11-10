@@ -88,6 +88,7 @@ const SdkUI = {
     view.history = pane.querySelector('.sdk-history');
     if (historyReady) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
     view.live = pane.querySelector('.sdk-live');
+    view.toolGroupNodes = new Map();
     view.notice = pane.querySelector('.sdk-status');
     view.input = pane.querySelector('#sdk-input');
     pane.querySelector('#sdk-composer').hidden = false;
@@ -120,7 +121,7 @@ const SdkUI = {
 
   canSteer(view) {
     const source=view.uid.split(':')[0];
-    return ['codex','kiro'].includes(source) || source==='droid' && !!view.capabilities?.steer;
+    return ['codex','kiro'].includes(source) || ['droid','agy'].includes(source) && !!view.capabilities?.steer;
   },
 
   paintSend(view) {
@@ -138,7 +139,7 @@ const SdkUI = {
   },
 
   bindSteerSend(view) {
-    if (!['codex', 'kiro', 'droid'].includes(view.uid.split(':')[0])) return;
+    if (!['codex', 'kiro', 'droid', 'agy'].includes(view.uid.split(':')[0])) return;
     const button = view.pane.querySelector('#sdk-send'), generation = view.generation;
     const controller = new AbortController(), {signal} = controller;
     const state = view.steerSend = {ctrl:false, held:false, controller};
@@ -296,7 +297,13 @@ const SdkUI = {
           const running = view.running ?? (view.turn?.status === 'inProgress');
           const previous = view.toolGroupNodes?.get(key);
           const group = previous || groupNode(items, !!running, run);
-          if (previous) group._syncExternalTools(items, run);
+          if (previous) {
+            const currentRun = new Set(run);
+            for (const stale of [...previous.querySelectorAll(':scope > [data-sdk-item]')]) {
+              if (!currentRun.has(stale)) stale.remove();
+            }
+            group._syncExternalTools(items, run);
+          }
           group.classList.add('sdk-tool-group');
           group.dataset.toolGroupKey = key;
           parent.insertBefore(group, anchor);

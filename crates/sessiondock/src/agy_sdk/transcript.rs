@@ -58,12 +58,24 @@ pub(super) async fn conflicting_result(
     if result["status"] != "ERROR" || error.trim().is_empty() {
         return json!({"conflict":false,"reason":"not_error"});
     }
-    let user_index = {
+    let (user_index, turn_user_steps) = {
         let data = live.data.lock().unwrap();
-        data.items
+        let start = data
+            .items
             .iter()
-            .find(|item| item["request_id"] == turn.id && item["role"] == "user")
-            .and_then(|item| item["native"]["step_index"].as_u64())
+            .position(|item| item["request_id"] == turn.id && item["role"] == "user");
+        let user_index =
+            start.and_then(|idx| data.items[idx]["native"]["step_index"].as_u64());
+        let steps: std::collections::HashSet<u64> = start
+            .map(|idx| {
+                data.items[idx..]
+                    .iter()
+                    .filter(|item| item["role"] == "user")
+                    .filter_map(|item| item["native"]["step_index"].as_u64())
+                    .collect()
+            })
+            .unwrap_or_default();
+        (user_index, steps)
     };
     let Some(user_index) = user_index else {
         return json!({"conflict":false,"reason":"missing_user_step"});
@@ -91,8 +103,12 @@ pub(super) async fn conflicting_result(
             }
             continue;
         }
-        // Never borrow a later input's answer to resolve this turn.
+        // Never borrow a later input's answer to resolve this turn, while
+        // recognizing steered USER_INPUT steps accepted within this turn.
         if record["type"] == "USER_INPUT" {
+            if turn_user_steps.contains(&index) {
+                continue;
+            }
             return json!({"conflict":false,"reason":"later_user_input",
                 "user_step":user_index,"later_user_step":record["step_index"].as_u64()});
         }

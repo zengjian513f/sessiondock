@@ -43,6 +43,8 @@ struct Data {
     seq: u64,
     items: Vec<Value>,
     receipts: HashMap<String, Value>,
+    steers: Vec<Steer>,
+    steer_outcomes: HashMap<String, Result<Value, String>>,
     outstanding: usize,
     active: Option<String>,
     model: Option<String>,
@@ -76,11 +78,21 @@ struct Turn {
     stdout_offset: u64,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct Steer {
+    id: String,
+    text: String,
+    #[serde(default)]
+    received_at: Option<String>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Binding {
     sid: String,
     cwd: String,
     turn: Turn,
+    #[serde(default)]
+    steers: Vec<Steer>,
 }
 
 fn log_turn(level: &str, event: &str, live: &Live, turn: &Turn, mut fields: Value) {
@@ -115,6 +127,7 @@ fn log_step(live: &Live, turn: &Turn, native: &Native, step: &Value, idle: bool)
 
 enum Command {
     Turn(Turn),
+    Steer(Steer, oneshot::Sender<Result<Value, String>>),
     Interrupt(oneshot::Sender<Result<Value, String>>),
     Rename(String, oneshot::Sender<Result<Value, String>>),
 }
@@ -157,7 +170,7 @@ pub fn new(
 
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
-        "rename":true,"interrupt":cfg!(unix),"respond":false,"approvals":false,"questions":false,
+        "rename":true,"interrupt":cfg!(unix),"steer":cfg!(unix),"respond":false,"approvals":false,"questions":false,
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
@@ -339,9 +352,36 @@ impl Bridge {
                     turn.runtime_id = runtime.runtime_id.clone();
                     turn.stdout_offset = runtime.stdout_offset;
                 }
+                let carryover: Vec<Steer> = if turn.runtime_id.is_empty() {
+                    Vec::new()
+                } else {
+                    data.steers
+                        .iter()
+                        .filter(|steer| {
+                            data.items.iter().any(|item| {
+                                item["role"] == "user"
+                                    && item["request_id"] == steer.id
+                                    && item["native_id"].is_null()
+                                    && item["status"] != "unknown"
+                            })
+                        })
+                        .cloned()
+                        .collect()
+                };
+                if turn.runtime_id.is_empty() {
+                    for item in &mut data.items {
+                        if item["role"] == "user"
+                            && item["steered"] == true
+                            && item["native_id"].is_null()
+                        {
+                            item["status"] = json!("unknown");
+                        }
+                    }
+                }
                 let receipt = json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
-                self.save_binding(&live, &turn)?;
+                self.save_binding(&live, &turn, &carryover)?;
                 live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
+                data.steers = carryover;
                 data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued","received_at":crate::sdk_message_time::now()}));
                 data.receipts.insert(request, receipt.clone());
                 data.outstanding += 1;
@@ -349,6 +389,39 @@ impl Bridge {
                 data.error_kind = None;
                 live.publish(&mut data);
                 Ok(receipt)
+            }
+            "steer" => {
+                let live = self.open(&target).await?;
+                let request = text(&input, "request_id")?;
+                {
+                    let data = live.data.lock().unwrap();
+                    if let Some(outcome) = data.steer_outcomes.get(&request) {
+                        return outcome.clone();
+                    }
+                    if let Some(receipt) = data.receipts.get(&request) {
+                        return Ok(receipt.clone());
+                    }
+                }
+                self.process.check_available(live.sid.clone()).await?;
+                let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?.to_owned();
+                if content.trim().is_empty() {
+                    return Err("agy_sdk_empty_steer: 引导内容不能为空".into());
+                }
+                if live.data.lock().unwrap().outstanding == 0 {
+                    return Err(
+                        "agy_sdk_idle: 当前没有运行中的任务；请直接发送新回合。".into(),
+                    );
+                }
+                let steer = Steer {
+                    id: request,
+                    text: content,
+                    received_at: Some(crate::sdk_message_time::now()),
+                };
+                let (sender, receiver) = oneshot::channel();
+                live.commands
+                    .send(Command::Steer(steer, sender))
+                    .map_err(|_| "agy_sdk_shutdown")?;
+                receiver.await.map_err(|_| "agy_sdk_shutdown".to_owned())?
             }
             "rename" => {
                 let title = text(&input,"title")?.trim().to_owned();
@@ -440,6 +513,13 @@ impl Bridge {
                 data.mode = binding.turn.mode.clone();
                 data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":binding.turn.text,"request_id":request,"status":"running"}));
                 data.receipts.insert(request.clone(), json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()}));
+                data.steers = binding.steers.clone();
+                for steer in binding.steers {
+                    let receipt = json!({"accepted":true,"queued":true,"sdkhost":self.process.host_dir.is_some(),"request_id":steer.id,"session_id":live.sid,"consumption":"unverified","capabilities":capabilities()});
+                    data.items.push(json!({"id":format!("agy:request:{}",steer.id),"role":"user","content":steer.text,"request_id":steer.id,"steered":true,"status":"queued","received_at":steer.received_at}));
+                    data.receipts.insert(steer.id.clone(), receipt.clone());
+                    data.steer_outcomes.insert(steer.id, Ok(receipt));
+                }
                 data.outstanding += 1;
                 live.commands
                     .send(Command::Turn(binding.turn))
@@ -470,42 +550,14 @@ impl Bridge {
         }
     }
 
-    fn save_binding(&self, live: &Live, turn: &Turn) -> Result<(), String> {
-        use std::io::Write;
-        let Some(path) = self.binding_path(&live.sid) else {
-            return Ok(());
-        };
-        static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let temporary = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
-        let result = (|| -> io::Result<()> {
-            let parent = path.parent().unwrap();
-            std::fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let mut options = std::fs::OpenOptions::new();
-            options.create(true).truncate(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            file.write_all(&serde_json::to_vec(&Binding {
-                sid: live.sid.clone(),
-                cwd: live.cwd.clone(),
-                turn: turn.clone(),
-            })?)?;
-            file.sync_all()?;
-            std::fs::rename(&temporary, path)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        result.map_err(|e| format!("agy_sdk_binding: {e}"))
+    fn save_binding(&self, live: &Live, turn: &Turn, steers: &[Steer]) -> Result<(), String> {
+        write_binding(
+            self.process.adapter_dir.as_deref(),
+            &live.sid,
+            &live.cwd,
+            turn,
+            steers,
+        )
     }
 
     fn install(
@@ -537,6 +589,8 @@ impl Bridge {
                 seq: 0,
                 items: vec![],
                 receipts: HashMap::new(),
+                steers: vec![],
+                steer_outcomes: HashMap::new(),
                 outstanding: 0,
                 active: None,
                 model,
@@ -645,8 +699,25 @@ impl Live {
     }
 
     fn raw(&self, data: &Data) -> Value {
+        let steers: Vec<Value> = if data.outstanding > 0 || data.runtime.is_some() {
+            data.items
+                .iter()
+                .filter(|item| {
+                    item["role"] == "user"
+                        && item["steered"] == true
+                        && item["native_id"].is_null()
+                        && item["status"] != "unknown"
+                })
+                .filter_map(|item| {
+                    let id = item["request_id"].as_str()?;
+                    Some(json!({"id":id,"request_id":id,"text":item["content"],"status":"native_queued"}))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
-            "items":data.items,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
+            "items":data.items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
@@ -799,6 +870,11 @@ async fn actor(
                 .await;
                 let _ = reply.send(result);
             }
+            Command::Steer(_, reply) => {
+                let _ = reply.send(Err(
+                    "agy_sdk_idle: 当前回合已结束，未发送引导；请重新发送。".into(),
+                ));
+            }
             Command::Interrupt(reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
             }
@@ -866,6 +942,16 @@ async fn actor(
                     } else {
                         "failed"
                     });
+                }
+                if !retained || runtime.native.is_none() {
+                    for item in &mut data.items {
+                        if item["role"] == "user"
+                            && item["steered"] == true
+                            && item["native_id"].is_null()
+                        {
+                            item["status"] = json!("unknown");
+                        }
+                    }
                 }
                 data.last_turn = json!({"id":turn.id,"status":match &outcome {
                     Ok(()) => "completed",
@@ -1018,6 +1104,45 @@ async fn execute(
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
+                Some(Command::Steer(steer,reply))=>{
+                    if let Some(existing)=live.data.lock().unwrap().steer_outcomes.get(&steer.id).cloned() {
+                        let _=reply.send(existing);
+                        continue;
+                    }
+                    if interrupted {
+                        let _=reply.send(Err("agy_sdk_cancelling: 当前回合正在停止，无法发送引导。".into()));
+                        continue;
+                    }
+                    let answer=native.steer(&steer.id,&steer.text).await;
+                    log_turn(if answer.is_ok() {"info"} else {"warn"},"agy.sdk.steer",live,turn,json!({
+                        "native_pid":native.pid(),"steer_id":steer.id,"method":"SendUserCascadeMessage",
+                        "sent":answer.is_ok(),"stdout_offset":native.stdout_offset,"input_bytes":steer.text.len()}));
+                    let outcome=match answer {
+                        Ok(())=>{
+                            let receipt=json!({"accepted":true,"queued":true,"sdkhost":process.host_dir.is_some(),
+                                "request_id":steer.id,"session_id":live.sid,"consumption":"unverified","capabilities":capabilities()});
+                            let steers_snapshot={
+                                let mut data=live.data.lock().unwrap();
+                                data.items.push(json!({"id":format!("agy:request:{}",steer.id),"role":"user","content":steer.text,
+                                    "request_id":steer.id,"steered":true,"status":"queued","received_at":steer.received_at}));
+                                data.steers.push(steer.clone());
+                                data.receipts.insert(steer.id.clone(),receipt.clone());
+                                data.steer_outcomes.insert(steer.id.clone(),Ok(receipt.clone()));
+                                live.publish(&mut data);
+                                data.steers.clone()
+                            };
+                            if let Err(error)=write_binding(process.adapter_dir.as_deref(),&live.sid,&live.cwd,turn,&steers_snapshot) {
+                                log_turn("warn","agy.sdk.steer_binding_failed",live,turn,json!({"steer_id":steer.id,"error":error}));
+                            }
+                            Ok(receipt)
+                        }
+                        Err(error)=>{
+                            live.data.lock().unwrap().steer_outcomes.insert(steer.id.clone(),Err(error.clone()));
+                            Err(error)
+                        }
+                    };
+                    let _=reply.send(outcome);
+                }
                 Some(Command::Rename(title,reply))=>{
                     let result=native.rename(&title).await.map(|()|json!({"renamed":true,"session_id":live.sid,"title":title}));
                     let _=reply.send(result);
@@ -1067,7 +1192,8 @@ async fn execute(
                         if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
                         if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.is_empty()) {
                             let mut data=live.data.lock().unwrap();
-                            data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value,"received_at":native.received_at}));live.publish(&mut data);
+                            insert_before_pending_users(&mut data.items,json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value,"received_at":native.received_at}));
+                            live.publish(&mut data);
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
                         let evidence=transcript::conflicting_result(process,live,turn,value).await;
@@ -1151,6 +1277,65 @@ async fn execute(
     outcome
 }
 
+fn insert_before_pending_users(items: &mut Vec<Value>, item: Value) -> usize {
+    let mut index = items.len();
+    while index > 0
+        && items[index - 1]["role"] == "user"
+        && items[index - 1]["native_id"].is_null()
+        && items[index - 1]["status"] != "unknown"
+    {
+        index -= 1;
+    }
+    items.insert(index, item);
+    index
+}
+
+fn write_binding(
+    adapter_dir: Option<&std::path::Path>,
+    sid: &str,
+    cwd: &str,
+    turn: &Turn,
+    steers: &[Steer],
+) -> Result<(), String> {
+    use std::io::Write;
+    let Some(dir) = adapter_dir else {
+        return Ok(());
+    };
+    let path = dir.join(format!("{sid}.json"));
+    static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
+    let result = (|| -> io::Result<()> {
+        let parent = path.parent().unwrap();
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(&serde_json::to_vec(&Binding {
+            sid: sid.to_owned(),
+            cwd: cwd.to_owned(),
+            turn: turn.clone(),
+            steers: steers.to_vec(),
+        })?)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result.map_err(|e| format!("agy_sdk_binding: {e}"))
+}
+
 fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
     let time = crate::sdk_message_time::MessageTime::new(step, received);
     let mut data = live.data.lock().unwrap();
@@ -1167,7 +1352,11 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
         if !data.items.iter().any(|item| item["id"] == id) {
             let mut item = json!({"id":id,"role":"thinking","content":thinking,"request_id":turn.id,"native_type":"PLANNER_RESPONSE"});
             time.stamp(&mut item);
-            data.items.push(item);
+            if let Some(pos) = data.items.iter().position(|item| item["id"] == native_id) {
+                data.items.insert(pos, item);
+            } else {
+                insert_before_pending_users(&mut data.items, item);
+            }
         }
     }
     // A completed step notification need not carry any visible body. Its
@@ -1183,14 +1372,23 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
         return;
     }
     if kind == "user_input" {
-        if let Some(item) = data
+        let target = data
             .items
-            .iter_mut()
-            .find(|item| item["request_id"] == turn.id && item["role"] == "user")
-        {
+            .iter()
+            .position(|item| item["role"] == "user" && item["native_id"] == native_id)
+            .or_else(|| {
+                data.items.iter().position(|item| {
+                    item["role"] == "user"
+                        && item["native_id"].is_null()
+                        && item["status"] != "unknown"
+                })
+            });
+        if let Some(index) = target {
+            let item = &mut data.items[index];
             time.stamp(item);
             item["native_id"] = json!(native_id);
             item["native"] = step.clone();
+            item["native_echo"] = json!(true);
             item["status"] = json!("accepted");
         }
     } else {
@@ -1203,8 +1401,10 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
                 "tool" => "tool",
                 _ => "system",
             };
-            data.items.push(json!({"id":native_id,"role":role,"content":"","native_type":kind,"request_id":turn.id}));
-            data.items.len() - 1
+            insert_before_pending_users(
+                &mut data.items,
+                json!({"id":native_id,"role":role,"content":"","native_type":kind,"request_id":turn.id}),
+            )
         };
         let item = &mut data.items[index];
         time.stamp(item);

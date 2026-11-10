@@ -21,7 +21,7 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS conversation_summaries (
     step_count INTEGER, agent_name TEXT)'''
 
 FAKE = r"""
-import json, os, signal, sqlite3, subprocess, sys, threading, time, uuid
+import json, os, queue, signal, sqlite3, subprocess, sys, threading, time, uuid
 from pathlib import Path
 args=sys.argv[1:]
 root=Path(os.environ['AGY_SDK_FIXTURE'])
@@ -89,6 +89,7 @@ def interrupted(*_):
 signal.signal(signal.SIGINT,interrupted)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 cancelled=threading.Event()
+steered_queue=queue.Queue()
 class ControlHandler(BaseHTTPRequestHandler):
     def log_message(self,*_): pass
     def do_POST(self):
@@ -103,6 +104,23 @@ class ControlHandler(BaseHTTPRequestHandler):
             while (root/'rename-hold').exists():threading.Event().wait(0.02)
             with sqlite3.connect(native/'conversation_summaries.db') as catalog:
                 catalog.execute('UPDATE conversation_summaries SET title=? WHERE conversation_id=?',(title,sid))
+            self.send_response(200);self.end_headers();self.wfile.write(b'{}');return
+        if self.path=='/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage':
+            assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
+            assert payload['cascadeId']==sid
+            assert payload.get('deliveryStrategy')=='MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION',payload
+            assert isinstance(payload.get('clientMessageId'),str) and payload['clientMessageId'],payload
+            assert isinstance(payload.get('items'),list) and len(payload['items'])==1,payload
+            steer_text=payload['items'][0]['text']
+            mode=(root/'steer-mode').read_text().strip() if (root/'steer-mode').exists() else ''
+            record({'kind':'steer','sid':sid,'pid':os.getpid(),'text':steer_text,
+                    'request_id':payload['clientMessageId'],'delivery_strategy':payload['deliveryStrategy'],'mode':mode})
+            while (root/'steer-delay').exists():threading.Event().wait(0.02)
+            if steer_text=='reject steer' or mode=='reject':
+                self.send_response(503);self.end_headers();self.wfile.write(b'{}');return
+            if steer_text=='unknown steer' or mode=='drop':
+                self.send_response(200);self.end_headers();self.wfile.write(b'{truncated');return
+            steered_queue.put((payload['clientMessageId'],steer_text))
             self.send_response(200);self.end_headers();self.wfile.write(b'{}');return
         assert self.path=='/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation'
         assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
@@ -135,6 +153,10 @@ for line in sys.stdin:
     text=message['message']['content']
     record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
     resumed=index>0
+    while not steered_queue.empty():
+        _,carry_text=steered_queue.get_nowait()
+        native_record('USER_INPUT','<USER_REQUEST>\n'+carry_text+'\n</USER_REQUEST>')
+        step('user_input',state='DONE');advance()
     content='<USER_REQUEST>\n'+text+'\n</USER_REQUEST>'
     if (root/'model-notice').exists():
         content+='\n<USER_SETTINGS_CHANGE>\n'+(root/'model-notice').read_text()+'\n</USER_SETTINGS_CHANGE>'
@@ -242,13 +264,35 @@ for line in sys.stdin:
         token=text.split(':',1)[1]
         assert Path(token).name==token
         step('agent_response',state='ACTIVE',text_delta='Agy running '+token+' ')
+        steered_seen=False
         deadline=time.monotonic()+25
         while not (root/'release'/token).exists() and not cancelled.is_set():
+            if not (root/'steer-consume-delay').exists() and not steered_queue.empty():
+                if not steered_seen:
+                    native_record('PLANNER_RESPONSE','Agy running '+token+' ')
+                    step('agent_response',state='DONE',text_delta='');advance()
+                    steered_seen=True
+                while not steered_queue.empty() and not (root/'steer-consume-delay').exists():
+                    _,steer_text=steered_queue.get_nowait()
+                    native_record('USER_INPUT','<USER_REQUEST>\n'+steer_text+'\n</USER_REQUEST>')
+                    step('user_input',state='DONE');advance()
+                    steer_reply='Agy steered: '+steer_text
+                    native_record('PLANNER_RESPONSE',steer_reply)
+                    step('agent_response',state='DONE',text_delta=steer_reply);advance()
+                    deadline=time.monotonic()+45
             if time.monotonic()>deadline:result('ERROR',error='fixture hold timeout');sys.exit(1)
             threading.Event().wait(0.02)
         if cancelled.is_set():
             record({'kind':'turn_cancelled','sid':sid,'pid':os.getpid()})
             result('CANCELED',error='synthetic native cancellation')
+            continue
+        if steered_seen:
+            answer='finished '+token
+            native_record('PLANNER_RESPONSE',answer)
+            step('agent_response',state='DONE',text_delta=answer);advance()
+            with sqlite3.connect(native/'conversation_summaries.db') as catalog:
+                catalog.execute('UPDATE conversation_summaries SET step_count=?,last_modified_time=? WHERE conversation_id=?',(index,'2026-10-18T00:00:01Z',sid))
+            result('SUCCESS',answer)
             continue
         step('agent_response',state='DONE',text_delta='finished '+token);advance()
         if token=='offline-times':
@@ -324,6 +368,10 @@ class AgyFixture:
 
     def inputs(self, text=None):
         return [event for event in self.events() if event['kind'] == 'input'
+                and (text is None or event['text'] == text)]
+
+    def steers(self, text=None):
+        return [event for event in self.events() if event['kind'] == 'steer'
                 and (text is None or event['text'] == text)]
 
     def release(self, token):

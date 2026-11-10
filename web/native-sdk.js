@@ -533,7 +533,7 @@ const NativeSdkView = {
 
   async send(operation = 'turn') {
     if (!this.input || !this.pane) return;
-    const source=this.uid.split(':')[0], composerSteer=['kiro','droid'].includes(source);
+    const source=this.uid.split(':')[0], composerSteer=['kiro','droid','agy'].includes(source);
     if (operation === 'steer' && composerSteer && !this.running) operation = 'turn';
     const steer = operation === 'steer';
     if (steer && (!composerSteer || !this.running || !this.capabilities.steer)) {

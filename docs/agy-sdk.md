@@ -49,6 +49,7 @@ Codex app-server、不写原生数据库或只读镜像。原生读模型合同�
 | open | 使用 inventory 已解析的 SID/cwd；原生数据库缺失时不从镜像伪造恢复载体 |
 | create | 无提示词启动，读取原生 init 的 SID/cwd，关闭空输入；不调用模型来换取身份 |
 | turn | 服务端逐会话 FIFO；重复 request_id 返回原回执，不重复发送 |
+| steer | 调用本实例的原生 `SendUserCascadeMessage`（`MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION`），`clientMessageId` 使用独立 `request_id`；不中断当前工具或进程，结果不确定绝不自动重发；配合持久队列支持 `queue_steer` |
 | interrupt | 调用本实例的原生 `CancelCascadeInvocation`，`killBackgroundTasks=false`、`notifyParent=false`；不发送 SIGINT/SIGKILL，不因取消超时终结进程；重复请求幂等 |
 | rename | 本实例的 `UpdateConversationAnnotations`，`annotations.title`、`mergeAnnotations=true`；等待读取原生摘要确认标题 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
@@ -79,6 +80,15 @@ DELTA（BUG-20261023-025934-a5d53c）：`/rename` 使用本机原生管理接口
 此通道只接受桥接拥有的 PID、loopback 端口和独立 CSRF 授权，不改变 Hub TLS 校验。
 验收：[真实 Agy 改名浏览器](../tests/agy_rename_real_browser.py)，临时 HOME、
 合成 loopback 模型，覆盖空闲／运行中改名、原生落盘、同 PID 和刷新。
+
+DELTA（BUG-20261110-162211-7507b6）：Agy 1.5.4 已用临时 HOME 与 loopback 合成模型核对本机
+Connect `SendUserCascadeMessage`（`deliveryStrategy=MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION`）：
+运行中通过 `Ctrl+Enter`、按住 `Ctrl` 点击发送、手机长按发送、会话菜单“引导当前任务”以及排队气泡
+“立即引导”（`queue_steer`，保留已发布附件路径与无关草稿）提交后，原生在当前工具或模型步骤结束后进入下一
+invocation，保持同一 `stream-json` 回合、同一 PID/SID 及显式 `--model` 参数。原生不按
+`clientMessageId` 去重：桥接对同一 `request_id` 保存回执，连接前失败／HTTP 非 200 记为确定失败，
+超时或响应体截断记为 `unknown` 且绝不自动重发。已接收未回显的引导随 `Binding.steers` 跨节点重启保留，
+原生 `user_input` 按 FIFO 绑定 `native_id` 并保持步骤时序，与 `/api/messages` 历史去重对齐。
 
 **headless 限制**：原生接受取消后，最终 NDJSON `result` 仍可能等待后台任务
 完成。此时诊断明确显示“当前回合取消已接受、后台任务继续”，桥接继续等待原生
@@ -184,6 +194,10 @@ user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能
 启动真实子代理及有心跳的后台进程，通过网页取消后等待超过原有 5 秒期限，核对
 它们继续存活；放行这些任务后验证子代理完成、同 PID/SID 下一轮成功。该用例
 不宣称后台任务仍活跃时 headless 已能立即接收下一轮。审批和问题按本来源声明的能力验收。
+[Agy 引导浏览器](../tests/agy_steer_browser.py)覆盖节点／Hub 的发送手势、排队转引导、
+附件路径、回执去重、确定拒绝、断线待核对与服务重启复接；
+[真实 Agy 引导浏览器](../tests/agy_steer_real_browser.py)在临时 HOME 和 loopback 合成网关
+验证 `Ctrl+Enter` 与 `queue_steer` 在同一回合、同一 PID/SID 下继续执行并保持显式 `--model`。
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
