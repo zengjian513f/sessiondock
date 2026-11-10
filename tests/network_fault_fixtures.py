@@ -1,6 +1,87 @@
 """Loopback faults that return headers then stall the real response body."""
 import threading
+import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+
+class PausedTransport:
+    """Forward real HTTP/SSE bytes; pause downstream delivery or cut TCP sockets.
+
+    The gate is outside Chromium, so a stalled transport never blocks its JS
+    thread. Only this fixture's loopback connections are affected.
+    """
+    def __init__(self, upstream):
+        target = urlsplit(upstream)
+        assert target.hostname == '127.0.0.1'
+        self.target = (target.hostname, target.port)
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.paused = False
+        self.held_bytes = 0
+        self.writers = set()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    async def _client(self, reader, writer):
+        upstream = None
+        try:
+            incoming, upstream = await asyncio.open_connection(*self.target)
+            self.writers.update((writer, upstream))
+
+            async def copy(source, destination, downstream=False):
+                while chunk := await source.read(65536):
+                    if downstream and self.paused:
+                        self.held_bytes += len(chunk)
+                        try:
+                            while self.paused:
+                                await asyncio.sleep(.01)
+                        finally:
+                            self.held_bytes -= len(chunk)
+                    destination.write(chunk)
+                    await destination.drain()
+
+            tasks = [asyncio.create_task(copy(reader, upstream)),
+                     asyncio.create_task(copy(incoming, writer, True))]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks: task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            for stream in (writer, upstream):
+                if stream:
+                    self.writers.discard(stream)
+                    stream.close()
+
+    def _run(self):
+        asyncio.set_event_loop(self.loop)
+        self.server = self.loop.run_until_complete(asyncio.start_server(self._client, '127.0.0.1', 0))
+        self.url = f'http://127.0.0.1:{self.server.sockets[0].getsockname()[1]}'
+        self.ready.set()
+        self.loop.run_forever()
+        pending = asyncio.all_tasks(self.loop)
+        for task in pending: task.cancel()
+        self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        self.loop.close()
+
+    def __enter__(self):
+        self.thread.start()
+        assert self.ready.wait(5), 'private transport failed to start'
+        return self
+
+    def cut(self):
+        async def close():
+            for writer in tuple(self.writers): writer.transport.abort()
+        asyncio.run_coroutine_threadsafe(close(), self.loop).result(5)
+
+    def __exit__(self, *_):
+        self.paused = False
+        self.cut()
+        self.loop.call_soon_threadsafe(self.server.close)
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(5)
 
 
 class StalledResponses:
