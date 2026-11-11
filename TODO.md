@@ -5,6 +5,12 @@
 
 ## Frontend delivery
 
+- [ ] Orion、Cetus 补发 Codex 后台状态修复 `3d83ac59`（BUG-20261111-194813-40040b）：
+  正式 Web 发布 SSH 超时；Lyra、Cygnus、Pavo、Hub、Vela 已部署、重启并健康。
+- [ ] 核对 `codex_sdk_status_browser.py` 的旧外部 CLI 提示与 daemon 卸载／重连假设：
+  本次扩展尝试在这些原有断言失败，未将该综合套件记为通过，原文件保持不变。
+  本次后台状态由独立 `codex_sdk_background_browser.py` 的节点／Hub 八组合验证。
+
 - [ ] Orion 补发工具过程警示修复 `c3ddda91`（BUG-20261111-113726-0d1e21）：
   正式部署 SSH 探测超时，前端待恢复后补发。
 
