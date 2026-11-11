@@ -39,6 +39,10 @@
 
 ## Runtime and platform coverage
 
+- [ ] Orion 补发 Windows/macOS SDK 平台补齐版本 `5ea9eabc` 的服务与 sdkhost：
+  2026-11-11 正式部署的 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
+  均已部署、重启并健康。此次无前端、ptyhost 或资源代理变更。
+
 - [ ] 更新既有综合测试的旧假设：`agy_sdk_browser.py` 在进入 SDK 后直接等待自动连接，
   2026-11-11 在未修改的已发布基线 `bdf03fc2` 与平台补齐版均超时；
   `lifecycle_cli_browser.py` 的 `resume_sources` 精确字典漏了 `droid:false`，在 Codex 分支前失败。
