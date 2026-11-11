@@ -76,6 +76,15 @@ agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动�
 - `conversations/<sid>.db`：agy 的原生二进制会话库；用于 CLI 恢复与 fd 身份证据，
   SessionDock 不解码或修改其中步骤；显式删除空会话时只读核对步骤及父引用是否为空。
 
+DELTA（导入索引的正文来源）：可选 `SESSIONDOCK_AGY_TRANSCRIPT_HOME` 显式指定第二个
+只读原生数据目录。当 CLI 目录中的完整 transcript 不存在时，只读取该目录下同 SID 的
+`brain/<sid>/.system_generated/logs/transcript_full.jsonl`。CLI 正文存在时始终优先；
+不导入备用目录的额外索引，不混合两份正文。两处都缺失时沿用缓存与缺失提示。
+备用正文的追加、改写和来源切换参与同一镜像刷新，历史、分页、搜索随之更新。
+原生恢复、占用检查、改名和删除仍以 `SESSIONDOCK_AGY_HOME` 为准；备用正文可读
+不代表 CLI 数据库存在或可恢复。普通读取不复制、移动或修改任一原生目录。
+验证见 [备用正文浏览器](../tests/agy_transcript_home_browser.py)。
+
 镜像位于 `<AGY_ROOT>/cli/<sid>/summary.json` 和 `messages.jsonl`，标记
 `sessiondock-agy-mirror`。新建私有目录/文件采用 0700/0600。列表、历史分页、
 增量视图、搜索和媒体复用文件读模型，不复制镜像冒充原生恢复载体。

@@ -166,20 +166,24 @@ fn deleted_receipt(home: &Path, root: &Path, sid: &str) -> io::Result<bool> {
     Ok(true)
 }
 
+type Exports = BTreeMap<String, (Value, Option<Stamp>, PathBuf)>;
+
 pub struct Mirror {
     home: PathBuf,
+    transcript_home: Option<PathBuf>,
     root: PathBuf,
     connection: Option<Connection>,
     identity: Option<FileIdentity>,
     version: Option<i64>,
     sessions: BTreeMap<String, Value>,
-    exported: BTreeMap<String, (Value, Option<Stamp>)>,
+    exported: Exports,
 }
 
 impl Mirror {
     pub fn new(home: PathBuf, root: PathBuf) -> Self {
         Self {
             home,
+            transcript_home: None,
             root,
             connection: None,
             identity: None,
@@ -187,6 +191,11 @@ impl Mirror {
             sessions: BTreeMap::new(),
             exported: BTreeMap::new(),
         }
+    }
+
+    pub fn with_transcript_home(mut self, home: Option<PathBuf>) -> Self {
+        self.transcript_home = home;
+        self
     }
 
     pub fn spawn(mut self, stop: tokio_util::sync::CancellationToken) -> io::Result<()> {
@@ -298,7 +307,14 @@ impl Mirror {
         let mut known = BTreeSet::new();
         for (sid, session) in sessions {
             if !deleted_receipt(&self.home, &self.root, sid)? {
-                Self::export(&self.home, &self.root, &mut self.exported, sid, session)?;
+                Self::export(
+                    &self.home,
+                    self.transcript_home.as_deref(),
+                    &self.root,
+                    &mut self.exported,
+                    sid,
+                    session,
+                )?;
                 known.insert(sid.clone());
             }
         }
@@ -336,21 +352,41 @@ impl Mirror {
 
     fn export(
         home: &Path,
+        transcript_home: Option<&Path>,
         root: &Path,
-        exported: &mut BTreeMap<String, (Value, Option<Stamp>)>,
+        exported: &mut Exports,
         sid: &str,
         session: &Value,
     ) -> io::Result<()> {
         let directory = root.join("cli").join(sid);
-        let native = home
+        let mut native = home
             .join("brain")
             .join(sid)
             .join(".system_generated/logs/transcript_full.jsonl");
-        let current = match stamp(&native) {
+        let mut current = match stamp(&native) {
             Ok(stamp) => Some(stamp),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
+        // Imported CLI catalog rows may keep their complete text in a separately
+        // configured native store. Only read that SID's transcript; database and
+        // lifecycle ownership remain under the CLI home.
+        if current.is_none() {
+            if let Some(fallback) = transcript_home {
+                let candidate = fallback
+                    .join("brain")
+                    .join(sid)
+                    .join(".system_generated/logs/transcript_full.jsonl");
+                match stamp(&candidate) {
+                    Ok(version) => {
+                        native = candidate;
+                        current = Some(version);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         private_dir(&directory)?;
         let messages = directory.join(MESSAGES_FILE);
         let summary = directory.join(SUMMARY_FILE);
@@ -367,11 +403,14 @@ impl Mirror {
                         .get("mirror_version")
                         .cloned()
                         .and_then(|value| serde_json::from_value::<Stamp>(value).ok());
-                    if saved["format"] == FORMAT && mirror_version == stamp(&messages).ok() {
+                    if saved["format"] == FORMAT
+                        && mirror_version == stamp(&messages).ok()
+                        && saved["native_path"] == json!(native)
+                    {
                         if let Some(version) = version {
                             exported.insert(
                                 sid.to_owned(),
-                                (saved["catalog_session"].clone(), version),
+                                (saved["catalog_session"].clone(), version, native.clone()),
                             );
                         }
                     }
@@ -379,8 +418,8 @@ impl Mirror {
             }
         }
         let cached = exported.get(sid);
-        if cached.is_some_and(|(last_session, last_stamp)| {
-            last_session == session && *last_stamp == current
+        if cached.is_some_and(|(last_session, last_stamp, last_path)| {
+            last_session == session && *last_stamp == current && *last_path == native
         }) && messages.is_file()
             && summary.is_file()
         {
@@ -419,7 +458,9 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
-        let transcript_changed = cached.is_none_or(|(_, last_stamp)| *last_stamp != current);
+        let transcript_changed = cached.is_none_or(|(_, last_stamp, last_path)| {
+            *last_stamp != current || *last_path != native
+        });
         if (current.is_some() && transcript_changed) || !messages.is_file() {
             let bytes = if current.is_some() {
                 fs::read(&native)?
@@ -464,12 +505,12 @@ impl Mirror {
         write_atomic(
             &version_path,
             &serde_json::to_vec(&json!({
-                "format":FORMAT,"catalog_session":session,"native_version":current,
+                "format":FORMAT,"catalog_session":session,"native_version":current,"native_path":native,
                 "mirror_version":stamp(&messages).ok()
             }))
             .map_err(io::Error::other)?,
         )?;
-        exported.insert(sid.to_owned(), (session.clone(), current));
+        exported.insert(sid.to_owned(), (session.clone(), current, native));
         Ok(())
     }
 }

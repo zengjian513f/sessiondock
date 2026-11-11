@@ -55,6 +55,8 @@ pub struct Config {
     pub opencode_db: Option<PathBuf>,
     /// Agy native data directory, read-only; paired with the private agy mirror root.
     pub agy_home: Option<PathBuf>,
+    /// Explicit read-only fallback for full transcripts of catalogued Agy sessions.
+    pub agy_transcript_home: Option<PathBuf>,
     /// Kiro account scope only. Never scanned or rewritten by SessionDock.
     pub kiro_native_root: Option<PathBuf>,
     /// Login-shell wrapper the service itself was started through
@@ -290,6 +292,7 @@ impl Default for Config {
             grok_active: None,
             opencode_db: None,
             agy_home: None,
+            agy_transcript_home: None,
             kiro_native_root: None,
             shell_env_command: None,
             shell_env_watch: Vec::new(),
@@ -550,6 +553,8 @@ impl Config {
         config.grok_active = env::var_os("SESSIONDOCK_GROK_ACTIVE").map(PathBuf::from);
         config.opencode_db = env::var_os("SESSIONDOCK_OPENCODE_DB").map(PathBuf::from);
         config.agy_home = env::var_os("SESSIONDOCK_AGY_HOME").map(PathBuf::from);
+        config.agy_transcript_home =
+            env::var_os("SESSIONDOCK_AGY_TRANSCRIPT_HOME").map(PathBuf::from);
         if config.agy_home.is_some() != config.roots.agy.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

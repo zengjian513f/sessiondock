@@ -480,7 +480,9 @@ fn build_app(
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         builder.create(&root)?;
-        sessions::agy::Mirror::new(home, root).spawn(shutdown.clone())?;
+        sessions::agy::Mirror::new(home, root)
+            .with_transcript_home(config.agy_transcript_home.clone())
+            .spawn(shutdown.clone())?;
     }
     // The canonical spelling rows carry in `path`.
     let opencode_root = config

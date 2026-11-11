@@ -44,6 +44,10 @@
 
 ## Runtime and platform coverage
 
+- [ ] `agy_history_browser.py` 最后的目录行删除检查超时：2026-11-11 在平台补齐基线
+  与备用正文修复版均复现于等待 `S.sessions` 移除 SID；此前正文、搜索、分页、
+  追加、改写、缺失恢复及服务重启断言通过。待单独定位列表移除刷新，未改写断言。
+
 - [ ] Orion 补发 Windows/macOS SDK 平台补齐版本 `5ea9eabc` 的服务与 sdkhost：
   2026-11-11 正式部署的 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
   均已部署、重启并健康。此次无前端、ptyhost 或资源代理变更。
