@@ -23,8 +23,11 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
 class FakeAppServer:
-    def __init__(self, socket_path, rollout, thread_id):
+    def __init__(self, socket_path, rollout, thread_id, *, token=None):
         self.socket_path = str(socket_path)
+        self.tcp = socket_path == "ws://127.0.0.1:0"
+        self.token = token
+        self.rejected = 0
         self.rollout = rollout
         self.thread_id = thread_id
         self.created = {}
@@ -56,7 +59,11 @@ class FakeAppServer:
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(asyncio.start_unix_server(self._client, path=self.socket_path))
+        if self.tcp:
+            listener = self.loop.run_until_complete(asyncio.start_server(self._client, "127.0.0.1", 0))
+            self.socket_path = f"ws://127.0.0.1:{listener.sockets[0].getsockname()[1]}"
+        else:
+            self.loop.run_until_complete(asyncio.start_unix_server(self._client, path=self.socket_path))
         self.ready.set()
         self.loop.run_forever()
 
@@ -81,6 +88,15 @@ class FakeAppServer:
             head = await reader.readuntil(b"\r\n\r\n")
         except (asyncio.IncompleteReadError, ConnectionError):
             return  # A reachability probe connects and leaves.
+        if self.token is not None:
+            headers = dict(line.split(":", 1) for line in head.decode("latin1").split("\r\n")[1:] if ":" in line)
+            authorization = next((value.strip() for name, value in headers.items() if name.lower() == "authorization"), "")
+            if authorization != "Bearer " + self.token:
+                self.rejected += 1
+                writer.write(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+                writer.close()
+                return
         key = ""
         for line in head.decode("latin1").split("\r\n"):
             if line.lower().startswith("sec-websocket-key:"):

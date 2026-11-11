@@ -23,16 +23,24 @@ fn provider_name(provider: &str) -> String {
         .collect()
 }
 
+pub(super) fn decode_provider(name: &str) -> Option<String> {
+    let bytes: Option<Vec<_>> = name.as_bytes().chunks(2)
+        .map(|pair| std::str::from_utf8(pair).ok().and_then(|s| u8::from_str_radix(s, 16).ok()))
+        .collect();
+    bytes.and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
 impl Endpoint {
     pub(super) fn for_provider(&self, provider: &str) -> Option<Self> {
         let home = self.autostart_home.as_ref()?;
         Some(Self {
             socket: home
                 .join("sd-providers")
-                .join(format!("{}.sock", provider_name(provider))),
+                .join(format!("{}.{}", provider_name(provider), if cfg!(windows) { "listener.json" } else { "sock" })),
             autostart_home: Some(home.clone()),
             explicit: false,
             provider: Some(provider.to_owned()),
+            launcher: self.launcher.clone(),
         })
     }
 }
@@ -143,22 +151,11 @@ impl Inner {
                 .map(|e| e.path())
                 .collect();
             for path in paths {
-                if path.extension().and_then(|s| s.to_str()) != Some("sock") {
-                    continue;
-                }
-                let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+                let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    .and_then(|s| s.strip_suffix(if cfg!(windows) { ".listener.json" } else { ".sock" })) else {
                     continue;
                 };
-                let bytes: Option<Vec<_>> = name
-                    .as_bytes()
-                    .chunks(2)
-                    .map(|pair| {
-                        std::str::from_utf8(pair)
-                            .ok()
-                            .and_then(|s| u8::from_str_radix(s, 16).ok())
-                    })
-                    .collect();
-                if let Some(provider) = bytes.and_then(|b| String::from_utf8(b).ok()) {
+                if let Some(provider) = decode_provider(name) {
                     // Connect the exact persistent endpoint, without a config
                     // read on an unrelated daemon for each observer interval.
                     let mut pool = self.providers.lock().await;
@@ -170,6 +167,7 @@ impl Inner {
                         autostart_home: None,
                         explicit: false,
                         provider: Some(provider.clone()),
+                        launcher: self.endpoint.launcher.clone(),
                     };
                     if let Ok(c) =
                         Connection::open(self.clone(), &endpoint, next_generation()).await

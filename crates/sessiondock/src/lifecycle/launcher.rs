@@ -786,12 +786,24 @@ impl Launcher {
                     OsString::from("--remote"),
                     OsString::from(
                         spec.codex_socket()
-                            .map(|path| format!("unix://{}", path.display()))
-                            .unwrap_or_else(|| remote.arg.clone()),
+                            .map(crate::codex_sdk::websocket::remote_arg)
+                            .unwrap_or_else(|| {
+                                if crate::codex_sdk::managed::is_managed(&remote.socket) {
+                                    crate::codex_sdk::websocket::remote_arg(&remote.socket)
+                                } else { remote.arg.clone() }
+                            }),
                     ),
                     OsString::from("-C"),
                     spec.cwd().as_os_str().to_os_string(),
                 ]);
+                let endpoint = spec.codex_socket().unwrap_or(&remote.socket);
+                if crate::codex_sdk::websocket::is_websocket(endpoint)
+                    || crate::codex_sdk::managed::is_managed(endpoint) {
+                    argv.extend([
+                        OsString::from("--remote-auth-token-env"),
+                        OsString::from(crate::codex_sdk::websocket::TOKEN_ENV),
+                    ]);
+                }
             }
         }
         if spec.source() == Source::Droid && (spec.model().is_some() || spec.effort().is_some()) {
@@ -993,9 +1005,10 @@ impl Launcher {
                     current_executable(&profile.executable).is_ok_and(|executable| {
                         if let Some(socket) = record.spec().codex_socket() {
                             let selected = crate::codex_sdk::TuiRemote {
-                                arg: format!("unix://{}", socket.display()),
+                                arg: crate::codex_sdk::websocket::remote_arg(socket),
                                 socket: socket.to_owned(),
                                 home: None,
+                                launcher: None,
                             };
                             selected.ensure(&executable)
                         } else {
@@ -1003,6 +1016,20 @@ impl Launcher {
                         }
                     })
                 });
+        // A configured authenticated TCP listener owns this thread. A failed
+        // handshake must not silently start a second, independent TUI runtime.
+        if !remote && record.spec().source() == Source::Codex
+            && self.codex_remote.as_ref().is_some_and(|endpoint| {
+                let endpoint = record.spec().codex_socket().unwrap_or(&endpoint.socket);
+                crate::codex_sdk::websocket::is_websocket(endpoint)
+                    || crate::codex_sdk::managed::is_managed(endpoint)
+            })
+        {
+            return Err(LaunchFailure {
+                authority,
+                error: Error::SpawnFailed(std::io::ErrorKind::ConnectionRefused),
+            });
+        }
         let argv = match self.argv(record, remote) {
             Ok(argv) => argv,
             Err(error) => return Err(LaunchFailure { authority, error }),
@@ -1182,6 +1209,21 @@ impl Launcher {
         }
         for name in DENIED_ENV {
             command.env_remove(name);
+        }
+        if record.spec().source() == Source::Codex {
+            let endpoint = record.spec().codex_socket()
+                .or_else(|| self.codex_remote.as_ref().map(|remote| remote.socket.as_path()));
+            if endpoint.is_some_and(crate::codex_sdk::websocket::is_websocket)
+                && let Ok(token) = std::env::var(crate::codex_sdk::websocket::TOKEN_ENV) {
+                command.env(crate::codex_sdk::websocket::TOKEN_ENV, token);
+            }
+            if let Some(endpoint) = endpoint.filter(|path| crate::codex_sdk::managed::is_managed(path))
+                && let Ok((_, token)) = crate::codex_sdk::managed::credentials(endpoint) {
+                command.env(crate::codex_sdk::websocket::TOKEN_ENV, token);
+                if let Some(home) = self.codex_remote.as_ref().and_then(|remote| remote.home.as_ref()) {
+                    command.env("CODEX_HOME", home);
+                }
+            }
         }
         command
             .current_dir(record.spec().cwd())

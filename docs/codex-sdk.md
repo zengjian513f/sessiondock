@@ -44,14 +44,15 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   unique across listeners. Model lists are cached per connection.
 - An explicit socket remains operator-managed: no extra processes are started,
   and native provider mismatch errors remain visible. `off` disables SDK mode;
-  non-Unix nodes report `codex_sdk: false`. No global provider configuration,
+  Windows also accepts the authenticated loopback WebSocket transport below.
+  No global provider configuration,
   credential files or existing conversation provider fields are changed.
 - A configured Codex launcher whose installation probe reports missing or
   non-executable (including wrappers returning 126/127) also reports
   `codex_sdk: false` and refuses SDK requests. The node and Hub new-session
   pickers use the owning node's current capability, including after restart.
   Explicit app-server integrations without a CLI launcher retain their existing
-  socket-only contract. The five-provider matrix is covered by
+  explicit-endpoint contract. The five-provider matrix is covered by
   [sdk_cli_availability_browser.py](../tests/sdk_cli_availability_browser.py).
 - Handshake: `initialize` with `clientInfo.name = "sessiondock"` and
   `capabilities.experimentalApi = true`, then `initialized`.
@@ -113,6 +114,54 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   The browser regression closes the SDK view during a live turn, generates
   progress while detached and restores it without resume/unsubscribe/interrupt.
 
+### Windows local listeners
+
+DELTA (Windows SDK parity): with no explicit app-server address, Windows uses
+one native `codex app-server --listen ws://127.0.0.1:<allocated-port>` per
+provider. The configured Codex launcher executable, fixed arguments and
+environment select the installation; `CODEX_HOME` comes from the configured
+sessions root. No model, approval or sandbox defaults are invented or written.
+Linux/macOS keep their native Unix daemon discovery and startup.
+
+`<CODEX_HOME>/sd-providers/<hex-provider>.listener.json` records the loopback
+address, provider, PID and kernel creation time. A sibling `.listener.token`
+contains a fresh random capability token, passed to native Codex using
+`--ws-auth capability-token --ws-token-file`. The directory has an inheritable
+current-user-only Windows ACL before these files are written. A per-provider
+OS file lock serializes startup across web-service processes and terminal
+launches. Reattachment checks the recorded process incarnation and owner, then
+performs an authenticated WebSocket handshake. A living but unreachable
+listener is reported unavailable, never replaced. Unreadable identity or an
+incomplete startup record also stays visible; neither authorizes another writer.
+
+A listener starts only for an explicit SDK/terminal action. Read-only discovery
+and retained-subscription recovery attach to existing listeners without starting
+historical sessions. Detached, breakaway children survive web-service restart;
+a job that forbids breakaway produces a launch error. A dead recorded process
+may be replaced on the next explicit action, with a new port/token. An interrupted
+or uncertain turn is never replayed. The existing thread routing, settings,
+approvals, steering, input queue and reconnect snapshots use the same JSON-RPC
+connection implementation on both transports. Stopping a thread uses native
+interrupt/unsubscribe; it does not stop unrelated threads or its provider process.
+
+Explicit `SESSIONDOCK_CODEX_APP_SERVER=ws://<loopback-IP>:<port>` remains
+operator-managed on all supported platforms and requires
+`SESSIONDOCK_CODEX_APP_SERVER_TOKEN` in the service environment. Only literal
+loopback IP addresses are accepted; no wildcard listener, remote host or URL
+credential is supported. The token is never placed in launcher argv or logs.
+Windows auto mode does not require either environment variable.
+
+Native capability evidence: Windows Codex 0.167.1 help and experimental JSON
+schemas support WS, capability-token authentication and
+`--remote-auth-token-env`; official WS transport remains experimental.
+Synthetic browser coverage runs [SDK interaction](../tests/codex_sdk_browser.py)
+and [creation](../tests/codex_sdk_create_browser.py) with `--transport ws`.
+[WS lifecycle coverage](../tests/codex_sdk_websocket_browser.py) checks rejected
+authentication, reconnect without replay, service restart and terminal arguments.
+The [Windows native browser suite](../tests/codex_sdk_windows_browser_real.py)
+uses temporary homes and Luna/low without inference to exercise automatic
+provider listeners and restart attachment.
+
 ### Terminal coexistence
 
 Managed terminal creation uses the same provider selection: new sessions use
@@ -121,7 +170,7 @@ internal launch receipt and passed as `--remote`; a provider-specific SDK thread
 therefore joins its own listener rather than the unrelated default daemon.
 
 DELTA (SDK → PTY): when this bridge has the exact thread loaded on a live
-connection, and the configured Codex CLI profile joins that same Unix socket,
+connection, and the configured Codex CLI profile joins that same native listener,
 opening 终端 starts or reuses a TUI client of the shared daemon. It does not
 ask to replace an external process or signal that daemon, even if process
 discovery finds it holding the rollout. An independent writer and a terminal
@@ -176,7 +225,15 @@ Shared launches omit the old launcher's `--enable default_mode_request_user_inpu
 override and use the daemon's setting, avoiding a feature-mismatch restart prompt;
 independent fallback launches retain it ([launcher contract](lifecycle-launcher.md)).
 
-The default endpoint applies only when the configured Codex sessions root's
+Windows managed terminals resolve the selected provider's persisted endpoint,
+pass `--remote ws://127.0.0.1:<port>` and
+`--remote-auth-token-env SESSIONDOCK_CODEX_APP_SERVER_TOKEN`, and receive the
+private token plus the same `CODEX_HOME` in their child environment. Explicit WS
+terminals use the service's token. A WS handshake failure fails the terminal
+launch instead of falling back to an independent runtime. Browser and terminal
+therefore share the native thread and its writer; no user CLI defaults change.
+
+For Unix sockets, the default endpoint applies only when the configured Codex sessions root's
 parent is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
 `~/.codex`); an isolated home (tests, other roots) is never joined. Only
 terminals started after this change share; an already running terminal keeps
