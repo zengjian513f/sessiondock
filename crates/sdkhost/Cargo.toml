@@ -9,3 +9,6 @@ sdkhost-client = { path = "../sdkhost-client" }
 serde_json = "1"
 libc = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "process", "fs", "sync", "signal", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_Security"] }

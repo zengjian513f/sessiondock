@@ -1,6 +1,6 @@
 //! Lossless cold storage for immutable, exited-host streams. Materialize once
 //! on demand so subsequent offset reads remain ordinary bounded seeks.
-use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+use crate::platform::OpenOptionsExt;
 use std::{
     fs::{self, File, OpenOptions},
     io,
@@ -8,16 +8,7 @@ use std::{
 };
 
 fn lock(path: &Path) -> io::Result<File> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(path.with_extension("storage-lock"))?;
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(file)
+    crate::platform::lock(&path.with_extension("storage-lock"))
 }
 fn gzip(path: &Path) -> PathBuf {
     path.with_extension("gz")
@@ -41,7 +32,8 @@ fn convert(input: &Path, output: &Path, decode: bool) -> io::Result<()> {
             encoder.finish()?;
         }
         file.sync_all()?;
-        fs::rename(&temp, output)?;
+        crate::platform::replace(&temp, output)?;
+        #[cfg(unix)]
         File::open(
             output
                 .parent()
