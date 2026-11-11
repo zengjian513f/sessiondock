@@ -787,15 +787,28 @@ def test_three_providers_realtime_and_http(
                 page.locator("#msgs .turn-process .fold-toggle").first.click()
                 expect(page.locator("#msgs .turn-process-body")).to_be_visible()
 
-            # 1) Verify 3-provider tabbed menu (OpenAI | Google | OpenRouter) & `实时` badges
+            # 1) Verify 3-provider tabbed menu: NO header title, upward placement, tabs at bottom & steady Y!
             mic.click()
             menu = page.locator(".voice-model-menu:popover-open")
             expect(menu).to_be_visible()
+            expect(menu).to_have_attribute("data-placement", "above")
+            expect(menu.locator(".voice-model-menu-head")).to_have_count(0)
+            tabs_bar = menu.locator(".voice-provider-tabs")
+            model_list = menu.locator(".voice-model-list")
             tabs = menu.locator(".voice-provider-tab")
             expect(tabs).to_have_count(3)
             assert tabs.evaluate_all("els => els.map(e => e.dataset.providerId)") == ["openai", "google", "openrouter"]
             assert menu.locator(".voice-model-option").evaluate_all("els => els.map(e => e.dataset.modelId)") == EXPECTED_OPENAI_MODELS
             expect(menu.locator('.voice-model-option[data-model-id="openai:gpt-live-transcribe"] .voice-realtime-badge')).to_have_text("实时")
+
+            mic_box = mic.bounding_box()
+            menu_box_oa = menu.bounding_box()
+            list_box_oa = model_list.bounding_box()
+            tabs_box_oa = tabs_bar.bounding_box()
+            assert mic_box and menu_box_oa and list_box_oa and tabs_box_oa
+            # Popover opens upward above mic, model list is on top, provider tabs are at the bottom nearest mic!
+            assert menu_box_oa["y"] + menu_box_oa["height"] <= mic_box["y"] + 1, (menu_box_oa, mic_box)
+            assert tabs_box_oa["y"] >= list_box_oa["y"] + list_box_oa["height"] - 1, (list_box_oa, tabs_box_oa)
 
             if output:
                 page.screenshot(path=str(output / "node-1280-light-openai-tab.png"), full_page=True)
@@ -807,9 +820,11 @@ def test_three_providers_realtime_and_http(
             if output:
                 page.screenshot(path=str(output / "node-1280-light-google-tab.png"), full_page=True)
 
-            # Switch to OpenRouter tab -> verify 4 OpenRouter models
+            # Switch to OpenRouter tab (4 models) -> menu grows upward while bottom tabs stay at the exact same Y!
             tabs.nth(2).click()
             assert menu.locator(".voice-model-option").evaluate_all("els => els.map(e => e.dataset.modelId)") == EXPECTED_OPENROUTER_MODELS
+            tabs_box_or = menu.locator(".voice-provider-tabs").bounding_box()
+            assert tabs_box_or and abs(tabs_box_or["y"] - tabs_box_oa["y"]) <= 1.5, (tabs_box_oa, tabs_box_or)
             if output:
                 page.screenshot(path=str(output / "node-1280-light-openrouter-tab.png"), full_page=True)
 

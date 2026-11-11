@@ -272,11 +272,14 @@ globalThis.VoiceInput = (() => {
     let x = anchorRect.right - box.width;
     x = Math.max(margin, Math.min(x, window.innerWidth - box.width - margin));
     let y = anchorRect.top - box.height - gap;
+    let placement = 'above';
     if (y < margin && anchorRect.bottom + gap + box.height <= window.innerHeight - margin) {
       y = anchorRect.bottom + gap;
+      placement = 'below';
     } else {
       y = Math.max(margin, Math.min(y, window.innerHeight - box.height - margin));
     }
+    popover.dataset.placement = placement;
     popover.style.left = `${x / zoom}px`;
     popover.style.top = `${y / zoom}px`;
   }
@@ -443,42 +446,6 @@ globalThis.VoiceInput = (() => {
 
       menu.innerHTML = '';
 
-      const head = document.createElement('div');
-      head.className = 'voice-model-menu-head';
-      const headTitle = document.createElement('span');
-      headTitle.textContent = '语音输入 · 单击选模型 / 长按说话';
-      head.appendChild(headTitle);
-      menu.appendChild(head);
-
-      const tabs = document.createElement('div');
-      tabs.className = 'voice-provider-tabs';
-      tabs.setAttribute('role', 'tablist');
-      tabs.setAttribute('aria-label', '语音服务提供商');
-
-      for (const prov of PROVIDERS) {
-        const enabled = providers.includes(prov.id);
-        const tab = document.createElement('button');
-        tab.type = 'button';
-        tab.className = 'voice-provider-tab';
-        tab.setAttribute('role', 'tab');
-        tab.dataset.providerId = prov.id;
-        const isCurrent = prov.id === activeProviderTab;
-        tab.setAttribute('aria-selected', String(isCurrent));
-        if (!enabled) tab.dataset.unconfigured = 'true';
-        const hasSelectedModel = selectedMeta.provider === prov.id;
-        tab.innerHTML = `<span class="voice-provider-tab-label"></span>`
-          + (hasSelectedModel ? `<i class="voice-provider-active-dot" aria-hidden="true"></i>` : '');
-        tab.querySelector('.voice-provider-tab-label').textContent = prov.short;
-        tab.onclick = event => {
-          event.stopPropagation();
-          activeProviderTab = prov.id;
-          renderMenuItems();
-          placePopover(menu, button);
-        };
-        tabs.appendChild(tab);
-      }
-      menu.appendChild(tabs);
-
       const list = document.createElement('div');
       list.className = 'voice-model-list';
       list.setAttribute('role', 'menu');
@@ -522,7 +489,35 @@ globalThis.VoiceInput = (() => {
         list.appendChild(opt);
       }
 
-      menu.appendChild(list);
+      const tabs = document.createElement('div');
+      tabs.className = 'voice-provider-tabs';
+      tabs.setAttribute('role', 'tablist');
+      tabs.setAttribute('aria-label', '语音服务提供商');
+
+      for (const prov of PROVIDERS) {
+        const enabled = providers.includes(prov.id);
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'voice-provider-tab';
+        tab.setAttribute('role', 'tab');
+        tab.dataset.providerId = prov.id;
+        const isCurrent = prov.id === activeProviderTab;
+        tab.setAttribute('aria-selected', String(isCurrent));
+        if (!enabled) tab.dataset.unconfigured = 'true';
+        const hasSelectedModel = selectedMeta.provider === prov.id;
+        tab.innerHTML = `<span class="voice-provider-tab-label"></span>`
+          + (hasSelectedModel ? `<i class="voice-provider-active-dot" aria-hidden="true"></i>` : '');
+        tab.querySelector('.voice-provider-tab-label').textContent = prov.short;
+        tab.onclick = event => {
+          event.stopPropagation();
+          activeProviderTab = prov.id;
+          renderMenuItems();
+          placePopover(menu, button);
+        };
+        tabs.appendChild(tab);
+      }
+
+      menu.append(list, tabs);
     }
 
     function openMenu() {

@@ -101,29 +101,28 @@
   font-family: var(--sans, system-ui, -apple-system, sans-serif);
 }
 
-/* 3-Provider Tabbed Model Menu */
+/* 3-Provider Tabbed Model Menu (upward popover: model list on top, provider tabs at bottom) */
 .voice-model-menu[popover] {
   width: min(296px, calc(100vw - 16px));
-  padding: 7px;
+  padding: 6px;
   border: 1px solid var(--border, #e3e6ec);
   border-radius: 11px;
   background: var(--panel, #ffffff);
   box-shadow: 0 14px 34px rgba(16, 24, 40, .2);
 }
 
-:root[data-theme="dark"] .voice-model-menu[popover] {
-  box-shadow: 0 16px 40px rgba(0, 0, 0, .52);
+.voice-model-menu[popover]:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.voice-model-menu-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px 6px;
-  color: var(--muted, #6b7280);
-  font-size: 11px;
-  line-height: 1.35;
+.voice-model-menu[popover][data-placement="below"]:popover-open {
+  flex-direction: column-reverse;
+}
+
+:root[data-theme="dark"] .voice-model-menu[popover] {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .52);
 }
 
 .voice-provider-tabs {
@@ -131,7 +130,6 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
-  margin-bottom: 6px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--border, #e3e6ec) 52%, var(--panel-2, #fbfbfd));
 }
