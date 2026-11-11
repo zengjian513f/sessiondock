@@ -39,6 +39,12 @@
 
 ## Runtime and platform coverage
 
+- [ ] Windows/macOS SDK parity：补 Windows 独立 sdkhost、Codex SDK 与发布接线；
+  补两平台 Agy SDK、Claude/CodeBuddy 已有会话恢复，以及 Kiro/OpenCode 原生占用检测。
+  跨重启输出/审批/输入回执、停止/中断和 Droid 原生恢复须分别完成平台 Chromium 验收。
+  本轮不含迁移、资源监控、process-links 或冻结；按独立宿主、原生占用、Codex 三包并行，
+  集成后补其余 SDK，保留 Linux 既有行为和生产会话。
+
 - [ ] BUG-20261110-135836-3fb287：前端整页无响应、偶尔触发浏览器结束页面提示，
   根因未定。报告内 7 次长帧最长 27.363 秒，多数缺少脚本归因；原生会话期间仍有输出。
   隔离历史读取和 SDK 回放诊断未复现秒级阻塞。已补应用阶段耗时及 SDK 规模记录，
