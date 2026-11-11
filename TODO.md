@@ -48,9 +48,9 @@
   与备用正文修复版均复现于等待 `S.sessions` 移除 SID；此前正文、搜索、分页、
   追加、改写、缺失恢复及服务重启断言通过。待单独定位列表移除刷新，未改写断言。
 
-- [ ] Orion 补发 Windows/macOS SDK 平台补齐版本 `5ea9eabc` 的服务与 sdkhost：
-  2026-11-11 正式部署的 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
-  均已部署、重启并健康。此次无前端、ptyhost 或资源代理变更。
+- [ ] Orion 补发服务 `388e839a`（含 SDK 平台补齐及 Agy 备用正文读取）与 sdkhost `5ea9eabc`：
+  2026-11-11 两轮正式部署的 SSH 探测均超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
+  均已部署、重启并健康。这两轮无前端、ptyhost 或资源代理变更。
 
 - [ ] 更新既有综合测试的旧假设：`agy_sdk_browser.py` 在进入 SDK 后直接等待自动连接，
   2026-11-11 在未修改的已发布基线 `bdf03fc2` 与平台补齐版均超时；
