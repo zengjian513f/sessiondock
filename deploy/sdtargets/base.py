@@ -70,6 +70,7 @@ class Artifacts:
     source_zip: Path | None = None  # optional `git archive --format=zip` of the same commit
                                     # (windows-node; derived from source_archive when None)
     frontend: str = "legacy"
+    voice_config: Path | None = None  # optional gitignored deploy/voice.local.json -> <prefix>/etc/voice.json
 
     @property
     def version(self) -> str:

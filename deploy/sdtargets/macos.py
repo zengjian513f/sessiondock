@@ -95,6 +95,10 @@ class MacOSNode(TargetHandler):
         return not (self.o.web_only or self.a.web_only)
 
     @property
+    def ship_voice_config(self) -> bool:
+        return self.ship_bin and self.a.voice_config is not None and self.a.voice_config.is_file()
+
+    @property
     def ship_web(self) -> bool:
         return not self.o.bin_only
 
@@ -184,6 +188,8 @@ class MacOSNode(TargetHandler):
                 f"cd {src} && {self.cargo} build --release --locked {pk}   (timeout {int(BUILD_TIMEOUT)}s)",
             ] + [f"cp -f {src}/target/release/{n} {p}/bin/{n}.new and write release date marker"
                  for n in self.bins]
+        if self.ship_voice_config:
+            steps.append(f"upload voice.local.json -> {p}/etc/voice.json.new (0600), then mv -f over {p}/etc/voice.json")
         if self.ship_web:
             steps.append(f"rsync -a --ignore-times --delete {self.a.web_dir}/ -> {p}/{WEB_STAGING}/ (release date version)")
         steps.append(f"backup: cp -Rp {p}/bin {p}/web -> {p}/backup-deploy-{self.a.short}-<UTC stamp>/")
@@ -234,6 +240,11 @@ class MacOSNode(TargetHandler):
                 self.expected_versions[name] = self.a.version
                 self.staged.append(name)
                 self.log(f"staged {name}.new version={self.a.version}")
+        if self.ship_voice_config:
+            self.sh.run(f"mkdir -p {_q(p + '/etc')}", timeout=20, check=True)
+            self.sh.upload(self.a.voice_config, f"{p}/etc/voice.json.new")
+            self.sh.run(f"chmod 0600 {_q(p + '/etc/voice.json.new')}", timeout=20, check=True)
+            self.log("staged etc/voice.json.new (0600)")
         if self.ship_web:
             staging = f"{p}/{WEB_STAGING}"
             self.sh.run(f"mkdir -p {_q(staging)}", timeout=20, check=True)
@@ -243,7 +254,10 @@ class MacOSNode(TargetHandler):
     def discard_staging(self) -> None:
         """Remove bin/<name>.new{,.version} and web.staging/; source_dir stays as the warm build tree."""
         p = self.prefix
-        news = " ".join(_q(f"{p}/bin/{name}{suffix}") for name in self.bins for suffix in (".new", ".new.version"))
+        extras = [f"{p}/bin/{name}{suffix}" for name in self.bins for suffix in (".new", ".new.version")]
+        if self.ship_voice_config:
+            extras.append(f"{p}/etc/voice.json.new")
+        news = " ".join(_q(path) for path in extras)
         self.sh.run(f"rm -rf {_q(p + '/' + WEB_STAGING)}" + (f" && rm -f {news}" if news else ""), timeout=60, check=True)
         self.staged, self.expected_versions = [], {}
         self.log("discarded staged bin/*.new and web.staging/")
@@ -264,6 +278,8 @@ class MacOSNode(TargetHandler):
         for name in self.staged:
             self.sh.run(f"mv -f {_q(f'{p}/bin/{name}.new')} {_q(f'{p}/bin/{name}')}", timeout=20, check=True)
             self.sh.run(f"mv -f {_q(f'{p}/bin/{name}.new.version')} {_q(f'{p}/bin/{name}.version')}", check=True)
+        if self.ship_voice_config:
+            self.sh.run(f"test -f {_q(p + '/etc/voice.json.new')} && mv -f {_q(p + '/etc/voice.json.new')} {_q(p + '/etc/voice.json')} && chmod 0600 {_q(p + '/etc/voice.json')}", timeout=20, check=True)
         if self.ship_web:
             self.sh.run(f"rsync -a --ignore-times --delete {_q(p + '/' + WEB_STAGING + '/')} {_q(p + '/web/')} && "
                         f"rm -rf {_q(p + '/' + WEB_STAGING)}", timeout=120, check=True)

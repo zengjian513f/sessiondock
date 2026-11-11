@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to deploy/voice.local.json (gitignored, chmod 600) and fill in real API keys. Never commit credentials.",
+  "openai": {
+    "api_key": "<OPENAI_API_KEY>"
+  },
+  "google": {
+    "api_key": "<GOOGLE_AI_STUDIO_API_KEY>"
+  },
+  "openrouter": {
+    "api_key": "<OPENROUTER_API_KEY>"
+  }
+}

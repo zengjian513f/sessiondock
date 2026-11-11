@@ -324,11 +324,13 @@ def load_stage(path: Path) -> Artifacts:
         doc = json.loads((path / "artifacts.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         die(f"not a stage directory ({e}): {path}")
+    voice_local = DEPLOY_DIR / "voice.local.json"
     return Artifacts(commit=doc["commit"], short=doc["short"], dirty=doc["dirty"],
                      built_at=doc["built_at"], web_dir=path / doc["web_dir"],
                      binaries={n: path / rel for n, rel in doc["binaries"].items()},
                      source_archive=path / doc["source_archive"] if doc.get("source_archive") else None,
-                     web_only=bool(doc.get("web_only")), frontend=doc.get("frontend", "legacy"))
+                     web_only=bool(doc.get("web_only")), frontend=doc.get("frontend", "legacy"),
+                     voice_config=voice_local if voice_local.is_file() else None)
 
 
 def stage_test_info(stage: Path) -> dict:

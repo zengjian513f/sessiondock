@@ -424,6 +424,12 @@ fn build_app(
     );
     let voice = voice::VoiceService::from_env();
     capabilities["voice_input"] = serde_json::json!(voice.is_some());
+    capabilities["voice_providers"] = serde_json::json!(
+        voice
+            .as_ref()
+            .map(|service| service.configured_providers())
+            .unwrap_or_default()
+    );
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(assets::Assets::load(
         &config.web_dir,

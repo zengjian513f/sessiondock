@@ -71,5 +71,6 @@
   CLI 不回滚，容易误解。`POST api/session/rewind` 一并移除；已存的这类固定不再生效。
   Claude 在终端里自己回滚后，对话仍跟随显示到回滚点。
 - 输入栏新增独立可复用语音输入组件（`web/voice-input.js`、`web/voice-input.css`）：在 `voice_input`
-  能力启用时于普通对话、SDK、接续会话和报告问题四个输入框旁提供话筒按钮，单击切换四个 OpenRouter
-  多模态语音模型，长按录音并结合最近的 `user`/`assistant` 对话上下文（排除工具卡片与过程块）流式转写进草稿（见 `docs/sdk-ui.md#语音输入`）。
+  能力启用时于普通对话、SDK、接续会话和报告问题四个输入框旁提供话筒按钮，支持 `OpenAI`、`Google AI Studio`、
+  `OpenRouter` 三家服务商与各自专属模型切换；实时流式模型（`gpt-live-transcribe`、`gemini-3.5-transcribe-live`）
+  按住即通过 WebSocket 展示专属实时听写浮层并边说边将文字写入输入框（取消自动撤回），非实时模型松手后流式转写进草稿，均结合最近普通 `user`/`assistant` 上下文热词并排除工具与过程块（见 `docs/sdk-ui.md#语音输入`）。

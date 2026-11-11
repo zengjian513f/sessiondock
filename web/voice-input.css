@@ -1,5 +1,6 @@
 /* Reusable Web Voice Input widget (SessionDock & MyTavern compatible). */
 .voice-mic-btn {
+  --voice-live: var(--codex, #10a37f);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -22,6 +23,20 @@
   pointer-events: none;
 }
 
+/* Subtle live-ready corner indicator when a real-time dictation model is selected */
+.voice-mic-btn[data-voice-realtime="true"][data-voice-state="idle"]:not(:disabled)::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--voice-live, #10a37f);
+  box-shadow: 0 0 0 1.5px var(--panel, #ffffff);
+  pointer-events: none;
+}
+
 .voice-mic-btn.on {
   color: var(--accent, #3b6ef6);
   border-color: var(--accent, #3b6ef6);
@@ -32,6 +47,13 @@
   border-color: var(--danger, #e5484d);
   background: color-mix(in srgb, var(--danger, #e5484d) 12%, var(--panel-2, #fbfbfd));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
+}
+
+.voice-mic-btn[data-voice-realtime="true"][data-voice-state="recording"] {
+  color: var(--voice-live, #10a37f);
+  border-color: var(--voice-live, #10a37f);
+  background: color-mix(in srgb, var(--voice-live, #10a37f) 13%, var(--panel-2, #fbfbfd));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--voice-live, #10a37f) 20%, transparent);
 }
 
 .voice-mic-btn[data-voice-state="recording"][data-cancel-ready="true"] {
@@ -79,17 +101,18 @@
   font-family: var(--sans, system-ui, -apple-system, sans-serif);
 }
 
+/* 3-Provider Tabbed Model Menu */
 .voice-model-menu[popover] {
-  width: min(264px, calc(100vw - 16px));
-  padding: 6px;
+  width: min(296px, calc(100vw - 16px));
+  padding: 7px;
   border: 1px solid var(--border, #e3e6ec);
-  border-radius: 10px;
+  border-radius: 11px;
   background: var(--panel, #ffffff);
-  box-shadow: 0 12px 32px rgba(16, 24, 40, .2);
+  box-shadow: 0 14px 34px rgba(16, 24, 40, .2);
 }
 
 :root[data-theme="dark"] .voice-model-menu[popover] {
-  box-shadow: 0 14px 36px rgba(0, 0, 0, .48);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .52);
 }
 
 .voice-model-menu-head {
@@ -97,9 +120,83 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px 6px;
-  border-bottom: 1px solid var(--border, #e3e6ec);
-  margin-bottom: 4px;
+  padding: 3px 6px 6px;
+  color: var(--muted, #6b7280);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.voice-provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--border, #e3e6ec) 52%, var(--panel-2, #fbfbfd));
+}
+
+:root[data-theme="dark"] .voice-provider-tabs {
+  background: color-mix(in srgb, var(--border, #2c313a) 68%, var(--panel-2, #181b20));
+}
+
+.voice-provider-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted, #6b7280);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease, box-shadow 110ms ease;
+}
+
+.voice-provider-tab:hover {
+  color: var(--text, #1c2024);
+}
+
+.voice-provider-tab[aria-selected="true"] {
+  background: var(--panel, #ffffff);
+  color: var(--text, #1c2024);
+  box-shadow: 0 1px 2.5px rgba(16, 24, 40, .1);
+}
+
+:root[data-theme="dark"] .voice-provider-tab[aria-selected="true"] {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .38);
+}
+
+.voice-provider-tab[data-unconfigured="true"] {
+  opacity: .62;
+}
+
+.voice-provider-active-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent, #3b6ef6);
+}
+
+.voice-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voice-provider-note {
+  padding: 5px 8px;
+  margin-bottom: 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted, #6b7280) 10%, transparent);
   color: var(--muted, #6b7280);
   font-size: 11px;
   line-height: 1.35;
@@ -121,10 +218,15 @@
   cursor: pointer;
 }
 
-.voice-model-option:hover,
-.voice-model-option:focus-visible {
+.voice-model-option:hover:not(:disabled),
+.voice-model-option:focus-visible:not(:disabled) {
   background: var(--hover, #eef2fb);
   outline: none;
+}
+
+.voice-model-option:disabled {
+  opacity: .48;
+  cursor: not-allowed;
 }
 
 .voice-model-option[aria-checked="true"] {
@@ -143,8 +245,15 @@
   min-width: 0;
 }
 
+.voice-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .voice-model-name {
-  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -153,9 +262,24 @@
   line-height: 1.3;
 }
 
+.voice-realtime-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5.5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--codex, #10a37f) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--codex, #10a37f) 34%, transparent);
+  color: var(--codex, #10a37f);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1.35;
+}
+
 .voice-model-hint {
   display: block;
-  margin-top: 1px;
+  margin-top: 1.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -164,25 +288,42 @@
   line-height: 1.3;
 }
 
+/* Status Pill (Compact Batch Mode & Dedicated Real-Time HUD Card) */
 .voice-status-pill[popover]:popover-open {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: min(320px, calc(100vw - 16px));
+  max-width: min(340px, calc(100vw - 16px));
   padding: 6px 10px;
   border: 1px solid var(--border, #e3e6ec);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--panel, #ffffff) 94%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--panel, #ffffff) 95%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   box-shadow: 0 8px 24px rgba(16, 24, 40, .18);
   font-size: 12px;
   line-height: 1.35;
   pointer-events: none;
 }
 
+.voice-status-pill[popover][data-mode="realtime"]:popover-open {
+  display: block;
+  width: min(356px, calc(100vw - 16px));
+  max-width: min(356px, calc(100vw - 16px));
+  padding: 0;
+  border-radius: 12px;
+  border-color: color-mix(in srgb, var(--codex, #10a37f) 36%, var(--border, #e3e6ec));
+  background: color-mix(in srgb, var(--panel, #ffffff) 97%, transparent);
+  box-shadow: 0 14px 36px rgba(16, 24, 40, .2);
+  overflow: hidden;
+}
+
+.voice-status-pill[popover][data-mode="realtime"][data-tone="cancel"]:popover-open {
+  border-color: var(--border, #e3e6ec);
+}
+
 :root[data-theme="dark"] .voice-status-pill[popover] {
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .48);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
 }
 
 .voice-status-pill[data-tone="error"] {
@@ -230,4 +371,150 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Dedicated Real-Time Streaming Dictation Card */
+.voice-live-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.voice-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7.5px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #e3e6ec) 75%, transparent);
+  background: color-mix(in srgb, var(--codex, #10a37f) 7%, var(--panel-2, #fbfbfd));
+}
+
+.voice-live-card[data-phase="cancel"] .voice-live-head {
+  background: var(--panel-2, #fbfbfd);
+}
+
+.voice-live-card[data-phase="finalizing"] .voice-live-head {
+  background: color-mix(in srgb, var(--accent, #3b6ef6) 8%, var(--panel-2, #fbfbfd));
+}
+
+.voice-live-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.voice-live-dot {
+  width: 7.5px;
+  height: 7.5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--codex, #10a37f);
+  animation: voice-rec-pulse 1s ease-in-out infinite;
+}
+
+.voice-live-card[data-phase="cancel"] .voice-live-dot {
+  background: var(--muted, #6b7280);
+  animation: none;
+}
+
+.voice-live-card[data-phase="finalizing"] .voice-live-dot {
+  background: var(--accent, #3b6ef6);
+}
+
+.voice-live-badge {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--codex, #10a37f);
+}
+
+.voice-live-card[data-phase="cancel"] .voice-live-badge {
+  color: var(--muted, #6b7280);
+}
+
+.voice-live-card[data-phase="finalizing"] .voice-live-badge {
+  color: var(--accent, #3b6ef6);
+}
+
+.voice-live-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted, #6b7280);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.voice-live-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+
+.voice-live-bars i {
+  background: var(--codex, #10a37f);
+}
+
+.voice-live-timer {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+}
+
+.voice-live-body {
+  min-height: 44px;
+  max-height: 112px;
+  overflow-y: auto;
+  padding: 9px 11px;
+  color: var(--text, #1c2024);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.voice-live-placeholder {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+
+.voice-live-committed {
+  color: var(--text, #1c2024);
+}
+
+.voice-live-interim {
+  color: color-mix(in srgb, var(--text, #1c2024) 72%, var(--muted, #6b7280));
+  text-decoration: underline dashed color-mix(in srgb, var(--codex, #10a37f) 60%, transparent);
+  text-underline-offset: 3px;
+}
+
+.voice-live-caret {
+  display: inline-block;
+  width: 2px;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--codex, #10a37f);
+  animation: voice-caret-blink .9s steps(2, start) infinite;
+}
+
+.voice-live-card[data-phase="finalizing"] .voice-live-caret {
+  background: var(--accent, #3b6ef6);
+}
+
+@keyframes voice-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .18; }
+}
+
+.voice-live-foot {
+  padding: 5.5px 11px 6.5px;
+  border-top: 1px solid color-mix(in srgb, var(--border, #e3e6ec) 60%, transparent);
+  color: var(--muted, #6b7280);
+  font-size: 10.5px;
+  line-height: 1.3;
 }

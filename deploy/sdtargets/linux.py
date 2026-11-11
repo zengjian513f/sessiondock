@@ -51,6 +51,9 @@ class LinuxNodeHandler(TargetHandler):
     def ship_web(self) -> bool:
         return not self.o.bin_only
 
+    def ship_voice_config(self) -> bool:
+        return bool(self.binaries()) and self.a.voice_config is not None and self.a.voice_config.is_file()
+
     def binaries(self) -> list[str]:
         """Binary names this run replaces (none with --web-only)."""
         if self.o.web_only:
@@ -163,6 +166,8 @@ class LinuxNodeHandler(TargetHandler):
             out.append(f"upload {name} -> {self.path('bin', name + '.new')}, then mv -f over bin/{name} ({state})")
         if not self.binaries():
             out.append("binaries: skipped (--web-only)")
+        if self.ship_voice_config():
+            out.append(f"upload voice.local.json -> {self.path('etc', 'voice.json.new')} (0600), then mv -f over etc/voice.json")
         if self.ship_web():
             out.append(f"rsync web snapshot -> {self.path('web.staging')}/, then rsync -a --delete into web/ on the target")
         else:
@@ -259,6 +264,12 @@ if active:
                 self.sh.run(f"chmod 0755 {q(dest)}", timeout=60, check=True)
                 self.sh.run(f"printf '%s\\n' {q(self.a.version)} > {q(dest + '.version')}", check=True)
                 self.log(f"staged {dest} version={self.a.version}")
+            if self.ship_voice_config():
+                vdest = self.path("etc", "voice.json.new")
+                self.sh.run(f"mkdir -p {q(self.path('etc'))}", timeout=30, check=True)
+                self.sh.upload(self.a.voice_config, vdest)
+                self.sh.run(f"chmod 0600 {q(vdest)}", timeout=30, check=True)
+                self.log(f"staged {vdest} (0600)")
             if self.ship_web():
                 self.sh.upload(self.a.web_dir.as_posix() + "/", self.path("web.staging") + "/", delete=True)
                 self.log(f"staged web -> {self.path('web.staging')}/")
@@ -267,7 +278,10 @@ if active:
             raise
 
     def _discard_staging(self, check: bool = False) -> None:
-        news = " ".join(q(self.path("bin", n)) for name in self.binaries() for n in (name + ".new", name + ".new.version"))
+        extras = [self.path("bin", n) for name in self.binaries() for n in (name + ".new", name + ".new.version")]
+        if self.ship_voice_config():
+            extras.append(self.path("etc", "voice.json.new"))
+        news = " ".join(q(p) for p in extras)
         cmd = f"rm -rf {q(self.path('web.staging'))}" + (f" && rm -f {news}" if news else "")
         self.sh.run(cmd, timeout=60, check=check)
 
@@ -302,6 +316,10 @@ if active:
             self.sh.run(f"test -f {q(new)} && mv -f {q(new)} {q(cur)}", timeout=60, check=True)
             self.sh.run(f"mv -f {q(new + '.version')} {q(cur + '.version')}", check=True)
             self.log(f"swapped bin/{name}")
+        if self.ship_voice_config():
+            vnew, vcur = self.path("etc", "voice.json.new"), self.path("etc", "voice.json")
+            self.sh.run(f"test -f {q(vnew)} && mv -f {q(vnew)} {q(vcur)} && chmod 0600 {q(vcur)}", timeout=30, check=True)
+            self.log("swapped etc/voice.json")
         if self.ship_web():
             staging = self.path("web.staging")
             # Equal size/mtime does not imply equal release contents.

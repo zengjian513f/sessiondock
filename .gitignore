@@ -14,3 +14,6 @@ __pycache__/
 *.swp
 *~
 /deploy/targets.local.json
+/deploy/voice.local.json
+/voice.local.json
+**/*.local.json

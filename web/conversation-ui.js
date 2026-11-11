@@ -200,12 +200,18 @@ const ConversationUI = {
     return (typeof SessionDockCapabilities === 'object' && SessionDockCapabilities?.namespace) || 'sessiondock.';
   },
 
+  voiceProviders() {
+    const list = (typeof SessionDockCapabilities === 'object' && SessionDockCapabilities?.config?.voice_providers) || null;
+    return Array.isArray(list) && list.length ? list : null;
+  },
+
   voiceModel() {
     try {
       const raw = SessionDockCapabilities.stored('voiceModel', this.voiceStoragePrefix());
-      return raw ? JSON.parse(raw) : VoiceInput.DEFAULT_MODEL;
+      const parsed = raw ? JSON.parse(raw) : VoiceInput.DEFAULT_MODEL;
+      return VoiceInput.validModelId(parsed, this.voiceProviders());
     } catch {
-      return VoiceInput.DEFAULT_MODEL;
+      return VoiceInput.validModelId(VoiceInput.DEFAULT_MODEL, this.voiceProviders());
     }
   },
 
@@ -250,18 +256,22 @@ const ConversationUI = {
 
   mountVoiceInput(input, buttonHost, {beforeElement = null, getUid = null} = {}) {
     if (!this.voiceEnabled() || !input || !buttonHost) return null;
+    const resolveUidObj = () => {
+      const uid = typeof getUid === 'function' ? String(getUid() || '').trim() : '';
+      return uid ? {uid} : {};
+    };
     return VoiceInput.attach({
       input,
       buttonHost,
       beforeElement,
       endpoint: '/api/voice/transcribe',
+      realtimeEndpoint: '/api/voice/realtime',
+      getProviders: () => this.voiceProviders(),
       getModel: () => this.voiceModel(),
       setModel: id => this.setVoiceModel(id),
       getContext: () => this.collectVoiceContext(),
-      getRequestExtra: () => {
-        const uid = typeof getUid === 'function' ? String(getUid() || '').trim() : '';
-        return uid ? {uid} : {};
-      },
+      getRequestExtra: resolveUidObj,
+      getRealtimeParams: resolveUidObj,
       getHeaders: () => {
         const headers = {};
         if (typeof AUDIT_PAGE_ID === 'string' && AUDIT_PAGE_ID) headers['X-SessionDock-Page'] = AUDIT_PAGE_ID;

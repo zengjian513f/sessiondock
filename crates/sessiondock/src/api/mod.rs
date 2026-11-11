@@ -306,7 +306,8 @@ pub fn router() -> Router<AppState> {
             post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/voice/transcribe"),
             )),
-        );
+        )
+        .route("/voice/realtime", get(voice::realtime));
     router
         .fallback(not_found)
         .layer(axum::middleware::from_fn_with_state(

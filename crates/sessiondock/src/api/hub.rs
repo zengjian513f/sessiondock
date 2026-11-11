@@ -76,6 +76,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/resources/summary"),
     ("POST", "/api/session/resources/probe"),
     ("POST", "/api/voice/transcribe"),
+    ("GET", "/api/voice/realtime"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -283,7 +284,13 @@ pub struct HubApp {
 pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Result<HubApp> {
     let registry = Arc::new(open_registry(config)?);
     let client = Arc::new(Client::default());
+    let voice = crate::voice::VoiceService::from_env();
     let mut capabilities = hub_capabilities();
+    if let Some(voice) = &voice {
+        capabilities["voice_providers"] = json!(voice.configured_providers());
+    } else {
+        capabilities["voice_providers"] = json!(["openai", "google", "openrouter"]);
+    }
     config.integrations.apply(&mut capabilities);
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(Assets::load_mode(
@@ -315,7 +322,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
     let state = HubState {
         cleanup_counts: Arc::new(crate::cleanup::Counts::default()),
         resource_nodes: Arc::new(crate::hub::resources::RelatedNodes::default()),
-        voice: crate::voice::VoiceService::from_env(),
+        voice,
         groups,
         registry: registry.clone(),
         client: client.clone(),
@@ -544,6 +551,94 @@ async fn read_body(request: Request) -> Result<Map<String, Value>, Reply> {
     }
 }
 
+fn select_voice_node(
+    registry: &Registry,
+    explicit: Option<&str>,
+    scoped_uid: Option<&str>,
+    node_param: Option<&str>,
+    model: Option<&str>,
+    has_local_voice: bool,
+) -> Option<String> {
+    let preferred = explicit
+        .map(str::to_string)
+        .or_else(|| {
+            scoped_uid
+                .filter(|uid| !uid.is_empty())
+                .and_then(|uid| namespace::split(uid, true).ok().map(|(nid, _)| nid))
+        })
+        .or_else(|| {
+            node_param
+                .map(str::trim)
+                .filter(|nid| crate::hub::identity::is_node_id(nid))
+                .map(str::to_string)
+        });
+    let wanted_provider = model.and_then(crate::voice::provider_for_model);
+    let public = registry.public();
+    let supports_provider = |row: &Value| -> bool {
+        if row["online"] != true || row["capabilities"]["voice_input"] != true {
+            return false;
+        }
+        let Some(provider) = wanted_provider else {
+            return true;
+        };
+        match row["capabilities"]["voice_providers"].as_array() {
+            Some(arr) => arr.iter().any(|v| v.as_str() == Some(provider)),
+            None => provider == "openrouter",
+        }
+    };
+    let has_voice =
+        |row: &Value| row["online"] == true && row["capabilities"]["voice_input"] == true;
+    let is_online = |row: &Value| row["online"] == true;
+    let pick = |pred: &dyn Fn(&Value) -> bool| -> Option<String> {
+        preferred
+            .as_deref()
+            .filter(|id| {
+                public
+                    .iter()
+                    .any(|row| row["id"].as_str() == Some(*id) && pred(row))
+            })
+            .map(str::to_string)
+            .or_else(|| {
+                public
+                    .iter()
+                    .find(|row| pred(row))
+                    .and_then(|row| row["id"].as_str())
+                    .map(str::to_string)
+            })
+    };
+    if let Some(nid) = pick(&supports_provider) {
+        return Some(nid);
+    }
+    if has_local_voice {
+        return None;
+    }
+    pick(&has_voice).or_else(|| pick(&is_online))
+}
+
+async fn upgrade_local_realtime_ws(
+    voice: Arc<crate::voice::VoiceService>,
+    shutdown: CancellationToken,
+    mut request: Request,
+    upgrade: Option<hyper::upgrade::OnUpgrade>,
+) -> Result<Response, Reply> {
+    if let Some(up) = upgrade {
+        request.extensions_mut().insert(up);
+    }
+    let (mut parts, _) = request.into_parts();
+    match <axum::extract::ws::WebSocketUpgrade as axum::extract::FromRequestParts<()>>::from_request_parts(
+        &mut parts,
+        &(),
+    )
+    .await
+    {
+        Ok(ws) => Ok(ws.on_upgrade(move |socket| voice.handle_realtime_ws(socket, shutdown))),
+        Err(_) => status(
+            StatusCode::BAD_REQUEST,
+            json!({"error": "实时语音连接需使用 WebSocket 升级", "code": "invalid_voice_ws"}),
+        ),
+    }
+}
+
 async fn handle(
     state: HubState,
     peer: Option<SocketAddr>,
@@ -721,6 +816,60 @@ async fn handle(
     }
     if method == Method::POST && path == "/api/voice/transcribe" {
         let mut body = read_body(request).await?;
+        let local_override = state
+            .voice
+            .as_ref()
+            .is_some_and(|v| v.has_explicit_url_override());
+        if local_override && let Some(voice) = &state.voice {
+            let req: crate::voice::TranscribeRequest = serde_json::from_value(Value::Object(body))
+                .map_err(|_| Reply::Invalid("无效的语音识别请求".into()))?;
+            return match voice.transcribe(req, state.shutdown.clone()).await {
+                Ok(response) => Ok(response),
+                Err(error) => Ok(error.into_response()),
+            };
+        }
+        let scoped_uid = body.get("uid").and_then(Value::as_str);
+        let node_param = query
+            .get("node")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        let model_str = body.get("model").and_then(Value::as_str);
+        if let Some(nid) = select_voice_node(
+            registry,
+            explicit.as_deref(),
+            scoped_uid,
+            node_param,
+            model_str,
+            state.voice.is_some(),
+        ) {
+            body.remove("uid");
+            let node = registry
+                .find(&nid)
+                .ok_or_else(|| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let target = registry
+                .target(&node)
+                .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
+            return Ok(proxy::proxy(
+                client,
+                &target,
+                &node,
+                state.shutdown.clone(),
+                Forward {
+                    nest_registry: state.registry.clone(),
+                    method: method.as_str(),
+                    path: "/api/voice/transcribe",
+                    query: &proxy::Query::new(),
+                    body: Some(&body),
+                    upload: None,
+                    browser: &headers,
+                    display_ip: &display_ip,
+                    upgrade: None,
+                    terminal_observer: None,
+                },
+            )
+            .await?);
+        }
         if let Some(voice) = &state.voice {
             let req: crate::voice::TranscribeRequest = serde_json::from_value(Value::Object(body))
                 .map_err(|_| Reply::Invalid("无效的语音识别请求".into()))?;
@@ -729,80 +878,75 @@ async fn handle(
                 Err(error) => Ok(error.into_response()),
             };
         }
-        let preferred = explicit.clone().or_else(|| {
-            body.get("uid")
-                .and_then(Value::as_str)
-                .and_then(|uid| namespace::split(uid, true).ok().map(|(nid, _)| nid))
-        });
-        let public = registry.public();
-        let has_voice =
-            |row: &Value| row["online"] == true && row["capabilities"]["voice_input"] == true;
-        let is_online = |row: &Value| row["online"] == true;
-        let nid = preferred
-            .as_deref()
-            .filter(|id| {
-                public
-                    .iter()
-                    .any(|row| row["id"].as_str() == Some(*id) && has_voice(row))
-            })
-            .map(str::to_string)
-            .or_else(|| {
-                public
-                    .iter()
-                    .find(|row| has_voice(row))
-                    .and_then(|row| row["id"].as_str())
-                    .map(str::to_string)
-            })
-            .or_else(|| {
-                preferred
-                    .as_deref()
-                    .filter(|id| {
-                        public
-                            .iter()
-                            .any(|row| row["id"].as_str() == Some(*id) && is_online(row))
-                    })
-                    .map(str::to_string)
-            })
-            .or_else(|| {
-                public
-                    .iter()
-                    .find(|row| is_online(row))
-                    .and_then(|row| row["id"].as_str())
-                    .map(str::to_string)
-            });
-        let Some(nid) = nid else {
-            return status(
-                StatusCode::NOT_IMPLEMENTED,
-                json!({"error": "未配置语音输入 API Key，且当前无可用语音识别节点", "code": "voice_input_unconfigured"}),
-            );
-        };
-        body.remove("uid");
-        let node = registry
-            .find(&nid)
-            .ok_or_else(|| Reply::Invalid(NOT_REGISTERED.into()))?;
-        let target = registry
-            .target(&node)
-            .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
-        let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
-        return Ok(proxy::proxy(
-            client,
-            &target,
-            &node,
-            state.shutdown.clone(),
-            Forward {
-                nest_registry: state.registry.clone(),
-                method: method.as_str(),
-                path: "/api/voice/transcribe",
-                query: &proxy::Query::new(),
-                body: Some(&body),
-                upload: None,
-                browser: &headers,
-                display_ip: &display_ip,
-                upgrade: None,
-                terminal_observer: None,
-            },
-        )
-        .await?);
+        return status(
+            StatusCode::NOT_IMPLEMENTED,
+            json!({"error": "未配置语音输入 API Key，且当前无可用语音识别节点", "code": "voice_input_unconfigured"}),
+        );
+    }
+    if method == Method::GET && path == "/api/voice/realtime" {
+        let local_override = state
+            .voice
+            .as_ref()
+            .is_some_and(|v| v.has_explicit_url_override());
+        if local_override && let Some(voice) = state.voice.clone() {
+            return upgrade_local_realtime_ws(voice, state.shutdown.clone(), request, upgrade)
+                .await;
+        }
+        let scoped_uid = query.get("uid").and_then(|v| v.first()).map(String::as_str);
+        let node_param = query
+            .get("node")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        let model_str = query
+            .get("model")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        if let Some(nid) = select_voice_node(
+            registry,
+            explicit.as_deref(),
+            scoped_uid,
+            node_param,
+            model_str,
+            state.voice.is_some(),
+        ) {
+            let mut forward_query = query.clone();
+            forward_query.shift_remove("uid");
+            forward_query.shift_remove("node");
+            let node = registry
+                .find(&nid)
+                .ok_or_else(|| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let target = registry
+                .target(&node)
+                .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
+            return Ok(proxy::proxy(
+                client,
+                &target,
+                &node,
+                state.shutdown.clone(),
+                Forward {
+                    nest_registry: state.registry.clone(),
+                    method: method.as_str(),
+                    path: "/api/voice/realtime",
+                    query: &forward_query,
+                    body: None,
+                    upload: None,
+                    browser: &headers,
+                    display_ip: &display_ip,
+                    upgrade,
+                    terminal_observer: None,
+                },
+            )
+            .await?);
+        }
+        if let Some(voice) = state.voice.clone() {
+            return upgrade_local_realtime_ws(voice, state.shutdown.clone(), request, upgrade)
+                .await;
+        }
+        return status(
+            StatusCode::NOT_IMPLEMENTED,
+            json!({"error": "未配置语音输入 API Key，且当前无可用语音识别节点", "code": "voice_input_unconfigured"}),
+        );
     }
     if method == Method::GET && path == "/api/session/file" {
         let accept = headers

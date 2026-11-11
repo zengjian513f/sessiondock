@@ -151,6 +151,10 @@ class WindowsNode(TargetHandler):
         return not (self.o.web_only or self.a.web_only)
 
     @property
+    def ship_voice_config(self) -> bool:
+        return self.ship_bin and self.a.voice_config is not None and self.a.voice_config.is_file()
+
+    @property
     def ship_web(self) -> bool:
         return not self.o.bin_only
 
@@ -299,6 +303,8 @@ class WindowsNode(TargetHandler):
             steps += [f"scp <source zip of {self.a.short}> -> {d}\\source-{self.a.short}.zip",
                       f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(self.build_timeout)}s): extract, {test}"
                       f"real cargo.exe build --release --locked, MTIME check, copy -> bin\\<name>.new.exe with release date"]
+        if self.ship_voice_config:
+            steps.append(f"scp voice.local.json -> {p}\\etc\\voice.json.new, then move /y over {p}\\etc\\voice.json")
         if self.ship_web:
             steps.append(f"scp web.zip -> {d}\\web.zip ; Expand-Archive -> {p}\\{WEB_STAGING}\\ "
                          "(release date version)")
@@ -339,6 +345,10 @@ class WindowsNode(TargetHandler):
                     raise RuntimeError(f"cargo compiled but target\\release\\{name}.exe kept its mtime")
                 self.staged.append(name)
                 self.log(f"staged {name}.new.exe version={self.expected_versions[name]} fresh={fresh}")
+        if self.ship_voice_config:
+            self.sh.run(f'if not exist "{p}\\etc" mkdir "{p}\\etc"', timeout=30, check=True)
+            self.sh.scp_upload(self.a.voice_config, f"{p}\\etc\\voice.json.new")
+            self.log("staged etc\\voice.json.new")
         if self.ship_web:
             web_zip = self._web_zip()
             self.sh.run(f'if not exist "{self.deploy_dir}" mkdir "{self.deploy_dir}"', timeout=30, check=True)
@@ -353,6 +363,8 @@ class WindowsNode(TargetHandler):
         p = self.prefix
         staging = f"{p}\\{WEB_STAGING}"
         news = [f"{p}\\bin\\{name}{suffix}" for name in self.bins for suffix in (".new.exe", ".new.exe.version")]
+        if self.ship_voice_config:
+            news.append(f"{p}\\etc\\voice.json.new")
         left = " else ".join(f'if exist "{path}" (exit /b 5)' for path in [staging, *news])
         dels = "".join(f'del /q /f "{path}" 2>nul & ' for path in news)
         self.sh.run(f'rd /s /q "{staging}" 2>nul & {dels}{left} else (echo DISCARDED)', timeout=60, check=True)
@@ -383,6 +395,8 @@ class WindowsNode(TargetHandler):
         for name in self.staged:
             if f"SWAPPED {name}" not in out:
                 raise ShellError(remote, 0, f"{name}.new.exe was not swapped in\n{out}")
+        if self.ship_voice_config:
+            self.sh.run(f'if exist "{self.prefix}\\etc\\voice.json.new" move /y "{self.prefix}\\etc\\voice.json.new" "{self.prefix}\\etc\\voice.json" >nul', timeout=30, check=True)
 
     def restart(self) -> None:
         if self.restarted:

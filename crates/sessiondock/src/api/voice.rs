@@ -1,4 +1,12 @@
-use axum::{Json, extract::State, http::StatusCode, response::Response};
+use axum::{
+    Json,
+    extract::{
+        State,
+        ws::{WebSocketUpgrade, rejection::WebSocketUpgradeRejection},
+    },
+    http::StatusCode,
+    response::Response,
+};
 
 use crate::{error::ApiError, state::AppState, voice::TranscribeRequest};
 
@@ -12,8 +20,30 @@ pub async fn transcribe(
         return Err(ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "voice_input_unconfigured",
-            "未配置语音输入 API Key（OPENROUTER_API_KEY）",
+            "未配置语音输入 API Key",
         ));
     };
     voice.transcribe(body, state.shutdown.clone()).await
+}
+
+pub async fn realtime(
+    State(state): State<AppState>,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
+) -> Result<Response, ApiError> {
+    let Some(voice) = state.voice.clone() else {
+        return Err(ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "voice_input_unconfigured",
+            "未配置语音输入 API Key",
+        ));
+    };
+    let upgrade = ws.map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_voice_ws",
+            "实时语音连接需使用 WebSocket 升级",
+        )
+    })?;
+    let shutdown = state.shutdown.clone();
+    Ok(upgrade.on_upgrade(move |socket| voice.handle_realtime_ws(socket, shutdown)))
 }

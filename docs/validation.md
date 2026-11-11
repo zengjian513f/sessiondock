@@ -43,7 +43,7 @@ Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure reco
 
 [droid_sdk_browser.py](../tests/droid_sdk_browser.py) covers Droid JSON-RPC, native history, settings, approvals/questions, errors, interruption, node restart and Hub access with an isolated synthetic peer.
 
-[voice_input_browser.py](../tests/voice_input_browser.py) covers the reusable composer microphone control across node/Hub, all four composer surfaces, single-click 4-model selection, long-press 16kHz WAV capture, SSE streaming insertion, cancellations, and tool/process context exclusion.
+[voice_input_browser.py](../tests/voice_input_browser.py) covers the reusable composer microphone control across node/Hub, all four composer surfaces, 3-provider (`openai`, `google`, `openrouter`) model tabs, live WebSocket streaming dictation while holding (`gpt-live-transcribe`, `gemini-3.5-transcribe-live`) with dedicated live HUD and cancel rollback, HTTP/SSE WAV transcription, and tool/process context exclusion.
 
 ## When to run which tier
 
