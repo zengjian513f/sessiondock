@@ -37,7 +37,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
                     {'id': f'tool-{turn}-{index}', 'role': 'tool', 'turn_id': identity,
                      'name': 'exec_command', 'text': '{"command": "check fixture"}', 'input': {'command': f'check-step-{index}'},
                      'summary': f'$ check-step-{index}',
-                     'result': {'role': 'tool_result',
+                     'result': {'role': 'tool_result', 'error': index == 0,
                                 'text': '\n'.join(f'检查结果 {line}' for line in range(18))}}])
             history.append({'id': f'final-{turn}', 'role': 'assistant', 'turn_id': identity,
                             'text': f'第 {turn + 1} 轮最终结论：检查已完成。', 'phase': 'final'})
@@ -120,6 +120,11 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             context.close()
             return
         expect(groups).to_have_count(3)
+        expect(page.locator('.sdk-pane .turn-process.has-error')).to_have_count(0)
+        expect(groups.first.locator('.turn-stats')).to_contain_text('调用报错 1')
+        assert groups.first.locator('.turn-preview').evaluate(
+            "node => { const probe = document.createElement('span'); probe.style.border = '1px solid var(--border)'; node.append(probe); const same = getComputedStyle(node).borderTopColor === getComputedStyle(probe).borderTopColor; probe.remove(); return same; }")
+
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(0)
         toggle()
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(3)
@@ -364,7 +369,8 @@ def exercise_connecting_active_tail(browser, base, screenshots, label):
             expect(page.locator('.sdk-pane .turn-process')).to_have_count(2)
             expect(page.locator('.sdk-pane .turn-process.folded')).to_have_count(2)
             tail_group = page.locator('.sdk-live .turn-process')
-            expect(tail_group).to_have_class(re.compile(r'\bhas-error\b'))
+            expect(tail_group).not_to_have_class(re.compile(r'\bhas-error\b'))
+            expect(tail_group.locator('.turn-stats')).to_contain_text('调用报错 1')
             if screenshots:
                 page.screenshot(path=str(screenshots / f'{name}-3-completed-folded.png'), full_page=True)
             tail_group.locator('.fold-toggle').first.click()

@@ -9061,7 +9061,7 @@ function turnProcessSummary(items) {
   const paths = [...new Set(changes.map(change => change.path).filter(Boolean))];
   const added = changes.reduce((n, change) => n + (+change.added || 0), 0);
   const removed = changes.reduce((n, change) => n + (+change.removed || 0), 0);
-  const errors = items.filter(m => m.error || (Number.isFinite(+m.exit_code) && +m.exit_code !== 0)).length;
+  const errors = items.filter(m => m.error || m.result?.error || (Number.isFinite(+m.exit_code) && +m.exit_code !== 0)).length;
   const times = items.flatMap(m => {
     const value = Date.parse(m.ts || '');
     return Number.isFinite(value) ? [value] : [];
@@ -9073,7 +9073,7 @@ function turnProcessSummary(items) {
   if (calls || orphanResults) stats.push(`🔧 ${calls || orphanResults}`);
   if (paths.length) stats.push(`修改 ${paths.length} 个文件${added || removed ? ` +${added} −${removed}` : ''}`);
   if (questions) stats.push(`${questions} 次确认`);
-  if (errors) stats.push(`⚠ ${errors}`);
+  if (errors) stats.push(`调用报错 ${errors}`);
   if (duration >= 1000) stats.push(formatDuration(duration));
   if (!stats.length) stats.push(`${items.length} 条记录`);
   return {stats, paths, errors};
@@ -9118,7 +9118,6 @@ function turnProcessNode(turn, initiallyOpen = false) {
   toolbar.appendChild(nav);
   const expandTitle = summary.paths.length
     ? `展开过程\n修改文件：${summary.paths.join('\n')}` : '展开过程';
-  if (summary.errors) n.classList.add('has-error');
   if (turn.inferred) n.dataset.inferred = 'true';
   const body = el('div', 'turn-process-body');
   body.hidden = true;

@@ -1393,9 +1393,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: var(--hover); color: var(--text);
 }
-.msg.turn-process.has-error > .turn-toolbar > .turn-preview {
-  border-color: color-mix(in srgb, #e5534b 42%, var(--border));
-}
 .msg.turn-process .turn-peek {
   display: flex; align-items: baseline; gap: 8px; max-width: none;
   overflow: hidden; white-space: nowrap; opacity: 1;
