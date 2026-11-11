@@ -234,7 +234,7 @@ def fake_cli():
     cwd = str(Path.cwd())
     home = Path(os.environ["CLAUDE_CONFIG_DIR"])
     path = Path(resume) if resume and not fork else home / "projects" / project_key(cwd) / (sid + ".jsonl")
-    assert path.is_relative_to(home / "projects"), path
+    assert any(parent.exists() and parent.samefile(home / "projects") for parent in path.parents), path
     assert not any(os.environ.get(key) for key in ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"))
     log = Path(os.environ["SESSIONDOCK_FAKE_CLAUDE_LOG"])
     mutex = threading.Lock()

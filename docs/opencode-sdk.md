@@ -170,10 +170,11 @@ fork、shell、command、compact 在调用前按 request_id 在当前桥接进�
 
 默认 TUI 与桥接通过同一 HOME/profile 下的默认原生 daemon 操作同一个 SID。
 `session.active` 只报告那个 OpenCode 进程拥有的运行任务，不代表所有独立
-runtime。Linux 用配置的 proc_root 拒绝同 SID 或同 cwd 的
-`--standalone/--server` OpenCode 进程，不终止或接管它们。跨机器的独立
-runtime、进程启动后才选择的其他 SID、以及非 Linux 的外部 writer 不能靠
-这个 proc 观察完整识别；这些情形不承诺原生共享，须关闭独立 runtime 后
+runtime。Linux、macOS、Windows 使用[公共占用采集](native-sdk.md#sdk-writer-evidence)，
+拒绝同 SID 或同 cwd 的 `--standalone/--server` OpenCode 进程，不终止或接管它们。
+DELTA：非 Linux 不再直接跳过这项检查；默认共享服务仍可共存。跨机器的独立
+runtime、进程启动后才选择的其他 SID 不能靠进程采样完整识别；这些情形
+不承诺原生共享，须关闭独立 runtime 后
 再使用 SDK。原生 API 返回的冲突保持可见，不绕过原生拒绝。
 
 ## 验证

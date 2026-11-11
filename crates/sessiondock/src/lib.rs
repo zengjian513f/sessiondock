@@ -97,7 +97,19 @@ pub fn app_pair_with_shutdown(
         None,
         config.kiro_native_root.as_deref(),
     ));
-    let built = build_app(config, shutdown.clone(), None, terminal, Vec::new(), quotas)?;
+    let endpoint = codex_sdk::Endpoint::from_config(
+        config.codex_app_server.as_deref(),
+        config.roots.codex.as_deref(),
+    );
+    let built = build_app(
+        config,
+        shutdown.clone(),
+        None,
+        terminal,
+        Vec::new(),
+        quotas,
+        endpoint,
+    )?;
     Ok((built.router, built.node_router))
 }
 
@@ -129,6 +141,7 @@ pub async fn prepare_app(
                     config.codex_app_server.as_deref(),
                     config.roots.codex.as_deref(),
                 )
+                .map(|endpoint| endpoint.with_launcher(Some(&launcher)))
                 .and_then(|endpoint| endpoint.tui_remote());
                 launcher.model_cache_dir = config.state_dir.as_ref().map(|dir| dir.join("models"));
                 Some(launcher)
@@ -148,6 +161,11 @@ pub async fn prepare_app(
         launcher.as_ref(),
         config.kiro_native_root.as_deref(),
     ));
+    let codex_endpoint = codex_sdk::Endpoint::from_config(
+        config.codex_app_server.as_deref(),
+        config.roots.codex.as_deref(),
+    )
+    .map(|endpoint| endpoint.with_launcher(launcher.as_ref()));
     let lifecycle = match (config.lifecycle_dir.clone(), launcher) {
         (Some(directory), Some(launcher)) => {
             let result = lifecycle::service::LifecycleService::open(
@@ -181,6 +199,7 @@ pub async fn prepare_app(
             terminal,
             adapters,
             quotas,
+            codex_endpoint,
         )
     })
     .await
@@ -256,6 +275,7 @@ fn build_app(
     terminal: Option<Arc<terminal::TerminalService>>,
     launch_adapters: Vec<state::LaunchAdapter>,
     quotas: Arc<quotas::Quotas>,
+    codex_endpoint: Option<codex_sdk::Endpoint>,
 ) -> io::Result<BuiltApp> {
     let kiro_catalog = sessions::kiro::Catalog::new(&config, shutdown.clone())?;
     if let Some(catalog) = &kiro_catalog {
@@ -331,12 +351,11 @@ fn build_app(
     capabilities["session_relations"] = serde_json::json!(metadata.is_some());
     capabilities["files"] = serde_json::json!(files.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
-    let codex_sdk = codex_sdk::Endpoint::from_config(
-        config.codex_app_server.as_deref(),
-        config.roots.codex.as_deref(),
-    )
-    .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone()))
-    .transpose()?;
+    let codex_sdk = codex_endpoint
+        .map(|endpoint| {
+            codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone())
+        })
+        .transpose()?;
     capabilities["codex_sdk"] = serde_json::json!(
         codex_sdk.is_some()
             && !lifecycle

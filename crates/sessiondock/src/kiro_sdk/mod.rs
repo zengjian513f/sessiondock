@@ -75,11 +75,7 @@ pub fn new(
         locks: Mutex::new(HashMap::new()),
         creating: Mutex::new(HashMap::new()),
         proc_root: config.proc_root.clone(),
-        host: config
-            .state_dir
-            .as_ref()
-            .filter(|_| cfg!(unix))
-            .map(|dir| dir.join("sdkhost")),
+        host: config.state_dir.as_ref().map(|dir| dir.join("sdkhost")),
         sessions: Mutex::new(HashMap::new()),
         starting: Mutex::new(HashSet::new()),
         models_cache: Mutex::new(None),

@@ -43,7 +43,9 @@ set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 ## 3. 暂存、备份与换入
 
 统一部署工具负责暂存新 EXE 和版本标记、备份、停止 Web 服务、换入产物、重启与失败
-回滚，具体顺序见第 5 节。不手工复制生产产物或另行重启，不停止现有 `ptyhost.exe`。
+回滚，具体顺序见第 5 节。不手工复制生产产物或另行重启，不停止现有 `ptyhost.exe` 或 `sdkhost.exe`。
+首次安装或修改 SDK 宿主时加 `--with-sdkhost`，原生编译、暂存、备份和回滚均包含
+`sdkhost.exe`；普通服务发布先检查宿主已安装，web-only 不补装或替换宿主。
 纯前端使用 `--web-only`，目标覆盖所有提供受影响组件的已启用实例，见
 [部署合同](deployment.md)。
 
@@ -85,7 +87,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   （保留 `target\`），`build.cmd` 用工具链目录里**真实的** `cargo.exe` 并把 `RUSTC`/`RUSTDOC` 指向同一
   工具链（`.cargo\bin` 下的 rustup shim 是 reparse point，提权的 SSH 进程执行会报 448）；stage 的测试
   模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）不是 `none` 时
-  `build.cmd` 渲染 `TEST=1`，在解压之后、构建之前按第 2 节跑 `cargo.exe check -p sessiondock --all-targets --locked`
+  `build.cmd` 渲染 `TEST=1`，在解压之后、构建之前对选定软件包运行 `cargo.exe check <selected packages> --all-targets --locked`
   （`TEST_FAILED` → 退出码 18，该目标 `FAILED`，什么都没暂存；日志 `<SD_SOURCE>\.deploy-test.log`），
   处理器还要求输出里有 `TEST_OK`；除退出码外
   还比较 `target\release\sessiondock.exe` 构建前后的 mtime，编译过但文件没更新即失败；产物

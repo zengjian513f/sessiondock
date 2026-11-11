@@ -1,6 +1,6 @@
-//! One WebSocket JSON-RPC connection over the app-server's Unix control
-//! socket (`--listen unix://`: standard HTTP Upgrade, one JSON message per
-//! text frame, `"jsonrpc"` omitted). The reader task routes responses to
+//! One WebSocket JSON-RPC connection over a Unix control socket or an
+//! authenticated loopback TCP listener: standard HTTP Upgrade, one JSON
+//! message per text frame, `"jsonrpc"` omitted. The reader routes responses to
 //! their waiters and hands notifications/server requests to `Inner`.
 
 use std::{
@@ -19,7 +19,9 @@ use tokio_util::sync::CancellationToken;
 use super::{Endpoint, Inner};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(unix)]
 const CONNECT_ATTEMPTS: u32 = 40;
+#[cfg(unix)]
 const CONNECT_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug)]
@@ -76,40 +78,87 @@ impl Connection {
         endpoint: &Endpoint,
         generation: u64,
     ) -> Result<Arc<Self>, RpcError> {
-        #[cfg(unix)]
-        {
-            let stream = connect(endpoint).await?;
-            let (socket, _) = tokio_tungstenite::client_async("ws://localhost/", stream)
+        let managed = super::managed::is_managed(&endpoint.socket);
+        let credentials = if managed {
+            let endpoint = endpoint.clone();
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    super::managed::ensure(&endpoint)?;
+                    super::managed::credentials(&endpoint.socket)
+                        .map_err(|e| RpcError::Unavailable(e.to_string()))
+                })
                 .await
-                .map_err(|error| RpcError::Unavailable(format!("握手失败：{error}")))?;
-            let closed = CancellationToken::new();
-            let connection = Arc::new(Self {
-                socket: endpoint.socket.clone(),
-                out: spawn_io(inner, socket, generation, closed.clone())?,
-                next_id: AtomicI64::new(1),
-                pending: Mutex::new(HashMap::new()),
-                closed,
-                generation,
-            });
-            connection.attach_reader();
-            connection
-                .request(
-                    "initialize",
-                    json!({
-                        "clientInfo": {"name": "sessiondock", "title": "SessionDock",
-                            "version": env!("CARGO_PKG_VERSION")},
-                        "capabilities": {"experimentalApi": true},
-                    }),
-                )
-                .await?;
-            connection.send(json!({"method": "initialized", "params": {}}));
-            Ok(connection)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (inner, endpoint, generation);
-            Err(RpcError::Unavailable("此平台不支持".into()))
-        }
+                .map_err(|e| RpcError::Unavailable(e.to_string()))??,
+            )
+        } else {
+            None
+        };
+        let closed = CancellationToken::new();
+        let out = if managed || super::websocket::is_websocket(&endpoint.socket) {
+            let request = match &credentials {
+                Some((url, token)) => super::websocket::request_with_token(url, token),
+                None => super::websocket::request(endpoint.socket.to_str().expect("WebSocket URL")),
+            }
+            .map_err(|error| RpcError::Unavailable(error.into()))?;
+            let value = credentials
+                .as_ref()
+                .map(|(url, _)| url.as_str())
+                .unwrap_or_else(|| endpoint.socket.to_str().expect("WebSocket URL"));
+            let address = super::websocket::address(value).expect("validated address");
+            let socket = tokio::time::timeout(Duration::from_secs(10), async {
+                let stream = tokio::net::TcpStream::connect(address)
+                    .await
+                    .map_err(|error| RpcError::Unavailable(error.to_string()))?;
+                tokio_tungstenite::client_async(request, stream)
+                    .await
+                    .map_err(|_| {
+                        RpcError::Unavailable(
+                            "WebSocket 握手失败；检查 listener 和 capability token".into(),
+                        )
+                    })
+            })
+            .await
+            .map_err(|_| RpcError::Unavailable("WebSocket 连接超时".into()))??
+            .0;
+            spawn_io(inner, socket, generation, closed.clone())?
+        } else {
+            #[cfg(unix)]
+            {
+                let stream = connect(endpoint).await?;
+                let (socket, _) = tokio_tungstenite::client_async("ws://localhost/", stream)
+                    .await
+                    .map_err(|error| RpcError::Unavailable(format!("握手失败：{error}")))?;
+                spawn_io(inner, socket, generation, closed.clone())?
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(RpcError::Unavailable(
+                    "此平台需要配置 loopback WebSocket".into(),
+                ));
+            }
+        };
+
+        let connection = Arc::new(Self {
+            socket: endpoint.socket.clone(),
+            out,
+            next_id: AtomicI64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            closed,
+            generation,
+        });
+        connection.attach_reader();
+        connection
+            .request(
+                "initialize",
+                json!({
+                    "clientInfo": {"name": "sessiondock", "title": "SessionDock",
+                        "version": env!("CARGO_PKG_VERSION")},
+                    "capabilities": {"experimentalApi": true},
+                }),
+            )
+            .await?;
+        connection.send(json!({"method": "initialized", "params": {}}));
+        Ok(connection)
     }
 
     fn attach_reader(self: &Arc<Self>) {
@@ -313,13 +362,15 @@ async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStream, RpcError
     )))
 }
 
-#[cfg(unix)]
-fn spawn_io(
+fn spawn_io<S>(
     inner: Arc<Inner>,
-    socket: tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>,
+    socket: tokio_tungstenite::WebSocketStream<S>,
     generation: u64,
     closed: CancellationToken,
-) -> Result<mpsc::UnboundedSender<String>, RpcError> {
+) -> Result<mpsc::UnboundedSender<String>, RpcError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
 

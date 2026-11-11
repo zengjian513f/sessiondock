@@ -211,10 +211,7 @@ impl LiveState {
             self.transcript_version = 2;
             return Ok(());
         }
-        #[cfg(unix)]
         let file = sdkhost_client::cold::open(stdout).map_err(|e| e.to_string())?;
-        #[cfg(not(unix))]
-        let file = std::fs::File::open(stdout).map_err(|e| e.to_string())?;
         let prompts: Vec<_> = self
             .journal
             .iter()

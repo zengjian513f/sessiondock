@@ -93,6 +93,25 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     page.wait_for_function("T.listLoaded")
     page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(row => row.sid === sid); }", arg=fixture.empty_sid, polling=500, timeout=30000)
     rows = page.evaluate("S.sessions")
+    # Portable explicit SID admission; unrelated SID/cwd is never a global lock.
+    evidence = fixture.proc / 'sdk-writers.json'
+    evidence.write_text(json.dumps([{'pid': 910001, 'ppid': 1,
+        'args': ['kiro-cli.exe', 'chat', '--resume-id=' + fixture.empty_sid],
+        'cwd': None, 'files': []}]))
+    occupied = next(row for row in rows if row['sid'] == fixture.empty_sid)
+    refused = api_raw(page, 'open', {'uid': occupied['uid']})
+    assert 'kiro_sdk_session_busy' in json.dumps(refused), refused
+    native_log = fixture.root / '.kiro/logs/private-acp/kiro.log'
+    native_log.parent.mkdir(parents=True)
+    native_log.write_text(json.dumps({'timestamp': '2026-11-11T00:00:00Z',
+        'message': '[KiroAgent] ACP session/load complete sessionId=' + fixture.empty_sid}) + '\n')
+    evidence.write_text(json.dumps([{'pid': 910002, 'ppid': 1,
+        'args': ['node', '/private/.kiro/acp-server.js'], 'cwd': None,
+        'files': [str(native_log)], 'started': 1700000000}]))
+    refused = api_raw(page, 'open', {'uid': occupied['uid']})
+    assert 'kiro_sdk_session_busy' in json.dumps(refused), refused
+    evidence.write_text('[]')
+
     kiro_rows = [r for r in rows if r.get("source") == "kiro"]
     assert len(kiro_rows) == 2, kiro_rows
     assert not any(r.get("sid") == fixture.v2_sid for r in rows), "Private legacy files leaked into official catalog"

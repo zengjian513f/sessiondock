@@ -201,7 +201,6 @@ impl Journal {
                 || matches!(input.state.as_str(), "sending" | "recovering")
             {
                 if directory.is_some()
-                    && cfg!(unix)
                     && input.operation == "turn"
                     && matches!(
                         input.target["source"].as_str(),

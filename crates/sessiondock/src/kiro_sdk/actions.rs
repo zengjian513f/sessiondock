@@ -292,6 +292,65 @@ impl Bridge {
         if sid.is_empty() {
             return Ok(());
         }
+        if cfg!(not(target_os = "linux")) || self.proc_root.join("sdk-writers.json").is_file() {
+            // Windows file ownership queries need concrete log paths. Resolve
+            // only this launcher's native HOME; never treat a directory listing
+            // or an unopened log as live ACP ownership.
+            let mut files = Vec::new();
+            if cfg!(windows) {
+                let home = self
+                    .profile
+                    .env
+                    .get("HOME")
+                    .or_else(|| self.profile.env.get("USERPROFILE"))
+                    .cloned()
+                    .or_else(|| std::env::var("HOME").ok())
+                    .or_else(|| std::env::var("USERPROFILE").ok());
+                let mut pending: Vec<_> = home
+                    .into_iter()
+                    .map(|home| std::path::PathBuf::from(home).join(".kiro/logs"))
+                    .collect();
+                while let Some(directory) = pending.pop() {
+                    let entries = match std::fs::read_dir(directory) {
+                        Ok(entries) => entries,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(error) => {
+                            return Err(format!("kiro_sdk: log ownership observation: {error}"));
+                        }
+                    };
+                    for entry in entries {
+                        let entry = entry.map_err(|error| error.to_string())?;
+                        let kind = entry.file_type().map_err(|error| error.to_string())?;
+                        if kind.is_dir() {
+                            pending.push(entry.path());
+                        } else if kind.is_file() && entry.file_name() == "kiro.log" {
+                            files.push(entry.path());
+                        }
+                    }
+                }
+            }
+            let snapshot = crate::sdk_common::writers::snapshot(&self.proc_root, &files)?;
+            let owned = own_pid.into_iter().collect();
+            for process in &snapshot.processes {
+                if snapshot.owns(process.pid, &owned) {
+                    continue;
+                }
+                if !(process.is_cli("kiro")
+                    || process.is_cli("kiro-cli")
+                    || process.is_cli("kiro-cli-chat")
+                    || crate::runtime::procscan::is_kiro_acp_cmd(&process.args.join(" ")))
+                {
+                    continue;
+                }
+                let explicit = process
+                    .option(&["--resume-id"])
+                    .is_some_and(|value| value.eq_ignore_ascii_case(sid));
+                if explicit || process.kiro_sessions().contains(&sid.to_ascii_lowercase()) {
+                    return Err("kiro_sdk_session_busy: 该 Kiro 会话由独立 CLI/ACP 程序运行；请先在原程序结束会话。".into());
+                }
+            }
+            return Ok(());
+        }
         // Only an explicit CLI resume identity is evidence of external ownership.
         // Kiro's private lock files and storage layout are not an integration API.
         let tree = Arc::new(crate::runtime::procscan::ProcTree::open(
@@ -299,15 +358,14 @@ impl Bridge {
         ));
         let roots = crate::runtime::procscan::SessionRoots::default();
         let scan = crate::runtime::procscan::scan(tree.clone(), None, &roots);
-        let is_ours = |pid: i64| -> bool {
-            let pid = pid.unsigned_abs() as u32;
-            own_pid.is_some_and(|own| pid == own || tree.cli_ancestor(pid) == Some(own))
-        };
+        let ownership = crate::sdk_common::writers::snapshot(&self.proc_root, &[])?;
+        let owned = own_pid.into_iter().collect();
+        let is_ours = |pid: i64| -> bool { ownership.owns(pid.unsigned_abs() as u32, &owned) };
         let sid_lower = format!("kiro:{}", sid.to_ascii_lowercase());
         if scan
             .kiro_acp
             .get(&sid.to_ascii_lowercase())
-            .is_some_and(|pids| !pids.is_empty())
+            .is_some_and(|pids| pids.iter().any(|pid| !is_ours(i64::from(*pid))))
         {
             return Err("kiro_sdk_session_busy: 该 Kiro 会话由外部 ACP 程序运行；当前仅可查看，请先在原程序结束会话。".into());
         }
@@ -595,8 +653,7 @@ impl Bridge {
     }
 
     pub(crate) fn live_models_catalog(&self) -> Option<Value> {
-        let sessions: Vec<Arc<Session>> =
-            self.sessions.lock().unwrap().values().cloned().collect();
+        let sessions: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
         for s in sessions {
             let st = s.state.lock().unwrap();
             let (mut list, cur, _) =

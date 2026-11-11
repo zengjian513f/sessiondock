@@ -2,6 +2,7 @@
 
 pub(crate) mod projection;
 pub(crate) mod usage;
+pub(crate) mod writers;
 
 use crate::lifecycle::launcher::CliProfile;
 use crate::sessions::native_json;
@@ -45,7 +46,6 @@ pub(crate) fn process_owned(
     false
 }
 
-#[cfg(unix)]
 pub(crate) fn checkpoint_file(root: &Path, uid: &str, sid: &str) -> std::path::PathBuf {
     let identity = if uid.is_empty() { sid } else { uid };
     let key: String = identity
@@ -79,11 +79,14 @@ pub(crate) fn hosted_error_kind<'de, D: serde::Deserializer<'de>>(
     })
 }
 
-#[cfg(unix)]
 pub(crate) fn private_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(path)?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    sdkhost_client::private_dir(path)
 }
 
 pub(crate) fn uuid_v4() -> Result<String, getrandom::Error> {

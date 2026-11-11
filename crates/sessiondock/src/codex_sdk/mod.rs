@@ -15,6 +15,7 @@ mod capacity;
 mod connection;
 mod controls;
 mod live;
+pub(crate) mod managed;
 mod observation;
 mod providers;
 mod queue;
@@ -22,6 +23,7 @@ mod receipts;
 mod retention;
 mod stopping;
 pub(crate) mod usage;
+pub(crate) mod websocket;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -41,36 +43,70 @@ use live::LiveThread;
 const MODEL_CACHE: Duration = Duration::from_secs(300);
 
 /// Where the app-server lives and whether this node may start it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Endpoint {
+    /// Unix socket, explicit WS URL, or stable Windows listener-record path.
     pub socket: PathBuf,
-    /// `CODEX_HOME` for `codex app-server daemon start`; `None` never starts.
+    /// `CODEX_HOME` for native daemon/provider startup; `None` never starts.
     pub autostart_home: Option<PathBuf>,
     /// The socket was named by `SESSIONDOCK_CODEX_APP_SERVER`.
     pub explicit: bool,
     pub provider: Option<String>,
+    pub launcher: Option<crate::lifecycle::launcher::CliProfile>,
 }
 
 /// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
 /// --remote …`), so a terminal and the SDK view drive one live thread
 /// instead of two runtimes fighting over the rollout's writer lock.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TuiRemote {
     /// Value of `--remote`: `unix://` (the default control socket of the
-    /// TUI's own `CODEX_HOME`) or `unix://<path>` for an explicit socket.
+    /// TUI's own `CODEX_HOME`), `unix://<path>`, or an explicit WS URL.
+    /// Managed Windows records resolve their current URL immediately at launch.
     pub arg: String,
     pub socket: PathBuf,
     /// `CODEX_HOME` the daemon is started in; `None` never starts one.
     pub home: Option<PathBuf>,
+    pub launcher: Option<crate::lifecycle::launcher::CliProfile>,
 }
 
 impl TuiRemote {
     /// Make the daemon reachable before a launch: connect, else start it once
     /// (`codex app-server daemon start`, idempotent) and wait for the socket.
-    /// Blocking and bounded; `false` means launch the TUI the old way rather
-    /// than fail the launch. A TUI given `--remote` does not start the daemon
+    /// Blocking and bounded. Unix keeps the legacy fallback on failure;
+    /// authenticated WS/managed endpoints fail the launch instead. A TUI given `--remote` does not start the daemon
     /// itself and exits with a connection error when none runs.
     pub fn ensure(&self, codex: &std::path::Path) -> bool {
+        if managed::is_managed(&self.socket) {
+            let provider = self
+                .socket
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".listener.json"))
+                .and_then(providers::decode_provider);
+            let endpoint = Endpoint {
+                socket: self.socket.clone(),
+                autostart_home: self.home.clone(),
+                explicit: false,
+                provider,
+                launcher: self.launcher.clone().or_else(|| {
+                    Some(crate::lifecycle::launcher::CliProfile {
+                        id: "codex-listener".into(),
+                        source: crate::lifecycle::model::Source::Codex,
+                        executable: codex.to_owned(),
+                        args: vec![],
+                        new_args: vec![],
+                        resume_args: vec![],
+                        env: Default::default(),
+                        env_remove: vec![],
+                    })
+                }),
+            };
+            return managed::ensure(&endpoint).is_ok();
+        }
+        if websocket::is_websocket(&self.socket) {
+            return websocket::reachable(&self.arg);
+        }
         #[cfg(unix)]
         {
             use std::{os::unix::net::UnixStream, process::Stdio};
@@ -121,12 +157,32 @@ impl TuiRemote {
 
 impl Endpoint {
     /// `SESSIONDOCK_CODEX_APP_SERVER` wins (`off` disables the mode, any other
-    /// value is an explicit socket that is never auto-started); otherwise the
-    /// default control socket beside the Codex sessions root.
+    /// value is an explicit endpoint that is never auto-started); otherwise
+    /// use the native Unix control socket or a managed Windows provider record.
     pub fn from_config(
         explicit: Option<&str>,
         codex_root: Option<&std::path::Path>,
     ) -> Option<Self> {
+        if let Some(value) = explicit.filter(|value| value.starts_with("ws://")) {
+            websocket::request(value).ok()?;
+            return Some(Self {
+                socket: PathBuf::from(value),
+                autostart_home: None,
+                explicit: true,
+                provider: None,
+                launcher: None,
+            });
+        }
+        if cfg!(windows) && explicit.is_none() {
+            let home = codex_root?.parent()?.to_path_buf();
+            return Some(Self {
+                socket: home.join("sd-providers").join("6f70656e6169.listener.json"),
+                autostart_home: Some(home),
+                explicit: false,
+                provider: Some("openai".into()),
+                launcher: None,
+            });
+        }
         if !cfg!(unix) {
             return None;
         }
@@ -137,6 +193,7 @@ impl Endpoint {
                 autostart_home: None,
                 explicit: true,
                 provider: None,
+                launcher: None,
             }),
             None => {
                 let home = codex_root?.parent()?.to_path_buf();
@@ -147,6 +204,7 @@ impl Endpoint {
                     autostart_home: Some(home),
                     explicit: false,
                     provider: None,
+                    launcher: None,
                 })
             }
         }
@@ -154,6 +212,18 @@ impl Endpoint {
 }
 
 impl Endpoint {
+    pub fn with_launcher(mut self, config: Option<&crate::lifecycle::launcher::Config>) -> Self {
+        self.launcher = config
+            .and_then(|config| {
+                config
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.source == crate::lifecycle::model::Source::Codex)
+            })
+            .cloned();
+        self
+    }
+
     /// The TUI's view of this endpoint. A default endpoint applies only when
     /// it is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
     /// `~/.codex`): `--remote unix://` finds its socket there, so a different
@@ -161,12 +231,21 @@ impl Endpoint {
     pub fn tui_remote(&self) -> Option<TuiRemote> {
         if self.explicit {
             return Some(TuiRemote {
-                arg: format!("unix://{}", self.socket.display()),
+                arg: websocket::remote_arg(&self.socket),
                 socket: self.socket.clone(),
                 home: None,
+                launcher: self.launcher.clone(),
             });
         }
         let home = self.autostart_home.as_ref()?;
+        if managed::is_managed(&self.socket) {
+            return Some(TuiRemote {
+                arg: String::new(),
+                socket: self.socket.clone(),
+                home: Some(home.clone()),
+                launcher: self.launcher.clone(),
+            });
+        }
         let own = std::env::var_os("CODEX_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -179,6 +258,7 @@ impl Endpoint {
             arg: "unix://".to_string(),
             socket: self.socket.clone(),
             home: Some(home.clone()),
+            launcher: self.launcher.clone(),
         })
     }
 }

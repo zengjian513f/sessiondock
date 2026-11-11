@@ -34,17 +34,8 @@ pub(super) fn exists(path: &Path) -> bool {
 
 fn database(path: &Path) -> Result<rusqlite::Connection, String> {
     let db_path = database_path(path);
-    std::fs::create_dir_all(path.parent().ok_or("checkpoint parent missing")?)
+    crate::sdk_common::private_dir(path.parent().ok_or("checkpoint parent missing")?)
         .map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            path.parent().unwrap(),
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .map_err(|e| e.to_string())?;
-    }
     let db = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {

@@ -371,7 +371,7 @@ async fn run(
             }
             if !signal_sent && (stop.is_cancelled() || session.stop.is_cancelled()) {
                 deliberate = true;
-                client.signal(libc::SIGKILL).await.map_err(error)?;
+                client.signal(9).await.map_err(error)?;
                 signal_sent = true;
             }
             // Entries are durable before acknowledgement; host receipts make a

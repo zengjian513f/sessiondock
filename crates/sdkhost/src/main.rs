@@ -1,12 +1,13 @@
 //! Owns an opaque child process and durable byte streams, independently of clients.
-#[cfg(unix)]
-mod unix {
+#[cfg(windows)]
+mod windows;
+#[cfg(any(unix, windows))]
+mod host {
+    use sdkhost_client::platform::OpenOptionsExt;
     use sdkhost_client::{
         Exit, LaunchSpec, ReadResult, Receipt, Request, Response, Status, Stream, os, private_dir,
     };
-    #[cfg(not(target_os = "linux"))]
-    use std::os::unix::process::ExitStatusExt;
-    use std::{collections::HashMap, io, os::unix::fs::OpenOptionsExt, path::PathBuf, sync::Arc};
+    use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
     use tokio::{
         io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
         sync::{Mutex, Notify},
@@ -59,6 +60,46 @@ mod unix {
         }
         result
     }
+    #[cfg(target_os = "macos")]
+    fn signal_session(leader: i32, signal: i32) -> io::Result<()> {
+        // libproc lists current processes; getsid includes workers which changed groups.
+        unsafe extern "C" {
+            fn proc_listallpids(buffer: *mut libc::c_void, size: libc::c_int) -> libc::c_int;
+        }
+        let count = unsafe { proc_listallpids(std::ptr::null_mut(), 0) };
+        if count <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut pids = vec![0i32; count as usize + 64];
+        let count = unsafe { proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
+        if count < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let members: Vec<_> = pids
+            .into_iter()
+            .take(count as usize)
+            .filter(|pid| *pid > 0 && unsafe { libc::getsid(*pid) } == leader)
+            .collect();
+        let mut result = if unsafe { libc::kill(-leader, signal) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+        for pid in members {
+            if unsafe { libc::kill(pid, signal) } == 0 {
+                result = Ok(());
+            }
+        }
+        result
+    }
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    fn signal_session(leader: i32, signal: i32) -> io::Result<()> {
+        if unsafe { libc::kill(-leader, signal) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
     fn persist(state: &State) -> io::Result<()> {
         let temp = state.dir.join("status.tmp");
         let mut f = std::fs::OpenOptions::new()
@@ -70,7 +111,7 @@ mod unix {
         use std::io::Write;
         f.write_all(&serde_json::to_vec(&state.status)?)?;
         f.sync_data()?;
-        std::fs::rename(temp, state.dir.join("status.json"))
+        sdkhost_client::platform::replace(&temp, &state.dir.join("status.json"))
     }
     fn receipt(state: &mut State, id: &str, status: &str) -> io::Result<Receipt> {
         let result = Receipt {
@@ -290,7 +331,7 @@ mod unix {
             .stderr(std::process::Stdio::piped());
         // A new session also makes a new process group. Kiro moves its worker
         // into another group; the session still holds it for explicit stop.
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         unsafe {
             command.pre_exec(|| {
                 if libc::setsid() < 0 {
@@ -299,9 +340,10 @@ mod unix {
                 Ok(())
             });
         }
-        #[cfg(not(target_os = "linux"))]
-        command.process_group(0);
+        #[cfg(unix)]
         let mut child = command.spawn()?;
+        #[cfg(windows)]
+        let (job, mut child) = crate::windows::Job::spawn(&mut command)?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let (signals, mut signal_requests) = tokio::sync::mpsc::unbounded_channel::<(
@@ -369,20 +411,26 @@ mod unix {
             // Keep the exited child unreaped until inherited output pipes close.
             // Its zombie reserves the process-group identity, so explicit stop can
             // still terminate descendants without risking a reused PGID.
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             loop {
-                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                let rc = unsafe {
-                    libc::waitid(
-                        libc::P_PID,
-                        child.id().unwrap(),
-                        &mut info,
-                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                    )
+                let (rc, pid, status, code) = {
+                    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                    let rc = unsafe {
+                        libc::waitid(
+                            libc::P_PID,
+                            child.id().unwrap(),
+                            &mut info,
+                            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                        )
+                    };
+                    #[cfg(target_os = "linux")]
+                    let (pid, status) = unsafe { (info.si_pid(), info.si_status()) };
+                    #[cfg(not(target_os = "linux"))]
+                    let (pid, status) = (info.si_pid, info.si_status);
+                    (rc, pid, status, info.si_code)
                 };
-                if rc == 0 && unsafe { info.si_pid() } != 0 {
-                    let status = unsafe { info.si_status() };
-                    let exited = info.si_code == libc::CLD_EXITED;
+                if rc == 0 && pid != 0 {
+                    let exited = code == libc::CLD_EXITED;
                     let mut s = waiting.lock().await;
                     if s.status.exit.is_none() {
                         s.status.exit = Some(Exit {
@@ -404,23 +452,23 @@ mod unix {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(windows)]
             loop {
+                // Child::wait may reap the leader: the Job handle reserves the tree's identity.
                 tokio::select! {
-                    biased;
-                    exit = child.wait() => {
+                    exit = child.wait(), if waiting.lock().await.status.exit.is_none() => {
                         if let Ok(exit) = exit {
                             let mut s = waiting.lock().await;
-                            s.status.exit = Some(Exit { code: exit.code(), signal: exit.signal() });
-                            let _ = persist(&s);
+                            s.status.exit = Some(Exit { code: exit.code(), signal: None });
+                            if let Err(e) = persist(&s) { eprintln!("sdkhost exit persistence: {e}"); }
                         }
-                        break;
                     }
-                    Some((signal, reply)) = signal_requests.recv() => {
-                        let result = if child.id().is_some_and(|pid| unsafe { libc::kill(-(pid as i32), signal) } == 0) { Ok(()) }
-                            else { Err(io::Error::last_os_error()) };
-                        let _ = reply.send(result);
-                    }
+                    Some((signal, reply)) = signal_requests.recv() => { let _ = reply.send(job.signal(signal)); }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                }
+                let s = waiting.lock().await;
+                if s.status.exit.is_some() && s.status.stdout_eof && s.status.stderr_eof {
+                    break;
                 }
             }
             drop(signal_requests);
@@ -444,13 +492,9 @@ mod unix {
             }
             std::process::exit(0);
         });
-        let (socket_path, _directory) = sdkhost_client::socket_path(&dir)?;
-        let listener = tokio::net::UnixListener::bind(socket_path)?;
+        let mut listener = sdkhost_client::platform::Listener::bind(&dir)?;
         loop {
-            let (socket, _) = listener.accept().await?;
-            if socket.peer_cred()?.uid() != unsafe { libc::geteuid() } {
-                continue;
-            }
+            let socket = listener.accept().await?;
             let shared = state.clone();
             let notify = notify.clone();
             tokio::spawn(async move {
@@ -491,15 +535,15 @@ mod unix {
         }
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::main]
 async fn main() {
-    if let Err(e) = unix::run().await {
+    if let Err(e) = host::run().await {
         eprintln!("sdkhost: {e}");
         std::process::exit(1);
     }
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn main() {
     eprintln!("sdkhost requires Unix");
     std::process::exit(1);

@@ -210,8 +210,21 @@ impl ProcessConfig {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = sid;
-            Err("agy_sdk_coexistence_unsupported: 此平台没有已验证的 Agy 原生占用检查。".into())
+            let native = self.native_path(sid);
+            let snapshot = crate::sdk_common::writers::snapshot(
+                &self.proc_root,
+                std::slice::from_ref(&native),
+            )
+            .map_err(|error| format!("agy_sdk_process_scan: {error}"))?;
+            let owned = self.owned.lock().unwrap().iter().copied().collect();
+            if snapshot
+                .processes
+                .iter()
+                .any(|process| process.holds(&native) && !snapshot.owns(process.pid, &owned))
+            {
+                return Err("agy_sdk_session_busy: 原生 conversation 数据库正被独立 Agy/TUI 进程使用；SDK 不接管或终止该进程，请在原生界面正常退出后重试。".into());
+            }
+            Ok(())
         }
     }
 
@@ -685,9 +698,8 @@ impl Native {
             "stdout_offset":self.stdout_offset,"hosted":self.host.is_some()}),
         );
         if let Some(host) = &self.host {
-            #[cfg(unix)]
             {
-                let signal = host.signal(libc::SIGKILL).await;
+                let signal = host.signal(9).await;
                 crate::log::transition(
                     "warn",
                     "agy.sdk.kill_signal",
@@ -704,14 +716,10 @@ impl Native {
     }
 
     pub async fn finish(&mut self, shutdown: CancellationToken) -> Result<ExitStatus, String> {
-        #[cfg(unix)]
         if let Some(host) = &self.host {
-            use std::os::unix::process::ExitStatusExt;
             return tokio::select! {
                 _=shutdown.cancelled()=>Err("agy_sdk_shutdown".into()),
-                result=host.wait()=>result.map(|exit| ExitStatus::from_raw(
-                    exit.code.map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8)
-                )).map_err(|error|format!("agy_sdk_wait: {error}")),
+                result=host.wait()=>result.map(host_exit_status).map_err(|error|format!("agy_sdk_wait: {error}")),
             };
         }
         let child = self.child.as_mut().ok_or("agy_sdk_child_missing")?;
@@ -723,20 +731,11 @@ impl Native {
 
     /// Inspect an ended output stream without waiting for a still-running child.
     pub async fn exit_status(&mut self) -> Result<Option<ExitStatus>, String> {
-        #[cfg(unix)]
         if let Some(host) = &self.host {
-            use std::os::unix::process::ExitStatusExt;
             return host
                 .status()
                 .await
-                .map(|status| {
-                    status.exit.map(|exit| {
-                        ExitStatus::from_raw(
-                            exit.code
-                                .map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8),
-                        )
-                    })
-                })
+                .map(|status| status.exit.map(host_exit_status))
                 .map_err(|error| format!("agy_sdk_status: {error}"));
         }
         self.child
@@ -788,5 +787,21 @@ impl Native {
                 Err("agy_sdk_create_close_timeout".into())
             }
         }
+    }
+}
+
+fn host_exit_status(exit: sdkhost_client::Exit) -> ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(
+            exit.code
+                .map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8),
+        )
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        ExitStatus::from_raw(exit.code.unwrap_or(1) as u32)
     }
 }

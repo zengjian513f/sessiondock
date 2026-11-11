@@ -136,9 +136,6 @@ pub fn new(
     config: &crate::config::Config,
     shutdown: CancellationToken,
 ) -> io::Result<Option<Arc<Bridge>>> {
-    if !cfg!(target_os = "linux") {
-        return Ok(None);
-    }
     let (Some(mirror), Some(home), Some(launcher)) =
         (&config.roots.agy, &config.agy_home, &config.launcher_config)
     else {
@@ -170,7 +167,7 @@ pub fn new(
 
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
-        "rename":true,"interrupt":cfg!(unix),"steer":cfg!(unix),"respond":false,"approvals":false,"questions":false,
+        "rename":true,"interrupt":true,"steer":true,"respond":false,"approvals":false,"questions":false,
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
@@ -1336,12 +1333,7 @@ fn write_binding(
     let temporary = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
     let result = (|| -> io::Result<()> {
         let parent = path.parent().unwrap();
-        std::fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-        }
+        crate::sdk_common::private_dir(parent)?;
         let mut options = std::fs::OpenOptions::new();
         options.create(true).truncate(true).write(true);
         #[cfg(unix)]

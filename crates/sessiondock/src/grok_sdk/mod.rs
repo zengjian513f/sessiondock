@@ -126,7 +126,7 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
     };
     let bridge = Arc::new(Bridge {
         root,
-        state_dir: config.state_dir.clone().filter(|_| cfg!(unix)),
+        state_dir: config.state_dir.clone(),
         home,
         profile,
         proc_root: config.proc_root.clone(),

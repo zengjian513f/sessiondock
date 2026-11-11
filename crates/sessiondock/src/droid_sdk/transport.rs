@@ -7,7 +7,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[derive(Clone)]
 pub(super) enum Outbound {
     Direct(mpsc::UnboundedSender<Value>),
-    #[cfg(unix)]
     Hosted(super::hosted::Sender),
 }
 impl Outbound {
@@ -16,7 +15,6 @@ impl Outbound {
             Self::Direct(sender) => sender
                 .send(frame)
                 .map_err(|_| "droid_sdk_disconnected".into()),
-            #[cfg(unix)]
             Self::Hosted(sender) => sender.send(frame),
         }
     }
@@ -25,7 +23,6 @@ impl Outbound {
 impl Bridge {
     pub(super) async fn ensure(self: &Arc<Self>, session: &Arc<Session>) -> Result<(), String> {
         let _admission = self.writer_admission.lock().await;
-        #[cfg(unix)]
         if self.state_dir.is_some() {
             return self.ensure_hosted(session).await;
         }

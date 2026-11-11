@@ -375,10 +375,12 @@ class AgyFixture:
         with sqlite3.connect(self.native / 'conversations' / (sid + '.db')) as connection:
             connection.execute('CREATE TABLE fixture_steps (next_index INTEGER)')
             connection.execute('INSERT INTO fixture_steps VALUES (2)')
+        connection.close()
         with sqlite3.connect(self.native / 'conversation_summaries.db') as connection:
             connection.execute(SCHEMA)
             connection.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
                 (sid, TITLE, '2026-10-18T00:00:00Z', json.dumps([self.work.as_uri()]), '', 'IDLE', 2, ''))
+        connection.close()
         logs = self.native / 'brain' / sid / '.system_generated/logs'
         logs.mkdir(parents=True)
         logs.joinpath('transcript_full.jsonl').write_text('\n'.join(json.dumps(row) for row in [

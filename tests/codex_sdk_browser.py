@@ -589,13 +589,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
+    parser.add_argument("--transport", choices=("unix", "ws"), default="unix")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-sdk-") as temporary:
         root = Path(temporary)
         corpus = build(root)
-        app_socket = root / "app-server.sock"
-        with LoadedAppServer(app_socket, corpus.paths["sdk"], THREAD) as fake:
-            with server(corpus, args.binary, app_socket) as base:
+        app_socket = "ws://127.0.0.1:0" if args.transport == "ws" else root / "app-server.sock"
+        token = "synthetic-codex-loopback-token" if args.transport == "ws" else None
+        environment = {"SESSIONDOCK_CODEX_APP_SERVER_TOKEN": token} if token else {}
+        with LoadedAppServer(app_socket, corpus.paths["sdk"], THREAD, token=token) as fake:
+            with server(corpus, args.binary, fake.socket_path, environment) as base:
                 browser_check(corpus, base, fake, args.screenshots)
     print("PASS Codex SDK view: history bubbles, model/effort override, streaming, approval across reload, "
           "user-input answer, steer, interrupt, non-Codex excluded")

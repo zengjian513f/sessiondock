@@ -163,6 +163,8 @@ class WindowsNode(TargetHandler):
         names = list(self.t.binaries)
         if self.o.with_ptyhost and "ptyhost" not in names:
             names.append("ptyhost")
+        if self.o.with_sdkhost and "sdkhost" not in names:
+            names.append("sdkhost")
         return names
 
     @property
@@ -298,7 +300,8 @@ class WindowsNode(TargetHandler):
         p, d = self.prefix, self.deploy_dir
         steps: list[str] = []
         if self.ship_bin:
-            test = (f"cargo.exe check -p sessiondock --all-targets --locked ({self.o.test_mode}; TEST_FAILED = FAILED before staging), "
+            packages = " ".join(f"-p {name}" for name in self.bins)
+            test = (f"cargo.exe check {packages} --all-targets --locked ({self.o.test_mode}; TEST_FAILED = FAILED before staging), "
                     if self.run_tests else "tests skipped (mode none), ")
             steps += [f"scp <source zip of {self.a.short}> -> {d}\\source-{self.a.short}.zip",
                       f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(self.build_timeout)}s): extract, {test}"
@@ -324,6 +327,7 @@ class WindowsNode(TargetHandler):
         p = self.prefix
         scripts = self._scripts()
         if self.ship_bin:
+            self.check_sdkhost_dependency(self.bins)
             remote = self._upload_script("build.cmd", scripts["build.cmd"])   # also creates .deploy\
             self.sh.scp_upload(self._source_zip(), f"{self.deploy_dir}\\source-{self.a.short}.zip", timeout=600)
             out = self._run_script(remote, "BUILD_OK", self.build_timeout)

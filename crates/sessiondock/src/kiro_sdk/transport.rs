@@ -1034,9 +1034,8 @@ impl Session {
         if !self.dead.load(Ordering::Acquire) {
             match &self.transport {
                 Transport::Host { client } => {
-                    #[cfg(unix)]
                     client
-                        .signal(libc::SIGKILL)
+                        .signal(9)
                         .await
                         .map_err(|e| format!("kiro_sdk_stop: {e}"))?;
                     client

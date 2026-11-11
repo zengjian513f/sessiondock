@@ -1,7 +1,6 @@
 //! CodeBuddy's native, persistent stream-json SDK transport. See docs/codebuddy-sdk.md.
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
-#[cfg(unix)]
 mod hosted;
 mod protocol;
 mod transport;
@@ -175,7 +174,7 @@ fn parse_json(text: &str) -> Result<Value, String> {
 
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
-        "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
+        "models":true,"create":true,"resume":cfg!(any(target_os="linux",target_os="macos",windows)),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":false,
         "usage":false,"context_usage":false,"compact":false,"rename":false,
         "fork":false,"fork_before":false,
@@ -679,24 +678,10 @@ impl Bridge {
             }
             "open" | "models" | "recover" | "reattach" => {
                 if method == "reattach" {
-                    #[cfg(unix)]
-                    {
-                        return self.reattach_hosted(&session).await;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        return Ok(json!({"attached":false}));
-                    }
+                    return self.reattach_hosted(&session).await;
                 }
                 if method == "recover" {
-                    #[cfg(unix)]
-                    {
-                        return self.recover_hosted(&session, &input).await;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        return Err("codebuddy_sdk_recovery: host unavailable".into());
-                    }
+                    return self.recover_hosted(&session, &input).await;
                 }
                 self.ensure(&session).await?;
                 if method == "models" {

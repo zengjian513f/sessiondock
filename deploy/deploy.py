@@ -739,7 +739,7 @@ def cmd_deploy(args) -> int:
         bins = sorted({b for t in chosen for b in t.binaries}) if not args.web_only else []
         if args.ptyhost and not args.web_only:
             bins.append('ptyhost')
-        if args.sdkhost and not args.web_only and any(t.kind in ('linux-node', 'macos-node') for t in chosen):
+        if args.sdkhost and not args.web_only and any(t.kind in ('linux-node', 'macos-node', 'windows-node') for t in chosen):
             bins.append('sdkhost')
         print('artifacts: ' + ', '.join(bins + ([] if args.bin_only else ['web'])))
         test_plan(args, ROOT, 'HEAD')

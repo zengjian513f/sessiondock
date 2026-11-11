@@ -250,7 +250,14 @@ class TargetHandler:
 
     def check_sdkhost_dependency(self, binaries: list[str]) -> None:
         """A node upgrade must not leave its stdio SDKs without their host."""
-        if self.kind not in ("linux-node", "macos-node") or "sessiondock" not in binaries or "sdkhost" in binaries:
+        if self.kind not in ("linux-node", "macos-node", "windows-node") or "sessiondock" not in binaries or "sdkhost" in binaries:
+            return
+        if self.kind == "windows-node":
+            path = self.t.prefix.replace("/", "\\").rstrip("\\") + "\\bin\\sdkhost.exe"
+            self.sh.run(
+                f'if not exist "{path}" (echo sdkhost is missing; repeat the node deployment with --with-sdkhost & exit /b 1)',
+                timeout=30, check=True,
+            )
             return
         path = self.t.prefix.rstrip("/") + "/bin/sdkhost"
         self.sh.run(
@@ -287,7 +294,7 @@ class TargetHandler:
         names = list(self.t.binaries)
         if self.o.with_ptyhost:
             names.append("ptyhost")
-        if self.o.with_sdkhost and self.kind in ("linux-node", "macos-node"):
+        if self.o.with_sdkhost and self.kind in ("linux-node", "macos-node", "windows-node"):
             names.append("sdkhost")
         for name in names:
             if self.kind.startswith("windows"):

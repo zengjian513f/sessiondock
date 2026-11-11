@@ -43,13 +43,8 @@ impl Control {
                 if binding.is_some_and(|(_, recovering, _)| recovering) {
                     return Ok(None);
                 }
-                std::fs::create_dir_all(&directory).map_err(|_| "agy_sdk_control_directory")?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-                        .map_err(|_| "agy_sdk_control_directory")?;
-                }
+                crate::sdk_common::private_dir(&directory)
+                    .map_err(|_| "agy_sdk_control_directory")?;
                 let mut options = std::fs::OpenOptions::new();
                 options.write(true).create_new(true);
                 #[cfg(unix)]
@@ -123,6 +118,7 @@ impl Control {
         let log = tokio::fs::read_to_string(&self.log).await.map_err(
             |_| "agy_sdk_control_unavailable: 无法取得本实例的原生管理接口；任务继续运行。",
         )?;
+        let log = log.replace("\r\n", "\n");
         let marker = format!("Starting language server process with pid {pid}\n");
         let startup = log
             .rsplit_once(&marker)
@@ -196,9 +192,7 @@ impl Control {
             | crate::hub::client::ClientError::ConnectionFailed => {
                 "agy_sdk_control_unavailable: 无法连接本实例的原生管理接口；任务继续运行。"
             }
-            _ => {
-                "agy_sdk_control_transport: 原生响应未完整到达；未终结运行时，请核对操作结果。"
-            }
+            _ => "agy_sdk_control_transport: 原生响应未完整到达；未终结运行时，请核对操作结果。",
         })?;
         if outcome.0 != 200 {
             return Err(format!(

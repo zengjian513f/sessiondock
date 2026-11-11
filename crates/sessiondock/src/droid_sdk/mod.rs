@@ -3,7 +3,6 @@
 
 mod actions;
 mod activity;
-#[cfg(unix)]
 mod hosted;
 mod protocol;
 mod transport;
@@ -808,24 +807,10 @@ impl Bridge {
             }
             "open" | "models" | "recover" | "reattach" => {
                 if method == "reattach" {
-                    #[cfg(unix)]
-                    {
-                        return self.reattach_hosted(&session).await;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        return Ok(json!({"attached":false}));
-                    }
+                    return self.reattach_hosted(&session).await;
                 }
                 if method == "recover" {
-                    #[cfg(unix)]
-                    {
-                        return self.recover_hosted(&session, &input).await;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        return Err("droid_sdk_recovery: host unavailable".into());
-                    }
+                    return self.recover_hosted(&session, &input).await;
                 }
                 self.ensure(&session).await?;
                 if method == "models" {

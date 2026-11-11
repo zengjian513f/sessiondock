@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy'))
 from sdtargets.base import Artifacts, DeployOptions, ShellError, Target
 from sdtargets.linux import LinuxNodeHandler
 from sdtargets.macos import MacOSNode
+from sdtargets.windows import WindowsNode
 
 
 def main():
@@ -99,6 +100,28 @@ def main():
                                DeployOptions(with_sdkhost=True), lambda _: None)
         assert 'sdkhost' in mac.bins
         assert any('sdkhost.new' in line for line in mac.plan())
+        windows = WindowsNode(Target('fixture', 'windows-node', r'C:\fixture-runtime',
+            service={'restart_cmd': r'C:\fixture-runtime\restart.cmd'},
+            extra={'source_dir': r'C:\fixture-source', 'toolchain_bin': r'C:\fixture-toolchain'}),
+            artifact, DeployOptions(with_sdkhost=True, test_mode='affected'), lambda _: None)
+        assert windows.bins == ['sessiondock', 'sdkhost'], windows.bins
+        scripts = windows._scripts()
+        assert 'check -p sessiondock -p sdkhost --all-targets --locked' in scripts['build.cmd']
+        assert 'for %%N in (sessiondock sdkhost)' in scripts['build.cmd']
+        commands = []
+        def missing_host(command, **kwargs):
+            commands.append(command)
+            raise ShellError(command, 1, 'sdkhost is missing; repeat with --with-sdkhost')
+        windows.sh.run = missing_host
+        windows.o.with_sdkhost = False
+        try:
+            windows.stage()
+        except ShellError as error:
+            assert '--with-sdkhost' in error.out
+        else:
+            raise AssertionError('Windows accepted a missing SDK host')
+        assert len(commands) == 1 and 'sdkhost.exe' in commands[0], commands
+        windows.tmp.cleanup()
 
         for mode, page in pages:
             print(f'Checking restored {mode} picker', flush=True)

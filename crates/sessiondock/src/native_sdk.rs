@@ -518,12 +518,10 @@ impl NativeSdks {
     }
 
     fn remember_binding(&self, target: &Value, active: bool) -> Result<(), String> {
-        if !cfg!(unix)
-            || !matches!(
-                target["source"].as_str(),
-                Some("agy" | "claude" | "codebuddy" | "droid" | "grok" | "kiro")
-            )
-        {
+        if !matches!(
+            target["source"].as_str(),
+            Some("agy" | "claude" | "codebuddy" | "droid" | "grok" | "kiro")
+        ) {
             return Ok(());
         }
         let mut rows = self.bindings.lock().expect("SDK bindings");
@@ -910,7 +908,8 @@ impl NativeSdks {
                 "resume": true,
                 "stream": true,
                 "rename": true,
-                "interrupt": cfg!(unix),
+                "interrupt": true,
+                "steer": true,
                 "respond": false,
                 "approvals": false,
                 "questions": false,

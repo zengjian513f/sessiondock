@@ -148,10 +148,11 @@ class NativeQueueFixture:
     def alive(pid):
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:
+            stat = Path('/proc') / str(pid) / 'stat'
+            return stat.read_text().rsplit(')', 1)[1].split()[0] != 'Z'
+        except (FileNotFoundError, ProcessLookupError):
+            # The private process may disappear between kill(0) and reading stat.
             return False
-        stat = Path('/proc') / str(pid) / 'stat'
-        return not stat.exists() or stat.read_text().rsplit(')', 1)[1].split()[0] != 'Z'
 
     def wait_exited(self, pid):
         deadline = time.monotonic() + 5

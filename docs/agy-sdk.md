@@ -2,7 +2,8 @@
 
 `agy_sdk::Bridge` 使用 Agy 的 headless NDJSON 协议，不使用 PTY、不模拟
 Codex app-server、不写原生数据库或只读镜像。原生读模型合同见 [agy.md](agy.md)。
-当前实现范围为 Linux；其他平台返回未启用，避免宣称具备尚未验证的外部占用检查。
+Linux、macOS 与 Windows 使用同一协议适配器；配置持久目录时由独立 SDK 宿主持有进程，
+重连附着原实例。外部数据库占用使用各平台的只读文件持有者证据。
 
 ## 原生机制与证据
 
@@ -96,8 +97,9 @@ invocation，保持同一 `stream-json` 回合、同一 PID/SID 及显式 `--mod
 因此当前尚不等同于 TUI Esc 后立即开始下一轮。此差距记录在 [TODO](../TODO.md)。
 取消终态保留运行时，待原生回执到达后新输入复用同 PID/SID。离开页面不停止任务。
 
-独立 TUI 不共享这个 headless 运行时。打开及每轮发送前检查原生数据库的 fd/inode
-占用，排除本桥接持有的子进程；发现外部持有者即报 `agy_sdk_session_busy`，
+独立 TUI 不共享这个 headless 运行时。打开及每轮发送前检查原生数据库的文件占用：
+Linux 使用 fd/inode，macOS 使用 lsof，Windows 使用 Restart Manager。排除本桥接
+持有的进程（macOS/Windows 同时排除其后代）；发现外部持有者即报 `agy_sdk_session_busy`，
 不杀进程、不接管。该检查没有跨独立 CLI 的原子租约，无法防止外部 TUI 在检查后
 同时打开数据库；使用 SDK 时应先正常退出同一 SID 的独立 TUI。此限制不能表述为
 支持原生共享写入或完整互斥保证。其他 SID 不受影响。

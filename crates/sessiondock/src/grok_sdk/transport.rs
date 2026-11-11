@@ -51,13 +51,7 @@ pub(super) fn save(path: &Path, value: &impl serde::Serialize) -> io::Result<()>
     result
 }
 pub(super) fn private_dir(path: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
+    crate::sdk_common::private_dir(path)
 }
 pub(super) struct Connection {
     legacy: Option<Arc<legacy::Connection>>,
@@ -431,8 +425,7 @@ async fn run(
     let outcome:Result<(),String>=async{loop{
         if shutdown.is_cancelled(){detached=true;return Ok(());}
         if connection.stop.is_cancelled()&&!signal_sent{
-            #[cfg(unix)]
-            {client.signal(libc::SIGKILL).await.map_err(error)?;}
+            client.signal(9).await.map_err(error)?;
             signal_sent=true;deliberate=true;
         }
         let entries=connection.journal.lock().unwrap().entries.clone();

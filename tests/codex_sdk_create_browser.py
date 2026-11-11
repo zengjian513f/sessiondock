@@ -207,6 +207,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--hub-binary", type=Path)
     parser.add_argument("--screenshots", type=Path)
+    parser.add_argument("--transport", choices=("unix", "ws"), default="unix")
     args = parser.parse_args()
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)
@@ -216,8 +217,12 @@ def main():
         corpus = build(root)
         port = free_port()
         environment = node_env(root, port, "127.0.0.0/8")
-        with FakeAppServer(root / "app.sock", corpus.paths["sdk"], THREAD) as fake:
-            with server(corpus, args.binary, root / "app.sock", environment) as base:
+        app_socket = "ws://127.0.0.1:0" if args.transport == "ws" else root / "app.sock"
+        token = "synthetic-codex-loopback-token" if args.transport == "ws" else None
+        if token:
+            environment["SESSIONDOCK_CODEX_APP_SERVER_TOKEN"] = token
+        with FakeAppServer(app_socket, corpus.paths["sdk"], THREAD, token=token) as fake:
+            with server(corpus, args.binary, fake.socket_path, environment) as base:
                 hub_root = root / "hub"
                 hub_root.mkdir()
                 node = SimpleNamespace(name="SdkNode", token=TOKEN, port=port)
