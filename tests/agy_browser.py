@@ -215,7 +215,7 @@ def run(browser, base, root):
         action = page.locator('#a-session-action')
         if not action.is_visible():
             page.locator('#a-more').click()
-        expect(action).to_have_attribute('aria-label', '删除会话')
+        expect(action).to_have_attribute('aria-label', '丢弃当前会话')
         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/discard') as discarded:
             action.click()
         assert discarded.value.status == 200, discarded.value.text()
