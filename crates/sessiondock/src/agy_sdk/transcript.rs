@@ -43,9 +43,22 @@ pub(super) async fn model(process: &ProcessConfig, sid: &str) -> Option<String> 
     crate::sessions::agy::transcript_model(&bytes)
 }
 
-/// Agy can retain an earlier stream error in its terminal result even after
-/// native recovery produced a complete response. This is conflicting evidence,
-/// not proof of SUCCESS and not a failed delivery.
+fn is_api_retry_error(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("API error (attempt ") else {
+        return false;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0
+        && rest[digits..]
+            .strip_prefix("): ")
+            .is_some_and(|reason| !reason.trim().is_empty())
+}
+
+/// Agy can retain an earlier stream or retried transport error in its terminal
+/// result even after native recovery produced a complete response. Stream
+/// interruptions remain conflicting evidence (`结果待核对`), whereas transient
+/// `API error (attempt N): ...` transport retries that subsequently finished a
+/// matching DONE planner response resolve as completed with diagnostics kept.
 pub(super) async fn conflicting_result(
     process: &ProcessConfig,
     live: &Live,
@@ -58,14 +71,14 @@ pub(super) async fn conflicting_result(
     if result["status"] != "ERROR" || error.trim().is_empty() {
         return json!({"conflict":false,"reason":"not_error"});
     }
+    let retry_error_target = is_api_retry_error(error);
     let (user_index, turn_user_steps) = {
         let data = live.data.lock().unwrap();
         let start = data
             .items
             .iter()
             .position(|item| item["request_id"] == turn.id && item["role"] == "user");
-        let user_index =
-            start.and_then(|idx| data.items[idx]["native"]["step_index"].as_u64());
+        let user_index = start.and_then(|idx| data.items[idx]["native"]["step_index"].as_u64());
         let steps: std::collections::HashSet<u64> = start
             .map(|idx| {
                 data.items[idx..]
@@ -90,6 +103,7 @@ pub(super) async fn conflicting_result(
     let mut error_seen = false;
     let mut final_response = None;
     let mut error_steps = Vec::new();
+    let mut retry_steps = Vec::new();
     let mut prior_error_step = None;
     let mut other_error_seen = false;
     let mut last_step = None;
@@ -99,7 +113,15 @@ pub(super) async fn conflicting_result(
         };
         if index <= user_index {
             if record["type"] == "ERROR_MESSAGE" {
-                prior_error_step = (record["error"] == error).then_some(index);
+                let record_error = record["error"].as_str().unwrap_or_default();
+                if record_error == error {
+                    prior_error_step = Some(index);
+                } else if !(retry_error_target
+                    && prior_error_step.is_some()
+                    && is_api_retry_error(record_error))
+                {
+                    prior_error_step = None;
+                }
             }
             continue;
         }
@@ -116,9 +138,14 @@ pub(super) async fn conflicting_result(
         final_response = None;
         if record["type"] == "ERROR_MESSAGE" && record["error"] == error {
             error_seen = true;
-            error_steps.push(record["step_index"].as_u64());
+            error_steps.push(index);
         } else if record["type"] == "ERROR_MESSAGE" {
-            other_error_seen = true;
+            let record_error = record["error"].as_str().unwrap_or_default();
+            if retry_error_target && is_api_retry_error(record_error) {
+                retry_steps.push(index);
+            } else {
+                other_error_seen = true;
+            }
         } else if (error_seen || prior_error_step.is_some())
             && record["type"] == "PLANNER_RESPONSE"
             && record["status"] == "DONE"
@@ -136,17 +163,22 @@ pub(super) async fn conflicting_result(
     });
     let historical_error =
         matches && !error_seen && !other_error_seen && prior_error_step.is_some();
+    let retried_error = retry_error_target && matches && error_seen && !other_error_seen;
     // Historical receipts are resolved by native identity and completion evidence,
-    // independent of wording. Current-turn recovery remains stream-specific.
+    // independent of wording. Current-turn recovery distinguishes mid-stream
+    // interruptions (`conflict`) from built-in `API error (attempt N)` retries.
     json!({"conflict":error == STREAM_ERROR && matches && error_seen && !other_error_seen,
         "historical_error":historical_error,
+        "retried_error":retried_error,
         "reason":if other_error_seen {"different_current_error"}
         else if historical_error {"historical_error_after_completed_response"}
+        else if retried_error {"retried_api_error_after_completed_response"}
         else if matches {"recovered_response_with_stale_error"}
         else if !error_seen && prior_error_step.is_none() {"missing_native_error"}
         else if final_response.is_none() {"missing_final_response"}
         else {"response_mismatch"},
-        "user_step":user_index,"error_steps":error_steps,"prior_error_step":prior_error_step,"last_step":last_step,
+        "user_step":user_index,"error_steps":error_steps,"retry_steps":retry_steps,
+        "prior_error_step":prior_error_step,"last_step":last_step,
         "final_response_bytes":final_response.as_ref().map(String::len),
         "response_suffix_matches":matches})
 }
@@ -155,6 +187,7 @@ pub(super) async fn conflicting_result(
 enum StepKind {
     UserInput,
     SystemMessage,
+    ErrorMessage,
     PlannerResponse,
 }
 
@@ -163,6 +196,7 @@ impl StepKind {
         match step_type {
             Some("user_input") => Self::UserInput,
             Some("system_message") => Self::SystemMessage,
+            Some("error_message") => Self::ErrorMessage,
             _ => Self::PlannerResponse,
         }
     }
@@ -171,6 +205,7 @@ impl StepKind {
         match record_type {
             Some("USER_INPUT") => Some(Self::UserInput),
             Some("SYSTEM_MESSAGE") => Some(Self::SystemMessage),
+            Some("ERROR_MESSAGE") => Some(Self::ErrorMessage),
             Some("PLANNER_RESPONSE") => Some(Self::PlannerResponse),
             _ => None,
         }
@@ -180,6 +215,7 @@ impl StepKind {
         match self {
             Self::UserInput => "USER_INPUT",
             Self::SystemMessage => "SYSTEM_MESSAGE",
+            Self::ErrorMessage => "ERROR_MESSAGE",
             Self::PlannerResponse => "PLANNER_RESPONSE",
         }
     }
@@ -333,7 +369,7 @@ impl Pending {
     pub fn observe(&mut self, step: &Value) {
         if matches!(
             step["step_type"].as_str(),
-            Some("user_input" | "agent_response" | "system_message")
+            Some("user_input" | "agent_response" | "system_message" | "error_message")
         ) && step["state"] == "DONE"
             && (step["step_type"] == "user_input"
                 || !step["text_delta"]
@@ -409,6 +445,17 @@ impl Pending {
                     let (text, fields) = crate::sessions::agy::system_message(text);
                     step["text"] = text.into();
                     step["system_fields"] = fields;
+                } else if kind == StepKind::ErrorMessage {
+                    let error_text = record["content"]
+                        .as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| {
+                            record["error"]
+                                .as_str()
+                                .filter(|value| !value.trim().is_empty())
+                        })
+                        .unwrap_or_default();
+                    step["text"] = process.redact(error_text).into();
                 } else {
                     assistant |= !text.is_empty();
                     step["text"] = text.into();

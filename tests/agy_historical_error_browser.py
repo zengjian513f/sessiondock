@@ -23,6 +23,11 @@ def exercise(browser, fixture, screenshots):
                 ('__MALFORMED_HISTORY__', False),
                 ('__RECOVERED_STREAM__', False), ('__HISTORICAL_ERROR__', True),
                 ('__HISTORICAL_WITH_CURRENT_ERROR__', False),
+                ('__RECOVERED_API_RETRY__', 'retried'),
+                ('__RECOVERED_API_MULTI_RETRY__', 'retried'),
+                ('__HISTORICAL_AFTER_MULTI_RETRY__', True),
+                ('__UNRECOVERED_API_RETRY__', False),
+                ('__API_RETRY_WITH_OTHER_ERROR__', False),
                 ('__MALFORMED_SEED__', False), ('__MALFORMED_HISTORY__', True),
             ]:
                 receipt = send(page, marker)
@@ -31,16 +36,38 @@ def exercise(browser, fixture, screenshots):
                 raw = page.evaluate('NativeSdkView.raw')
                 assert not raw.get('input_queue'), raw.get('input_queue')
                 assert fixture.entry(receipt['request_id'])['consumption'] == 'observed'
+                expect(page.locator('.sdk-live')).not_to_contain_text('"step_type"')
+                expect(page.locator('.sdk-live')).not_to_contain_text('附加信息 · error_message')
                 if success:
                     assert not raw.get('error'), raw.get('error')
                     assert raw['last_turn']['status'] == 'completed'
-                    assert 'prior turn; current native response completed' in raw['diagnostics']
+                    assert not any(
+                        item.get('id', '').startswith('agy:error:') for item in raw['items']
+                        if item.get('id') == f"agy:error:{receipt['request_id']}"
+                    )
+                    expected_diag = (
+                        'transient API retry recovered; current native response completed'
+                        if success == 'retried'
+                        else 'prior turn; current native response completed'
+                    )
+                    assert expected_diag in raw['diagnostics'], raw['diagnostics']
+                    expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('就绪')
+                    if marker == '__RECOVERED_API_MULTI_RETRY__':
+                        pictures(page, uid, screenshots, 'api-retry-recovered-folded')
+                        fold_btn = page.locator('.sdk-live > .turn-process.folded').last.get_by_role('button', name='展开本轮过程', exact=True)
+                        expect(fold_btn).to_be_visible()
+                        fold_btn.click()
+                        expect(page.locator('.sdk-live')).to_contain_text('API error (attempt 1):')
+                        expect(page.locator('.sdk-live')).to_contain_text('API error (attempt 2):')
+                        pictures(page, uid, screenshots, 'api-retry-recovered-expanded')
+                        page.locator('.sdk-live > .turn-process:not(.folded)').last.get_by_role('button', name='收起本轮过程', exact=True).click()
                 else:
                     assert raw.get('error'), marker
                     assert raw['error_kind'] == ('uncertain' if marker == '__RECOVERED_STREAM__' else 'turn')
                     expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text(
                         '结果待核对' if marker == '__RECOVERED_STREAM__' else '错误')
                 print(f'{marker}: historical={success}, delivery completed, native verdict checked', flush=True)
+            expect(page.locator('.sdk-live')).to_contain_text('原生瞬时 API 重试已恢复完成')
             expect(page.locator('.sdk-live')).to_contain_text('历史函数调用错误未污染本轮')
             pictures(page, uid, screenshots, 'historical-error', all_sizes=True)
             pid = fixture.native_pid()

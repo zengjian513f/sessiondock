@@ -199,6 +199,29 @@ for line in sys.stdin:
         step('agent_response',state='DONE');advance()
         result('ERROR',answer+'\n','The stream was interrupted. Please continue the task you were working on.')
         continue
+    if text in ('__RECOVERED_API_RETRY__', '__RECOVERED_API_MULTI_RETRY__',
+                '__HISTORICAL_AFTER_MULTI_RETRY__', '__UNRECOVERED_API_RETRY__',
+                '__API_RETRY_WITH_OTHER_ERROR__'):
+        retry_err1='API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": unexpected EOF'
+        retry_err2='API error (attempt 2): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": unexpected EOF'
+        if text!='__HISTORICAL_AFTER_MULTI_RETRY__':
+            native_record('ERROR_MESSAGE','',error=retry_err1)
+            step('error_message',state='DONE',duration_seconds=0);advance()
+        if text in ('__RECOVERED_API_MULTI_RETRY__','__UNRECOVERED_API_RETRY__'):
+            native_record('ERROR_MESSAGE','',error=retry_err2)
+            step('error_message',state='DONE',duration_seconds=0);advance()
+        if text=='__API_RETRY_WITH_OTHER_ERROR__':
+            other_err='model output error: model output must contain either output text or tool calls'
+            native_record('ERROR_MESSAGE','',error=other_err)
+            step('error_message',state='DONE',duration_seconds=0);advance()
+        if text=='__UNRECOVERED_API_RETRY__':
+            result('ERROR','',retry_err2)
+            continue
+        answer='本轮完整回复：原生瞬时 API 重试已恢复完成。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        result('ERROR','先前工具步骤\n'+answer+'\n',retry_err1)
+        continue
     if text in ('__RECOVERED_STREAM__', '__UNRECOVERED_STREAM__') or text.startswith('好，请在独立工作区'):
         error='The stream was interrupted. Please continue the task you were working on.'
         native_record('PLANNER_RESPONSE','正在核对审计结果。')

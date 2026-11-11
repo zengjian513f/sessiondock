@@ -782,15 +782,39 @@ async fn actor(
                                     runtime.transcript.observe(&event["step_update"]);
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                 } else if event["event"]=="result" {
+                                    runtime.transcript.refresh(&process,&live,&turn).await;
+                                    let value=&event["result"];
+                                    let status=value["status"].as_str().unwrap_or("INVALID");
+                                    let evidence=transcript::conflicting_result(&process,&live,&turn,value).await;
+                                    let conflict=evidence["conflict"]==true;
+                                    let historical_error=evidence["historical_error"]==true;
+                                    let retried_error=evidence["retried_error"]==true;
+                                    let recovered_ok=status=="SUCCESS" || historical_error || retried_error;
                                     log_turn("warn","agy.sdk.idle_result",&live,&turn,json!({
                                         "native_pid":runtime.native.as_ref().unwrap().pid(),
                                         "stdout_offset":runtime.native.as_ref().unwrap().stdout_offset,
-                                        "success":event["result"]["status"]=="SUCCESS",
-                                        "error_present":event["result"]["error"].is_string()}));
+                                        "success":status=="SUCCESS",
+                                        "conflict":conflict,
+                                        "historical_error":historical_error,
+                                        "retried_error":retried_error,
+                                        "effective_status":if recovered_ok {"SUCCESS"} else {"ERROR"},
+                                        "error_present":value["error"].is_string(),
+                                        "evidence":evidence}));
+                                    if historical_error {
+                                        live.diagnostic(format!("\nAgy idle result.status=ERROR (prior turn; current native response completed): {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                                    } else if retried_error {
+                                        live.diagnostic(format!("\nAgy idle result.status=ERROR (transient API retry recovered; current native response completed): {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                                    } else if conflict {
+                                        live.diagnostic(format!("\nAgy idle result.status=ERROR: {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                                    }
                                     let mut data=live.data.lock().unwrap();
-                                    if event["result"]["usage"].is_object() { data.usage=event["result"]["usage"].clone(); }
-                                    if event["result"]["status"]!="SUCCESS" {
-                                        data.error=Some(format!("agy_sdk_native_{}: {}",event["result"]["status"],process.redact(event["result"]["error"].as_str().unwrap_or("原生后台任务失败"))));
+                                    if value["usage"].is_object() { data.usage=value["usage"].clone(); }
+                                    if conflict {
+                                        data.error=Some("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
+                                        data.error_kind=Some("uncertain");
+                                    } else if !recovered_ok {
+                                        let detail=value["error"].as_str().filter(|text|!text.trim().is_empty()).unwrap_or("原生后台任务失败");
+                                        data.error=Some(format!("agy_sdk_native_{status}: {}",process.redact(detail)));
                                         data.error_kind=Some("turn");
                                     }
                                     live.publish(&mut data);
@@ -1199,23 +1223,28 @@ async fn execute(
                         let evidence=transcript::conflicting_result(process,live,turn,value).await;
                         let conflict=!interrupted && evidence["conflict"]==true;
                         let historical_error=!interrupted && evidence["historical_error"]==true;
+                        let retried_error=!interrupted && evidence["retried_error"]==true;
+                        let recovered_ok=status=="SUCCESS" || historical_error || retried_error;
                         log_turn(if status=="SUCCESS" {"info"} else {"warn"},"agy.sdk.result",live,turn,json!({
                             "native_pid":native.pid(),"stdout_offset":native.stdout_offset,
                             "status":match status {"SUCCESS"|"ERROR"|"INTERRUPTED"|"CANCELED"=>status,_=>"INVALID"},
                             "error_present":value["error"].is_string(),
                             "response_bytes":value["response"].as_str().map(str::len).unwrap_or(0),
                             "interrupted":interrupted,"saw_assistant":saw_assistant,
-                            "conflict":conflict,"historical_error":historical_error,
-                            "effective_status":if status=="SUCCESS" || historical_error {"SUCCESS"} else {"ERROR"},
+                            "conflict":conflict,"historical_error":historical_error,"retried_error":retried_error,
+                            "effective_status":if recovered_ok {"SUCCESS"} else {"ERROR"},
                             "evidence":evidence}));
                         if historical_error {
                             live.diagnostic(format!("\nAgy result.status=ERROR (prior turn; current native response completed): {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                        } else if retried_error {
+                            live.diagnostic(format!("\nAgy result.status=ERROR (transient API retry recovered; current native response completed): {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
                         }
                         if conflict {
                             live.diagnostic(format!("\nAgy result.status=ERROR: {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
                             return Err("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
                         }
-                        result=Some(if status=="SUCCESS" || historical_error {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
+                        let detail=value["error"].as_str().filter(|text|!text.trim().is_empty()).unwrap_or(status);
+                        result=Some(if recovered_ok {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(detail)))});
                         if turn.persistent {
                             if interrupted { return Err("agy_sdk_interrupted: 已取消当前 Agy 回合；子代理、后台任务及运行时保留。".into()); }
                             return result.take().unwrap();
@@ -1361,7 +1390,7 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
     }
     // A completed step notification need not carry any visible body. Its
     // transcript is authoritative; metadata alone is not an assistant message.
-    if matches!(kind, "agent_response" | "system_message")
+    if matches!(kind, "agent_response" | "system_message" | "error_message")
         && !step["text"].as_str().is_some_and(|text| !text.is_empty())
         && !step["text_delta"]
             .as_str()
@@ -1397,7 +1426,7 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
             index
         } else {
             let role = match kind {
-                "agent_response" => "assistant",
+                "agent_response" | "error_message" => "assistant",
                 "tool" => "tool",
                 _ => "system",
             };
@@ -1453,6 +1482,10 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
             if let Some(fields) = step["system_fields"].as_object() {
                 item.as_object_mut().unwrap().extend(fields.clone());
             }
+        } else if kind == "error_message" {
+            item["native_type"] = json!("ERROR_MESSAGE");
+            item["phase"] = json!("progress");
+            item["error"] = json!(true);
         } else if kind != "agent_response" {
             item["content"] = json!(step.to_string());
         }
