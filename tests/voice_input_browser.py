@@ -53,8 +53,8 @@ from session_global_actions_browser import click_action
 
 EXPECTED_OPENAI_MODELS = [
     "openai:gpt-live-transcribe",
-    "openai:gpt-4o-transcribe",
-    "openai:gpt-4o-mini-transcribe",
+    "openai:gpt-transcribe",
+    "openai:gpt-audio-1.5",
 ]
 EXPECTED_GOOGLE_MODELS = [
     "google:gemini-3.5-transcribe-live",
@@ -64,7 +64,7 @@ EXPECTED_GOOGLE_MODELS = [
 EXPECTED_OPENROUTER_MODELS = [
     "openrouter:qwen/qwen3.8-omni-flash",
     "openrouter:google/gemini-3.8-flash",
-    "openrouter:openai/gpt-audio-mini",
+    "openrouter:openai/gpt-audio",
     "openrouter:xiaomi/mimo-v2.6-flash",
 ]
 
@@ -195,7 +195,8 @@ class MockVoiceUpstream:
         self.ws_sessions: list[dict] = []
         self.or_mode = "normal"
         self.or_chunks = ["<transcript>", "OpenRouter ", "语音输入完成", "</transcript>"]
-        self.openai_http_deltas = ["OpenAI ", "GPT-4o ", "流式转写完成"]
+        self.openai_http_deltas = ["OpenAI ", "GPT Transcribe ", "流式转写完成"]
+        self.openai_chat_chunks = ["<transcript>", "OpenAI ", "GPT Audio 1.5 ", "多模态转写完成", "</transcript>"]
         self.google_http_chunks = ["<transcript>", "Google ", "Gemini 3.8 Flash ", "转写成功", "</transcript>"]
         self.openai_ws_live_deltas = ["边说话", "边出字"]
         self.openai_ws_final_suffix = "，实时完成！"
@@ -261,6 +262,26 @@ class MockVoiceUpstream:
                             self._send_sse({"type": "transcript.text.delta", "delta": d})
                             time.sleep(0.015)
                         self._send_sse({"type": "transcript.text.done", "text": "".join(deltas)})
+                        self._send_sse("[DONE]")
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    return
+
+                if self.path.startswith("/openai/v1/chat/completions"):
+                    payload = json.loads(raw.decode("utf-8"))
+                    with outer.lock:
+                        outer.http_requests.append({
+                            "provider": "openai_chat",
+                            "path": self.path,
+                            "auth": auth,
+                            "payload": payload,
+                        })
+                        chunks = list(outer.openai_chat_chunks)
+                    self._start_sse()
+                    try:
+                        for piece in chunks:
+                            self._send_sse({"choices": [{"delta": {"content": piece}}]})
+                            time.sleep(0.015)
                         self._send_sse("[DONE]")
                     except (BrokenPipeError, ConnectionResetError):
                         pass
@@ -338,6 +359,7 @@ class MockVoiceUpstream:
         self.port = self.server.server_address[1]
         self.openrouter_url = f"http://127.0.0.1:{self.port}/openrouter/v1/chat/completions"
         self.openai_transcribe_url = f"http://127.0.0.1:{self.port}/openai/v1/audio/transcriptions"
+        self.openai_chat_url = f"http://127.0.0.1:{self.port}/openai/v1/chat/completions"
         self.openai_realtime_url = f"ws://127.0.0.1:{self.port}/ws/openai?intent=transcription"
         self.google_api_base = f"http://127.0.0.1:{self.port}/google"
         self.google_realtime_url = f"ws://127.0.0.1:{self.port}/ws/google"
@@ -489,6 +511,7 @@ class MockVoiceUpstream:
             "openai": {
                 "api_key": "sk-test-openai-voice-key",
                 "transcribe_url": self.openai_transcribe_url,
+                "chat_url": self.openai_chat_url,
                 "realtime_url": self.openai_realtime_url,
             },
             "google": {
@@ -911,21 +934,51 @@ def test_three_providers_realtime_and_http(
             assert g_ws[0]["stream_ended"] is True
             assert_context_clean(g_ws[0]["context_text"])
 
-            # 5) OpenAI HTTP/SSE (`openai:gpt-4o-transcribe`)
-            select_provider_and_model(page, mic, "openai", "openai:gpt-4o-transcribe")
+            # Verify legacy 4o & mini aliases transparently upgrade to 2026 canonical IDs
+            alias_map = page.evaluate("""() => ({
+                oa4o: VoiceInput.validModelId('openai:gpt-4o-transcribe'),
+                oaMini: VoiceInput.validModelId('openai:gpt-4o-mini-transcribe'),
+                orMini: VoiceInput.validModelId('openrouter:openai/gpt-audio-mini'),
+                orBare: VoiceInput.validModelId('openai/gpt-audio-mini'),
+            })""")
+            assert alias_map == {
+                "oa4o": "openai:gpt-transcribe",
+                "oaMini": "openai:gpt-audio-1.5",
+                "orMini": "openrouter:openai/gpt-audio",
+                "orBare": "openrouter:openai/gpt-audio",
+            }, alias_map
+
+            # 5a) OpenAI HTTP/SSE (`openai:gpt-transcribe` via /v1/audio/transcriptions)
+            select_provider_and_model(page, mic, "openai", "openai:gpt-transcribe")
             expect(mic).to_have_attribute("data-voice-realtime", "false")
             upstream.clear()
             cinput.fill("")
             long_press_mic(page, mic, hold_ms=360)
-            expect(cinput).to_have_value("OpenAI GPT-4o 流式转写完成", timeout=8000)
+            expect(cinput).to_have_value("OpenAI GPT Transcribe 流式转写完成", timeout=8000)
             expect(mic).to_have_attribute("data-voice-state", "idle", timeout=5000)
             h_reqs = upstream.http_snapshot()
             assert len(h_reqs) == 1 and h_reqs[0]["provider"] == "openai", h_reqs
             assert h_reqs[0]["auth"] == "Bearer sk-test-openai-voice-key"
-            assert h_reqs[0]["model"] == "gpt-4o-transcribe"
+            assert h_reqs[0]["model"] == "gpt-transcribe"
             assert h_reqs[0]["stream"] == "true"
             assert_valid_16k_mono_wav_bytes(h_reqs[0]["file"])
             assert_context_clean(h_reqs[0]["prompt"])
+
+            # 5b) OpenAI Multimodal Audio (`openai:gpt-audio-1.5` via /v1/chat/completions)
+            select_provider_and_model(page, mic, "openai", "openai:gpt-audio-1.5")
+            expect(mic).to_have_attribute("data-voice-realtime", "false")
+            upstream.clear()
+            cinput.fill("")
+            long_press_mic(page, mic, hold_ms=360)
+            expect(cinput).to_have_value("OpenAI GPT Audio 1.5 多模态转写完成", timeout=8000)
+            expect(mic).to_have_attribute("data-voice-state", "idle", timeout=5000)
+            h_reqs = upstream.http_snapshot()
+            assert len(h_reqs) == 1 and h_reqs[0]["provider"] == "openai_chat", h_reqs
+            assert h_reqs[0]["auth"] == "Bearer sk-test-openai-voice-key"
+            assert h_reqs[0]["payload"]["model"] == "gpt-audio-1.5"
+            assert h_reqs[0]["payload"]["modalities"] == ["text"]
+            assert_valid_16k_mono_wav(extract_or_audio_b64(h_reqs[0]))
+            assert_context_clean(extract_or_prompt_text(h_reqs[0]))
 
             # 6) Google AI Studio HTTP/SSE (`google:gemini-3.8-flash`)
             select_provider_and_model(page, mic, "google", "google:gemini-3.8-flash")
@@ -942,7 +995,7 @@ def test_three_providers_realtime_and_http(
             assert_context_clean(g_parts[0]["text"])
             assert_valid_16k_mono_wav(g_parts[1]["inlineData"]["data"])
 
-            # 7) OpenRouter HTTP/SSE (`openrouter:qwen/qwen3.8-omni-flash`), slow abort & refusal filter
+            # 7) OpenRouter HTTP/SSE (`openrouter:qwen/qwen3.8-omni-flash`, `openrouter:xiaomi/mimo-v2.6-flash`), slow abort & refusal filter
             select_provider_and_model(page, mic, "openrouter", "openrouter:qwen/qwen3.8-omni-flash")
             upstream.clear()
             cinput.fill("")
@@ -951,7 +1004,19 @@ def test_three_providers_realtime_and_http(
             h_reqs = upstream.http_snapshot()
             assert len(h_reqs) == 1 and h_reqs[0]["provider"] == "openrouter", h_reqs
             assert h_reqs[0]["payload"]["model"] == "qwen/qwen3.8-omni-flash"
+            assert [m["role"] for m in h_reqs[0]["payload"]["messages"]] == ["system", "user"]
             assert_valid_16k_mono_wav(extract_or_audio_b64(h_reqs[0]))
+            assert_context_clean(extract_or_prompt_text(h_reqs[0]))
+
+            # MiMo v2.6 Flash merges system instructions into user block so input_audio never returns empty
+            select_provider_and_model(page, mic, "openrouter", "openrouter:xiaomi/mimo-v2.6-flash")
+            upstream.clear()
+            cinput.fill("")
+            long_press_mic(page, mic, hold_ms=360)
+            expect(cinput).to_have_value("OpenRouter 语音输入完成", timeout=8000)
+            h_reqs = upstream.http_snapshot()
+            assert len(h_reqs) == 1 and h_reqs[0]["payload"]["model"] == "xiaomi/mimo-v2.6-flash", h_reqs
+            assert [m["role"] for m in h_reqs[0]["payload"]["messages"]] == ["user"]
             assert_context_clean(extract_or_prompt_text(h_reqs[0]))
 
             # Slow SSE stream abort on click
@@ -996,7 +1061,7 @@ def test_three_providers_realtime_and_http(
             page.locator(".item").first.click()
             mic = page.locator("#composer [data-voice-input]")
             expect(mic).to_be_visible()
-            select_provider_and_model(page, mic, "openai", "openai:gpt-4o-mini-transcribe")
+            select_provider_and_model(page, mic, "openai", "openai:gpt-audio-1.5")
             upstream.clear()
             long_press_mic(page, mic, hold_ms=360)
             expect(mic).to_have_attribute("data-voice-state", "idle")
@@ -1096,12 +1161,12 @@ def exercise_sdk_dialogs_and_hub(
     bug_mic = page.locator("#bug-report-form [data-voice-input]")
     expect(bug_input).to_be_visible()
     expect(bug_mic).to_be_visible()
-    select_provider_and_model(page, bug_mic, "openai", "openai:gpt-4o-mini-transcribe")
+    select_provider_and_model(page, bug_mic, "openai", "openai:gpt-audio-1.5")
     expect(page.locator("#bug-report-dialog")).to_be_visible()
 
     upstream.clear()
     long_press_mic(page, bug_mic, hold_ms=360)
-    expect(bug_input).to_have_value("OpenAI GPT-4o 流式转写完成", timeout=8000)
+    expect(bug_input).to_have_value("OpenAI GPT Audio 1.5 多模态转写完成", timeout=8000)
     page.locator("#bug-report-dialog .modal-close").click()
 
     assert not errors, errors
@@ -1132,6 +1197,28 @@ def main() -> None:
             sdk_root = root / "sdk-hub"
             sdk_root.mkdir()
             voice_json = upstream.write_voice_json(sdk_root / "voice.json")
+            # Give Hub its OWN local voice.json pointing to an unroutable port (127.0.0.1:9)
+            # to mirror production where Hub has /srv/sessiondock-hub/etc/voice.json without
+            # login-shell proxy env, proving Hub routes BOTH WS /api/voice/realtime and
+            # POST /api/voice/transcribe to online VoiceNode instead of timing out locally!
+            hub_unroutable_voice = sdk_root / "hub-unroutable-voice.json"
+            hub_unroutable_voice.write_text(json.dumps({
+                "openai": {
+                    "api_key": "sk-hub-dead-local",
+                    "transcribe_url": "http://127.0.0.1:9/v1/audio/transcriptions",
+                    "chat_url": "http://127.0.0.1:9/v1/chat/completions",
+                    "realtime_url": "ws://127.0.0.1:9/v1/realtime",
+                },
+                "google": {
+                    "api_key": "AQ.hub-dead-local",
+                    "api_base": "http://127.0.0.1:9",
+                    "realtime_url": "ws://127.0.0.1:9/ws",
+                },
+                "openrouter": {
+                    "api_key": "sk-or-hub-dead-local",
+                    "api_url": "http://127.0.0.1:9/v1/chat/completions",
+                },
+            }), encoding="utf-8")
             with provider(
                 "codex",
                 sdk_root,
@@ -1144,9 +1231,7 @@ def main() -> None:
                 node_port = int(extra["SESSIONDOCK_NODE_BIND"].rsplit(":", 1)[1])
                 node_desc = SimpleNamespace(name="VoiceNode", token=TOKEN, port=node_port)
                 hub = Hub(args.binary.resolve().with_name("sessiondock-hub"), hub_root, [node_desc])
-                # Force Hub itself to have NO local voice config so it proxies BOTH WS /api/voice/realtime
-                # and POST /api/voice/transcribe to VoiceNode!
-                hub.env["SESSIONDOCK_VOICE_CONFIG"] = "off"
+                hub.env["SESSIONDOCK_VOICE_CONFIG"] = str(hub_unroutable_voice)
                 hub.env.pop("OPENROUTER_API_KEY", None)
                 hub.env.pop("OPENAI_API_KEY", None)
                 hub.env.pop("GEMINI_API_KEY", None)

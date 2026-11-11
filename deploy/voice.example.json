@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to deploy/voice.local.json (gitignored, chmod 600) and fill in real API keys. Never commit credentials.",
+  "_comment": "Copy to deploy/voice.local.json (gitignored, chmod 600) and fill in real API keys. Optional hub_proxy sets an HTTP CONNECT proxy for sessiondock-hub when no node is online and HTTPS_PROXY is unset. Never commit credentials or private addresses.",
   "openai": {
     "api_key": "<OPENAI_API_KEY>"
   },

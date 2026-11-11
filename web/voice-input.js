@@ -18,7 +18,7 @@ globalThis.VoiceInput = (() => {
   ]);
 
   const MODELS = Object.freeze([
-    // OpenAI
+    // OpenAI (2026 dedicated speech/audio generation; legacy 4o IDs map transparently)
     Object.freeze({
       id: 'openai:gpt-live-transcribe',
       provider: 'openai',
@@ -28,20 +28,22 @@ globalThis.VoiceInput = (() => {
       hint: '边说边出字 · OpenAI 原生实时转写',
     }),
     Object.freeze({
-      id: 'openai:gpt-4o-transcribe',
+      id: 'openai:gpt-transcribe',
+      legacyAliases: Object.freeze(['openai:gpt-4o-transcribe']),
       provider: 'openai',
       realtime: false,
-      label: 'GPT-4o Transcribe',
-      short: 'GPT-4o Transcribe',
-      hint: '高精语音识别 · 松手流式转写',
+      label: 'GPT Transcribe',
+      short: 'GPT Transcribe',
+      hint: '新一代语音识别 · 热词校准流式转写',
     }),
     Object.freeze({
-      id: 'openai:gpt-4o-mini-transcribe',
+      id: 'openai:gpt-audio-1.5',
+      legacyAliases: Object.freeze(['openai:gpt-4o-mini-transcribe']),
       provider: 'openai',
       realtime: false,
-      label: 'GPT-4o Mini Transcribe',
-      short: 'GPT-4o Mini',
-      hint: '轻量低延迟 · 松手流式转写',
+      label: 'GPT Audio 1.5',
+      short: 'GPT Audio 1.5',
+      hint: '原生多模态音频理解 · 复杂语境纠错',
     }),
     // Google AI Studio
     Object.freeze({
@@ -68,7 +70,7 @@ globalThis.VoiceInput = (() => {
       short: 'Gemini 4 Carbon',
       hint: '旗舰多模态复杂语境理解',
     }),
-    // OpenRouter (retaining legacy bare aliases for backward compatibility)
+    // OpenRouter (retaining legacy bare & mini aliases for backward compatibility)
     Object.freeze({
       id: 'openrouter:qwen/qwen3.8-omni-flash',
       legacyAlias: 'qwen/qwen3.8-omni-flash',
@@ -88,12 +90,12 @@ globalThis.VoiceInput = (() => {
       hint: 'OpenRouter 聚合多模态转写',
     }),
     Object.freeze({
-      id: 'openrouter:openai/gpt-audio-mini',
-      legacyAlias: 'openai/gpt-audio-mini',
+      id: 'openrouter:openai/gpt-audio',
+      legacyAliases: Object.freeze(['openai/gpt-audio', 'openrouter:openai/gpt-audio-mini', 'openai/gpt-audio-mini']),
       provider: 'openrouter',
       realtime: false,
-      label: 'GPT Audio Mini',
-      short: 'GPT Audio Mini',
+      label: 'GPT Audio',
+      short: 'GPT Audio',
       hint: 'OpenRouter 聚合原生语音模型',
     }),
     Object.freeze({
@@ -122,7 +124,11 @@ globalThis.VoiceInput = (() => {
   function findModelSpec(id) {
     const raw = String(id || '').trim();
     if (!raw) return null;
-    return MODELS.find(m => m.id === raw || m.legacyAlias === raw) || null;
+    return MODELS.find(m =>
+      m.id === raw
+      || m.legacyAlias === raw
+      || (Array.isArray(m.legacyAliases) && m.legacyAliases.includes(raw))
+    ) || null;
   }
 
   function resolveAvailableProviders(getProviders) {

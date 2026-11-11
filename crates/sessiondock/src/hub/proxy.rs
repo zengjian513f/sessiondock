@@ -710,6 +710,7 @@ pub async fn proxy(
                 | "/api/codex-sdk/models"
                 // Reports create and name a native SDK session before replying.
                 | "/api/bug-report"
+                | "/api/voice/transcribe"
         )
     {
         super::client::BULK_WRITE_TIMEOUT

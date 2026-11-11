@@ -321,10 +321,10 @@ DELTA：当 `voice_input` 能力开启时，独立语音组件 [voice-input.js](
 [voice-input.css](../web/voice-input.css) 在普通对话、SDK 对话、接续会话和报告问题四个输入栏的
 发送键左侧挂载话筒按钮（不耦合业务状态，供 SessionDock 与 MyTavern 等前端共用）：
 
-- **三家服务与模型选择（单击 `< 220ms`）**：弹出三栏分段标签（`OpenAI`、`Google`、`OpenRouter`），各自提供专属语音模型，并按 `voice_providers` 能力标注可用性：
-  - **OpenAI**：`openai:gpt-live-transcribe`（**实时**，默认）、`openai:gpt-4o-transcribe`、`openai:gpt-4o-mini-transcribe`。
+- **三家服务与模型选择（单击 `< 220ms`）**：向上弹出无标题面板，模型列表在上方、底部提供三栏分段标签（`OpenAI`、`Google`、`OpenRouter`），各自提供专属语音模型，并按 `voice_providers` 能力标注可用性：
+  - **OpenAI**：`openai:gpt-live-transcribe`（**实时**，默认）、`openai:gpt-transcribe`、`openai:gpt-audio-1.5`（兼容旧 `4o` 别名自动升级）。
   - **Google AI Studio**：`google:gemini-3.5-transcribe-live`（**实时**）、`google:gemini-3.8-flash`、`google:gemini-4-carbon`。
-  - **OpenRouter**：`openrouter:qwen/qwen3.8-omni-flash`、`openrouter:google/gemini-3.8-flash`、`openrouter:openai/gpt-audio-mini`、`openrouter:xiaomi/mimo-v2.6-flash`（兼容无前缀旧模型名）。
+  - **OpenRouter**：`openrouter:qwen/qwen3.8-omni-flash`、`openrouter:google/gemini-3.8-flash`、`openrouter:openai/gpt-audio`、`openrouter:xiaomi/mimo-v2.6-flash`（兼容无前缀及 `gpt-audio-mini` 旧模型名）。
   - 仅在用户显式选择模型时写入 `sessiondock.*`（Hub 为 `sessiondock.hub.*`）下的 `voiceModel` 键。
 - **实时流式听写（`realtime: true`，长按 `>= 220ms`）**：按住话筒即同时打开麦克风与 `GET /api/voice/realtime` WebSocket，将 16kHz 单声道 PCM 音频帧实时上行，展示专属 `.voice-live-card` 实时听写浮层（实时状态徽章、动态五柱声波、流式已确认文本与虚线过渡预览词、闪烁听写光标），并在说话过程中**边说边将文字写入输入框选区**、同步高度与草稿；上滑或按 `Escape` 取消时自动撤回本次已写入输入框的流式文字并恢复原选区；松手后发送 `commit` 完成尾句校准。
 - **分段流式转写（`realtime: false`，长按 `>= 220ms`）**：按住录音并显示紧凑录音状态条（上滑或 `Escape` 取消，静音自动拦截），松手后编码为 16kHz 单声道 WAV 发送至 `POST /api/voice/transcribe`，通过 SSE 流式插入按下时的光标选区；识别期间再次点击可中止请求。

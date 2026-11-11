@@ -284,7 +284,7 @@ pub struct HubApp {
 pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Result<HubApp> {
     let registry = Arc::new(open_registry(config)?);
     let client = Arc::new(Client::default());
-    let voice = crate::voice::VoiceService::from_env();
+    let voice = crate::voice::VoiceService::from_env_mode(true);
     let mut capabilities = hub_capabilities();
     if let Some(voice) = &voice {
         capabilities["voice_providers"] = json!(voice.configured_providers());
@@ -556,63 +556,46 @@ fn select_voice_node(
     explicit: Option<&str>,
     scoped_uid: Option<&str>,
     node_param: Option<&str>,
-    model: Option<&str>,
-    has_local_voice: bool,
 ) -> Option<String> {
-    let preferred = explicit
-        .map(str::to_string)
-        .or_else(|| {
-            scoped_uid
-                .filter(|uid| !uid.is_empty())
-                .and_then(|uid| namespace::split(uid, true).ok().map(|(nid, _)| nid))
-        })
+    let public = registry.public();
+    let is_online = |id: &str| -> bool {
+        public
+            .iter()
+            .any(|row| row["id"].as_str() == Some(id) && row["online"] == true)
+    };
+    if let Some(id) = explicit {
+        return is_online(id).then(|| id.to_string());
+    }
+    // Prefer a co-located loopback node (e.g. Lyra on 127.0.0.1:8741) for zero-hop
+    // streaming and native proxy environment, even when viewing a remote WAN session.
+    if let Some(loopback_id) = public.iter().find_map(|row| {
+        if row["online"] != true {
+            return None;
+        }
+        let id = row["id"].as_str()?;
+        let node = registry.find(id)?;
+        let target = registry.target(&node).ok()?;
+        target.addr.ip().is_loopback().then(|| id.to_string())
+    }) {
+        return Some(loopback_id);
+    }
+    let preferred = scoped_uid
+        .filter(|uid| !uid.is_empty())
+        .and_then(|uid| namespace::split(uid, true).ok().map(|(nid, _)| nid))
         .or_else(|| {
             node_param
                 .map(str::trim)
                 .filter(|nid| crate::hub::identity::is_node_id(nid))
                 .map(str::to_string)
         });
-    let wanted_provider = model.and_then(crate::voice::provider_for_model);
-    let public = registry.public();
-    let supports_provider = |row: &Value| -> bool {
-        if row["online"] != true || row["capabilities"]["voice_input"] != true {
-            return false;
-        }
-        let Some(provider) = wanted_provider else {
-            return true;
-        };
-        match row["capabilities"]["voice_providers"].as_array() {
-            Some(arr) => arr.iter().any(|v| v.as_str() == Some(provider)),
-            None => provider == "openrouter",
-        }
-    };
-    let has_voice =
-        |row: &Value| row["online"] == true && row["capabilities"]["voice_input"] == true;
-    let is_online = |row: &Value| row["online"] == true;
-    let pick = |pred: &dyn Fn(&Value) -> bool| -> Option<String> {
-        preferred
-            .as_deref()
-            .filter(|id| {
-                public
-                    .iter()
-                    .any(|row| row["id"].as_str() == Some(*id) && pred(row))
-            })
-            .map(str::to_string)
-            .or_else(|| {
-                public
-                    .iter()
-                    .find(|row| pred(row))
-                    .and_then(|row| row["id"].as_str())
-                    .map(str::to_string)
-            })
-    };
-    if let Some(nid) = pick(&supports_provider) {
-        return Some(nid);
+    if let Some(id) = preferred.filter(|id| is_online(id)) {
+        return Some(id);
     }
-    if has_local_voice {
-        return None;
-    }
-    pick(&has_voice).or_else(|| pick(&is_online))
+    public
+        .iter()
+        .find(|row| row["online"] == true)
+        .and_then(|row| row["id"].as_str())
+        .map(str::to_string)
 }
 
 async fn upgrade_local_realtime_ws(
@@ -833,15 +816,8 @@ async fn handle(
             .get("node")
             .and_then(|v| v.first())
             .map(String::as_str);
-        let model_str = body.get("model").and_then(Value::as_str);
-        if let Some(nid) = select_voice_node(
-            registry,
-            explicit.as_deref(),
-            scoped_uid,
-            node_param,
-            model_str,
-            state.voice.is_some(),
-        ) {
+        if let Some(nid) = select_voice_node(registry, explicit.as_deref(), scoped_uid, node_param)
+        {
             body.remove("uid");
             let node = registry
                 .find(&nid)
@@ -897,18 +873,8 @@ async fn handle(
             .get("node")
             .and_then(|v| v.first())
             .map(String::as_str);
-        let model_str = query
-            .get("model")
-            .and_then(|v| v.first())
-            .map(String::as_str);
-        if let Some(nid) = select_voice_node(
-            registry,
-            explicit.as_deref(),
-            scoped_uid,
-            node_param,
-            model_str,
-            state.voice.is_some(),
-        ) {
+        if let Some(nid) = select_voice_node(registry, explicit.as_deref(), scoped_uid, node_param)
+        {
             let mut forward_query = query.clone();
             forward_query.shift_remove("uid");
             forward_query.shift_remove("node");

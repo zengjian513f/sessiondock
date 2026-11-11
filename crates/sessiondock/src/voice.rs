@@ -36,6 +36,7 @@ use crate::error::ApiError;
 
 pub const DEFAULT_OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const DEFAULT_OPENAI_TRANSCRIBE_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
+pub const DEFAULT_OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_OPENAI_REALTIME_URL: &str =
     "wss://api.openai.com/v1/realtime?intent=transcription";
 pub const DEFAULT_GOOGLE_API_BASE: &str = "https://generativelanguage.googleapis.com";
@@ -85,88 +86,107 @@ impl VoiceProvider {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModelTransport {
+    RealtimeWs,
+    OpenAiMultipartStt,
+    OpenAiChatAudio,
+    GoogleGenerateContent,
+    OpenRouterChatAudio,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ModelSpec {
     canonical_id: &'static str,
-    legacy_alias: Option<&'static str>,
+    aliases: &'static [&'static str],
     provider: VoiceProvider,
     upstream_model: &'static str,
-    realtime: bool,
+    transport: ModelTransport,
+}
+
+impl ModelSpec {
+    const fn is_realtime(&self) -> bool {
+        matches!(self.transport, ModelTransport::RealtimeWs)
+    }
 }
 
 const MODEL_CATALOG: &[ModelSpec] = &[
-    // OpenAI
+    // OpenAI (2026 dedicated speech/audio generation; legacy 4o IDs map transparently)
     ModelSpec {
         canonical_id: "openai:gpt-live-transcribe",
-        legacy_alias: None,
+        aliases: &[],
         provider: VoiceProvider::OpenAi,
         upstream_model: "gpt-live-transcribe",
-        realtime: true,
+        transport: ModelTransport::RealtimeWs,
     },
     ModelSpec {
-        canonical_id: "openai:gpt-4o-transcribe",
-        legacy_alias: None,
+        canonical_id: "openai:gpt-transcribe",
+        aliases: &["openai:gpt-4o-transcribe"],
         provider: VoiceProvider::OpenAi,
-        upstream_model: "gpt-4o-transcribe",
-        realtime: false,
+        upstream_model: "gpt-transcribe",
+        transport: ModelTransport::OpenAiMultipartStt,
     },
     ModelSpec {
-        canonical_id: "openai:gpt-4o-mini-transcribe",
-        legacy_alias: None,
+        canonical_id: "openai:gpt-audio-1.5",
+        aliases: &["openai:gpt-4o-mini-transcribe"],
         provider: VoiceProvider::OpenAi,
-        upstream_model: "gpt-4o-mini-transcribe",
-        realtime: false,
+        upstream_model: "gpt-audio-1.5",
+        transport: ModelTransport::OpenAiChatAudio,
     },
     // Google AI Studio
     ModelSpec {
         canonical_id: "google:gemini-3.5-transcribe-live",
-        legacy_alias: None,
+        aliases: &[],
         provider: VoiceProvider::Google,
         upstream_model: "models/gemini-3.5-transcribe-live",
-        realtime: true,
+        transport: ModelTransport::RealtimeWs,
     },
     ModelSpec {
         canonical_id: "google:gemini-3.8-flash",
-        legacy_alias: None,
+        aliases: &[],
         provider: VoiceProvider::Google,
         upstream_model: "gemini-3.8-flash",
-        realtime: false,
+        transport: ModelTransport::GoogleGenerateContent,
     },
     ModelSpec {
         canonical_id: "google:gemini-4-carbon",
-        legacy_alias: None,
+        aliases: &[],
         provider: VoiceProvider::Google,
         upstream_model: "gemini-4-carbon",
-        realtime: false,
+        transport: ModelTransport::GoogleGenerateContent,
     },
-    // OpenRouter (with backward-compatible bare aliases)
+    // OpenRouter (with backward-compatible bare & legacy aliases)
     ModelSpec {
         canonical_id: "openrouter:qwen/qwen3.8-omni-flash",
-        legacy_alias: Some("qwen/qwen3.8-omni-flash"),
+        aliases: &["qwen/qwen3.8-omni-flash"],
         provider: VoiceProvider::OpenRouter,
         upstream_model: "qwen/qwen3.8-omni-flash",
-        realtime: false,
+        transport: ModelTransport::OpenRouterChatAudio,
     },
     ModelSpec {
         canonical_id: "openrouter:google/gemini-3.8-flash",
-        legacy_alias: Some("google/gemini-3.8-flash"),
+        aliases: &["google/gemini-3.8-flash"],
         provider: VoiceProvider::OpenRouter,
         upstream_model: "google/gemini-3.8-flash",
-        realtime: false,
+        transport: ModelTransport::OpenRouterChatAudio,
     },
     ModelSpec {
-        canonical_id: "openrouter:openai/gpt-audio-mini",
-        legacy_alias: Some("openai/gpt-audio-mini"),
+        canonical_id: "openrouter:openai/gpt-audio",
+        aliases: &[
+            "openai/gpt-audio",
+            "openrouter:openai/gpt-audio-mini",
+            "openai/gpt-audio-mini",
+        ],
         provider: VoiceProvider::OpenRouter,
-        upstream_model: "openai/gpt-audio-mini",
-        realtime: false,
+        upstream_model: "openai/gpt-audio",
+        transport: ModelTransport::OpenRouterChatAudio,
     },
     ModelSpec {
         canonical_id: "openrouter:xiaomi/mimo-v2.6-flash",
-        legacy_alias: Some("xiaomi/mimo-v2.6-flash"),
+        aliases: &["xiaomi/mimo-v2.6-flash"],
         provider: VoiceProvider::OpenRouter,
         upstream_model: "xiaomi/mimo-v2.6-flash",
-        realtime: false,
+        transport: ModelTransport::OpenRouterChatAudio,
     },
 ];
 
@@ -174,17 +194,15 @@ fn lookup_model(id: &str) -> Option<&'static ModelSpec> {
     let trimmed = id.trim();
     MODEL_CATALOG
         .iter()
-        .find(|spec| spec.canonical_id == trimmed || spec.legacy_alias == Some(trimmed))
-}
-
-pub fn provider_for_model(id: &str) -> Option<&'static str> {
-    lookup_model(id).map(|spec| spec.provider.as_str())
+        .find(|spec| spec.canonical_id == trimmed || spec.aliases.contains(&trimmed))
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct VoiceConfigFile {
     #[serde(default)]
     proxy: Option<String>,
+    #[serde(default)]
+    hub_proxy: Option<String>,
     #[serde(default)]
     openai: Option<OpenAiProviderFile>,
     #[serde(default)]
@@ -199,6 +217,8 @@ struct OpenAiProviderFile {
     api_key: String,
     #[serde(default)]
     transcribe_url: Option<String>,
+    #[serde(default)]
+    chat_url: Option<String>,
     #[serde(default)]
     realtime_url: Option<String>,
 }
@@ -225,6 +245,7 @@ struct OpenRouterProviderFile {
 struct OpenAiConfig {
     api_key: Arc<str>,
     transcribe_url: Arc<str>,
+    chat_url: Arc<str>,
     realtime_url: Arc<str>,
 }
 
@@ -945,6 +966,10 @@ fn append_url_key(base: &str, key: &str) -> String {
 
 impl VoiceService {
     pub fn from_env() -> Option<Arc<Self>> {
+        Self::from_env_mode(false)
+    }
+
+    pub fn from_env_mode(is_hub: bool) -> Option<Arc<Self>> {
         let cfg_env = read_nonempty_env("SESSIONDOCK_VOICE_CONFIG")
             .or_else(|| read_nonempty_env("VOICE_INPUT_CONFIG"));
         if cfg_env
@@ -975,6 +1000,7 @@ impl VoiceService {
         let explicit_url_override = read_nonempty_env("SESSIONDOCK_VOICE_API_URL").is_some()
             || read_nonempty_env("VOICE_INPUT_API_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_OPENAI_TRANSCRIBE_URL").is_some()
+            || read_nonempty_env("SESSIONDOCK_OPENAI_CHAT_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_OPENAI_REALTIME_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_GOOGLE_API_BASE").is_some()
             || read_nonempty_env("SESSIONDOCK_GOOGLE_REALTIME_URL").is_some();
@@ -1001,6 +1027,9 @@ impl VoiceService {
         let oa_transcribe_url = read_nonempty_env("SESSIONDOCK_OPENAI_TRANSCRIBE_URL")
             .or_else(|| clean_opt(oa_file.transcribe_url))
             .unwrap_or_else(|| DEFAULT_OPENAI_TRANSCRIBE_URL.to_string());
+        let oa_chat_url = read_nonempty_env("SESSIONDOCK_OPENAI_CHAT_URL")
+            .or_else(|| clean_opt(oa_file.chat_url))
+            .unwrap_or_else(|| DEFAULT_OPENAI_CHAT_URL.to_string());
         let oa_realtime_url = read_nonempty_env("SESSIONDOCK_OPENAI_REALTIME_URL")
             .or_else(|| clean_opt(oa_file.realtime_url))
             .unwrap_or_else(|| DEFAULT_OPENAI_REALTIME_URL.to_string());
@@ -1024,7 +1053,19 @@ impl VoiceService {
             return None;
         }
 
-        let proxy = clean_opt(file_cfg.proxy).map(Arc::<str>::from);
+        let has_env_proxy = read_nonempty_env("HTTPS_PROXY").is_some()
+            || read_nonempty_env("https_proxy").is_some()
+            || read_nonempty_env("HTTP_PROXY").is_some()
+            || read_nonempty_env("http_proxy").is_some();
+        let proxy = clean_opt(file_cfg.proxy)
+            .or_else(|| {
+                if is_hub && !has_env_proxy {
+                    clean_opt(file_cfg.hub_proxy)
+                } else {
+                    None
+                }
+            })
+            .map(Arc::<str>::from);
         let mut remote_builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(60));
@@ -1048,6 +1089,7 @@ impl VoiceService {
             openai: oa_key.map(|key| OpenAiConfig {
                 api_key: Arc::from(key),
                 transcribe_url: Arc::from(oa_transcribe_url),
+                chat_url: Arc::from(oa_chat_url),
                 realtime_url: Arc::from(oa_realtime_url),
             }),
             google: gg_key.map(|key| GoogleConfig {
@@ -1095,7 +1137,7 @@ impl VoiceService {
         } else if self.google.is_some() {
             lookup_model("google:gemini-3.8-flash")
         } else if self.openai.is_some() {
-            lookup_model("openai:gpt-4o-transcribe")
+            lookup_model("openai:gpt-transcribe")
         } else {
             None
         }
@@ -1134,7 +1176,7 @@ impl VoiceService {
             })?
         };
 
-        if spec.realtime {
+        if spec.is_realtime() {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "voice_realtime_required",
@@ -1188,8 +1230,8 @@ impl VoiceService {
             ));
         }
 
-        match spec.provider {
-            VoiceProvider::OpenRouter => {
+        match spec.transport {
+            ModelTransport::OpenRouterChatAudio => {
                 let cfg = self.openrouter.as_ref().ok_or_else(|| {
                     ApiError::new(
                         StatusCode::NOT_IMPLEMENTED,
@@ -1197,9 +1239,12 @@ impl VoiceService {
                         format!("未配置 {} API Key", spec.provider.display_name()),
                     )
                 })?;
-                self.transcribe_openrouter(
+                self.transcribe_chat_audio(
                     spec,
-                    cfg,
+                    &cfg.api_url,
+                    &cfg.api_key,
+                    true,
+                    false,
                     raw_b64,
                     format,
                     req.context.as_ref(),
@@ -1207,7 +1252,7 @@ impl VoiceService {
                 )
                 .await
             }
-            VoiceProvider::Google => {
+            ModelTransport::GoogleGenerateContent => {
                 let cfg = self.google.as_ref().ok_or_else(|| {
                     ApiError::new(
                         StatusCode::NOT_IMPLEMENTED,
@@ -1218,7 +1263,7 @@ impl VoiceService {
                 self.transcribe_google(spec, cfg, raw_b64, format, req.context.as_ref(), shutdown)
                     .await
             }
-            VoiceProvider::OpenAi => {
+            ModelTransport::OpenAiMultipartStt => {
                 let cfg = self.openai.as_ref().ok_or_else(|| {
                     ApiError::new(
                         StatusCode::NOT_IMPLEMENTED,
@@ -1236,6 +1281,28 @@ impl VoiceService {
                 )
                 .await
             }
+            ModelTransport::OpenAiChatAudio => {
+                let cfg = self.openai.as_ref().ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::NOT_IMPLEMENTED,
+                        "voice_provider_unconfigured",
+                        format!("未配置 {} API Key", spec.provider.display_name()),
+                    )
+                })?;
+                self.transcribe_chat_audio(
+                    spec,
+                    &cfg.chat_url,
+                    &cfg.api_key,
+                    false,
+                    true,
+                    raw_b64,
+                    format,
+                    req.context.as_ref(),
+                    shutdown,
+                )
+                .await
+            }
+            ModelTransport::RealtimeWs => unreachable!("realtime models rejected above"),
         }
     }
 
@@ -1286,46 +1353,69 @@ impl VoiceService {
         Ok(upstream)
     }
 
-    async fn transcribe_openrouter(
+    #[allow(clippy::too_many_arguments)]
+    async fn transcribe_chat_audio(
         &self,
         spec: &'static ModelSpec,
-        cfg: &OpenRouterConfig,
+        api_url: &str,
+        api_key: &str,
+        is_openrouter: bool,
+        include_text_modality: bool,
         raw_b64: &str,
         format: &str,
         context: Option<&VoiceContext>,
         shutdown: CancellationToken,
     ) -> Result<Response, ApiError> {
         let user_prompt = build_user_prompt(context);
-        let payload = json!({
-            "model": spec.upstream_model,
-            "stream": true,
-            "temperature": 0,
-            "messages": [
+        let audio_block = json!({
+            "type": "input_audio",
+            "input_audio": {
+                "data": raw_b64,
+                "format": format,
+            }
+        });
+        let messages = if spec.upstream_model.starts_with("xiaomi/") {
+            json!([
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": format!("{SYSTEM_PROMPT}\n\n{user_prompt}")},
+                        audio_block,
+                    ]
+                }
+            ])
+        } else {
+            json!([
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": user_prompt},
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": raw_b64,
-                                "format": format,
-                            }
-                        }
+                        audio_block,
                     ]
                 }
-            ]
+            ])
+        };
+        let mut payload = json!({
+            "model": spec.upstream_model,
+            "stream": true,
+            "messages": messages,
         });
+        if include_text_modality {
+            payload["modalities"] = json!(["text"]);
+        } else {
+            payload["temperature"] = json!(0);
+        }
 
-        let req = self
-            .client_for(&cfg.api_url)
-            .post(&*cfg.api_url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", cfg.api_key))
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("X-Title", "SessionDock Voice Input")
-            .json(&payload);
-        let mut upstream = self.send_upstream(req, &shutdown).await?;
+        let mut req = self
+            .client_for(api_url)
+            .post(api_url)
+            .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
+            .header(header::CONTENT_TYPE, "application/json");
+        if is_openrouter {
+            req = req.header("X-Title", "SessionDock Voice Input");
+        }
+        let mut upstream = self.send_upstream(req.json(&payload), &shutdown).await?;
         let canonical = spec.canonical_id.to_string();
 
         let stream = async_stream::stream! {
@@ -1693,7 +1783,7 @@ impl VoiceService {
             }
         } else {
             match lookup_model(&start.model) {
-                Some(s) if s.realtime => s,
+                Some(s) if s.is_realtime() => s,
                 _ => {
                     let _ = browser
                         .send(AxumWsMessage::Text(
