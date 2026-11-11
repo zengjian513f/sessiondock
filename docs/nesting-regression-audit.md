@@ -8,6 +8,7 @@
 | 范围 | 对应实现与浏览器路径 |
 | --- | --- |
 | 本机 SDK 创建按 HTTP 调用者进程初始化附属 | `sdk_spawn_browser.py` 验证创建、回执、列表、重试、解除与普通浏览器新建 |
+| SSH 调用者新建 SDK 会话 | `sdk_ssh_spawn_browser.py` 的兼容采集和 resource-agent 两种模式验证请求等待期间的首次跨机归属、相同 SID 隔离、回执、Hub 树形、退出和解除 |
 | 本地 exec / headless CLI 按进程证据自动附属 | `codex_exec_nest_browser.py` 验证 detached dispatcher、后台发现、扫描、退出和重启 |
 | OpenCode 按启动者证据初始化附属 | `opencode_spawn_browser.py` 验证两类发起方、歧义目录、原生子代理和恢复旧会话 |
 | SSH 远程 CLI 按跨节点证据初始化附属 | resource-agent 与兼容采集路径都参与，只初始化尚未决定的父关系；`process_links_browser.py` 两种模式验证跨节点、同 SID 隔离、解除后重采样与重启 |

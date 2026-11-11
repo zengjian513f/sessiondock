@@ -149,7 +149,15 @@ Ordinary browser creation, Hub/proxy requests and requests without process evide
 remain independent; a successful create records that initial decision so another
 caller retrying its request ID cannot attach it later. No directory or prompt-text
 matching is used.
-Coverage: [SDK caller browser regression](../tests/sdk_spawn_browser.py).
+SSH-launched loopback SDK callers also use the coordinator's verified process
+binding, preserving the remote parent node ID. When the caller's ancestry exposes
+an SSH connection but no local parent, creation waits up to five seconds for that
+binding while the client is alive. The socket owner, ancestor process incarnations
+and boot ID must still match; an SSH tuple alone is never a parent. An unavailable
+coordinator or an unobserved/ambiguous origin leaves creation independent. Local
+owning sessions take precedence over a more distant SSH initiator.
+Coverage: [SDK caller browser regression](../tests/sdk_spawn_browser.py) and
+[SSH SDK caller regression](../tests/sdk_ssh_spawn_browser.py).
 
 Verified SSH initiators also initialize the same parent, with the remote node ID.
 The originating SSH socket must have been observed while it existed. A detached

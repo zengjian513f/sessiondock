@@ -2,10 +2,11 @@
 //! Shared SDK daemons cannot supply per-request ancestry after creation.
 use super::procscan::SessionRow;
 use crate::{error::ApiError, metadata::NestParent, state::AppState};
-use process_links::linux;
+use process_links::{Process, linux};
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
+    time::Duration,
 };
 
 pub struct Initiator {
@@ -27,8 +28,10 @@ pub async fn capture(
         return Ok(None);
     };
     let rows = SessionRow::from_list(&document);
+    let root = scanner.root().to_path_buf();
+    // Capture the HTTP client before asking the coordinator for SSH evidence.
     // Process observation failure must not prevent an otherwise valid create.
-    Ok(tokio::task::spawn_blocking(move || {
+    let observed = tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(scanner.root());
         let owners = linux::local_socket_owners(scanner.root(), peer, &snapshot);
         let [owner] = owners.as_slice() else {
@@ -54,11 +57,15 @@ pub async fn capture(
         let mut pid = owner.pid;
         let mut seen = BTreeSet::new();
         let mut parent = None;
+        let mut lineage = Vec::new();
+        let mut ssh = false;
         while pid > 1 && seen.insert(pid) {
             let entry = snapshot.entries.get(&pid)?;
             if entry.shared_parent {
                 break;
             }
+            lineage.push(entry.process.clone());
+            ssh |= entry.connection.is_some();
             parent = by_pid
                 .get(&pid)
                 .and_then(|uid| rows.iter().find(|r| r.uid.as_str() == uid.as_str()))
@@ -74,25 +81,76 @@ pub async fn capture(
             }
             pid = entry.parent;
         }
-        let parent = parent?;
+
         if !linux::identity(scanner.root(), owner.pid).is_some_and(|(p, _)| p == *owner) {
             return None;
         }
-        Some(Initiator {
-            parent: NestParent {
+        Some((
+            parent.map(|parent| NestParent {
                 node_id: None,
                 source: parent.source.clone(),
                 sid: parent.sid.clone(),
-            },
-            identities: rows
-                .into_iter()
+            }),
+            lineage,
+            ssh,
+            snapshot.boot_id,
+            rows.into_iter()
                 .map(|r| ((r.source, r.sid), r.uid))
                 .collect(),
-        })
+        ))
     })
     .await
     .ok()
-    .flatten())
+    .flatten();
+    let Some((parent, lineage, ssh, boot_id, identities)) = observed else {
+        return Ok(None);
+    };
+    let parent = if parent.is_some() {
+        parent
+    } else if ssh && state.local_node_id.is_some() {
+        // A short SSH dispatcher stays alive waiting for this HTTP reply. Give
+        // the existing fleet coordinator time to observe both socket endpoints;
+        // never turn SSH_CONNECTION alone into a session identity.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let caller = lineage.first()?;
+                if !same_process(&root, caller) {
+                    return None;
+                }
+                if let Ok(report) = super::process_links::report(state).await
+                    && report.boot_id == boot_id
+                    && report.supported
+                {
+                    for process in &lineage {
+                        if let Some(binding) =
+                            report.bindings.iter().find(|b| b.process == *process)
+                            && Some(binding.session.node_id.as_str())
+                                != state.local_node_id.as_deref()
+                            && same_process(&root, caller)
+                            && same_process(&root, process)
+                        {
+                            return Some(NestParent {
+                                node_id: Some(binding.session.node_id.clone()),
+                                source: binding.session.source.clone(),
+                                sid: binding.session.sid.clone(),
+                            });
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    Ok(parent.map(|parent| Initiator { parent, identities }))
+}
+
+fn same_process(root: &std::path::Path, process: &Process) -> bool {
+    linux::identity(root, process.pid).is_some_and(|(current, _)| current == *process)
 }
 
 pub fn record(
