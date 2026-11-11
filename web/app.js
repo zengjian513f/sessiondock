@@ -2315,6 +2315,13 @@ function paintItemStatus(node) {
     : running;
 }
 
+function sessionBackgroundWorking(uid) {
+  if (!uid || !S.live.has(uid)) return false;
+  const row = indexedSessions().byUid.get(uid);
+  return S.liveWorking.has(uid) || row?.background > 0
+    || (row?.agent_items || []).some(item => agentRunning(uid, item));
+}
+
 /** 回合状态只在进程还在跑时区分：working = 正在轮转，waiting = 等你回答，idle = 停在输入框。
  *  正在看的会话用最新的对话 activity 和 CLI 画面（cli.instance.busy，docs/cli-state.md），
  *  其他行用列表的 turn（docs/read-model.md）。缺字段的旧节点返回空串，只显示运行点。 */
@@ -2327,7 +2334,7 @@ function sessionTurn(uid) {
   const busy = entry?.cli?.instance?.busy;
   if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
   // 主回合结束但后台子代理或后台任务（Monitor、后台命令）还在跑：会话在等它们，仍算轮转中。
-  if (state !== 'waiting' && (S.liveWorking.has(uid) || row?.background > 0 || (row?.agent_items || []).some(item => agentRunning(uid, item)))) state = 'working';
+  if (state !== 'waiting' && sessionBackgroundWorking(uid)) state = 'working';
   return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
 }
 const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
@@ -2505,6 +2512,7 @@ function paintLive() {
   const selected = S.sessions.find(x => x.uid === S.sel);
   if (selected) {
     renderSessionAction(selected);
+    if (SdkView.active === CodexSdkView && CodexSdkView.connected && CodexSdkView.pane) CodexSdkView.paintStatus();
     renderComposerInputStatus();
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }

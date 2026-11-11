@@ -905,6 +905,10 @@ const CodexSdkView = {
         parts.push('已中断' + (reason ? '：' + reason : ''));
         kind = 'warning';
       }
+      else if (!this.agent && sessionBackgroundWorking(this.uid)) {
+        parts.push('后台运行：主回合已结束，仍有后台任务或子代理运行；可以发送新消息。');
+        kind = 'working';
+      }
       else if (compact?.status === 'completed') parts.push('压缩完成');
       else parts.push('就绪');
     }
