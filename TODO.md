@@ -3,6 +3,11 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
+## Frontend delivery
+
+- [ ] Orion 补发工具过程警示修复 `c3ddda91`（BUG-20261111-113726-0d1e21）：
+  正式部署 SSH 探测超时，前端待恢复后补发。
+
 ## Droid integration
 
 - [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
