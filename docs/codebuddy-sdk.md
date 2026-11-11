@@ -32,9 +32,11 @@
 `rename`、`compact`、`fork`、`usage` 均不提供：CLI 没有对应控制请求，stream-json 中的
 `/rename` 会被当作普通提示词交给模型（已实测），因此桥接明确返回 `codebuddy_sdk_unsupported`，
 不把命令文本发给模型。`fast_mode`、MCP elicitation、user dialog、子代理均不支持。
-`shared_tui:false`：无法加入独立 TUI 正在使用的运行时；Linux 在首次连接和每次发送前复用
-procscan 检查 SID 与完整原生文件持有者，冲突返回 `codebuddy_sdk_session_busy`，
+`shared_tui:false`：无法加入独立 TUI 正在使用的运行时；Linux、macOS、Windows 在首次连接和每次发送前
+检查 SID 与完整原生文件持有者，排除 SDK 自有进程及后代，冲突返回 `codebuddy_sdk_session_busy`，
 不接管、不发信号。SDK 运行期间启动同一会话的 CLI 返回 `sdk_session_busy`。
+DELTA：macOS/Windows 通过[公共占用采集](native-sdk.md#sdk-writer-evidence)后可恢复已有会话；
+不增加同 cwd 或未知身份的全局拒绝。
 
 ## 协议事实（2.175.0 实测）
 

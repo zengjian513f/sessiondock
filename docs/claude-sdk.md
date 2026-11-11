@@ -145,11 +145,11 @@ stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
 effort、settings、permission_mode、fast_mode、usage、context_usage、compact、rename、fork、fork_before、
 mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
-无法加入一个独立 TUI 正在使用的 runtime。Linux 在首次连接和每次发送前
-复用既有 procscan，检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸
-Claude 进程，排除本桥接的进程树。发现冲突返回
-`claude_sdk_session_busy`，不接管、不发信号。其他平台因缺少这项观察能力，
-现有原生文件的首次恢复明确拒绝；新建桥接会话仍可使用。
+无法加入一个独立 TUI 正在使用的 runtime。Linux、macOS、Windows 在首次连接和每次发送前
+检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸 Claude 进程，排除本桥接的
+进程树。Linux 保留 procscan 的既有证据；其他平台使用[公共占用采集](native-sdk.md#sdk-writer-evidence)。
+发现冲突返回 `claude_sdk_session_busy`，不接管、不发信号。
+DELTA：macOS/Windows 已有会话恢复不再仅因平台返回 unsupported；仍须通过实际占用检查。
 
 进程观察是操作前采样，**不是 Claude 原生跨进程排他锁**，不能阻止另一个
 外部 TUI 在采样后启动。共享终端接入不得把本桥接进程当作可强杀的旧 TUI；

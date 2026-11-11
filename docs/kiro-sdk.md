@@ -87,7 +87,10 @@ RPC/写入 ID、待发送 frame、原生响应、回合归属及 stdout/stderr �
 
 普通查看读取自有缓存；未绑定受管宿主的本地 V3 历史按 [只读观测合同](kiro.md) 更新。
 官方 history 的默认响应未证实是完整历史，不能通过普通查看调用激活式 load；
-外部 ACP 活动时拒绝启动第二个实例。缓存投影与 live 检查点分开，历史
+外部 ACP 活动时拒绝启动第二个实例。DELTA：macOS/Windows 使用
+[公共占用采集](native-sdk.md#sdk-writer-evidence)核对显式 `--resume-id`，以及该进程
+打开的原生诊断日志中晚于进程启动的 ACP SID；排除自有进程和后代。
+不因无 SID 的其他 Kiro 进程或同 cwd 拒绝所有会话。缓存投影与 live 检查点分开，历史
 分页不移动 live 游标。
 
 ## 运行中引导

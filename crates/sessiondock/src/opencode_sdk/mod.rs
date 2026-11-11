@@ -859,65 +859,26 @@ impl Bridge {
     /// A default TUI joins the shared service. Private runtimes cannot be
     /// interrupted/controlled through it. Never kill or take over those writers.
     async fn check_runtime(&self, sid: &str, cwd: &Path) -> Result<(), String> {
-        #[cfg(target_os = "linux")]
-        {
-            let proc_root = self.proc_root.clone();
-            let sid = sid.to_owned();
-            let cwd = cwd.to_path_buf();
-            tokio::task::spawn_blocking(move || {
-                let entries = std::fs::read_dir(&proc_root)
-                    .map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?;
-                for entry in entries.flatten() {
-                    if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
-                        continue;
-                    }
-                    let path = entry.path();
-                    let Ok(bytes) = std::fs::read(path.join("cmdline")) else {
-                        continue;
-                    };
-                    let args: Vec<_> = bytes
-                        .split(|b| *b == 0)
-                        .filter_map(|b| std::str::from_utf8(b).ok())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if !args.iter().take(3).any(|a| {
-                        Path::new(a)
-                            .file_name()
-                            .is_some_and(|n| n == "opencode" || n == "opencode.exe")
-                    }) {
-                        continue;
-                    }
-                    let independent = args.iter().any(|a| {
-                        *a == "--standalone" || *a == "--server" || a.starts_with("--server=")
-                    });
-                    if !independent {
-                        continue;
-                    }
-                    let same_sid = !sid.is_empty()
-                        && (args
-                            .windows(2)
-                            .any(|a| (a[0] == "--session" || a[0] == "-s") && a[1] == sid)
-                            || args
-                                .iter()
-                                .any(|a| a.strip_prefix("--session=") == Some(sid.as_str())));
-                    let same_cwd = std::fs::read_link(path.join("cwd"))
-                        .ok()
-                        .is_some_and(|p| p == cwd);
-                    if same_sid || same_cwd {
-                        return Err("此 OpenCode 会话可能由独立 --standalone/--server runtime 写入；SDK 仅共享默认原生服务，不接管或终止独立 TUI".into());
-                    }
+        let proc_root = self.proc_root.clone();
+        let sid = sid.to_owned();
+        let cwd = cwd.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let snapshot = crate::sdk_common::writers::snapshot(&proc_root, &[])?;
+            for process in &snapshot.processes {
+                if !process.is_cli("opencode") { continue; }
+                let independent = process.args.iter().any(|arg|
+                    arg == "--standalone" || arg == "--server" || arg.starts_with("--server="));
+                if !independent { continue; }
+                let same_sid = !sid.is_empty()
+                    && process.option(&["--session", "-s"]) == Some(sid.as_str());
+                if same_sid || process.same_cwd(&cwd) {
+                    return Err("此 OpenCode 会话可能由独立 --standalone/--server runtime 写入；SDK 仅共享默认原生服务，不接管或终止独立 TUI".into());
                 }
-                Ok(())
-            })
-            .await
-            .map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (sid, cwd);
+            }
             Ok(())
-        }
+        }).await.map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?
     }
+
 }
 
 fn capabilities() -> Value {

@@ -338,10 +338,35 @@ impl Bridge {
                 return Err("codebuddy_sdk_session_busy: an independent CodeBuddy process owns this SID/path; stream-json cannot share that runtime (shared_tui:false). Stop it explicitly before SDK resume; no takeover was attempted.".into());
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        if session.path.is_file() && lock(&session.live).outbound.is_none() {
-            return Err("codebuddy_sdk_unsupported: independent CodeBuddy writer detection is unavailable on this platform; existing-session SDK resume cannot safely share a TUI (shared_tui:false)".into());
+        if cfg!(not(target_os = "linux")) || self.proc_root.join("sdk-writers.json").is_file() {
+            let root = self.proc_root.clone();
+            let sid = session.sid.clone();
+            let path = session.path.clone();
+
+            let own_pids: std::collections::BTreeSet<_> = lock(&self.state)
+                .sessions
+                .values()
+                .filter_map(|session| lock(&session.live).pid)
+                .collect();
+            let conflict = tokio::task::spawn_blocking(move || {
+                let snapshot =
+                    crate::sdk_common::writers::snapshot(&root, std::slice::from_ref(&path))?;
+                Ok::<_, String>(snapshot.processes.iter().any(|process| {
+                    !snapshot.owns(process.pid, &own_pids)
+                        && (process.holds(&path)
+                            || ((process.is_cli("codebuddy")
+                                || process.is_cli("codebuddy-code")
+                                || process.is_cli("cbc"))
+                                && process.session_matches(&sid, &path)))
+                }))
+            })
+            .await
+            .map_err(|e| format!("codebuddy_sdk: writer observation failed: {e}"))??;
+            if conflict {
+                return Err("codebuddy_sdk_session_busy: an independent CodeBuddy process owns this SID/path; stop it explicitly before SDK resume (shared_tui:false). No takeover was attempted.".into());
+            }
         }
         Ok(())
     }
+
 }

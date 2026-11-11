@@ -175,7 +175,7 @@ fn parse_json(text: &str) -> Result<Value, String> {
 
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
-        "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
+        "models":true,"create":true,"resume":cfg!(any(target_os="linux",target_os="macos",windows)),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":false,
         "usage":false,"context_usage":false,"compact":false,"rename":false,
         "fork":false,"fork_before":false,

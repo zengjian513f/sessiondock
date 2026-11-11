@@ -190,3 +190,24 @@ Grok 引导单独记录，不会在重启或失败后变为普通输入自动重
 排队及已接受工作持有原生订阅，避免闲置回收误杀任务。Grok/Claude 无订阅、任务、
 审批和原生控制等活动后经过十分钟才回收桥接子进程，重开恢复相同身份且不重发输入。
 Grok 尚未证明终结的引导和已观测后台任务保持租约；各来源的细节见其合同。
+
+
+## SDK writer evidence
+
+`sdk_common::writers` 只为 SDK 准入采集进程参数、父子关系、cwd 和指定文件的持有者，
+不提供通用进程列表或控制能力。适配器保留各自 SID、共享原生服务与文件占用语义；
+未知 cwd 不等于所有目录，未知 SID 不成为所有会话的锁。自有 PID 与多层后代排除，
+父进程启动时间晚于子进程时不把重用 PID 当成自有祖先。
+
+Linux 使用 proc；Claude/CodeBuddy 额外保留原有 procscan 的环境和文件证据。
+macOS 使用 `KERN_PROCARGS2` 的 argv（不读取环境内容）、libproc 启动时间和 lsof 的
+cwd/文件字段。Windows 使用 CIM 的命令行/父 PID、只读 PEB cwd 和 Restart Manager
+指定文件查询；不调用 shutdown/restart，不取 debug privilege。cwd 的 PEB 布局按
+64 位/WOW64 查询；无法读取时保留未知，不伪造目录。Kiro ACP 只使用进程实际打开的
+原生诊断日志和晚于进程启动的 SID 证据，Windows 从 launcher HOME（否则当前 HOME/USERPROFILE）的 `.kiro/logs` 定位候选日志。
+采集失败显示错误；采样不是原生排他锁，不能阻止检查之后新启动的独立 CLI。
+
+平台接口依据：[CIM Win32_Process](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-process)、
+[Restart Manager 文件查询](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/nf-restartmanager-rmregisterresources)。
+浏览器验证：[公共占用准入](../tests/sdk_writers_browser.py)、
+[Kiro](../tests/kiro_sdk_browser.py)、[OpenCode](../tests/opencode_sdk_browser.py)。

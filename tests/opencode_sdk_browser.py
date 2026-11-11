@@ -415,6 +415,12 @@ def main():
                     proc.mkdir()
                     (proc / 'cmdline').write_bytes(b'opencode\0--standalone\0--session\0' + SID.encode() + b'\0')
                     (proc / 'cwd').symlink_to(native.cwd)
+                    # The same decisions also consume Windows/macOS-shaped
+                    # snapshots; a default shared-service process stays allowed.
+                    portable = root / 'proc/sdk-writers.json'
+                    portable.write_text(json.dumps([{'pid': 12345, 'ppid': 1,
+                        'args': ['opencode.exe', '--standalone', '--session=' + SID],
+                        'cwd': str(native.cwd), 'files': []}]))
                     send('must not reach native')
                     page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='must not reach native' && row.state==='failed')")
                     refused = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='must not reach native')")
@@ -424,6 +430,7 @@ def main():
                     (proc / 'cmdline').unlink()
                     (proc / 'cwd').unlink()
                     proc.rmdir()
+                    portable.unlink()
                     if args.screenshot:
                         args.screenshot.parent.mkdir(parents=True, exist_ok=True)
                         for width in (1280,390,320):

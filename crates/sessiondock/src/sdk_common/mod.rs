@@ -2,6 +2,7 @@
 
 pub(crate) mod projection;
 pub(crate) mod usage;
+pub(crate) mod writers;
 
 use crate::lifecycle::launcher::CliProfile;
 use crate::sessions::native_json;
