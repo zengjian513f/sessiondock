@@ -314,3 +314,20 @@ DELTA：SDK 已连接且原生支持改名时，主会话标题可点击或用�
 名称长度；原生公共端点记录请求和结果，日志不记录标题正文或本机管理凭据。
 验收：[五种原生 SDK](../tests/native_sdk_rename_browser.py)、
 [Codex](../tests/codex_sdk_rename_browser.py)，覆盖节点／Hub、宽窄屏和明暗主题。
+
+## 语音输入
+
+DELTA：当 `voice_input` 能力开启时，独立语音组件 [voice-input.js](../web/voice-input.js) 与
+[voice-input.css](../web/voice-input.css) 在普通对话、SDK 对话、接续会话和报告问题四个输入栏的
+发送键左侧挂载话筒按钮：
+
+- **单击（`< 220ms`）**：弹出／收起模型菜单，可在 `qwen/qwen3.8-omni-flash`（默认）、
+  `google/gemini-3.8-flash`、`openai/gpt-audio-mini`、`xiaomi/mimo-v2.6-flash` 四个 OpenRouter
+  多模态模型间切换；仅在用户显式选择时将模型 ID 写入 `sessiondock.*`（Hub 为 `sessiondock.hub.*`）下的
+  `voiceModel` 键。
+- **长按（`>= 220ms`）**：按住录音并显示实时状态条（上滑或 `Escape` 取消，静音自动拦截），松手后编码为
+  16kHz 单声道 WAV 发送至 `POST /api/voice/transcribe`，流式将转写文本插入按下时的光标选区并同步草稿与高度；
+  识别期间再次点击可中止请求。
+- **上下文热词提取**：仅提取当前可见会话标题、光标前后草稿以及最近最多 6 条普通 `user` / `assistant`
+  对话正文，显式排除 `.tool-msg`、`.user-shell-command`、工具组（`.grp` / `.tool-group`）与回合过程折叠块
+  （`.turn-process`）。验收见 [语音输入](../tests/voice_input_browser.py)。

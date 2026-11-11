@@ -33,6 +33,7 @@ mod terminal;
 mod transfer;
 mod trash;
 mod trash_tree;
+mod voice;
 
 use axum::{
     Json, Router,
@@ -49,6 +50,7 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
     match path {
         "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
         "/api/bug-report" => bug_report::REPORT_BODY_LIMIT,
+        "/api/voice/transcribe" => voice::VOICE_BODY_LIMIT,
         "/api/session/star"
         | "/api/session/group"
         | "/api/groups"
@@ -297,6 +299,12 @@ pub fn router() -> Router<AppState> {
             "/bug-report/capture",
             post(bug_report::capture).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/bug-report/capture"),
+            )),
+        )
+        .route(
+            "/voice/transcribe",
+            post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/voice/transcribe"),
             )),
         );
     router

@@ -108,6 +108,11 @@ const SdkUI = {
     // Match the conversation editor: clicking SEND must not leave focus on a
     // disabled button while the request is pending.
     pane.querySelector('#sdk-send').onmousedown = event => event.preventDefault();
+    view.voiceInput?.destroy();
+    view.voiceInput = ConversationUI.mountVoiceInput(view.input, pane.querySelector('.cbtns'), {
+      beforeElement: pane.querySelector('#sdk-send'),
+      getUid: () => view.uid || '',
+    });
     this.bindSteerSend(view);
     for (const kind of ['model', 'effort']) {
       pane.querySelector(`#sdk-${kind}`).onchange = async event => {
@@ -186,6 +191,7 @@ const SdkUI = {
   },
 
   closeToolbar(view) {
+    view.voiceInput?.destroy(); view.voiceInput = null;
     view.steerSend?.controller.abort(); view.steerSend = null;
     view.toolbarObserver?.disconnect(); view.toolbarObserver = null;
     view.toolbarBindings?.abort(); view.toolbarBindings = null;

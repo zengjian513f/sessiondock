@@ -56,6 +56,7 @@ pub(crate) mod terminal;
 pub mod transfer;
 pub(crate) mod trash;
 pub(crate) mod ui_events;
+pub mod voice;
 
 use std::{io, sync::Arc};
 
@@ -421,6 +422,8 @@ fn build_app(
                 || config.roots.grok.is_some()
                 || config.roots.droid.is_some())
     );
+    let voice = voice::VoiceService::from_env();
+    capabilities["voice_input"] = serde_json::json!(voice.is_some());
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(assets::Assets::load(
         &config.web_dir,
@@ -612,6 +615,7 @@ fn build_app(
         cleanup_counts: Arc::new(cleanup::Counts::default()),
         transfer,
         shell_env,
+        voice,
         opencode_root,
         agy_home: config.agy_home.clone(),
         agy_root: config.roots.agy.clone(),

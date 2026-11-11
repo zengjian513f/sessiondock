@@ -185,4 +185,122 @@ const ConversationUI = {
       });
     });
   },
+
+  voiceEnabled() {
+    if (typeof VoiceInput !== 'object' || !VoiceInput) return false;
+    if (typeof SessionDockCapabilities === 'object' && SessionDockCapabilities) {
+      if (SessionDockCapabilities.config?.read_only === true) return false;
+      if (!SessionDockCapabilities.allows('voice_input')) return false;
+    }
+    return true;
+  },
+
+  voiceStoragePrefix() {
+    if (typeof STORAGE_PREFIX === 'string' && STORAGE_PREFIX) return STORAGE_PREFIX;
+    return (typeof SessionDockCapabilities === 'object' && SessionDockCapabilities?.namespace) || 'sessiondock.';
+  },
+
+  voiceModel() {
+    try {
+      const raw = SessionDockCapabilities.stored('voiceModel', this.voiceStoragePrefix());
+      return raw ? JSON.parse(raw) : VoiceInput.DEFAULT_MODEL;
+    } catch {
+      return VoiceInput.DEFAULT_MODEL;
+    }
+  },
+
+  setVoiceModel(id) {
+    try {
+      localStorage.setItem(this.voiceStoragePrefix() + 'voiceModel', JSON.stringify(id));
+    } catch {}
+  },
+
+  collectVoiceContext() {
+    const sdkActive = typeof SessionContentView === 'object'
+      && SessionContentView?.kind === 'sdk'
+      && typeof SdkView === 'object'
+      && SdkView?.box?.isConnected;
+    const box = sdkActive ? SdkView.box : document.querySelector('#msgs');
+    const messages = [];
+    if (box && box.isConnected && !box.hidden && !box.classList.contains('hidden')) {
+      const nodes = box.querySelectorAll('.msg');
+      for (const node of nodes) {
+        const role = node.dataset.role || '';
+        if (role !== 'user' && role !== 'assistant' && role !== 'assistant·subagent') continue;
+        if (node.classList.contains('tool-msg') || node.classList.contains('user-shell-command')) continue;
+        if (node.closest('.turn-process, .turn-process-body, .grp, .tool-group, .sdk-tool-group, .silent-tool-result, [hidden], .hidden')) continue;
+        const raw = typeof node._messageData?.text === 'string'
+          ? node._messageData.text
+          : (node.querySelector('.mb')?.innerText || '');
+        const trimmed = String(raw || '').trim();
+        if (!trimmed) continue;
+        messages.push({
+          role: role === 'user' ? 'user' : 'assistant',
+          text: trimmed.length > 600 ? trimmed.slice(-600) : trimmed,
+        });
+      }
+    }
+    const continueRef = document.querySelector('#new-session-dialog[open] #continue-session-reference:not([hidden])')?.textContent?.trim() || '';
+    const sessionTitle = document.querySelector('#a-session-title')?.textContent?.trim() || '';
+    return {
+      title: continueRef || sessionTitle,
+      messages: messages.slice(-6),
+    };
+  },
+
+  mountVoiceInput(input, buttonHost, {beforeElement = null, getUid = null} = {}) {
+    if (!this.voiceEnabled() || !input || !buttonHost) return null;
+    return VoiceInput.attach({
+      input,
+      buttonHost,
+      beforeElement,
+      endpoint: '/api/voice/transcribe',
+      getModel: () => this.voiceModel(),
+      setModel: id => this.setVoiceModel(id),
+      getContext: () => this.collectVoiceContext(),
+      getRequestExtra: () => {
+        const uid = typeof getUid === 'function' ? String(getUid() || '').trim() : '';
+        return uid ? {uid} : {};
+      },
+      getHeaders: () => {
+        const headers = {};
+        if (typeof AUDIT_PAGE_ID === 'string' && AUDIT_PAGE_ID) headers['X-SessionDock-Page'] = AUDIT_PAGE_ID;
+        if (typeof BUILD_ID === 'string' && BUILD_ID) headers['X-SessionDock-Build'] = BUILD_ID;
+        return headers;
+      },
+    });
+  },
+
+  mountStaticVoiceInputs() {
+    if (!this.voiceEnabled()) return;
+    const bindings = [
+      {
+        input: document.querySelector('#cinput'),
+        host: document.querySelector('#composer .cbtns'),
+        before: document.querySelector('#csend'),
+        getUid: () => (typeof composerUid === 'string' && composerUid) || (typeof S === 'object' && S?.sel) || '',
+      },
+      {
+        input: document.querySelector('#continue-session-description'),
+        host: document.querySelector('#continue-session-composer .cbtns'),
+        before: document.querySelector('#continue-session-go'),
+        getUid: () => (typeof newContinueOrigin === 'object' && newContinueOrigin?.uid) || (typeof S === 'object' && S?.sel) || '',
+      },
+      {
+        input: document.querySelector('#bug-report-description'),
+        host: document.querySelector('#bug-report-form .report-composer .cbtns'),
+        before: document.querySelector('#bug-report-go'),
+        getUid: () => (typeof S === 'object' && S?.sel) || '',
+      },
+    ];
+    for (const item of bindings) {
+      if (!item.input || !item.host || item.host.querySelector('[data-voice-input]')) continue;
+      this.mountVoiceInput(item.input, item.host, {
+        beforeElement: item.before,
+        getUid: item.getUid,
+      });
+    }
+  },
 };
+
+ConversationUI.mountStaticVoiceInputs();

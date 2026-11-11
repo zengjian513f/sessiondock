@@ -70,3 +70,6 @@
 - 删除了用户消息下的「回到此处」和固定显示通知里的「取消固定」：它们只改网页显示，
   CLI 不回滚，容易误解。`POST api/session/rewind` 一并移除；已存的这类固定不再生效。
   Claude 在终端里自己回滚后，对话仍跟随显示到回滚点。
+- 输入栏新增独立可复用语音输入组件（`web/voice-input.js`、`web/voice-input.css`）：在 `voice_input`
+  能力启用时于普通对话、SDK、接续会话和报告问题四个输入框旁提供话筒按钮，单击切换四个 OpenRouter
+  多模态语音模型，长按录音并结合最近的 `user`/`assistant` 对话上下文（排除工具卡片与过程块）流式转写进草稿（见 `docs/sdk-ui.md#语音输入`）。

@@ -92,6 +92,9 @@ pub struct AppState {
     /// Login-shell environment drift (`SESSIONDOCK_SHELL_ENV_COMMAND`);
     /// `None` answers `/api/shell-env` with `configured: false`.
     pub shell_env: Option<Arc<crate::shell_env::ShellEnv>>,
+    /// OpenRouter multimodal voice transcription (`OPENROUTER_API_KEY` /
+    /// `SESSIONDOCK_VOICE_API_KEY`); `None` keeps `/api/voice/transcribe` 501.
+    pub voice: Option<Arc<crate::voice::VoiceService>>,
 }
 
 impl AppState {
@@ -223,6 +226,7 @@ pub fn capabilities() -> Value {
         "terminal": false, "audit": false, "files": false,
         "hub": false, "trash": false,
         "session_delete_tree": false, "bug_report": false, "session_clone_local_codex": false,
+        "voice_input": false,
         "media": true, "media_remote": true, "media_lazy": true, "history_pages": true, "unread_batch": true, "ui_events": true, "list_delta": true,
         "media_continuation": true,
         "history_semantics": "limited_native"

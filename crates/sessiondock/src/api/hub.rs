@@ -75,6 +75,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/session/resources"),
     ("GET", "/api/resources/summary"),
     ("POST", "/api/session/resources/probe"),
+    ("POST", "/api/voice/transcribe"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -96,7 +97,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": false, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "session_relations": true, "conversation_send": true, "conversation_path_completion": true, "codex_sdk": true, "native_sdks": {"grok":true,"agy":true,"opencode":true,"claude":true,"kiro":true,"codebuddy":true,"droid":true}, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": false, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "session_relations": true, "conversation_send": true, "conversation_path_completion": true, "voice_input": true, "codex_sdk": true, "native_sdks": {"grok":true,"agy":true,"opencode":true,"claude":true,"kiro":true,"codebuddy":true,"droid":true}, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
@@ -239,6 +240,7 @@ pub struct HubState {
     pub transfers: Arc<crate::hub::transfer::Transfers>,
     pub groups: Arc<crate::hub::groups::Groups>,
     pub resource_nodes: Arc<crate::hub::resources::RelatedNodes>,
+    pub voice: Option<Arc<crate::voice::VoiceService>>,
 }
 
 /// The hub router: one gate, one dispatcher.
@@ -313,6 +315,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
     let state = HubState {
         cleanup_counts: Arc::new(crate::cleanup::Counts::default()),
         resource_nodes: Arc::new(crate::hub::resources::RelatedNodes::default()),
+        voice: crate::voice::VoiceService::from_env(),
         groups,
         registry: registry.clone(),
         client: client.clone(),
@@ -715,6 +718,91 @@ async fn handle(
             ),
         )
             .into_response());
+    }
+    if method == Method::POST && path == "/api/voice/transcribe" {
+        let mut body = read_body(request).await?;
+        if let Some(voice) = &state.voice {
+            let req: crate::voice::TranscribeRequest = serde_json::from_value(Value::Object(body))
+                .map_err(|_| Reply::Invalid("无效的语音识别请求".into()))?;
+            return match voice.transcribe(req, state.shutdown.clone()).await {
+                Ok(response) => Ok(response),
+                Err(error) => Ok(error.into_response()),
+            };
+        }
+        let preferred = explicit.clone().or_else(|| {
+            body.get("uid")
+                .and_then(Value::as_str)
+                .and_then(|uid| namespace::split(uid, true).ok().map(|(nid, _)| nid))
+        });
+        let public = registry.public();
+        let has_voice =
+            |row: &Value| row["online"] == true && row["capabilities"]["voice_input"] == true;
+        let is_online = |row: &Value| row["online"] == true;
+        let nid = preferred
+            .as_deref()
+            .filter(|id| {
+                public
+                    .iter()
+                    .any(|row| row["id"].as_str() == Some(*id) && has_voice(row))
+            })
+            .map(str::to_string)
+            .or_else(|| {
+                public
+                    .iter()
+                    .find(|row| has_voice(row))
+                    .and_then(|row| row["id"].as_str())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                preferred
+                    .as_deref()
+                    .filter(|id| {
+                        public
+                            .iter()
+                            .any(|row| row["id"].as_str() == Some(*id) && is_online(row))
+                    })
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                public
+                    .iter()
+                    .find(|row| is_online(row))
+                    .and_then(|row| row["id"].as_str())
+                    .map(str::to_string)
+            });
+        let Some(nid) = nid else {
+            return status(
+                StatusCode::NOT_IMPLEMENTED,
+                json!({"error": "未配置语音输入 API Key，且当前无可用语音识别节点", "code": "voice_input_unconfigured"}),
+            );
+        };
+        body.remove("uid");
+        let node = registry
+            .find(&nid)
+            .ok_or_else(|| Reply::Invalid(NOT_REGISTERED.into()))?;
+        let target = registry
+            .target(&node)
+            .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
+        let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
+        return Ok(proxy::proxy(
+            client,
+            &target,
+            &node,
+            state.shutdown.clone(),
+            Forward {
+                nest_registry: state.registry.clone(),
+                method: method.as_str(),
+                path: "/api/voice/transcribe",
+                query: &proxy::Query::new(),
+                body: Some(&body),
+                upload: None,
+                browser: &headers,
+                display_ip: &display_ip,
+                upgrade: None,
+                terminal_observer: None,
+            },
+        )
+        .await?);
     }
     if method == Method::GET && path == "/api/session/file" {
         let accept = headers
