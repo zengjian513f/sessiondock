@@ -21,6 +21,13 @@ Cetus 原生完整 transcript 的 `media` 包含 4 张图片、1 个 `applicatio
 在新旧二进制均超时，未宣称该套件通过，待查项在 TODO。相关 Rust 格式、JS 语法、
 文档链接、AGENTS、品牌与 diff 检查通过；全仓库 rustfmt 有既存无关差异，未改动。
 
+修复 `27782c8e` 已提交、推送，发布 build `20261112T081334705795Z`，相关检查
+已独立完成并按上述记录，部署使用 `--test none`。七个目标均正式尝试：Lyra、Cygnus、
+Pavo、Hub、Vela、Cetus 发布、重启并健康；Orion SSH 超时待补发。未发布资源代理
+或 ptyhost，已存在的宿主均保留，每个成功目标保留回滚备份。Cetus 原会话上线后
+只读复核，节点与 Hub 都返回 9 个非图片附件、空警告列表；JSON 文本预览与 MP3
+文件信息响应正常。未修改生产会话、原生附件或默认 CLI 配置。
+
 ## Cetus provider 统一维护（2026-11-11）
 
 用户明确要求仅将 Cetus 默认 provider 与全部 Codex 会话统一为 `openai`。
