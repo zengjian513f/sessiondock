@@ -237,6 +237,7 @@ impl Parser<'_> {
         // The native format references media files by URI; it never embeds
         // image bytes. Keep normal selected-view file grants and validation.
         let mut media = Vec::new();
+        let mut files = Vec::new();
         for item in record["media"].as_array().into_iter().flatten() {
             if item["mime_type"]
                 .as_str()
@@ -249,6 +250,8 @@ impl Parser<'_> {
                 {
                     media.push(image);
                 }
+            } else if let Some(uri) = item["uri"].as_str().filter(|uri| !uri.trim().is_empty()) {
+                files.push(json!({"ref":uri,"mime":item["mime_type"]}));
             } else {
                 self.skipped
                     .note("Agy 媒体类型", item["mime_type"].as_str().unwrap_or(""));
@@ -267,13 +270,13 @@ impl Parser<'_> {
                     .filter(|(tag, _)| *tag == "ADDITIONAL_METADATA")
                     .map(|(tag, body)| json!({"tag":tag,"text":body.trim()}))
                     .collect();
-                if !text.trim().is_empty() || !media.is_empty() {
+                if !text.trim().is_empty() || !media.is_empty() || !files.is_empty() {
                     self.emit_media(
                         end,
                         "user",
                         text.to_owned(),
                         &ts,
-                        json!({"native_type":"USER_INPUT", "native_metadata":metadata}),
+                        json!({"native_type":"USER_INPUT", "native_metadata":metadata,"native_files":files}),
                         media,
                     )?;
                 }
@@ -300,8 +303,9 @@ impl Parser<'_> {
                 }
             }
             "SYSTEM_MESSAGE" => {
-                let (text, extra) = system_message(&string(&record["content"]));
-                if !text.trim().is_empty() || !media.is_empty() {
+                let (text, mut extra) = system_message(&string(&record["content"]));
+                extra["native_files"] = json!(files);
+                if !text.trim().is_empty() || !media.is_empty() || !files.is_empty() {
                     self.emit_media(end, "system", text, &ts, extra, media)?;
                 }
             }
@@ -321,13 +325,13 @@ impl Parser<'_> {
                     );
                 }
                 let text = string(&record["content"]);
-                if !text.trim().is_empty() || !media.is_empty() {
+                if !text.trim().is_empty() || !media.is_empty() || !files.is_empty() {
                     self.emit_media(
                         end,
                         "assistant",
                         text,
                         &ts,
-                        json!({"native_type":"PLANNER_RESPONSE", "phase":if calls.is_empty() && record["status"] == "DONE" { "final" } else { "progress" }}),
+                        json!({"native_type":"PLANNER_RESPONSE", "native_files":files,"phase":if calls.is_empty() && record["status"] == "DONE" { "final" } else { "progress" }}),
                         media,
                     )?;
                 }
@@ -356,14 +360,15 @@ impl Parser<'_> {
                     .filter(|text| !text.trim().is_empty())
                     .or(record["error"].as_str())
                     .unwrap_or("");
-                if !text.is_empty() {
-                    self.emit(
+                if !text.is_empty() || !media.is_empty() || !files.is_empty() {
+                    self.emit_media(
                         end,
                         "assistant",
-                        text,
+                        text.to_owned(),
                         &ts,
-                        json!({"native_type":"ERROR_MESSAGE", "phase":"progress","error":true}),
-                    );
+                        json!({"native_type":"ERROR_MESSAGE", "phase":"progress","error":true,"native_files":files}),
+                        media,
+                    )?;
                 }
             }
             other => {
@@ -373,7 +378,7 @@ impl Parser<'_> {
                 {
                     content = error.to_owned();
                 }
-                if !content.is_empty() || !media.is_empty() {
+                if !content.is_empty() || !media.is_empty() || !files.is_empty() {
                     // Generic/unknown steps publish their own content. The
                     // transcript has no documented cross-step call ID, so do
                     // not attach a result to an unrelated call by position.
@@ -381,7 +386,7 @@ impl Parser<'_> {
                         .then(|| command_exit_code(&content))
                         .flatten();
                     self.emit_media(end, "tool_result", content, &ts,
-                        json!({"native_type":other,"name":if other == "GENERIC" { "工具结果" } else { other },
+                        json!({"native_type":other,"native_files":files,"name":if other == "GENERIC" { "工具结果" } else { other },
                             "exit_code":exit_code,
                             "error":exit_code.is_some_and(|code| code != 0) || record["status"]=="ERROR" || record["error"].as_str().is_some_and(|error| !error.trim().is_empty())}), media)?;
                 } else {

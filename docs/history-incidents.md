@@ -3,6 +3,24 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261112-075842-b01ef4：Agy 非图片附件被跳过
+
+Cetus 原生完整 transcript 的 `media` 包含 4 张图片、1 个 `application/json`
+附件和 8 个 `audio/mpeg` 附件，现场文件均存在。第一处异常在 Agy provider：
+只有 `image/*` 投影为媒体，其余全部记为未知并丢弃，详情返回对应的 ×1／×8 警告。
+修复保留非图片原生引用为 `native_files`，不改变用户正文；文件引用索引及普通／SDK
+消息与工具结果共用既有文件入口。仅有附件的工具结果不再作为空结果隐藏。
+独立文件页使用原生音频控件，避免把音频作为受文件 CSP 沙箱限制的 iframe 文档。
+
+合成 Chromium 的 `agy_media_browser.py` 在节点／Hub、宽窄屏、明暗主题共八组合
+逐一点击普通历史与 SDK 历史中的 JSON、MP3，验证预览、实际播放、下载、刷新、
+混合图片，并覆盖附件空正文、增量追加、URI 改写、文件缺失、跨会话拒绝及无 URI 警告。
+旧 release 二进制在同一新用例显示未知媒体警告、文件链接数为 0，修复后为 9。
+执行者检查了改前及最终整页、长文件名换行和预览截图。`history_browser.py`、
+`history_pages_browser.py`、`files_browser.py` 通过；Agy 综合历史套件的目录删除末步
+在新旧二进制均超时，未宣称该套件通过，待查项在 TODO。相关 Rust 格式、JS 语法、
+文档链接、AGENTS、品牌与 diff 检查通过；全仓库 rustfmt 有既存无关差异，未改动。
+
 ## Cetus provider 统一维护（2026-11-11）
 
 用户明确要求仅将 Cetus 默认 provider 与全部 Codex 会话统一为 `openai`。

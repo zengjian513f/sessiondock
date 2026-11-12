@@ -36,12 +36,17 @@ DELTA: without FileDock, conversation file links retain built-in text/media
 previews and downloads via the existing single-file API. Direct path links and
 directories explain that directory browsing is not configured and offer copying
 the resolved path. They never navigate to an assumed external service.
+Audio previews use the viewer's native audio controls with the checked file URL;
+the file response retains its sandbox policy.
 
 Conversation-specific responsibilities remain here:
 
 - Recognizing file references in message/tool content, resolving relative paths
   against the selected cwd, and disambiguating names.
 - Inline conversation media and its checked file responses.
+- Agy typed non-image `native_files` references, including JSON and audio, use
+  the same selected-session resolution, previews and downloads without changing
+  message text. See [Agy attachments](agy.md#历史投影与证据).
 - Uploading/recording conversation and bug-report attachments, and the
   console file paste that publishes straight into `sessiondock_attachments`
   ([terminal-input.md](terminal-input.md#console-file-paste)).

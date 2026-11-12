@@ -51,7 +51,16 @@
         if (info.truncated) host.append(document.createTextNode('预览已截断；下载可查看完整文件。'));
       } else if (info.preview && info.preview !== 'unsupported') {
         target.searchParams.delete('download'); target.searchParams.set('mode', 'preview');
-        const frame = document.createElement('iframe'); frame.title = '文件预览'; frame.src = target.href; host.append(frame);
+        if (info.preview.startsWith('audio/')) {
+          // A media document inside an iframe inherits the file response's
+          // sandbox. Load audio as media in this viewer, preserving file CSP.
+          const audio = document.createElement('audio');
+          audio.controls = true; audio.preload = 'metadata'; audio.src = target.href;
+          audio.style.maxWidth = '100%'; audio.setAttribute('aria-label', '音频预览');
+          host.append(audio);
+        } else {
+          const frame = document.createElement('iframe'); frame.title = '文件预览'; frame.src = target.href; host.append(frame);
+        }
       } else host.textContent = '此格式无法预览，请下载后查看。';
       return;
     }

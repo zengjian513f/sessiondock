@@ -154,6 +154,13 @@ impl ReferenceIndex {
         };
         for message in messages {
             // Caller supplies semantic messages, never raw metadata/native records.
+            // Typed attachments are exact references, including spaces and file
+            // URIs. Their message text must stay unchanged for native echo matching.
+            for file in message["native_files"].as_array().into_iter().flatten() {
+                if let Some(reference) = file["ref"].as_str() {
+                    index.insert(reference);
+                }
+            }
             let role = message["role"].as_str().unwrap_or("");
             let native_role = if media {
                 role.strip_suffix("·subagent").unwrap_or(role)

@@ -8244,7 +8244,7 @@ function planMessages(msgs, { openTail = false } = {}) {
     // 调用与结果跨增量批次时，空结果配不到上面的调用。它仍参与消息计数，
     // 但不能凭空生成一块黑色空卡片。
     if (m.role === 'tool_result' && !String(m.text || '').trim()
-        && !m.media?.length && !m.changes?.length) {
+        && !m.media?.length && !m.native_files?.length && !m.changes?.length) {
       flush(false);
       plan.push({ m: { ...m, silent: true } });
       continue;
@@ -8766,6 +8766,7 @@ function toolEntry(m) {
                     m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
     }
     if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
+    entry.insertAdjacentHTML('beforeend', nativeFileLinks(m.native_files));
     return entry;
   }
   // 摘要是可选文本；只有独立按钮切换参数，拖选/双击不触发折叠。
@@ -8805,6 +8806,7 @@ function toolEntry(m) {
   entry.appendChild(closeArgs);
   setArgsOpen(!args.hidden);
   if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
+  entry.insertAdjacentHTML('beforeend', nativeFileLinks(m.native_files));
   appendToolResult(entry, m.result, m);
   return entry;
 }
@@ -8862,6 +8864,7 @@ function appendToolResult(entry, r, m) {
     addClippedPre(entry, 'tool-out' + (r.error ? ' err' : ''), r.text, toolOutputPath(m));
   }
   if (r.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(r.media, r.media_more));
+  entry.insertAdjacentHTML('beforeend', nativeFileLinks(r.native_files));
 }
 
 const CHANGE_LABEL = {
@@ -9861,7 +9864,8 @@ function messageBodyNode(m) {
     const attachmentRefs = new Set();
     const cache = full && !linkContext.attachments && !m.media?.length ? mdCache : null;
     return md(m.text, full, m.media, {...linkContext, attachmentRefs}, cache)
-      + mediaGallery(m.media?.filter(item => !attachmentRefs.has(item.ref)), m.media_more);
+      + mediaGallery(m.media?.filter(item => !attachmentRefs.has(item.ref)), m.media_more)
+      + nativeFileLinks(m.native_files, linkContext);
   };
   const paint = full => {
     const next = document.createElement('template');
@@ -9911,7 +9915,8 @@ function messageBodyNode(m) {
   // Preserve the disclosure button and its state while SDK text keeps arriving.
   n._updateMessage = next => {
     if (next.text === m.text && JSON.stringify(next.media) === JSON.stringify(m.media)
-        && JSON.stringify(next.media_more) === JSON.stringify(m.media_more)) {
+        && JSON.stringify(next.media_more) === JSON.stringify(m.media_more)
+        && JSON.stringify(next.native_files) === JSON.stringify(m.native_files)) {
       m = next;
       return;
     }
@@ -10754,6 +10759,18 @@ function trimReference(raw) {
     while (ref.endsWith(right) && ref.split(right).length > ref.split(left).length) ref = ref.slice(0, -1);
   }
   return ref;
+}
+
+function nativeFileLinks(files, context = {uid: S.sel, agent: S.agent}) {
+  return (files || []).map(file => {
+    if (typeof file.ref !== 'string') return '';
+    let name = file.ref.split(/[/\\]/).pop() || file.ref;
+    if (/^file:\/\//i.test(file.ref)) {
+      try { name = decodeURIComponent(name); } catch { /* 保留原始文件名 */ }
+    }
+    const link = referenceLink(file.ref, esc(name), context, true);
+    return `<div class="mb native-file">附件：${link || esc(name)}</div>`;
+  }).join('');
 }
 
 function referenceLink(ref, label, context, explicit = false) {

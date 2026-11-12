@@ -661,6 +661,9 @@ patching Playwright APIs or treating native selectors/popovers as peer overlap.
 Agy 原生子代理归属：`python3 tests/agy_nesting_browser.py --binary target/debug/sessiondock`，
 私有原生目录与 Chromium 验证父子链、历史增量、父关系变更、刷新重启及宽窄明暗画面。
 
+[Agy 原生附件](../tests/agy_media_browser.py) 在节点与 Hub 的普通历史、SDK 历史中
+点击 JSON／音频附件，验证预览、播放、下载、混合图片、增量、失效引用及宽窄明暗画面。
+
 Kiro 原生引导：[kiro_steer_browser.py](../tests/kiro_steer_browser.py) 覆盖节点与 Hub 的普通排队、Ctrl+Enter／点击引导及失败草稿保留。
 
 Kiro 停止：[kiro_stop_browser.py](../tests/kiro_stop_browser.py) 在约 1 MB/s 限速下，对载入 3 MB 历史的会话流式输出时点击停止，节点与 Hub 均须 5 秒内收起停止键并显示已中断，实时帧小于 1 MB，历史回合各显示一次。
