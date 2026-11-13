@@ -7,18 +7,20 @@ drafts, same-request retry, first SEND, native handoff and explicit discard.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 
 from codex_sdk_browser import THREAD, build
 from codex_sdk_compose_browser import saved
-from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY
-from hub_fixtures import free_port
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
 from new_session_model_browser import open_dialog
-from sdk_creation_retention_fixtures import node
+from sdk_creation_retention_fixtures import UnloadedCreationServer, node
 
 
 def create(page, cwd):
@@ -41,6 +43,88 @@ def replay(page, body):
     }""", body)
 
 
+def unloaded_creation(browser, binary, mode):
+    with tempfile.TemporaryDirectory(prefix='sd-unloaded-create-') as temporary:
+        root = Path(temporary)
+        corpus = build(root)
+        state = root / 'state'
+        state.mkdir(mode=0o700)
+        socket = root / 'app-server-control/app-server-control.sock'
+        socket.parent.mkdir()
+        port, peer_port = free_port(), free_port()
+        env = {**node_env(root, peer_port, '127.0.0.0/8'), 'SESSIONDOCK_CODEX_APP_SERVER': ''}
+        context = browser.new_context(service_workers='block')
+        page = context.new_page()
+        hub_root = root / 'hub'
+        hub_root.mkdir()
+        hub = None
+        try:
+            with UnloadedCreationServer(socket, corpus.paths['sdk'], THREAD) as fake:
+                with node(corpus, binary, socket, port, state, env) as base:
+                    if mode == 'hub':
+                        hub = Hub(binary.with_name('sessiondock-hub').resolve(), hub_root,
+                                  [SimpleNamespace(name='CreationNode', token=TOKEN, port=peer_port)])
+                        hub.start()
+                        base = f'http://127.0.0.1:{hub.port}'
+                    page.goto(base, wait_until='domcontentloaded')
+                    receipt, _ = create(page, root)
+                    uid = page.evaluate('S.sel')
+                    sid = receipt['thread_id']
+                    assert not fake.rollout.exists()
+                    page.goto('about:blank')
+                # The daemon has no persisted record to read after it unloads.
+                fake.loaded.clear()
+                with node(corpus, binary, socket, port, state, env) as base:
+                    if mode == 'hub':
+                        base = f'http://127.0.0.1:{hub.port}'
+                    page.goto(base, wait_until='domcontentloaded')
+                    page.wait_for_function('T.listLoaded')
+                    row = page.locator(f'#side .item[data-uid="{uid}"]')
+                    expect(row).to_be_visible()
+                    row.click()
+                    # Stop is idempotent even when no process owns this thread.
+                    row.click(button='right')
+                    with page.expect_response('**/api/codex-sdk/stop') as stopped:
+                        page.locator('#item-menu [data-act="stop-sdk"]').click()
+                        page.locator('dialog.app-popup[open] [data-popup-action="ok"]').click()
+                    assert stopped.value.ok, stopped.value.text()
+                    expect(row).to_be_visible()
+                    before = len(fake.received)
+                    # A genuine native failure must remain visible and retryable.
+                    fake.fail_unsubscribe = True
+                    row.click(button='right')
+                    with page.expect_response('**/api/codex-sdk/discard') as failed:
+                        page.locator('#item-menu [data-act="delete"]').click()
+                    assert failed.value.status == 502, failed.value.text()
+                    expect(row).to_be_visible()
+                    popup = page.locator('dialog.app-popup[open]')
+                    expect(popup).to_contain_text('synthetic unsubscribe failure')
+                    popup.locator('[data-popup-action="ok"]').click()
+                    fake.fail_unsubscribe = False
+                    row.click(button='right')
+                    with page.expect_response('**/api/codex-sdk/discard') as discarded:
+                        page.locator('#item-menu [data-act="delete"]').click()
+                    assert discarded.value.ok, discarded.value.text()
+                    expect(row).to_have_count(0)
+                    cleanup = fake.received[before:]
+                    assert not any(m.get('method') in ('thread/read', 'thread/resume', 'thread/start') for m in cleanup), cleanup
+                    assert not fake.rollout.exists()
+                    subscriptions = json.loads((state / 'codex-sdk-subscriptions.json').read_text())
+                    assert sid not in subscriptions['threads'], subscriptions
+                with node(corpus, binary, socket, port, state, env) as base:
+                    if mode == 'hub':
+                        base = f'http://127.0.0.1:{hub.port}'
+                    page.goto(base, wait_until='domcontentloaded')
+                    page.wait_for_function('T.listLoaded')
+                    expect(row).to_have_count(0)
+                    assert len(fake.methods('thread/start')) == 1
+                print(f'PASS {mode}: unloaded empty thread stops/discards after restart; native failure stays retryable; no history read or resume', flush=True)
+        finally:
+            if hub:
+                hub.stop()
+            context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -61,7 +145,7 @@ def main():
         errors = []
         page.on('pageerror', lambda error: errors.append(error.stack))
         try:
-            with FakeAppServer(root / 'app.sock', corpus.paths['sdk'], THREAD) as fake:
+            with UnloadedCreationServer(root / 'app.sock', corpus.paths['sdk'], THREAD) as fake:
                 with node(corpus, args.binary, root / 'app.sock', port, state) as base:
                     page.goto(base, wait_until='domcontentloaded')
                     page.wait_for_function('T.listLoaded')
@@ -127,6 +211,8 @@ def main():
                     assert not fake.rollout.exists()
                     assert not errors, errors
                     print('PASS explicit discard survives restart without recreation', flush=True)
+            for mode in ('node', 'hub'):
+                unloaded_creation(browser, args.binary, mode)
         finally:
             context.close()
             browser.close()

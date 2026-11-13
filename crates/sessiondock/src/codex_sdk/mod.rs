@@ -450,15 +450,10 @@ impl CodexSdk {
         let Some(id) = self.pending_thread(uid) else {
             return Ok(());
         };
-        let lock = self.inner.queue.lock(&id);
-        let _dispatch = lock.lock().await;
-        self.inner.retention.set(&id, false)?;
-        let connection = self.inner.thread_connection(&id).await?;
-        connection
-            .request("thread/unsubscribe", json!({"threadId":id}))
-            .await?;
+        // An unused thread may have unloaded before a service restart. Cleanup
+        // must not resolve its provider by reading a rollout that never existed.
+        self.stop_thread(&id).await?;
         self.inner.receipts.discard(uid)?;
-        self.inner.threads.lock().expect("threads").remove(&id);
         Ok(())
     }
 

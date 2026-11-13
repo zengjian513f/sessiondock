@@ -93,7 +93,10 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   already unloaded, loaded descendants locate their existing listener without
   resuming the parent. Every discovered
   member is attempted; partial failures remain visible and retryable. Discard
-  removes the pending thread's record before its native request. Recovery is
+  uses the same stop path and retires the creation receipt only after success.
+  Already-unloaded threads accept the existing daemon's `notLoaded` response;
+  stop/discard never read or resume a missing rollout or start a daemon.
+  Discard removes the pending thread's retention record before its native request. Recovery is
   serialized with each member's stop/discard operation. A service outage beyond the native grace
   period cannot guarantee runtime survival. Installations without this new record
   begin retaining threads when they next successfully open/create them; old create

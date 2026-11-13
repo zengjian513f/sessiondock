@@ -17,6 +17,7 @@ impl CodexSdk {
                 // The parent can unload before a still-running child. Locate
                 // that child's existing listener without resuming the parent.
                 let mut owner = None;
+                let mut observer = None;
                 for connection in self.inner.observed_connections().await {
                     let descendants = spawned_descendants(&connection, thread_id).await?;
                     let loaded = connection.request("thread/loaded/list", json!({})).await?;
@@ -28,8 +29,12 @@ impl CodexSdk {
                         owner = Some(connection);
                         break;
                     }
+                    // With no loaded root or descendants, the existing daemon
+                    // can acknowledge notLoaded. Never resume missing history
+                    // just to stop it; keep transport/RPC failures retryable.
+                    observer = Some(connection);
                 }
-                owner.ok_or(error)?
+                owner.or(observer).ok_or(error)?
             }
         };
         let mut stopped = BTreeSet::from([thread_id.to_owned()]);
