@@ -10,6 +10,10 @@
 
 ## Frontend delivery
 
+- [ ] Orion 补发 Agy 后台任务通知前端 `d1506cb3`（BUG-20261113-132137-89196c）：
+  正式部署 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已仅发布前端、
+  重启并健康。专项 Chromium 节点／Hub 八组合与既有消息呈现六组合通过，已完成视觉验收。
+
 - [ ] Orion 补发 Agy 非图片附件修复 `27782c8e` 的服务与前端（BUG-20261112-075842-b01ef4）：
   正式 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康。
   此版本也包含 Codex 后台状态修复 `3d83ac59`；Cetus 已同步，不再待补发。
