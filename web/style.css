@@ -1518,6 +1518,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .event-detail-body > :first-child { margin-top: 0; }
 .event-detail-body > :last-child { margin-bottom: 0; }
+pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--terminal-font); }
 .msg.native-settings { padding: 3px 8px; color: var(--muted); box-shadow: none; }
 .native-settings > .event-details { margin: 0; min-width: 0; }
 .native-settings summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; list-style-position: inside; }

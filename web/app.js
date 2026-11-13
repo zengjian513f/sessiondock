@@ -9809,6 +9809,22 @@ function messageBodyNode(m) {
     return n;
   }
   if (m.role === 'event') return eventNode(m);
+  if (String(S.sel || '').startsWith('agy:') && m.role === 'system' && m.native_type === 'SYSTEM_MESSAGE') {
+    const task = String(m.text || '').match(/^Task id "([^"\r\n]+\/(task-\d+))" finished with result:\s*Command exited with code (-?\d+)\.(?:\r?\n|$)/);
+    if (task && m.system_sender === task[1]) {
+      // Native task completion is independent of the SDK connection/turn.
+      // Reuse the task disclosure without changing the underlying system role.
+      const completed = Number(task[3]) === 0;
+      const n = eventNode({event_kind: 'task', event_status: completed ? 'completed' : 'failed',
+        text: `${completed ? '后台任务已完成' : '后台任务失败'} · ${task[2]} · 退出码 ${task[3]}`,
+        details: m.text, details_plain: true});
+      n.classList.add('native-task-notice');
+      n.dataset.role = 'system';
+      n.dataset.nativeType = m.native_type;
+      n.title = [m.system_sender, m.system_priority, m.system_timestamp].filter(Boolean).join('\n');
+      return n;
+    }
+  }
   if (m.role === 'system' && m.native_type === 'USER_SETTINGS_CHANGE') {
     const setting = String(m.text || '').match(/^The user changed setting `([^`]+)` from (.*?) to (.*?)\. No need to comment on this change if the user doesn't ask about it\./s);
     if (setting) {
@@ -10002,9 +10018,12 @@ function eventNode(m) {
     disclosure.appendChild(el('summary', '', `查看结果 · ${stats.lines.toLocaleString()} 行`));
     disclosure.ontoggle = () => {
       if (!disclosure.open || disclosure.querySelector('.event-detail-body')) return;
-      const body = el('div', 'event-detail-body');
-      body.innerHTML = md(m.details, true);
-      renderFormulae(body); paintSyntax(body);
+      const body = el(m.details_plain ? 'pre' : 'div', 'event-detail-body');
+      if (m.details_plain) body.textContent = m.details;
+      else {
+        body.innerHTML = md(m.details, true);
+        renderFormulae(body); paintSyntax(body);
+      }
       disclosure.appendChild(body);
     };
     n.appendChild(disclosure);

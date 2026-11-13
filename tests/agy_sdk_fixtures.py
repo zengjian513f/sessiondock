@@ -166,6 +166,18 @@ for line in sys.stdin:
         native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] Native runtime restarted; background tasks have stopped.\n</SYSTEM_MESSAGE>')
         step('system_message',state='DONE');advance()
     first_input=False
+    if text=='__TASK_NOTICES__':
+        for task,code in [('task-196',0),('task-197',2)]:
+            sender=sid+'/'+task
+            output='\n'.join('synthetic task output '+str(i) for i in range(40))
+            notice='Task id "'+sender+'" finished with result:\nCommand exited with code '+str(code)+'.\n\nCommand output:\n'+output
+            native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender='+sender+' priority=MESSAGE_PRIORITY_HIGH content='+notice+'\n</SYSTEM_MESSAGE>')
+            step('system_message',state='DONE');advance()
+        answer='后台命令通知已记录；会话仍可继续发送。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        result('SUCCESS',answer)
+        continue
     if text in('__DESCENDANT_PIPE__','__DESCENDANT_GROUP_PIPE__'):
         # The group variant leaves the native process group, as Kiro's worker does.
         descendant=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'],

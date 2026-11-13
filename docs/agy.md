@@ -154,6 +154,11 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   `[Message]` 头的 timestamp/sender/priority 单独保留在消息字段与标注提示中，
   content 显示为正文。后台任务完成通知沿用系统角色，不冒充工具结果或用户输入；
   纯文本和不完整包裹保留可见正文。
+  **DELTA（BUG-20261113-132137-89196c）**：发送者与正文任务 ID 一致、且明确包含命令
+  退出码的完成通知，在普通历史及 SDK 历史／实时区复用任务事件样式：默认显示后台任务
+  已完成或失败、任务编号和退出码，点击“查看结果”展开完整原文与输出。退出码 0 不表示
+  会话断连，非零退出码保留失败标识；未知格式、来源不匹配及用户引用沿用原有显示。
+  验收见 [后台任务通知浏览器](../tests/agy_task_notice_browser.py)。
 - `PLANNER_RESPONSE`：`thinking` 单独投影；无 `tool_calls` 且 status 为 `DONE`
   时正文为 `phase: final`，其他情况为 `progress`。`ERROR_MESSAGE` 投影为可见错误消息。
 - `CHECKPOINT`：**DELTA**，上下文压缩投影为既有的
