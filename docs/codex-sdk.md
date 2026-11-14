@@ -63,7 +63,12 @@ browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel
 - Handshake: `initialize` with `clientInfo.name = "sessiondock"` and
   `capabilities.experimentalApi = true`, then `initialized`.
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
-  connection; later pages reuse it. Before resuming, `thread/read` with
+  connection; later pages reuse it. DELTA: after fresh runtime ownership confirms
+  the thread is running, browser re-entry subscribes directly to its snapshot
+  without an extra `open` request. Explicit Start still opens the thread.
+  [Loading regression](../tests/sdk_loading_browser.py) holds unrelated Hub
+  inventory and verifies two pages reuse the native connection without extra
+  initialization, resume, turn recovery or inference. Before resuming, `thread/read` with
   `includeTurns: false` supplies the thread's native `modelProvider`, which is
   passed explicitly to resume on the selected provider process. Native read,
   configuration and resume errors remain visible; no per-request override is

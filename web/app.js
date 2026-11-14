@@ -1532,7 +1532,7 @@ async function fetchMessages(uid, opts = {}) {
     return result;
   } catch (error) {
     if (!SessionDockNetwork.paused && (stall.signal.aborted || error.name === 'TypeError')) {
-      noteNetworkIssue(viewKey(uid, opts.agent || null), '会话同步暂时中断；已保留当前内容，恢复连接后会继续同步。');
+      noteNetworkIssue(viewKey(uid, opts.agent || null), '会话同步暂时中断；已保留当前内容，恢复后会继续同步。');
     }
     if (stall.signal.aborted && !opts.signal?.aborted) throw stall.signal.reason;
     throw error;
@@ -3129,12 +3129,12 @@ function renderNetworkNotice() {
     notice = el('div', 'app-float warn'); notice.id = 'network-status';
     notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite');
     const text = el('span', 'network-status-text');
-    const actions = el('div', 'app-float-actions'), retry = el('button', 'btn', '立即重连');
+    const actions = el('div', 'app-float-actions'), retry = el('button', 'btn', '重新载入');
     retry.type = 'button'; retry.onclick = () => { void recoverNetworkConnection(); };
     actions.append(retry); notice.append(text, actions); floatStack().append(notice);
   }
   notice.querySelector('.network-status-text').textContent = issue;
-  notice.querySelector('button').textContent = networkRecovery ? '正在重连…' : '立即重连';
+  notice.querySelector('button').textContent = networkRecovery ? '载入中…' : '重新载入';
 }
 let networkRecovery = null;
 function recoverNetworkConnection() {
@@ -3260,7 +3260,7 @@ function startUiEvents() {
   const disconnected = () => {
     if (uiEvents !== stream) return;
     closeUiEvents();
-    noteNetworkIssue('events', '实时同步连接中断，正在自动重连；当前内容可能尚未更新。');
+    noteNetworkIssue('events', '实时同步中断，正在重新载入；当前内容可能尚未更新。');
     if (!document.hidden && navigator.onLine) {
       uiEventsRetry = setTimeout(startUiEvents, retryDelay(uiEventsRetryAttempt++));
     }

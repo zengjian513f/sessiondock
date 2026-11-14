@@ -23,7 +23,7 @@ const CodexSdkView = {
       && String(uid || '').startsWith('codex:') && !String(uid).startsWith('tmux:');
   },
 
-  open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
+  open(uid, pane, agent = null, {historyReady = null, readOnly = false, observing = false} = {}) {
     this.close();
     this.stopped = false;
     this.uid = uid; this.agent = agent; this.pane = pane;
@@ -72,8 +72,8 @@ const CodexSdkView = {
     })();
     void this.loadRecordedUsage(generation);
     this.refreshHistory(generation);
-    this.setNotice('连接中', 'connecting');
-    this.start(generation);
+    this.setNotice('载入中', 'connecting');
+    this.start(generation, false, observing);
   },
 
   close() {
@@ -129,24 +129,28 @@ const CodexSdkView = {
     this.updateStatusDisclosure();
   },
 
-  async start(generation, reconnecting = false) {
+  async start(generation, reconnecting = false, observing = false) {
     if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     clearTimeout(this.openRetryTimer);
     this.openRetryTimer = 0;
     const read = new AbortController();
     this.openRead = read;
-    this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
+    this.setNotice('载入中', 'connecting');
     const uid = this.uid;
     // Account reads do not depend on resuming this thread or recovering its turn.
     this.loadLimits(generation);
     try {
-      const opened = await this.request('api/codex-sdk/open', {uid}, read.signal);
+      // Fresh runtime ownership already confirmed this retained thread. Its
+      // event snapshot includes the summary; re-entry needs no extra open RPC.
+      const opened = observing ? null : await this.request('api/codex-sdk/open', {uid}, read.signal);
       if (!this.current(generation)) return;
       // Stopping the conflicting CLI may mark this failed SDK pane stopped.
       // A successful explicit/retry open is a new live attachment, not a SEND.
       if(this.openFailed && this.stopped){this.stopped=false;this.pane.querySelector('#sdk-send').disabled=false;}
-      this.summary = opened.raw || {};
-      this.seedGauges();
+      if (opened) {
+        this.summary = opened.raw || {};
+        this.seedGauges();
+      }
     } catch (error) {
       if (!this.current(generation)) return;
       this.openFailed = true;
@@ -165,7 +169,7 @@ const CodexSdkView = {
     }
     if (!this.current(generation)) return;
     this.openFailed = false; this.openRetryDelay = 1000;
-    this.setNotice('连接中', 'connecting');
+    this.setNotice('载入中', 'connecting');
     this.loadModels(generation);
     this.connectEvents(generation);
   },
@@ -190,7 +194,7 @@ const CodexSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       this.setConnected(false);
       if (es.readyState === EventSource.CLOSED) {
-        this.setNotice('重连中', 'connecting');
+        this.setNotice('载入中', 'connecting');
         this.scheduleReconnect();
       }
     };
@@ -200,7 +204,7 @@ const CodexSdkView = {
     if (!this.pane) return;
     this.es?.close();
     this.es = null;
-    this.start(this.generation, true);
+    this.start(this.generation, true, true);
   },
 
   scheduleReconnect() {
@@ -619,7 +623,7 @@ const CodexSdkView = {
     if (method === 'bridge/reset') {
       this.setConnected(false);
       queueUiChange({live: true});
-      this.setNotice('重连中', 'connecting');
+      this.setNotice('载入中', 'connecting');
       this.es?.close();
       this.scheduleReconnect();
       return;

@@ -10,7 +10,7 @@ const SdkUI = {
     view.es.close();
     view.es = null;
     view.setConnected(false);
-    view.setNotice('重连中', 'connecting');
+    view.setNotice('载入中', 'connecting');
     // Only replace the browser subscription; do not add an SDK open request,
     // clear live output, or replay an input whose outcome is unknown.
     view.connectEvents(view.generation);
@@ -66,7 +66,7 @@ const SdkUI = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '连接中'}</span></button>
+          <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '载入中'}</span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量"></div>
           <div class="sdk-options"><div class="sdk-pickers">
@@ -476,7 +476,7 @@ const SdkUI = {
       });
       this.toolbarObserver.observe(this.pane.querySelector('.sdk-status-row'));
       this.toolbarObserver.observe(this.notice);
-      this.setNotice(this.readOnly ? '未运行' : '连接中', this.readOnly ? 'idle' : 'connecting');
+      this.setNotice(this.readOnly ? '未运行' : '载入中', this.readOnly ? 'idle' : 'connecting');
     },
     pending(uid) {
       return typeof T === 'undefined' || S.sessions.some(row => row.uid === uid) ? null

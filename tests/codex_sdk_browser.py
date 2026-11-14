@@ -131,7 +131,7 @@ def opening_check(browser, corpus, base, expect, screenshots):
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     history = page.locator('.sdk-history')
     expect(history).to_contain_text("earlier synthetic answer")
-    expect(page.locator('.sdk-pane .sdk-status')).to_have_text("连接中")
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_text("载入中")
     assert len(reads) == 1, reads
     assert held, "SDK connection was not started"
     # Account reads are independent of a slow thread/resume or active-turn recovery.
@@ -471,7 +471,7 @@ def browser_check(corpus, base, fake, screenshots=None):
                 closedSdkStream.close();
                 closedSdkStream.dispatchEvent(new Event('error'));
             }''')
-            expect(pane.locator('.sdk-status')).to_have_text('重连中')
+            expect(pane.locator('.sdk-status')).to_have_text('载入中')
             page.wait_for_function('CodexSdkView.es !== closedSdkStream && CodexSdkView.es?.readyState === 1')
             expect(pane).to_contain_text('Progress while the view is closed')
             expect(box).to_have_value('draft survives a disconnected stream')

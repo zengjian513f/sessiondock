@@ -102,11 +102,11 @@ def exercise(browser, base, source, screenshots, label):
         expect(page.locator('#sdk-send')).to_be_disabled()
         set_mode('cli')
         page.reload(wait_until='networkidle')
-        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         page.locator('#a-chat').click()
         set_mode('sdk')
         page.reload(wait_until='networkidle')
-        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
         assert not opens
         page.locator('#a-sdk').click()
         if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
@@ -183,7 +183,7 @@ def exercise(browser, base, source, screenshots, label):
         page.route(endpoint, lambda route: held.append(route), times=1)
         start()
         page.wait_for_function('!!SdkView.openRead')
-        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('连接中')
+        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('载入中')
         expect(page.locator('#sdk-send')).to_be_disabled()
         expect(page.locator('#sdk-input')).to_have_value(draft)
         expect(page.locator('#sdk-input')).to_be_focused()
@@ -231,9 +231,10 @@ def exercise(browser, base, source, screenshots, label):
         expect(page.locator('#sdk-input')).to_be_visible()
         connected()
         expect(page.locator('#sdk-input')).to_have_value('draft survives delayed SDK discovery')
-        assert len(opens) == count + 1, opens
+        expected = count + (0 if source in ('codex', 'agy') else 1)
+        assert len(opens) == expected, opens
         page.evaluate('refreshLive(true)')
-        assert len(opens) == count + 1, opens
+        assert len(opens) == expected, opens
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-reconnected.png'))
         # A second page attaches to the live SDK; stopping must also close its stream.
         second = context.new_page()

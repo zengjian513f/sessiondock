@@ -73,8 +73,8 @@ def repeated_reconnect(browser, binary, screenshots=None):
                 reads_before = len(reads)
                 before = len(connections)
                 for _ in range(6):
-                    page.get_by_role('button', name=re.compile('^(立即重连|正在重连…)$')).click()
-                expect(page.get_by_role('button', name='正在重连…', exact=True)).to_be_visible()
+                    page.get_by_role('button', name=re.compile('^(重新载入|载入中…)$')).click()
+                expect(page.get_by_role('button', name='载入中…', exact=True)).to_be_visible()
                 if screenshots:
                     page.screenshot(path=str(screenshots / f'{"sdk" if sdk else "chat"}-reconnecting.png'), full_page=True)
                 page.wait_for_timeout(300)
@@ -168,7 +168,7 @@ def sdk_reconnect(browser, binary, screenshots=None, sources=('codex', 'claude',
                             page.wait_for_function('syncingViews.has(viewKey(S.sel, S.agent))')
                             before_reads, before_events, before_opens = len(reads), len(subscriptions), len(writes)
                             blocked[0] = False
-                            page.get_by_role('button', name='立即重连', exact=True).click()
+                            page.get_by_role('button', name='重新载入', exact=True).click()
                             # Do not release the old request or wait its 12 s deadline.
                             expect(page.locator('.sdk-live')).to_contain_text('Live output recovered by manual reconnect', timeout=3000)
                             expect(page.locator('#network-status')).to_have_count(0, timeout=3000)
@@ -223,7 +223,7 @@ def history(browser, binary):
             page.wait_for_function('uiEventsReady && !uiEventApplying')
             sid = 'network-recovery-new-row'
             data.put(sid, 'claude', [claude_row(sid, 'user', 'net-u', None, 'New row after stalled events')], [])
-            expect(page.locator('#network-status')).to_contain_text('实时同步连接中断', timeout=35000)
+            expect(page.locator('#network-status')).to_contain_text('实时同步中断', timeout=35000)
             expect(page.locator(f'#side .item[data-uid="{data.uid(sid)}"]')).to_be_visible(timeout=12000)
             expect(page.locator('#network-status')).to_have_count(0)
             assert len(connections) == 2, connections

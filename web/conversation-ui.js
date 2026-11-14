@@ -128,7 +128,7 @@ const ConversationUI = {
     if (text.startsWith('不支持的命令')) return '命令不支持';
     if (text.startsWith('队列暂停')) return '队列暂停';
     return {blocked: '执行失败', retrying: '正在重试', working: '处理中',
-      waiting: '等待处理', maintenance: '压缩中', connecting: '连接中', ready: '就绪'}[kind] || '状态详情';
+      waiting: '等待处理', maintenance: '压缩中', connecting: '载入中', ready: '就绪'}[kind] || '状态详情';
   },
 
   updateStatusDisclosure(notice, details) {

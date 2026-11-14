@@ -314,7 +314,7 @@ def exercise_connecting_active_tail(browser, base, screenshots, label):
             # 1) Connecting before first SSE snapshot: completed turn-0 is folded,
             #    while unfinished turn-1 is ALREADY expanded (never folded into a
             #    red-bordered .turn-process.has-error pill).
-            expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('连接中')
+            expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('载入中')
             expect(page.locator('.sdk-history')).to_contain_text('上一轮最终结论')
             expect(page.locator('.sdk-history')).to_contain_text('继续分析 NativeSdkView.paintHistory')
             expect(page.locator('.sdk-pane .turn-process')).to_have_count(1)

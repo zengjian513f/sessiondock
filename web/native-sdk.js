@@ -111,7 +111,7 @@ const NativeSdkView = {
   },
   layoutToolbar() { NativeSdkControls.layout(this); },
 
-  open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
+  open(uid, pane, agent = null, {historyReady = null, readOnly = false, observing = false} = {}) {
     this.close();
     this.uid = uid; this.agent = agent; this.pane = pane;
     this.historyReady = historyReady;
@@ -136,7 +136,7 @@ const NativeSdkView = {
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
     if (!this.observeExternal()) void this.start(generation, false,
-      source === 'agy' && S.liveSdk.has(agent ? `${uid}:${agent}` : uid));
+      source === 'agy' && observing);
   },
 
   observeExternal() {
@@ -206,9 +206,9 @@ const NativeSdkView = {
   async start(generation, reconnecting = false, observing = false) {
     if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     const read = new AbortController(); this.openRead = read;
-    this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
+    this.setNotice('载入中', 'connecting');
     try {
-      // Live ownership was already confirmed by /api/live. Re-entering that
+      // Runtime ownership was already confirmed. Re-entering that
       // Agy view only subscribes; explicit Start still performs /open checks.
       const data = observing && this.uid.startsWith('agy:') ? {}
         : await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
@@ -312,7 +312,7 @@ const NativeSdkView = {
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
-      this.setConnected(false); this.setNotice('重连中', 'connecting');
+      this.setConnected(false); this.setNotice('载入中', 'connecting');
       if (es.readyState === EventSource.CLOSED) this.reconnect();
     };
   },
@@ -1061,7 +1061,7 @@ const SdkView = new Proxy({
       // in-flight one (bounded) instead of deciding on an unloaded list.
       for (let tries = 0; tries < 4 && typeof T !== 'undefined'
           && (!T.listLoaded || (HUB_MODE && !Nodes.capabilities[nodeOf(uid)])); tries++) {
-        await loadTermList(false).catch(() => {});
+        await loadTermList(false, HUB_MODE ? nodeOf(uid) : '').catch(() => {});
         if (controller.signal.aborted) break;
       }
       // Self-heal staleness off the critical path: a background full-fleet
@@ -1150,7 +1150,7 @@ const SdkView = new Proxy({
     // Attach to the observed running instance without replacing history/drafts.
     view.readOnly = false;
     view.pane.querySelector('#sdk-composer').hidden = false;
-    void view.start(view.generation, false, view.uid.startsWith('agy:'));
+    void view.start(view.generation, false, /^(codex|agy):/.test(view.uid));
   },
   retryOpen() {
     this.syncRunning();
@@ -1165,7 +1165,8 @@ const SdkView = new Proxy({
     const running = (agent && String(uid).startsWith('droid:') && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
       || (this.selection?.key === viewKey(uid,agent)
         ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
-    this.active.open(uid,pane,agent,{...options, readOnly: this.discovering || (!options?.start && !running)});
+    this.active.open(uid,pane,agent,{...options, observing: !this.discovering && !options?.start && running,
+      readOnly: this.discovering || (!options?.start && !running)});
     if (this.discovering) {
       this.active.input.onclick = null;
       this.active.setNotice('确认状态中', 'neutral');

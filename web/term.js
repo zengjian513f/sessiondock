@@ -173,25 +173,35 @@ function mergeUnavailableTermRows(rows, previous, errors) {
 }
 
 let termListBootstrap = null;
+let termListBootstrapReady = null, termListBootstrapNode = '';
 let termListStarted = false;
-function loadTermList(force = false) {
+function loadTermList(force = false, readyNode = '') {
   if (SessionDockNetwork.paused) return Promise.resolve();
-  if (termListBootstrap) return force ? termListBootstrap.then(() => loadTermList(true)) : termListBootstrap;
+  if (termListBootstrap) return force ? termListBootstrap.then(() => loadTermList(true))
+    : readyNode && readyNode === termListBootstrapNode ? termListBootstrapReady : termListBootstrap;
   // A linked/reloaded conversation needs its own machine's observation, not
   // the slowest member of the fleet. Complete the inventory afterwards.
   const node = !termListStarted && HUB_MODE
     ? (deepNode() || nodeOf(DEEP_SID || S.sel || store.get('sel', ''))) : '';
   termListStarted = true;
   const first = /^[a-f0-9]{32}$/.test(node) ? node : '';
-  const request = (first
-    ? fetchTermList(first, force).then(() => fetchTermList('', force))
+  const ready = first ? fetchTermList(first, force) : null;
+  const request = (ready
+    ? ready.then(() => fetchTermList('', force))
     : fetchTermList('', force)).finally(() => {
       if (T.listRequest === request) T.listRequest = null;
-      if (termListBootstrap === request) termListBootstrap = null;
+      if (termListBootstrap === request) {
+        termListBootstrap = termListBootstrapReady = null;
+        termListBootstrapNode = '';
+      }
     });
-  if (first) termListBootstrap = request;
+  if (first) {
+    termListBootstrap = request;
+    termListBootstrapReady = ready;
+    termListBootstrapNode = first;
+  }
   T.listRequest = request;
-  return request;
+  return readyNode && readyNode === first ? ready : request;
 }
 async function fetchTermList(node = '', force = false) {
   const requestSeq = ++termListRequestSeq;
