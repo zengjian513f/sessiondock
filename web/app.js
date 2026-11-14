@@ -6205,14 +6205,12 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     if (remembered) {
       if (SessionContentView.kind === 'sdk') SessionContentView.close();
       await renderSession(remembered.meta, remembered.msgs, remembered.activity,
-        {startWatch: false, preview: true});
+        {startWatch: false, preview: true, sdkPreview: mode === 'sdk' && SdkView.available(uid, selectedAgent)});
       if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
-      if (mode === 'sdk' && SdkView.available(uid, selectedAgent))
-        SessionContentView.open('sdk', uid, selectedAgent, {discovering: true});
     }
     await selectionReady;
     if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
-    if (SdkView.discovering) SessionContentView.close();
+    if (SdkView.discovering && !SdkView.finishDiscovery()) SessionContentView.close();
   }
   if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
   if (SessionContentView.kind === 'sdk') {
@@ -6859,7 +6857,7 @@ async function loadFullHistory(uid, agent, button) {
 
 // Ordinary navigation and background updates use the conversation's own loading
 // state. Global progress is reserved for an explicit full-history request.
-async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = false, preview = false } = {}) {
+async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = false, preview = false, sdkPreview = false } = {}) {
   const seq = ++renderSeq;
   const uid = meta.uid;
   const agent = meta.agent_id || null;
@@ -6879,6 +6877,22 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   d.appendChild(box);
   auditDetailRendered('render', {messages: msgs.length, seq});
   S.cur = -1; S.autoOpen = 0; S.markCapped = false;
+
+  // SDK owns the visible history. Building a second, hidden conversation tree
+  // on every selection doubles parsing/layout and is immediately discarded.
+  if (sdkPreview || (!preview && (SessionContentView.kind === 'sdk'
+      || (!SessionContentView.kind && SdkView.defaultFor(uid, agent))))) {
+    box._sdkDeferred = {uid, agent};
+    SessionContentView.open('sdk', uid, agent, {discovering: preview});
+    if (entry) SdkView.useHistory(entry);
+    progressDone();
+    if (!preview) {
+      renderMigrationReadFailure(uid, agent);
+      if (startWatch) watchSession(uid, agent);
+      scheduleBrowserSnapshot('rendered');
+    }
+    return;
+  }
 
   // 关键: 建在游离的 fragment 里, 最后一次性挂上。
   // 若逐批插入已在文档中的容器, 每批都会触发一次全量 layout, 上万条时是 O(n²) —— 实测 0.2s 变 14s。

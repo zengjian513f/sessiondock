@@ -100,7 +100,7 @@ def exercise(browser, base, source, output, label, baseline):
         page.unroute('**/api/live?*force=1*')
         page.unroute('**/api/term/list?*force=1*')
         page.wait_for_function("SdkView.selection?.mode !== 'loading' && !SdkView.discovering")
-        expect(page.locator('#detail')).to_contain_text('第 5 轮结论')
+        expect(page.locator('.sdk-history:visible, #msgs:visible')).to_contain_text('第 5 轮结论')
         assert not opens, opens
         assert not errors, errors
         page.screenshot(path=str(output / f'{name}-settled.png'), full_page=True)

@@ -998,6 +998,23 @@ const SdkView = new Proxy({
   awaitingRunning: false,
   discovering: false,
   selectController: null,
+  backgroundLive: new Map(),
+  backgroundTerms: null,
+  refreshBackground(node) {
+    if (!this.backgroundLive.has(node)) {
+      const query = new URLSearchParams({force: '1'});
+      if (node) query.set('nodes', node);
+      const request = fetch(appUrl('api/live?' + query)).then(r => r.ok && r.json()).then(() => {
+        if (typeof paintLive === 'function') paintLive();
+      }).catch(() => {}).finally(() => this.backgroundLive.delete(node));
+      this.backgroundLive.set(node, request);
+    }
+    // Rapid selections share the pending inventory refresh. Each selection
+    // still reads its own authoritative runtime before enabling input.
+    if (!this.backgroundTerms && typeof T !== 'undefined')
+      this.backgroundTerms = loadTermList(true).finally(() => { this.backgroundTerms = null; });
+    return this.backgroundTerms || Promise.resolve();
+  },
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   views: new Map(),
   selection: null,
@@ -1068,14 +1085,10 @@ const SdkView = new Proxy({
       // refresh converges a just-changed terminal/external owner shortly, and
       // updates the per-session cache the next GET reads, without delaying the
       // view. Never awaited.
-      const bgQuery = new URLSearchParams({force: '1'});
-      if (HUB_MODE) bgQuery.set('nodes', nodeOf(uid));
-      void fetch(appUrl('api/live?' + bgQuery)).then(r => r.ok && r.json()).then(() => {
-        if (typeof paintLive === 'function') paintLive();
-      }).catch(() => {});
+      if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
       // The background refresh may reveal a managed console that the cached
       // reads did not know yet; reopen once so ownership picks it up.
-      if (typeof T !== 'undefined') void loadTermList(true).then(() => {
+      void this.refreshBackground(HUB_MODE ? nodeOf(uid) : '').then(() => {
         // Opening the chosen view rebuilds the selection object; compare its
         // key and mode so a later explicit view change is left alone.
         if (S.sel !== uid || S.agent !== agent || this.selection?.key !== key
@@ -1156,15 +1169,35 @@ const SdkView = new Proxy({
     this.syncRunning();
     this.active.retryOpen();
   },
+  runningFor(uid, agent) {
+    return (agent && String(uid).startsWith('droid:') && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
+      || (this.selection?.key === viewKey(uid,agent)
+        ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
+  },
+  finishDiscovery() {
+    const view = this.active, uid = view.uid, agent = view.agent;
+    if (!this.discovering || !view.pane || uid !== S.sel || agent !== S.agent
+        || !this.defaultFor(uid, agent)) return false;
+    // Promote the read-only preview in place. Rebuilding it loses focus and
+    // repeats history, draft, quota and toolbar work on each warm switch.
+    this.discovering = false;
+    const running = this.runningFor(uid, agent);
+    this.selectMode(uid, agent, 'sdk');
+    view.readOnly = !running;
+    if (!view.observeExternal?.()) {
+      view.setNotice(running ? '载入中' : '未运行', running ? 'connecting' : 'idle');
+      if (running) void view.start(view.generation, false, /^(codex|agy):/.test(uid));
+    }
+    refreshSessionRunControls();
+    return true;
+  },
   open(uid,pane,agent,options) {
     this.close();
     this.awaitingRunning = true;
     this.discovering = options?.discovering === true;
     if (!this.discovering) this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
-    const running = (agent && String(uid).startsWith('droid:') && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
-      || (this.selection?.key === viewKey(uid,agent)
-        ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
+    const running = this.runningFor(uid, agent);
     this.active.open(uid,pane,agent,{...options, observing: !this.discovering && !options?.start && running,
       readOnly: this.discovering || (!options?.start && !running)});
     if (this.discovering) {

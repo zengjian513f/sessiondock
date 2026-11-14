@@ -255,6 +255,16 @@ const SessionContentView = {
     this.pane = null;
     $('#right').classList.remove('session-content-view');
     if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
+    // SDK history is rendered only in its visible pane. If this close exposes
+    // the ordinary conversation, build it now from the current cache. Opening
+    // another embedded view or selecting another session needs no hidden tree.
+    queueMicrotask(() => {
+      const deferred = $('#msgs')?._sdkDeferred;
+      if (this.kind || !deferred || deferred.uid !== S.sel || deferred.agent !== S.agent
+          || SdkView.defaultFor(S.sel, S.agent)) return;
+      const entry = cache.get(viewKey(S.sel, S.agent));
+      if (entry) void renderSession(entry.meta, entry.msgs, entry.activity);
+    });
   },
   sync() {
     if (this.kind && (this.uid !== S.sel || this.agent !== S.agent)) this.close();
