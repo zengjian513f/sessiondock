@@ -132,17 +132,28 @@ const ConversationUI = {
   },
 
   updateStatusDisclosure(notice, details) {
+    notice._statusDetails = details;
+    if (notice._statusDisclosureFrame != null) return;
+    notice._statusDisclosureFrame = requestAnimationFrame(() => {
+      notice._statusDisclosureFrame = null;
+      const latest = notice._statusDetails;
+      if (notice.isConnected && latest?.isConnected) this.updateStatusDisclosureNow(notice, latest);
+    });
+  },
+
+  updateStatusDisclosureNow(notice, details) {
     const full = details.textContent.trim(), summary = notice.textContent.trim();
     const available = !notice.hidden && !!full
       && (full !== summary || notice.scrollWidth > notice.clientWidth + 1);
-    notice.disabled = !available;
+    if (notice.disabled !== !available) notice.disabled = !available;
     if (available) {
-      notice.setAttribute('aria-controls', details.id);
-      notice.setAttribute('aria-haspopup', 'dialog');
-      notice.setAttribute('aria-expanded', String(details.matches(':popover-open')));
+      for (const [name, value] of Object.entries({'aria-controls': details.id,
+          'aria-haspopup': 'dialog', 'aria-expanded': String(details.matches(':popover-open'))}))
+        if (notice.getAttribute(name) !== value) notice.setAttribute(name, value);
     } else {
       if (details.matches(':popover-open')) details.hidePopover();
-      for (const attribute of ['aria-controls', 'aria-haspopup', 'aria-expanded']) notice.removeAttribute(attribute);
+      for (const attribute of ['aria-controls', 'aria-haspopup', 'aria-expanded'])
+        if (notice.hasAttribute(attribute)) notice.removeAttribute(attribute);
     }
   },
 

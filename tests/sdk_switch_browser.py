@@ -106,6 +106,9 @@ def exercise(browser, base, streams, shots, width, theme):
                    'layout': {key: value-before_layout[key] for key, value in layout_counts().items()}}
         (shots/f'{width}-{theme}-switches.json').write_text(json.dumps(metrics))
         print(f'SWITCHES {width}/{theme}: {metrics}', flush=True)
+        # Count actual Chromium layouts, not wall time. Before batching header
+        # measurements/status disclosure, the desktop run used >450 layouts.
+        assert metrics['layout']['LayoutCount'] < 400, metrics
         term_refreshes = [r for r in background if '/term/list' in r.request.url]
         live_refreshes = [r for r in background if '/live?' in r.request.url]
         assert len(term_refreshes) == 1, f'duplicate pending fleet refreshes: {len(term_refreshes)}'

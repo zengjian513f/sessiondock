@@ -7152,18 +7152,26 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     let used = 0;
     // 操作按钮先放：按菜单顺序逐个平铺，到放不下的那一个为止，它和后面的都留在菜单里
     const actionsGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
-    for (const node of [...list.children]) {
-      // Deletion scope must stay readable; never flatten these actions to icons.
-      if (node.hasAttribute('data-menu-only')) continue;
+    // Measure the candidates together. Inserting and measuring each button
+    // separately forces one document layout per action on every refresh.
+    // Deletion scope must stay readable; keep menu-only actions in the menu.
+    const candidates = [...list.children].filter(node => !node.hasAttribute('data-menu-only'));
+    for (const node of candidates) {
       node.dataset.fromMenu = '1';
       actions.insertBefore(node, wrap);
-      const width = node.getBoundingClientRect().width + actionsGap;
-      if (used + width > room) {
-        delete node.dataset.fromMenu;
-        list.prepend(node);
-        break;
-      }
+    }
+    const widths = candidates.map(node => node.getBoundingClientRect().width + actionsGap);
+    let shown = 0;
+    for (const width of widths) {
+      if (used + width > room) break;
       used += width;
+      shown++;
+    }
+    const overflow = candidates.slice(shown);
+    for (const node of overflow) delete node.dataset.fromMenu;
+    if (overflow.length) list.replaceChildren(...[...list.children, ...overflow]
+      .sort((a, b) => a.dataset.order - b.dataset.order));
+    for (const node of candidates.slice(0, shown)) {
       for (const item of menuButtons(node)) item.removeAttribute('role');
     }
     // 操作全放下了，元信息再按固定顺序往标题后放，放不下的留在菜单里
