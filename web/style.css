@@ -1271,7 +1271,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; width: 100%; margin: 10px 0 16px;
   color: var(--muted);
 }
-.history-gap::before, .history-gap::after {
+.history-gap-summary {
+  flex-basis: 100%; display: flex; align-items: center; gap: 9px;
+  font-size: 12px; text-align: center;
+}
+.history-gap-summary::before, .history-gap-summary::after {
   content: ""; flex: 1; height: 1px; background: var(--border);
 }
 .history-gap-button, .history-gap-reload {
@@ -1282,7 +1286,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .history-gap-button:hover, .history-gap-reload:hover { border-color: var(--accent); color: var(--text); background: var(--hover); }
 .history-gap-button:disabled { cursor: wait; opacity: .7; }
 .history-page-error { flex-basis: 100%; font-size: 12px; overflow-wrap: anywhere; text-align: center; }
-.history-gap-failed::before, .history-gap-failed::after { display: none; }
 .msg {
   --bubble: var(--bubble-assistant);
   position: relative; width: fit-content; max-width: 100%; min-width: 0;

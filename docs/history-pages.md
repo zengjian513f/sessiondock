@@ -296,8 +296,11 @@ including `counted:false`, rather than native byte offsets or `message_total`.
 Several events may share an offset; inherited events may have offset zero.
 `next` is null exactly when the initial omitted range has been filled.
 
-DELTA: SDK and ordinary conversation gaps offer **载入前面 N 条**, **全部载入**,
-and **载入后面 N 条**, where N is `partial.batch` (200 on older nodes).
+DELTA (BUG-20261114-062522-37e9af): SDK and ordinary conversation gaps display
+**中间还有 X 条未载入**, with X tracking the remaining omitted events. They offer
+**载入较早 N 条**, **全部载入**, and **载入较近 N 条**, where N is `partial.batch`
+(200 on older nodes). Tooltips explain that earlier messages adjoin the content
+above the gap, and more recent messages adjoin the content below it.
 The directional buttons request one batch with `limit=N` and
 `direction=forward|backward`. Forward reads the oldest end of the gap; backward
 reads its newest end, still returning messages in chronological order. Byte and
@@ -315,6 +318,9 @@ head/tail boundary in the loaded array, preserving the gap's scroll position.
 Coverage: [SDK and conversation pages](../tests/codex_sdk_history_pages_browser.py)
 and [lost-grant recovery](../tests/history_pages_resume_browser.py), through node
 and Hub browser entry points.
+[Shared gap labels](../tests/history_gap_labels_browser.py) covers all eight
+providers' SDK and supported ordinary conversation entries, chronological actions,
+remaining counts and completion at desktop/mobile widths in both themes.
 
 A page has no live `end`, `head`, `anchor`, `version` or session metadata fields.
 Its messages are inserted before the existing tail. Loading a page must never
