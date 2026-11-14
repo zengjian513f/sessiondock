@@ -69,7 +69,15 @@ SDK 目标解析原先重复打开同一历史视图，现从一次读取同时�
 浏览器在当前运行状态已确认的 Agy 视图重入时也直接订阅；专项节点／Hub 实际传输
 验证刷新不再发 open、仍显示完整历史且没有重发输入。显式启动保留原流程。
 `105023de` 消息衔接版本已部署 Lyra、Cygnus、Pavo、Hub、Vela、Cetus，均重启并健康；
-Orion 正式 SSH 探测超时，未发布。订阅优化的生产复测与交付结果另行记录。
+Orion 正式 SSH 探测超时，未发布。
+`549c4e79` 的 Lyra 生产只读复测：订阅首快照三次为 168／19／22 毫秒，
+同一恢复后快照均为约 549 KB、73 项；此前同形状快照约 1.59–1.89 秒。
+这是本机接口耗时，不等同于外网浏览器完整加载时间。浏览器零重复 open 已由节点／Hub
+假 CLI 的实际 HTTP/SSE 回归验证。
+最终运行版本 `549c4e79` 已在 Lyra、Cygnus、Pavo、Hub、Vela、Cetus 全部部署、
+重启并通过健康检查，原有会话宿主保留；Orion 已尝试但 SSH 超时，待补发。
+`lyra-resources`、`cygnus-resources`、`pavo-resources` 因资源代理组件未变而排除，
+不重建或替换 ptyhost/sdkhost。部署使用已完成的上述独立验证，`--test none` 本身不算验证。
 
 最终修改通过 `history_browser.py`、`history_pages_browser.py`、
 `sdk_turns_browser.py --sources agy`（八组合）及新增
