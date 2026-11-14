@@ -15,6 +15,7 @@ mod capacity;
 mod channel;
 mod connection;
 mod controls;
+pub(crate) mod creation;
 mod live;
 pub(crate) mod managed;
 mod observation;
@@ -272,6 +273,8 @@ pub(crate) struct Inner {
     account_read: tokio::sync::Mutex<Option<(Instant, AccountRead)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
+    creations: creation::Creations,
+    metadata: Option<Arc<crate::metadata::MetadataStore>>,
     retention: retention::Retention,
     observation: tokio::sync::Mutex<observation::Sample>,
     shutdown: CancellationToken,
@@ -339,6 +342,7 @@ impl CodexSdk {
         endpoint: Endpoint,
         shutdown: CancellationToken,
         state_dir: Option<PathBuf>,
+        metadata: Option<Arc<crate::metadata::MetadataStore>>,
     ) -> std::io::Result<Arc<Self>> {
         let model_cache_path = state_dir
             .as_ref()
@@ -346,6 +350,7 @@ impl CodexSdk {
         let queue = queue::Queue::open(state_dir.clone())?;
         let receipts = receipts::Receipts::open(state_dir.clone())?;
         let retention = retention::Retention::open(state_dir.clone(), &endpoint.socket)?;
+        let creations = creation::Creations::open(&endpoint.host_state)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
                 host_state: crate::sdk_common::host::state_dir(state_dir.as_deref()),
@@ -362,6 +367,8 @@ impl CodexSdk {
                 account_read: tokio::sync::Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
+                creations,
+                metadata,
                 retention,
                 observation: tokio::sync::Mutex::new(observation::Sample::default()),
                 shutdown,
@@ -373,13 +380,36 @@ impl CodexSdk {
         tokio::spawn(async move { inner.run_queue().await });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.run_capacity_retries().await });
+        let recovering = sdk.clone();
+        tokio::spawn(async move {
+            for (id, attempt) in recovering.inner.creations.pending() {
+                let sdk = recovering.clone();
+                tokio::spawn(async move {
+                    let _ = sdk
+                        .create_attributed(&id, attempt.params, attempt.context)
+                        .await;
+                });
+            }
+        });
         Ok(sdk)
     }
 
     /// Keep an explicit create attempt alive across HTTP disconnects. Retrying
     /// its request id returns the same result, including uncertain failures.
     pub async fn create(&self, request_id: &str, params: Value) -> Result<Value, RpcError> {
+        self.create_attributed(request_id, params, None).await
+    }
+
+    pub(crate) async fn create_attributed(
+        &self,
+        request_id: &str,
+        params: Value,
+        context: Option<creation::Context>,
+    ) -> Result<Value, RpcError> {
         if let Some(result) = self.inner.receipts.completed(request_id) {
+            if self.inner.creations.pending().contains_key(request_id) {
+                self.inner.creations.finish(request_id)?;
+            }
             return Ok(result);
         }
         let mut result = {
@@ -391,7 +421,7 @@ impl CodexSdk {
                     let inner = self.inner.clone();
                     let request_id = request_id.to_owned();
                     tokio::spawn(async move {
-                        let result = inner.start(&request_id, params).await;
+                        let result = inner.start(&request_id, params, context).await;
                         send.send_replace(Some(result));
                     });
                     receive
@@ -629,22 +659,38 @@ impl Inner {
         self: &Arc<Self>,
         request_id: &str,
         mut params: Value,
+        context: Option<creation::Context>,
     ) -> Result<Value, RpcError> {
+        let attempt = self.creations.begin(request_id, params, context)?;
+        params = attempt.params;
         let provider = params["modelProvider"]
             .as_str()
             .filter(|p| !p.is_empty())
             .unwrap_or("openai")
             .to_owned();
         params["modelProvider"] = json!(provider);
-        let connection = self.provider_connection(&provider, true).await?;
-        let result = connection.request("thread/start", params).await?;
-        if let Some(id) = result["thread"]["id"].as_str() {
-            self.routes
-                .lock()
-                .expect("routes")
-                .insert(id.to_owned(), provider);
+        let connection = match self.provider_connection(&provider, true).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                if attempt.binding.is_none() {
+                    self.creations.finish(request_id)?;
+                }
+                return Err(error);
+            }
+        };
+        if let Some(result) = self.receipts.completed(request_id) {
+            self.creations.finish(request_id)?;
+            return Ok(result);
         }
-        self.adopt_result(connection.generation(), result, Some(request_id))
+        let result = connection.start_request(self, request_id, params).await;
+        if matches!(result, Err(RpcError::Disconnected)) && !self.shutdown.is_cancelled() {
+            // Resume the hosted reader, never replay thread/start on a new channel.
+            let _ = self.provider_connection(&provider, true).await;
+        }
+        self.receipts
+            .completed(request_id)
+            .map(Ok)
+            .unwrap_or(result)
     }
 
     fn adopt_result(

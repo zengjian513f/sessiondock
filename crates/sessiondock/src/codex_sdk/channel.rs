@@ -145,6 +145,9 @@ impl Channel {
     pub fn offset(&self) -> u64 {
         self.state.lock().unwrap().offset
     }
+    pub fn key(&self) -> String {
+        self.state.lock().unwrap().key.clone()
+    }
     pub fn entries(&self) -> Vec<Entry> {
         self.state.lock().unwrap().outbox.clone()
     }

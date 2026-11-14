@@ -9,9 +9,10 @@ use std::{
     time::Duration,
 };
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Initiator {
     parent: NestParent,
-    identities: BTreeMap<(String, String), String>,
+    identities: Vec<((String, String), String)>,
 }
 
 pub async fn capture(
@@ -160,23 +161,34 @@ pub fn record(
     sid: &str,
     initiator: Option<Initiator>,
 ) -> Result<(), ApiError> {
-    if let Some(store) = &state.metadata {
+    if record_metadata(state.metadata.as_deref(), uid, source, sid, initiator)? {
+        state.ui_events.publish_sessions();
+    }
+    state.reader.store.invalidate_inventory();
+    Ok(())
+}
+
+pub(crate) fn record_metadata(
+    store: Option<&crate::metadata::MetadataStore>,
+    uid: &str,
+    source: &str,
+    sid: &str,
+    initiator: Option<Initiator>,
+) -> Result<bool, ApiError> {
+    if let Some(store) = store {
         let previous = store.snapshot();
         let updated = if let Some(mut initiator) = initiator {
             initiator
                 .identities
-                .insert((source.to_owned(), sid.to_owned()), uid.to_owned());
+                .push(((source.to_owned(), sid.to_owned()), uid.to_owned()));
             store.initialize_nest_parents(
                 &[(uid.to_owned(), initiator.parent)],
-                &initiator.identities,
+                &initiator.identities.into_iter().collect(),
             )?
         } else {
             store.initialize_nest_decision(uid)?
         };
-        if !std::sync::Arc::ptr_eq(&previous, &updated) {
-            state.ui_events.publish_sessions();
-        }
-        state.reader.store.invalidate_inventory();
+        return Ok(!std::sync::Arc::ptr_eq(&previous, &updated));
     }
-    Ok(())
+    Ok(false)
 }

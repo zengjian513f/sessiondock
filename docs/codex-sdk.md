@@ -392,6 +392,19 @@ empty thread lost by the daemon itself or recover old, already-lost memory-only
 receipts (BUG-20261019-032629-1ba6cf).
 Browser regression: [creation retention](../tests/sdk_creation_retention_browser.py).
 
+DELTA (BUG-20261114-233657-ab4cea): before sending `thread/start`, the node saves
+the request, original caller/continuation context and exact hosted channel/RPC
+binding in `codex-sdk-creates.json`. A timed-out waiter does not discard a later
+successful native reply: the reader saves its identity receipt and original
+display parent before advancing the output checkpoint. Pending attempts recover
+on node restart through the same hosted channel; retries never issue a second
+native start. If that channel has been replaced, the result remains uncertain
+instead of creating another thread. Existing explicit attach/detach decisions
+take precedence. This cannot reconstruct provenance for requests lost before
+this journal existed, and does not infer parents from message text.
+Browser regression: [late creation](../tests/codex_sdk_late_create_browser.py)
+also checks first SEND, native child discovery and migration-tree membership.
+
 ## View
 
 Shared status, layout, conditional menus and immediate cached usage follow

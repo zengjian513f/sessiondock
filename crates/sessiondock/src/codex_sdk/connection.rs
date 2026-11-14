@@ -137,7 +137,18 @@ impl Connection {
                 .await?;
         let connection = Arc::new(Self {
             socket: endpoint.socket.clone(),
-            next_id: AtomicI64::new(channel.next_id()),
+            next_id: AtomicI64::new(
+                inner
+                    .creations
+                    .pending()
+                    .values()
+                    .filter_map(|a| a.binding.as_ref())
+                    .filter(|(key, _)| key == &channel.key())
+                    .map(|(_, id)| id + 1)
+                    .max()
+                    .unwrap_or(0)
+                    .max(channel.next_id()),
+            ),
             channel,
             pending: Mutex::new(HashMap::new()),
             closed: CancellationToken::new(),
@@ -222,10 +233,33 @@ impl Connection {
     }
 
     pub async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, RpcError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.request_id(id, method, params).await
+    }
+
+    pub(super) async fn start_request(
+        self: &Arc<Self>,
+        inner: &Inner,
+        request_id: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        let id = inner.creations.bind(
+            request_id,
+            &self.channel.key(),
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+        )?;
+        self.request_id(id, "thread/start", params).await
+    }
+
+    async fn request_id(
+        self: &Arc<Self>,
+        id: i64,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         if self.is_closed() {
             return Err(RpcError::Disconnected);
         }
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("pending").insert(id, tx);
         if let Err(error) = self.send(json!({"method": method, "id": id, "params": params})) {
@@ -387,6 +421,7 @@ fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
                     let consumed = offset - buffer.len() as u64;
                     if let Some(text) = record.as_str() {
                         let frame: Value = serde_json::from_str(text).map_err(|e| RpcError::Unavailable(e.to_string()))?;
+                        inner.creation_reply(&channel.key(), connection.generation(), &frame)?;
                         channel.observe(&frame, consumed)?;
                         dispatch(&inner, connection.generation(), text);
                     } else { channel.observe(&Value::Null, consumed)?; }

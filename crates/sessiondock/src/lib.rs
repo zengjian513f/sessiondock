@@ -356,7 +356,12 @@ fn build_app(
     capabilities["audit"] = serde_json::json!(audit.is_some());
     let codex_sdk = codex_endpoint
         .map(|endpoint| {
-            codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone())
+            codex_sdk::CodexSdk::new(
+                endpoint,
+                shutdown.clone(),
+                config.state_dir.clone(),
+                metadata.clone(),
+            )
         })
         .transpose()?;
     capabilities["codex_sdk"] = serde_json::json!(

@@ -167,19 +167,22 @@ async fn create_owned(
     } else {
         None
     };
-    let result = sdk.create(&body.request_id, params).await.map_err(rpc)?;
+    let result = sdk
+        .create_attributed(
+            &body.request_id,
+            params,
+            Some(crate::codex_sdk::creation::Context {
+                initiator,
+                continuation,
+            }),
+        )
+        .await
+        .map_err(rpc)?;
     let path = result["thread"]["path"]
         .as_str()
         .ok_or_else(|| rpc(RpcError::Disconnected))?;
     let uid = crate::sessions::uid_for("codex", Path::new(path));
-    super::relations::record_sdk_continuation(&state, &uid, continuation)?;
-    crate::runtime::sdk_spawn::record(
-        &state,
-        &uid,
-        "codex",
-        result["thread"]["id"].as_str().unwrap_or(""),
-        initiator,
-    )?;
+    state.ui_events.publish_sessions();
     state.reader.store.invalidate_inventory();
     let mut session = sdk
         .pending()
