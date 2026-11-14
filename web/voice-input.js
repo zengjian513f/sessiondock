@@ -118,17 +118,94 @@ globalThis.VoiceInput = (() => {
   const PCM_FRAME_SAMPLES = 1600; // 100ms @ 16kHz
 
   const MIC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5v4"/><path d="M8.5 21.5h7"/></svg>`;
+  const REFRESH_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 5.8A5.8 5.8 0 003 4.1L2 6.5h3"/><path d="M2.5 10.2A5.8 5.8 0 0013 11.9l1-2.4h-3"/></svg>`;
 
   const instances = new Set();
+  let activeModels = MODELS;
+  let catalogHydrated = false;
+  let refreshInFlight = false;
+  let refreshFeedback = null;
+  let refreshFeedbackTimer = null;
+
+  function normalizeCatalogList(rawModels) {
+    if (!Array.isArray(rawModels) || rawModels.length === 0) return MODELS;
+    const byProvider = new Map(PROVIDERS.map(p => [p.id, []]));
+    const seen = new Set();
+    for (const raw of rawModels) {
+      if (!raw || typeof raw !== 'object') continue;
+      const id = String(raw.id || '').trim();
+      const provider = String(raw.provider || '').trim().toLowerCase();
+      if (!id || seen.has(id) || !byProvider.has(provider)) continue;
+      seen.add(id);
+      const builtin = MODELS.find(m => m.id === id) || null;
+      const label = String(raw.label || builtin?.label || id).trim();
+      const short = String(raw.short || builtin?.short || label).trim();
+      const hint = String(raw.hint || builtin?.hint || '').trim();
+      const entry = {
+        id,
+        provider,
+        realtime: Boolean(raw.realtime),
+        label,
+        short,
+        hint,
+      };
+      if (builtin?.legacyAlias) entry.legacyAlias = builtin.legacyAlias;
+      if (builtin?.legacyAliases) entry.legacyAliases = builtin.legacyAliases;
+      byProvider.get(provider).push(Object.freeze(entry));
+    }
+    const merged = [];
+    for (const prov of PROVIDERS) {
+      const items = byProvider.get(prov.id);
+      if (items && items.length > 0) {
+        merged.push(...items);
+      } else {
+        merged.push(...MODELS.filter(m => m.provider === prov.id));
+      }
+    }
+    return merged.length > 0 ? Object.freeze(merged) : MODELS;
+  }
+
+  function hydrateCachedCatalog(getModelsCache) {
+    if (catalogHydrated || typeof getModelsCache !== 'function') return;
+    catalogHydrated = true;
+    try {
+      const cached = getModelsCache();
+      const list = Array.isArray(cached) ? cached : cached?.models;
+      if (Array.isArray(list) && list.length > 0) {
+        activeModels = normalizeCatalogList(list);
+      }
+    } catch {}
+  }
+
+  function setRefreshFeedback(next, durationMs = 3600) {
+    clearTimeout(refreshFeedbackTimer);
+    refreshFeedbackTimer = null;
+    refreshFeedback = next;
+    for (const inst of instances) inst.syncMenu();
+    if (next && durationMs > 0) {
+      refreshFeedbackTimer = setTimeout(() => {
+        refreshFeedback = null;
+        refreshFeedbackTimer = null;
+        for (const inst of instances) inst.syncMenu();
+      }, durationMs);
+    }
+  }
 
   function findModelSpec(id) {
     const raw = String(id || '').trim();
     if (!raw) return null;
-    return MODELS.find(m =>
+    const matchIn = list => list.find(m =>
       m.id === raw
       || m.legacyAlias === raw
       || (Array.isArray(m.legacyAliases) && m.legacyAliases.includes(raw))
     ) || null;
+    const direct = matchIn(activeModels);
+    if (direct) return direct;
+    const legacy = matchIn(MODELS);
+    if (legacy) {
+      return activeModels.find(m => m.id === legacy.id) || legacy;
+    }
+    return null;
   }
 
   function resolveAvailableProviders(getProviders) {
@@ -150,13 +227,16 @@ globalThis.VoiceInput = (() => {
       : PROVIDERS.map(p => p.id);
     const spec = findModelSpec(id);
     if (spec && allowed.includes(spec.provider)) return spec.id;
-    const fallback = MODELS.find(m => allowed.includes(m.provider)) || MODELS[0];
+    const fallback = activeModels.find(m => allowed.includes(m.provider))
+      || MODELS.find(m => allowed.includes(m.provider))
+      || activeModels[0]
+      || MODELS[0];
     return fallback.id;
   }
 
   function modelMeta(id, availableProviders = null) {
     const resolved = validModelId(id, availableProviders);
-    return findModelSpec(resolved) || MODELS[0];
+    return findModelSpec(resolved) || activeModels[0] || MODELS[0];
   }
 
   function providerMeta(id) {
@@ -337,9 +417,12 @@ globalThis.VoiceInput = (() => {
       beforeElement = null,
       endpoint = '/api/voice/transcribe',
       realtimeEndpoint = '/api/voice/realtime',
+      modelsEndpoint = '/api/voice/models',
       buttonClassName = 'btn voice-mic-btn',
       getModel = () => DEFAULT_MODEL,
       setModel = () => {},
+      getModelsCache = null,
+      setModelsCache = null,
       getProviders = null,
       getContext = () => ({}),
       getRequestExtra = () => ({}),
@@ -350,6 +433,7 @@ globalThis.VoiceInput = (() => {
     } = options;
 
     if (!input || !buttonHost) return null;
+    hydrateCachedCatalog(getModelsCache);
 
     const ac = new AbortController();
     const {signal} = ac;
@@ -442,6 +526,62 @@ globalThis.VoiceInput = (() => {
       if (menuOpen) renderMenuItems();
     }
 
+    async function triggerRefreshModels() {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      clearTimeout(refreshFeedbackTimer);
+      refreshFeedbackTimer = null;
+      refreshFeedback = null;
+      for (const inst of instances) inst.syncMenu();
+
+      try {
+        const baseHref = resolveHttpUrl(modelsEndpoint);
+        const url = new URL(baseHref);
+        url.searchParams.set('refresh', '1');
+        const extraParams = (typeof getRealtimeParams === 'function' ? getRealtimeParams() : null)
+          || (typeof getRequestExtra === 'function' ? getRequestExtra() : null)
+          || {};
+        for (const [k, v] of Object.entries(extraParams)) {
+          if (v != null && String(v) !== '') url.searchParams.set(k, String(v));
+        }
+        const headers = {Accept: 'application/json', ...(getHeaders?.() || {})};
+        const resp = await fetch(url.href, {
+          method: 'GET',
+          headers,
+          credentials: 'same-origin',
+          signal,
+        });
+        let data = null;
+        try { data = await resp.json(); } catch {}
+        if (!resp.ok) {
+          throw new Error(data?.error || `刷新模型失败 (HTTP ${resp.status})`);
+        }
+        if (Array.isArray(data?.models) && data.models.length > 0) {
+          activeModels = normalizeCatalogList(data.models);
+          try {
+            setModelsCache?.({
+              models: activeModels,
+              updated_at: data.updated_at || Math.floor(Date.now() / 1000),
+            });
+          } catch {}
+        }
+        const warnings = Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [];
+        if (warnings.length > 0) {
+          setRefreshFeedback({tone: 'warn', text: `部分服务已更新（${warnings[0]}）`}, 4500);
+        } else {
+          const tabCount = activeModels.filter(m => m.provider === (activeProviderTab || 'openai')).length;
+          setRefreshFeedback({tone: 'ok', text: `已同步最新语音模型（本栏 ${tabCount} 个，共 ${activeModels.length} 个）`}, 3200);
+        }
+      } catch (err) {
+        if (err?.name !== 'AbortError') {
+          setRefreshFeedback({tone: 'error', text: err?.message || '刷新模型失败'}, 4500);
+        }
+      } finally {
+        refreshInFlight = false;
+        for (const inst of instances) inst.sync();
+      }
+    }
+
     function renderMenuItems() {
       const providers = availableProviders();
       const selected = currentModelId();
@@ -450,10 +590,23 @@ globalThis.VoiceInput = (() => {
         activeProviderTab = selectedMeta.provider;
       }
 
+      const prevList = menu.querySelector('.voice-model-list');
+      const prevTab = prevList?.dataset.providerTab || '';
+      const prevScroll = prevTab === activeProviderTab ? (prevList?.scrollTop || 0) : 0;
+
       menu.innerHTML = '';
+
+      if (refreshFeedback?.text) {
+        const banner = document.createElement('div');
+        banner.className = 'voice-refresh-note';
+        banner.dataset.tone = refreshFeedback.tone || 'ok';
+        banner.textContent = refreshFeedback.text;
+        menu.appendChild(banner);
+      }
 
       const list = document.createElement('div');
       list.className = 'voice-model-list';
+      list.dataset.providerTab = activeProviderTab;
       list.setAttribute('role', 'menu');
 
       const providerEnabled = providers.includes(activeProviderTab);
@@ -464,7 +617,7 @@ globalThis.VoiceInput = (() => {
         list.appendChild(note);
       }
 
-      const providerModels = MODELS.filter(m => m.provider === activeProviderTab);
+      const providerModels = activeModels.filter(m => m.provider === activeProviderTab);
       for (const item of providerModels) {
         const opt = document.createElement('button');
         opt.type = 'button';
@@ -495,6 +648,9 @@ globalThis.VoiceInput = (() => {
         list.appendChild(opt);
       }
 
+      const bar = document.createElement('div');
+      bar.className = 'voice-menu-bar';
+
       const tabs = document.createElement('div');
       tabs.className = 'voice-provider-tabs';
       tabs.setAttribute('role', 'tablist');
@@ -523,7 +679,26 @@ globalThis.VoiceInput = (() => {
         tabs.appendChild(tab);
       }
 
-      menu.append(list, tabs);
+      const refreshBtn = document.createElement('button');
+      refreshBtn.type = 'button';
+      refreshBtn.className = 'voice-model-refresh';
+      const refreshTitle = refreshInFlight ? '正在刷新模型列表…' : '刷新模型列表';
+      refreshBtn.title = refreshTitle;
+      refreshBtn.setAttribute('aria-label', refreshTitle);
+      refreshBtn.setAttribute('aria-busy', refreshInFlight ? 'true' : 'false');
+      refreshBtn.disabled = refreshInFlight;
+      refreshBtn.innerHTML = REFRESH_SVG;
+      refreshBtn.onclick = event => {
+        event.stopPropagation();
+        void triggerRefreshModels();
+      };
+
+      bar.append(tabs, refreshBtn);
+      menu.append(list, bar);
+      if (prevScroll > 0) list.scrollTop = prevScroll;
+      if (menuOpen && menu.matches(':popover-open')) {
+        placePopover(menu, button);
+      }
     }
 
     function openMenu() {
@@ -1561,6 +1736,10 @@ globalThis.VoiceInput = (() => {
       menu,
       pill,
       sync: syncButtonMeta,
+      syncMenu() {
+        if (menuOpen) renderMenuItems();
+      },
+      refreshModels: triggerRefreshModels,
       closeMenu,
       destroy() {
         instances.delete(api);
@@ -1584,6 +1763,7 @@ globalThis.VoiceInput = (() => {
     PROVIDERS,
     MODELS,
     DEFAULT_MODEL,
+    getModels: () => [...activeModels],
     validModelId,
     encodeWav16k,
     attach,

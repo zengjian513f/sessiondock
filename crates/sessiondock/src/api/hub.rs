@@ -75,6 +75,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/session/resources"),
     ("GET", "/api/resources/summary"),
     ("POST", "/api/session/resources/probe"),
+    ("GET", "/api/voice/models"),
     ("POST", "/api/voice/transcribe"),
     ("GET", "/api/voice/realtime"),
 ];
@@ -796,6 +797,70 @@ async fn handle(
             ),
         )
             .into_response());
+    }
+    if method == Method::GET && path == "/api/voice/models" {
+        let refresh = query
+            .get("refresh")
+            .and_then(|v| v.first())
+            .map(|s| s.trim())
+            .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+        let local_override = state
+            .voice
+            .as_ref()
+            .is_some_and(|v| v.has_explicit_url_override());
+        if local_override && let Some(voice) = &state.voice {
+            return match voice.list_models(refresh, state.shutdown.clone()).await {
+                Ok(payload) => ok(&payload),
+                Err(error) => Ok(error.into_response()),
+            };
+        }
+        let scoped_uid = query.get("uid").and_then(|v| v.first()).map(String::as_str);
+        let node_param = query
+            .get("node")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        if let Some(nid) = select_voice_node(registry, explicit.as_deref(), scoped_uid, node_param)
+        {
+            let mut forward_query = query.clone();
+            forward_query.shift_remove("uid");
+            forward_query.shift_remove("node");
+            let node = registry
+                .find(&nid)
+                .ok_or_else(|| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let target = registry
+                .target(&node)
+                .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
+            let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
+            return Ok(proxy::proxy(
+                client,
+                &target,
+                &node,
+                state.shutdown.clone(),
+                Forward {
+                    nest_registry: state.registry.clone(),
+                    method: method.as_str(),
+                    path: "/api/voice/models",
+                    query: &forward_query,
+                    body: None,
+                    upload: None,
+                    browser: &headers,
+                    display_ip: &display_ip,
+                    upgrade: None,
+                    terminal_observer: None,
+                },
+            )
+            .await?);
+        }
+        if let Some(voice) = &state.voice {
+            return match voice.list_models(refresh, state.shutdown.clone()).await {
+                Ok(payload) => ok(&payload),
+                Err(error) => Ok(error.into_response()),
+            };
+        }
+        return status(
+            StatusCode::NOT_IMPLEMENTED,
+            json!({"error": "未配置语音输入 API Key，且当前无可用语音识别节点", "code": "voice_input_unconfigured"}),
+        );
     }
     if method == Method::POST && path == "/api/voice/transcribe" {
         let mut body = read_body(request).await?;

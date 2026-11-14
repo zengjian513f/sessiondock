@@ -101,9 +101,9 @@
   font-family: var(--sans, system-ui, -apple-system, sans-serif);
 }
 
-/* 3-Provider Tabbed Model Menu (upward popover: model list on top, provider tabs at bottom) */
+/* 3-Provider Tabbed Model Menu (upward popover: model list on top, provider tabs + refresh at bottom) */
 .voice-model-menu[popover] {
-  width: min(296px, calc(100vw - 16px));
+  width: min(318px, calc(100vw - 16px));
   padding: 6px;
   border: 1px solid var(--border, #e3e6ec);
   border-radius: 11px;
@@ -125,7 +125,15 @@
   box-shadow: 0 16px 40px rgba(0, 0, 0, .52);
 }
 
+.voice-menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .voice-provider-tabs {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
@@ -136,6 +144,67 @@
 
 :root[data-theme="dark"] .voice-provider-tabs {
   background: color-mix(in srgb, var(--border, #2c313a) 68%, var(--panel-2, #181b20));
+}
+
+.voice-model-refresh {
+  width: 33px;
+  height: 33px;
+  flex: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 8px;
+  background: var(--panel-2, #fbfbfd);
+  color: var(--muted, #6b7280);
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease;
+}
+
+.voice-model-refresh:hover:not(:disabled),
+.voice-model-refresh:focus-visible:not(:disabled) {
+  background: var(--hover, #eef2fb);
+  color: var(--text, #1c2024);
+  outline: none;
+}
+
+.voice-model-refresh[aria-busy="true"] {
+  color: var(--accent, #3b6ef6);
+  border-color: color-mix(in srgb, var(--accent, #3b6ef6) 45%, var(--border, #e3e6ec));
+  cursor: progress;
+}
+
+.voice-model-refresh svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .voice-model-refresh[aria-busy="true"] svg {
+    animation: voice-input-spin .75s linear infinite;
+  }
+}
+
+.voice-refresh-note {
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent, #3b6ef6) 10%, var(--panel-2, #fbfbfd));
+  color: var(--text, #1c2024);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.voice-refresh-note[data-tone="warn"] {
+  background: color-mix(in srgb, var(--muted, #6b7280) 14%, var(--panel-2, #fbfbfd));
+  color: var(--muted, #6b7280);
+}
+
+.voice-refresh-note[data-tone="error"] {
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, var(--panel-2, #fbfbfd));
+  color: var(--danger, #e5484d);
 }
 
 .voice-provider-tab {
@@ -188,6 +257,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: min(268px, calc(100vh - 128px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .voice-provider-note {

@@ -307,6 +307,7 @@ pub fn router() -> Router<AppState> {
                 request_body_limit("/api/voice/transcribe"),
             )),
         )
+        .route("/voice/models", get(voice::models))
         .route("/voice/realtime", get(voice::realtime));
     router
         .fallback(not_found)

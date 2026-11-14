@@ -213,8 +213,170 @@ class MockVoiceUpstream:
             def log_message(self, fmt, *args):
                 return
 
+            def _send_json_obj(self, obj: dict, status: int = 200):
+                raw_json = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(raw_json)))
+                self.end_headers()
+                self.wfile.write(raw_json)
+                self.wfile.flush()
+
             def do_GET(self):
                 if self.headers.get("Upgrade", "").lower() != "websocket":
+                    auth = self.headers.get("Authorization", "")
+                    goog_key = self.headers.get("x-goog-api-key", "")
+                    if self.path.startswith("/openai/v1/models"):
+                        with outer.lock:
+                            outer.http_requests.append({
+                                "provider": "openai_models",
+                                "path": self.path,
+                                "auth": auth,
+                            })
+                        self._send_json_obj({
+                            "data": [
+                                {"id": "gpt-live-transcribe", "created": 1785168000},
+                                {"id": "gpt-transcribe", "created": 1785167000},
+                                {"id": "gpt-audio-1.5", "created": 1785166000},
+                                {"id": "gpt-audio-2", "created": 1795000000},
+                                {"id": "gpt-4o-transcribe", "created": 1740000000},
+                                {"id": "gpt-audio-2025-08-28", "created": 1756339200},
+                                {"id": "gpt-5-tts", "created": 1790000000},
+                                {"id": "gpt-realtime", "created": 1790000000},
+                                {"id": "text-embedding-3-large", "created": 1710000000},
+                            ]
+                        })
+                        return
+                    if self.path.startswith("/google/v1beta/models"):
+                        with outer.lock:
+                            outer.http_requests.append({
+                                "provider": "google_models",
+                                "path": self.path,
+                                "api_key": goog_key,
+                            })
+                        if "pageToken=page2" in self.path:
+                            self._send_json_obj({
+                                "models": [
+                                    {
+                                        "name": "models/gemini-3.5-transcribe-live",
+                                        "displayName": "Gemini 3.5 Transcribe Live",
+                                        "supportedGenerationMethods": ["bidiGenerateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-4-argon",
+                                        "displayName": "Gemini 4 Argon",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                ]
+                            })
+                        else:
+                            self._send_json_obj({
+                                "models": [
+                                    {
+                                        "name": "models/gemini-4-hydrogen",
+                                        "displayName": "Gemini 4 Hydrogen",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-4-carbon",
+                                        "displayName": "Gemini 4 Carbon",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-3.8-flash",
+                                        "displayName": "Gemini 3.8 Flash",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-omni-1.2-flash",
+                                        "displayName": "Gemini Omni 1.2 Flash",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-3.5-transcribe",
+                                        "displayName": "Gemini 3.5 Transcribe",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-3.8-flash-tts",
+                                        "displayName": "Gemini 3.8 Flash TTS",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                    {
+                                        "name": "models/gemini-3.5-flash-001",
+                                        "displayName": "Gemini 3.5 Flash 001",
+                                        "supportedGenerationMethods": ["generateContent"],
+                                    },
+                                ],
+                                "nextPageToken": "page2",
+                            })
+                        return
+                    if self.path.startswith("/openrouter/v1/models"):
+                        with outer.lock:
+                            outer.http_requests.append({
+                                "provider": "openrouter_models",
+                                "path": self.path,
+                                "auth": auth,
+                            })
+                        self._send_json_obj({
+                            "data": [
+                                {
+                                    "id": "qwen/qwen3.8-omni-flash",
+                                    "name": "Qwen: Qwen3.8 Omni Flash",
+                                    "created": 1785000000,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "google/gemini-3.8-flash",
+                                    "name": "Google: Gemini 3.8 Flash",
+                                    "created": 1785000001,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "openai/gpt-audio",
+                                    "name": "OpenAI: GPT Audio",
+                                    "created": 1785000002,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text", "audio"]},
+                                },
+                                {
+                                    "id": "xiaomi/mimo-v2.6-flash",
+                                    "name": "Xiaomi: MiMo-V2.6-Flash",
+                                    "created": 1785000003,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "google/gemini-4-hydrogen",
+                                    "name": "Google: Gemini 4 Hydrogen",
+                                    "created": 1795000020,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "meta/muse-ember",
+                                    "name": "Meta: Muse Ember",
+                                    "created": 1795000010,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "anthropic/claude-sonnet-4.6",
+                                    "name": "Anthropic: Claude Sonnet 4.6",
+                                    "created": 1795000030,
+                                    "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "openrouter/auto",
+                                    "name": "Auto Router",
+                                    "created": 1795000040,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                                {
+                                    "id": "google/gemini-4-hydrogen:free",
+                                    "name": "Google: Gemini 4 Hydrogen (free)",
+                                    "created": 1795000050,
+                                    "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]},
+                                },
+                            ]
+                        })
+                        return
                     self.send_response(400)
                     self.end_headers()
                     return
@@ -689,6 +851,8 @@ def test_capability_gate_disabled(pw, binary: Path, root: Path, wav_path: Path) 
         assert meta["capabilities"]["conversation_send"] is True, meta["capabilities"]
 
         for method, path, payload in [
+            ("GET", "/api/voice/models", None),
+            ("GET", "/api/voice/models?refresh=1", None),
             ("POST", "/api/voice/transcribe", json.dumps({"audio": "UklGRg==", "format": "wav"}).encode("utf-8")),
             ("GET", "/api/voice/realtime", None),
         ]:
@@ -795,6 +959,7 @@ def test_three_providers_realtime_and_http(
             keys = page.evaluate("() => Object.keys(localStorage)")
             assert all(k.startswith("sessiondock.") for k in keys), keys
             assert "sessiondock.voiceModel" not in keys, keys
+            assert "sessiondock.voiceModelCatalog" not in keys, keys
 
             page.locator(".item").first.click()
             cinput = page.locator("#cinput")
@@ -828,10 +993,15 @@ def test_three_providers_realtime_and_http(
             menu_box_oa = menu.bounding_box()
             list_box_oa = model_list.bounding_box()
             tabs_box_oa = tabs_bar.bounding_box()
-            assert mic_box and menu_box_oa and list_box_oa and tabs_box_oa
-            # Popover opens upward above mic, model list is on top, provider tabs are at the bottom nearest mic!
+            refresh_btn = menu.locator(".voice-model-refresh")
+            expect(refresh_btn).to_be_visible()
+            refresh_box = refresh_btn.bounding_box()
+            assert mic_box and menu_box_oa and list_box_oa and tabs_box_oa and refresh_box
+            # Popover opens upward above mic, model list is on top, provider tabs + refresh button sit side-by-side at bottom!
             assert menu_box_oa["y"] + menu_box_oa["height"] <= mic_box["y"] + 1, (menu_box_oa, mic_box)
             assert tabs_box_oa["y"] >= list_box_oa["y"] + list_box_oa["height"] - 1, (list_box_oa, tabs_box_oa)
+            assert abs(refresh_box["y"] - tabs_box_oa["y"]) <= 1.5, (tabs_box_oa, refresh_box)
+            assert refresh_box["x"] >= tabs_box_oa["x"] + tabs_box_oa["width"] - 1, (tabs_box_oa, refresh_box)
 
             if output:
                 page.screenshot(path=str(output / "node-1280-light-openai-tab.png"), full_page=True)
@@ -1047,6 +1217,67 @@ def test_three_providers_realtime_and_http(
             assert cinput.input_value() == "保留原稿"
             upstream.or_mode = "normal"
 
+            # 8) Live Model Refresh (`.voice-model-refresh` -> `GET /api/voice/models?refresh=1`) & dynamic model transcription!
+            upstream.clear()
+            mic.click()
+            menu = page.locator(".voice-model-menu:popover-open")
+            expect(menu).to_be_visible()
+            menu.locator(".voice-model-refresh").click()
+            expect(menu.locator(".voice-refresh-note")).to_contain_text("已同步最新语音模型", timeout=6000)
+
+            # Verify all 3 upstream `/models` endpoints (including Google page 2!) were queried concurrently
+            model_fetches = [r["provider"] for r in upstream.http_snapshot()]
+            assert model_fetches.count("openai_models") == 1, model_fetches
+            assert model_fetches.count("google_models") == 2, model_fetches
+            assert model_fetches.count("openrouter_models") == 1, model_fetches
+
+            # Verify OpenRouter tab discovered `google/gemini-4-hydrogen` & `meta/muse-ember`, excluding text-only/router/:free
+            menu.locator('.voice-provider-tab[data-provider-id="openrouter"]').click()
+            or_ids = menu.locator(".voice-model-option").evaluate_all("els => els.map(e => e.dataset.modelId)")
+            assert or_ids == EXPECTED_OPENROUTER_MODELS + [
+                "openrouter:google/gemini-4-hydrogen",
+                "openrouter:meta/muse-ember",
+            ], or_ids
+
+            # Verify OpenAI tab discovered `openai:gpt-audio-2`, excluding `4o`/tts/dated snapshots/voice-realtime
+            menu.locator('.voice-provider-tab[data-provider-id="openai"]').click()
+            oa_ids = menu.locator(".voice-model-option").evaluate_all("els => els.map(e => e.dataset.modelId)")
+            assert oa_ids == EXPECTED_OPENAI_MODELS + ["openai:gpt-audio-2"], oa_ids
+
+            # Verify Google tab discovered `google:gemini-4-hydrogen` & `google:gemini-4-argon` + page-2 `gemini-3.5-transcribe-live`,
+            # while excluding `gemini-omni-1.2-flash`, `gemini-3.5-transcribe`, `-tts`, and `-001`!
+            menu.locator('.voice-provider-tab[data-provider-id="google"]').click()
+            gg_ids = menu.locator(".voice-model-option").evaluate_all("els => els.map(e => e.dataset.modelId)")
+            assert "google:gemini-3.5-transcribe-live" in gg_ids, gg_ids
+            assert "google:gemini-4-hydrogen" in gg_ids, gg_ids
+            assert "google:gemini-4-argon" in gg_ids, gg_ids
+            assert "google:gemini-omni-1.2-flash" not in gg_ids, gg_ids
+            assert "google:gemini-3.5-transcribe" not in gg_ids, gg_ids
+
+            if output:
+                page.screenshot(path=str(output / "node-1280-light-refreshed-google-tab.png"), full_page=True)
+
+            # Select newly discovered `google:gemini-4-hydrogen` and transcribe end-to-end!
+            menu.locator('.voice-model-option[data-model-id="google:gemini-4-hydrogen"]').click()
+            expect(mic).to_have_attribute("data-voice-model", "google:gemini-4-hydrogen")
+            upstream.clear()
+            cinput.fill("")
+            long_press_mic(page, mic, hold_ms=360)
+            expect(cinput).to_have_value("Google Gemini 3.8 Flash 转写成功", timeout=8000)
+            h_reqs = upstream.http_snapshot()
+            assert len(h_reqs) == 1 and h_reqs[0]["provider"] == "google", h_reqs
+            assert "/v1beta/models/gemini-4-hydrogen:streamGenerateContent?alt=sse" in h_reqs[0]["path"], h_reqs[0]
+
+            # Select newly discovered `openai:gpt-audio-2` and transcribe end-to-end!
+            select_provider_and_model(page, mic, "openai", "openai:gpt-audio-2")
+            upstream.clear()
+            cinput.fill("")
+            long_press_mic(page, mic, hold_ms=360)
+            expect(cinput).to_have_value("OpenAI GPT Audio 1.5 多模态转写完成", timeout=8000)
+            h_reqs = upstream.http_snapshot()
+            assert len(h_reqs) == 1 and h_reqs[0]["provider"] == "openai_chat", h_reqs
+            assert h_reqs[0]["payload"]["model"] == "gpt-audio-2", h_reqs[0]
+
             assert not errors, errors
             context.close()
         finally:
@@ -1134,11 +1365,31 @@ def exercise_sdk_dialogs_and_hub(
     expect(sdk_input).to_have_value(expected_final, timeout=6000)
     expect(sdk_mic).to_have_attribute("data-voice-state", "idle", timeout=5000)
 
-    # Reload and verify model preference persisted under namespace
+    # Refresh models via `.voice-model-refresh` (on Hub, routes GET /api/voice/models?refresh=1 to online VoiceNode!),
+    # verify newly discovered model persists across reload via `voiceModelCatalog` + `voiceModel`!
+    sdk_mic = page.locator("#sdk-composer [data-voice-input]")
+    sdk_mic.click()
+    menu = page.locator(".voice-model-menu:popover-open")
+    expect(menu).to_be_visible()
+    menu.locator(".voice-model-refresh").click()
+    expect(menu.locator(".voice-refresh-note")).to_contain_text("已同步最新语音模型", timeout=6000)
+    menu.locator('.voice-provider-tab[data-provider-id="google"]').click()
+    expect(menu.locator('.voice-model-option[data-model-id="google:gemini-4-hydrogen"]')).to_be_visible()
+    if output:
+        page.screenshot(path=str(output / f"{label}-{width}-{'dark' if dark else 'light'}-sdk-refreshed-menu.png"), full_page=True)
+    menu.locator('.voice-model-option[data-model-id="google:gemini-4-hydrogen"]').click()
+    expect(sdk_mic).to_have_attribute("data-voice-model", "google:gemini-4-hydrogen")
+
+    # Reload and verify BOTH dynamic catalog (`voiceModelCatalog`) and selected dynamic model (`voiceModel`) persisted!
     page.reload(wait_until="networkidle")
     if width < 720 and not page.locator("#sdk-input").is_visible():
         page.locator(".item").first.click()
-    expect(page.locator("#sdk-composer [data-voice-input]")).to_have_attribute("data-voice-model", chosen_model, timeout=10000)
+    expect(page.locator("#sdk-composer [data-voice-input]")).to_have_attribute("data-voice-model", "google:gemini-4-hydrogen", timeout=10000)
+    stored_keys = page.evaluate("() => Object.keys(localStorage)")
+    expected_ns = "sessiondock.hub." if label == "hub" else "sessiondock."
+    assert any(k.startswith(expected_ns) and k.endswith("voiceModelCatalog") for k in stored_keys), stored_keys
+    assert any(k.startswith(expected_ns) and k.endswith("voiceModel") for k in stored_keys), stored_keys
+    assert all(k.startswith("sessiondock.") for k in stored_keys), stored_keys
 
     # Open Continue Session dialog (#continue-session-composer inside #new-session-dialog)
     click_action(page, "[data-continue-session]")

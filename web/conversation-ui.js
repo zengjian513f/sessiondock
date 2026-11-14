@@ -232,6 +232,21 @@ const ConversationUI = {
     } catch {}
   },
 
+  voiceModelsCache() {
+    try {
+      const raw = SessionDockCapabilities.stored('voiceModelCatalog', this.voiceStoragePrefix());
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  setVoiceModelsCache(payload) {
+    try {
+      localStorage.setItem(this.voiceStoragePrefix() + 'voiceModelCatalog', JSON.stringify(payload));
+    } catch {}
+  },
+
   collectVoiceContext() {
     const sdkActive = typeof SessionContentView === 'object'
       && SessionContentView?.kind === 'sdk'
@@ -277,9 +292,12 @@ const ConversationUI = {
       beforeElement,
       endpoint: '/api/voice/transcribe',
       realtimeEndpoint: '/api/voice/realtime',
+      modelsEndpoint: '/api/voice/models',
       getProviders: () => this.voiceProviders(),
       getModel: () => this.voiceModel(),
       setModel: id => this.setVoiceModel(id),
+      getModelsCache: () => this.voiceModelsCache(),
+      setModelsCache: payload => this.setVoiceModelsCache(payload),
       getContext: () => this.collectVoiceContext(),
       getRequestExtra: resolveUidObj,
       getRealtimeParams: resolveUidObj,

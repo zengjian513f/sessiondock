@@ -35,8 +35,10 @@ use tokio_util::sync::CancellationToken;
 use crate::error::ApiError;
 
 pub const DEFAULT_OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+pub const DEFAULT_OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 pub const DEFAULT_OPENAI_TRANSCRIBE_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
 pub const DEFAULT_OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
+pub const DEFAULT_OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
 pub const DEFAULT_OPENAI_REALTIME_URL: &str =
     "wss://api.openai.com/v1/realtime?intent=transcription";
 pub const DEFAULT_GOOGLE_API_BASE: &str = "https://generativelanguage.googleapis.com";
@@ -102,12 +104,85 @@ struct ModelSpec {
     provider: VoiceProvider,
     upstream_model: &'static str,
     transport: ModelTransport,
+    label: &'static str,
+    short: &'static str,
+    hint: &'static str,
 }
 
 impl ModelSpec {
+    fn to_resolved(self) -> ResolvedModel {
+        ResolvedModel {
+            canonical_id: Arc::from(self.canonical_id),
+            provider: self.provider,
+            upstream_model: Arc::from(self.upstream_model),
+            transport: self.transport,
+        }
+    }
+
+    fn to_catalog_model(self) -> CatalogModel {
+        CatalogModel {
+            id: Arc::from(self.canonical_id),
+            provider: self.provider,
+            upstream_model: Arc::from(self.upstream_model),
+            transport: self.transport,
+            label: Arc::from(self.label),
+            short: Arc::from(self.short),
+            hint: Arc::from(self.hint),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedModel {
+    canonical_id: Arc<str>,
+    provider: VoiceProvider,
+    upstream_model: Arc<str>,
+    transport: ModelTransport,
+}
+
+impl ResolvedModel {
     const fn is_realtime(&self) -> bool {
         matches!(self.transport, ModelTransport::RealtimeWs)
     }
+}
+
+#[derive(Clone, Debug)]
+struct CatalogModel {
+    id: Arc<str>,
+    provider: VoiceProvider,
+    upstream_model: Arc<str>,
+    transport: ModelTransport,
+    label: Arc<str>,
+    short: Arc<str>,
+    hint: Arc<str>,
+}
+
+impl CatalogModel {
+    fn to_json(&self) -> Value {
+        json!({
+            "id": &*self.id,
+            "provider": self.provider.as_str(),
+            "realtime": matches!(self.transport, ModelTransport::RealtimeWs),
+            "label": &*self.label,
+            "short": &*self.short,
+            "hint": &*self.hint,
+        })
+    }
+
+    fn to_resolved(&self) -> ResolvedModel {
+        ResolvedModel {
+            canonical_id: self.id.clone(),
+            provider: self.provider,
+            upstream_model: self.upstream_model.clone(),
+            transport: self.transport,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedCatalog {
+    models: Vec<CatalogModel>,
+    updated_at: u64,
 }
 
 const MODEL_CATALOG: &[ModelSpec] = &[
@@ -118,6 +193,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenAi,
         upstream_model: "gpt-live-transcribe",
         transport: ModelTransport::RealtimeWs,
+        label: "GPT Live Transcribe",
+        short: "GPT Live",
+        hint: "边说边出字 · OpenAI 原生实时转写",
     },
     ModelSpec {
         canonical_id: "openai:gpt-transcribe",
@@ -125,6 +203,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenAi,
         upstream_model: "gpt-transcribe",
         transport: ModelTransport::OpenAiMultipartStt,
+        label: "GPT Transcribe",
+        short: "GPT Transcribe",
+        hint: "新一代语音识别 · 热词校准流式转写",
     },
     ModelSpec {
         canonical_id: "openai:gpt-audio-1.5",
@@ -132,6 +213,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenAi,
         upstream_model: "gpt-audio-1.5",
         transport: ModelTransport::OpenAiChatAudio,
+        label: "GPT Audio 1.5",
+        short: "GPT Audio 1.5",
+        hint: "原生多模态音频理解 · 复杂语境纠错",
     },
     // Google AI Studio
     ModelSpec {
@@ -140,6 +224,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::Google,
         upstream_model: "models/gemini-3.5-transcribe-live",
         transport: ModelTransport::RealtimeWs,
+        label: "Gemini 3.5 Transcribe Live",
+        short: "Gemini Live",
+        hint: "边说边出字 · Gemini Live 双向流",
     },
     ModelSpec {
         canonical_id: "google:gemini-3.8-flash",
@@ -147,6 +234,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::Google,
         upstream_model: "gemini-3.8-flash",
         transport: ModelTransport::GoogleGenerateContent,
+        label: "Gemini 3.8 Flash",
+        short: "Gemini 3.8 Flash",
+        hint: "上下文热词与代码术语校准",
     },
     ModelSpec {
         canonical_id: "google:gemini-4-carbon",
@@ -154,6 +244,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::Google,
         upstream_model: "gemini-4-carbon",
         transport: ModelTransport::GoogleGenerateContent,
+        label: "Gemini 4 Carbon",
+        short: "Gemini 4 Carbon",
+        hint: "旗舰多模态复杂语境理解",
     },
     // OpenRouter (with backward-compatible bare & legacy aliases)
     ModelSpec {
@@ -162,6 +255,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenRouter,
         upstream_model: "qwen/qwen3.8-omni-flash",
         transport: ModelTransport::OpenRouterChatAudio,
+        label: "Qwen 3.8 Omni Flash",
+        short: "Qwen 3.8 Omni",
+        hint: "中文与中英混输推荐",
     },
     ModelSpec {
         canonical_id: "openrouter:google/gemini-3.8-flash",
@@ -169,6 +265,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenRouter,
         upstream_model: "google/gemini-3.8-flash",
         transport: ModelTransport::OpenRouterChatAudio,
+        label: "Gemini 3.8 Flash (OR)",
+        short: "Gemini 3.8 OR",
+        hint: "OpenRouter 聚合多模态转写",
     },
     ModelSpec {
         canonical_id: "openrouter:openai/gpt-audio",
@@ -180,6 +279,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenRouter,
         upstream_model: "openai/gpt-audio",
         transport: ModelTransport::OpenRouterChatAudio,
+        label: "GPT Audio",
+        short: "GPT Audio",
+        hint: "OpenRouter 聚合原生语音模型",
     },
     ModelSpec {
         canonical_id: "openrouter:xiaomi/mimo-v2.6-flash",
@@ -187,6 +289,9 @@ const MODEL_CATALOG: &[ModelSpec] = &[
         provider: VoiceProvider::OpenRouter,
         upstream_model: "xiaomi/mimo-v2.6-flash",
         transport: ModelTransport::OpenRouterChatAudio,
+        label: "MiMo v2.6 Flash",
+        short: "MiMo v2.6 Flash",
+        hint: "轻量低延迟备选",
     },
 ];
 
@@ -195,6 +300,14 @@ fn lookup_model(id: &str) -> Option<&'static ModelSpec> {
     MODEL_CATALOG
         .iter()
         .find(|spec| spec.canonical_id == trimmed || spec.aliases.contains(&trimmed))
+}
+
+fn lookup_canonical_index(id: &str) -> Option<(usize, &'static ModelSpec)> {
+    let trimmed = id.trim();
+    MODEL_CATALOG
+        .iter()
+        .enumerate()
+        .find(|(_, spec)| spec.canonical_id == trimmed)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -220,6 +333,8 @@ struct OpenAiProviderFile {
     #[serde(default)]
     chat_url: Option<String>,
     #[serde(default)]
+    models_url: Option<String>,
+    #[serde(default)]
     realtime_url: Option<String>,
 }
 
@@ -239,6 +354,8 @@ struct OpenRouterProviderFile {
     api_key: String,
     #[serde(default)]
     api_url: Option<String>,
+    #[serde(default)]
+    models_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -246,6 +363,7 @@ struct OpenAiConfig {
     api_key: Arc<str>,
     transcribe_url: Arc<str>,
     chat_url: Arc<str>,
+    models_url: Arc<str>,
     realtime_url: Arc<str>,
 }
 
@@ -260,6 +378,7 @@ struct GoogleConfig {
 struct OpenRouterConfig {
     api_key: Arc<str>,
     api_url: Arc<str>,
+    models_url: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -271,6 +390,7 @@ pub struct VoiceService {
     google: Option<GoogleConfig>,
     openrouter: Option<OpenRouterConfig>,
     explicit_url_override: bool,
+    catalog_cache: Arc<std::sync::RwLock<Option<CachedCatalog>>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -964,6 +1084,185 @@ fn append_url_key(base: &str, key: &str) -> String {
     format!("{base}{sep}key={key}")
 }
 
+fn unix_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn is_safe_model_id(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= 120
+        && !raw.contains("..")
+        && !raw.starts_with('/')
+        && !raw.ends_with('/')
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
+}
+
+fn has_date_or_snapshot_suffix(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    if lower.ends_with("-exp") || lower.contains("-exp-") || lower.contains("-preview-") {
+        return true;
+    }
+    let bytes = lower.as_bytes();
+    let n = bytes.len();
+    // Matches `-YYYY-MM-DD`
+    if n > 11
+        && bytes[n - 11] == b'-'
+        && bytes[n - 6] == b'-'
+        && bytes[n - 3] == b'-'
+        && bytes[n - 10..n - 6].iter().all(u8::is_ascii_digit)
+        && bytes[n - 5..n - 3].iter().all(u8::is_ascii_digit)
+        && bytes[n - 2..n].iter().all(u8::is_ascii_digit)
+    {
+        return true;
+    }
+    // Matches `-001` / `-002` (3-digit revision) or `-0924` / `-2025` (4-digit snapshot)
+    if let Some((_, tail)) = lower.rsplit_once('-')
+        && (tail.len() == 3 || tail.len() == 4 || tail.len() == 8)
+        && tail.bytes().all(|b| b.is_ascii_digit())
+    {
+        return true;
+    }
+    false
+}
+
+fn parse_gemini_version(short_id: &str) -> Option<(u32, u32)> {
+    let rest = short_id.strip_prefix("gemini-")?;
+    let ver_seg = rest.split('-').next()?;
+    if let Some((maj, min)) = ver_seg.split_once('.') {
+        Some((maj.parse().ok()?, min.parse().ok()?))
+    } else {
+        Some((ver_seg.parse().ok()?, 0))
+    }
+}
+
+fn humanize_model_slug(slug: &str) -> String {
+    let base = slug.rsplit('/').next().unwrap_or(slug);
+    let mut parts = Vec::new();
+    for raw in base.split(['-', '_']).filter(|s| !s.is_empty()) {
+        let low = raw.to_ascii_lowercase();
+        let word = match low.as_str() {
+            "gpt" => "GPT".to_string(),
+            "tts" => "TTS".to_string(),
+            "stt" => "STT".to_string(),
+            "ai" => "AI".to_string(),
+            "vl" => "VL".to_string(),
+            "omni" => "Omni".to_string(),
+            "mimo" => "MiMo".to_string(),
+            "qwen" => "Qwen".to_string(),
+            _ if low.starts_with("qwen") => {
+                let suffix = &raw[4..];
+                format!("Qwen{}", if suffix.is_empty() { "" } else { suffix })
+            }
+            _ if low.starts_with('v') && low.len() > 1 && low.as_bytes()[1].is_ascii_digit() => low,
+            _ if raw.bytes().next().is_some_and(|b| b.is_ascii_alphabetic()) => {
+                let mut chars = raw.chars();
+                let first = chars.next().unwrap().to_ascii_uppercase();
+                format!("{first}{}", chars.as_str())
+            }
+            _ => raw.to_string(),
+        };
+        parts.push(word);
+    }
+    if parts.is_empty() {
+        slug.to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn dynamic_resolve_by_prefix(trimmed: &str) -> Option<ResolvedModel> {
+    let (prov_str, raw_id) = trimmed.split_once(':')?;
+    if !is_safe_model_id(raw_id) {
+        return None;
+    }
+    let lower = raw_id.to_ascii_lowercase();
+    match prov_str {
+        "openai" => {
+            if lower.contains("tts")
+                || lower.contains("embed")
+                || lower.contains("image")
+                || lower.contains("moderation")
+            {
+                return None;
+            }
+            let transport = if lower.contains("live") || lower.contains("realtime") {
+                ModelTransport::RealtimeWs
+            } else if lower.contains("transcribe") || lower.starts_with("whisper") {
+                ModelTransport::OpenAiMultipartStt
+            } else if lower.contains("audio") {
+                ModelTransport::OpenAiChatAudio
+            } else {
+                return None;
+            };
+            Some(ResolvedModel {
+                canonical_id: Arc::from(format!("openai:{raw_id}")),
+                provider: VoiceProvider::OpenAi,
+                upstream_model: Arc::from(raw_id),
+                transport,
+            })
+        }
+        "google" => {
+            let short_id = raw_id.strip_prefix("models/").unwrap_or(raw_id);
+            let short_low = short_id.to_ascii_lowercase();
+            if short_low.contains("tts")
+                || short_low.contains("embed")
+                || short_low.contains("imagen")
+                || short_low.contains("veo")
+            {
+                return None;
+            }
+            let (transport, upstream) = if short_low.contains("live") || short_low.ends_with("bidi")
+            {
+                (ModelTransport::RealtimeWs, format!("models/{short_id}"))
+            } else if short_low.starts_with("gemini-") {
+                (ModelTransport::GoogleGenerateContent, short_id.to_string())
+            } else {
+                return None;
+            };
+            Some(ResolvedModel {
+                canonical_id: Arc::from(format!("google:{short_id}")),
+                provider: VoiceProvider::Google,
+                upstream_model: Arc::from(upstream),
+                transport,
+            })
+        }
+        "openrouter" => {
+            if !raw_id.contains('/') || lower.contains("tts") || lower.contains("embed") {
+                return None;
+            }
+            Some(ResolvedModel {
+                canonical_id: Arc::from(format!("openrouter:{raw_id}")),
+                provider: VoiceProvider::OpenRouter,
+                upstream_model: Arc::from(raw_id),
+                transport: ModelTransport::OpenRouterChatAudio,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn builtin_provider_models(provider: VoiceProvider) -> Vec<CatalogModel> {
+    MODEL_CATALOG
+        .iter()
+        .filter(|spec| spec.provider == provider)
+        .copied()
+        .map(ModelSpec::to_catalog_model)
+        .collect()
+}
+
+fn default_models_url_from_chat(chat_url: &str, fallback: &str) -> String {
+    chat_url
+        .trim_end_matches('/')
+        .strip_suffix("/chat/completions")
+        .map(|prefix| format!("{prefix}/models"))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 impl VoiceService {
     pub fn from_env() -> Option<Arc<Self>> {
         Self::from_env_mode(false)
@@ -999,8 +1298,10 @@ impl VoiceService {
 
         let explicit_url_override = read_nonempty_env("SESSIONDOCK_VOICE_API_URL").is_some()
             || read_nonempty_env("VOICE_INPUT_API_URL").is_some()
+            || read_nonempty_env("SESSIONDOCK_OPENROUTER_MODELS_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_OPENAI_TRANSCRIBE_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_OPENAI_CHAT_URL").is_some()
+            || read_nonempty_env("SESSIONDOCK_OPENAI_MODELS_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_OPENAI_REALTIME_URL").is_some()
             || read_nonempty_env("SESSIONDOCK_GOOGLE_API_BASE").is_some()
             || read_nonempty_env("SESSIONDOCK_GOOGLE_REALTIME_URL").is_some();
@@ -1016,6 +1317,11 @@ impl VoiceService {
             .or_else(|| read_nonempty_env("VOICE_INPUT_API_URL"))
             .or_else(|| clean_opt(or_file.api_url))
             .unwrap_or_else(|| DEFAULT_OPENROUTER_URL.to_string());
+        let or_models_url = read_nonempty_env("SESSIONDOCK_OPENROUTER_MODELS_URL")
+            .or_else(|| clean_opt(or_file.models_url))
+            .unwrap_or_else(|| {
+                default_models_url_from_chat(&or_url, DEFAULT_OPENROUTER_MODELS_URL)
+            });
 
         let oa_file = file_cfg.openai.unwrap_or_default();
         let oa_key = match read_nonempty_env("SESSIONDOCK_OPENAI_API_KEY") {
@@ -1030,6 +1336,11 @@ impl VoiceService {
         let oa_chat_url = read_nonempty_env("SESSIONDOCK_OPENAI_CHAT_URL")
             .or_else(|| clean_opt(oa_file.chat_url))
             .unwrap_or_else(|| DEFAULT_OPENAI_CHAT_URL.to_string());
+        let oa_models_url = read_nonempty_env("SESSIONDOCK_OPENAI_MODELS_URL")
+            .or_else(|| clean_opt(oa_file.models_url))
+            .unwrap_or_else(|| {
+                default_models_url_from_chat(&oa_chat_url, DEFAULT_OPENAI_MODELS_URL)
+            });
         let oa_realtime_url = read_nonempty_env("SESSIONDOCK_OPENAI_REALTIME_URL")
             .or_else(|| clean_opt(oa_file.realtime_url))
             .unwrap_or_else(|| DEFAULT_OPENAI_REALTIME_URL.to_string());
@@ -1090,6 +1401,7 @@ impl VoiceService {
                 api_key: Arc::from(key),
                 transcribe_url: Arc::from(oa_transcribe_url),
                 chat_url: Arc::from(oa_chat_url),
+                models_url: Arc::from(oa_models_url),
                 realtime_url: Arc::from(oa_realtime_url),
             }),
             google: gg_key.map(|key| GoogleConfig {
@@ -1100,8 +1412,10 @@ impl VoiceService {
             openrouter: or_key.map(|key| OpenRouterConfig {
                 api_key: Arc::from(key),
                 api_url: Arc::from(or_url),
+                models_url: Arc::from(or_models_url),
             }),
             explicit_url_override,
+            catalog_cache: Arc::new(std::sync::RwLock::new(None)),
         }))
     }
 
@@ -1131,25 +1445,616 @@ impl VoiceService {
         }
     }
 
-    fn default_http_model(&self) -> Option<&'static ModelSpec> {
-        if self.openrouter.is_some() {
-            lookup_model("openrouter:qwen/qwen3.8-omni-flash")
+    fn default_http_model(&self) -> Option<ResolvedModel> {
+        let id = if self.openrouter.is_some() {
+            "openrouter:qwen/qwen3.8-omni-flash"
         } else if self.google.is_some() {
-            lookup_model("google:gemini-3.8-flash")
+            "google:gemini-3.8-flash"
         } else if self.openai.is_some() {
-            lookup_model("openai:gpt-transcribe")
+            "openai:gpt-transcribe"
         } else {
-            None
+            return None;
+        };
+        lookup_model(id).copied().map(ModelSpec::to_resolved)
+    }
+
+    fn default_realtime_model(&self) -> Option<ResolvedModel> {
+        let id = if self.openai.is_some() {
+            "openai:gpt-live-transcribe"
+        } else if self.google.is_some() {
+            "google:gemini-3.5-transcribe-live"
+        } else {
+            return None;
+        };
+        lookup_model(id).copied().map(ModelSpec::to_resolved)
+    }
+
+    fn resolve_model(&self, id: &str) -> Option<ResolvedModel> {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Some(spec) = lookup_model(trimmed) {
+            return Some(spec.to_resolved());
+        }
+        if let Ok(guard) = self.catalog_cache.read()
+            && let Some(cached) = guard.as_ref()
+            && let Some(found) = cached.models.iter().find(|m| &*m.id == trimmed)
+        {
+            return Some(found.to_resolved());
+        }
+        dynamic_resolve_by_prefix(trimmed)
+    }
+
+    pub async fn list_models(
+        &self,
+        refresh: bool,
+        shutdown: CancellationToken,
+    ) -> Result<Value, ApiError> {
+        if !refresh {
+            if let Ok(guard) = self.catalog_cache.read()
+                && let Some(cached) = guard.as_ref()
+            {
+                let models: Vec<Value> = cached.models.iter().map(CatalogModel::to_json).collect();
+                return Ok(json!({
+                    "models": models,
+                    "providers": self.configured_providers(),
+                    "refreshed": false,
+                    "updated_at": cached.updated_at,
+                    "warnings": [],
+                }));
+            }
+            let models: Vec<Value> = MODEL_CATALOG
+                .iter()
+                .copied()
+                .map(ModelSpec::to_catalog_model)
+                .map(|m| m.to_json())
+                .collect();
+            return Ok(json!({
+                "models": models,
+                "providers": self.configured_providers(),
+                "refreshed": false,
+                "updated_at": Value::Null,
+                "warnings": [],
+            }));
+        }
+
+        let prev_cached = self
+            .catalog_cache
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone());
+        let prev_for = |prov: VoiceProvider| -> Vec<CatalogModel> {
+            if let Some(prev) = &prev_cached {
+                let items: Vec<CatalogModel> = prev
+                    .models
+                    .iter()
+                    .filter(|m| m.provider == prov)
+                    .cloned()
+                    .collect();
+                if !items.is_empty() {
+                    return items;
+                }
+            }
+            builtin_provider_models(prov)
+        };
+
+        let oa_fut = async {
+            match &self.openai {
+                Some(cfg) => Some(self.fetch_openai_models(cfg, &shutdown).await),
+                None => None,
+            }
+        };
+        let gg_fut = async {
+            match &self.google {
+                Some(cfg) => Some(self.fetch_google_models(cfg, &shutdown).await),
+                None => None,
+            }
+        };
+        let or_fut = async {
+            match &self.openrouter {
+                Some(cfg) => Some(self.fetch_openrouter_models(cfg, &shutdown).await),
+                None => None,
+            }
+        };
+
+        let (oa_res, gg_res, or_res) = tokio::join!(oa_fut, gg_fut, or_fut);
+
+        let mut warnings = Vec::<String>::new();
+        let mut success_count = 0usize;
+        let mut attempt_count = 0usize;
+
+        let oa_models = match oa_res {
+            Some(Ok(list)) => {
+                attempt_count += 1;
+                success_count += 1;
+                list
+            }
+            Some(Err(err)) => {
+                attempt_count += 1;
+                warnings.push(format!("OpenAI 模型刷新失败：{err}"));
+                prev_for(VoiceProvider::OpenAi)
+            }
+            None => builtin_provider_models(VoiceProvider::OpenAi),
+        };
+        let gg_models = match gg_res {
+            Some(Ok(list)) => {
+                attempt_count += 1;
+                success_count += 1;
+                list
+            }
+            Some(Err(err)) => {
+                attempt_count += 1;
+                warnings.push(format!("Google 模型刷新失败：{err}"));
+                prev_for(VoiceProvider::Google)
+            }
+            None => builtin_provider_models(VoiceProvider::Google),
+        };
+        let or_models = match or_res {
+            Some(Ok(list)) => {
+                attempt_count += 1;
+                success_count += 1;
+                list
+            }
+            Some(Err(err)) => {
+                attempt_count += 1;
+                warnings.push(format!("OpenRouter 模型刷新失败：{err}"));
+                prev_for(VoiceProvider::OpenRouter)
+            }
+            None => builtin_provider_models(VoiceProvider::OpenRouter),
+        };
+
+        if attempt_count > 0 && success_count == 0 {
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "voice_models_refresh_failed",
+                warnings.join("；"),
+            ));
+        }
+
+        let mut merged = Vec::with_capacity(oa_models.len() + gg_models.len() + or_models.len());
+        merged.extend(oa_models);
+        merged.extend(gg_models);
+        merged.extend(or_models);
+
+        let updated_at = unix_epoch_secs();
+        if let Ok(mut guard) = self.catalog_cache.write() {
+            *guard = Some(CachedCatalog {
+                models: merged.clone(),
+                updated_at,
+            });
+        }
+
+        let models_json: Vec<Value> = merged.iter().map(CatalogModel::to_json).collect();
+        Ok(json!({
+            "models": models_json,
+            "providers": self.configured_providers(),
+            "refreshed": true,
+            "updated_at": updated_at,
+            "warnings": warnings,
+        }))
+    }
+
+    async fn fetch_json_value(
+        &self,
+        req: reqwest::RequestBuilder,
+        shutdown: &CancellationToken,
+    ) -> Result<Value, String> {
+        let resp = tokio::select! {
+            _ = shutdown.cancelled() => return Err("服务正在关闭".to_string()),
+            res = tokio::time::timeout(Duration::from_secs(15), req.send()) => {
+                res.map_err(|_| "连接超时".to_string())?
+                    .map_err(|e| if e.is_timeout() { "连接超时".to_string() } else { "无法连接上游服务".to_string() })?
+            }
+        };
+        let status = resp.status();
+        let body = tokio::select! {
+            _ = shutdown.cancelled() => return Err("服务正在关闭".to_string()),
+            res = tokio::time::timeout(Duration::from_secs(15), resp.text()) => {
+                res.map_err(|_| "读取响应超时".to_string())?
+                    .map_err(|_| "读取响应失败".to_string())?
+            }
+        };
+        let parsed: Value = serde_json::from_str(&body)
+            .map_err(|_| format!("上游返回无效 JSON (HTTP {})", status.as_u16()))?;
+        if !status.is_success() {
+            let detail = parsed
+                .get("error")
+                .and_then(|e| e.get("message").or(Some(e)))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+            return Err(detail);
+        }
+        Ok(parsed)
+    }
+
+    async fn fetch_openai_models(
+        &self,
+        cfg: &OpenAiConfig,
+        shutdown: &CancellationToken,
+    ) -> Result<Vec<CatalogModel>, String> {
+        let req = self
+            .client_for(&cfg.models_url)
+            .get(&*cfg.models_url)
+            .header(header::AUTHORIZATION, format!("Bearer {}", cfg.api_key));
+        let root = self.fetch_json_value(req, shutdown).await?;
+        let items = root
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "缺少 data 数组".to_string())?;
+
+        struct Candidate {
+            curated_rank: usize,
+            created: i64,
+            model: CatalogModel,
+        }
+        let mut seen = std::collections::HashSet::<String>::new();
+        let mut found = Vec::<Candidate>::new();
+
+        for item in items {
+            let Some(raw_id) = item.get("id").and_then(Value::as_str).map(str::trim) else {
+                continue;
+            };
+            if !is_safe_model_id(raw_id) || has_date_or_snapshot_suffix(raw_id) {
+                continue;
+            }
+            let lower = raw_id.to_ascii_lowercase();
+            if lower.contains("tts")
+                || lower.contains("diarize")
+                || lower.contains("translate")
+                || lower.contains("4o")
+                || lower == "whisper-1"
+                || lower.contains("embed")
+                || lower.contains("moderation")
+                || lower.contains("image")
+                || lower.contains("search")
+                || (lower.contains("realtime") && !lower.contains("transcribe"))
+            {
+                continue;
+            }
+            let transport = if lower.contains("live") && lower.contains("transcribe") {
+                ModelTransport::RealtimeWs
+            } else if lower.contains("transcribe") {
+                ModelTransport::OpenAiMultipartStt
+            } else if lower.starts_with("gpt-audio")
+                || (lower.contains("audio") && !lower.contains("preview"))
+            {
+                ModelTransport::OpenAiChatAudio
+            } else {
+                continue;
+            };
+
+            let canonical_id = format!("openai:{raw_id}");
+            if !seen.insert(canonical_id.clone()) {
+                continue;
+            }
+            let created = item.get("created").and_then(Value::as_i64).unwrap_or(0);
+            if let Some((idx, spec)) = lookup_canonical_index(&canonical_id) {
+                found.push(Candidate {
+                    curated_rank: idx,
+                    created,
+                    model: spec.to_catalog_model(),
+                });
+            } else {
+                let label = humanize_model_slug(raw_id);
+                let hint = match transport {
+                    ModelTransport::RealtimeWs => "边说边出字 · OpenAI 原生实时转写",
+                    ModelTransport::OpenAiMultipartStt => "语音识别 · 上下文热词流式转写",
+                    _ => "原生多模态音频理解 · 语境纠错",
+                };
+                found.push(Candidate {
+                    curated_rank: usize::MAX,
+                    created,
+                    model: CatalogModel {
+                        id: Arc::from(canonical_id),
+                        provider: VoiceProvider::OpenAi,
+                        upstream_model: Arc::from(raw_id),
+                        transport,
+                        short: Arc::from(label.as_str()),
+                        label: Arc::from(label),
+                        hint: Arc::from(hint),
+                    },
+                });
+            }
+        }
+
+        found.sort_by(|a, b| {
+            let a_rt = matches!(a.model.transport, ModelTransport::RealtimeWs);
+            let b_rt = matches!(b.model.transport, ModelTransport::RealtimeWs);
+            b_rt.cmp(&a_rt)
+                .then_with(|| a.curated_rank.cmp(&b.curated_rank))
+                .then_with(|| b.created.cmp(&a.created))
+                .then_with(|| a.model.id.cmp(&b.model.id))
+        });
+
+        let out: Vec<CatalogModel> = found.into_iter().take(12).map(|c| c.model).collect();
+        if out.is_empty() {
+            Ok(builtin_provider_models(VoiceProvider::OpenAi))
+        } else {
+            Ok(out)
         }
     }
 
-    fn default_realtime_model(&self) -> Option<&'static ModelSpec> {
-        if self.openai.is_some() {
-            lookup_model("openai:gpt-live-transcribe")
-        } else if self.google.is_some() {
-            lookup_model("google:gemini-3.5-transcribe-live")
+    async fn fetch_google_models(
+        &self,
+        cfg: &GoogleConfig,
+        shutdown: &CancellationToken,
+    ) -> Result<Vec<CatalogModel>, String> {
+        struct Candidate {
+            curated_rank: usize,
+            ver: (u32, u32),
+            tier: u8,
+            model: CatalogModel,
+        }
+        let mut seen = std::collections::HashSet::<String>::new();
+        let mut found = Vec::<Candidate>::new();
+        let mut page_token: Option<String> = None;
+
+        for _ in 0..5 {
+            let mut url = format!("{}/v1beta/models?pageSize=200", cfg.api_base);
+            if let Some(tok) = &page_token {
+                url.push_str("&pageToken=");
+                url.push_str(tok);
+            }
+            let req = self
+                .client_for(&url)
+                .get(&url)
+                .header("x-goog-api-key", &*cfg.api_key);
+            let root = self.fetch_json_value(req, shutdown).await?;
+            if let Some(items) = root.get("models").and_then(Value::as_array) {
+                for item in items {
+                    let Some(raw_name) = item.get("name").and_then(Value::as_str).map(str::trim)
+                    else {
+                        continue;
+                    };
+                    let short_id = raw_name.strip_prefix("models/").unwrap_or(raw_name);
+                    if !is_safe_model_id(short_id) || has_date_or_snapshot_suffix(short_id) {
+                        continue;
+                    }
+                    let lower = short_id.to_ascii_lowercase();
+                    if [
+                        "tts",
+                        "image",
+                        "nano-banana",
+                        "omni",
+                        "robotics",
+                        "computer-use",
+                        "deep-research",
+                        "embedding",
+                        "customtools",
+                        "thinking",
+                        "gemma",
+                        "lyria",
+                        "imagen",
+                        "veo",
+                        "aqa",
+                        "learnlm",
+                    ]
+                    .iter()
+                    .any(|bad| lower.contains(bad))
+                    {
+                        continue;
+                    }
+                    let Some(ver) = parse_gemini_version(&lower) else {
+                        continue;
+                    };
+                    if ver.0 < 3 || (ver.0 == 3 && ver.1 < 5) {
+                        continue;
+                    }
+                    let methods: Vec<&str> = item
+                        .get("supportedGenerationMethods")
+                        .and_then(Value::as_array)
+                        .map(|arr| arr.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+
+                    let (transport, upstream_model) = if methods.contains(&"bidiGenerateContent")
+                        && lower.contains("transcribe")
+                    {
+                        (ModelTransport::RealtimeWs, format!("models/{short_id}"))
+                    } else if methods.contains(&"generateContent")
+                        && !lower.ends_with("-transcribe")
+                        && !lower.contains("-live")
+                    {
+                        (ModelTransport::GoogleGenerateContent, short_id.to_string())
+                    } else {
+                        continue;
+                    };
+
+                    let canonical_id = format!("google:{short_id}");
+                    if !seen.insert(canonical_id.clone()) {
+                        continue;
+                    }
+
+                    let tier = if lower.contains("hydrogen") || lower.contains("flash") {
+                        3
+                    } else if lower.contains("carbon") || lower.contains("pro") {
+                        2
+                    } else {
+                        1
+                    };
+
+                    if let Some((idx, spec)) = lookup_canonical_index(&canonical_id) {
+                        found.push(Candidate {
+                            curated_rank: idx,
+                            ver,
+                            tier,
+                            model: spec.to_catalog_model(),
+                        });
+                    } else {
+                        let disp = item
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| humanize_model_slug(short_id));
+                        let hint = if matches!(transport, ModelTransport::RealtimeWs) {
+                            "边说边出字 · Gemini Live 双向流"
+                        } else if ver.0 >= 4 {
+                            "Gemini 新一代多模态语音转写"
+                        } else if lower.contains("lite") {
+                            "轻量低延迟多模态语音转写"
+                        } else {
+                            "上下文热词与多模态语音转写"
+                        };
+                        found.push(Candidate {
+                            curated_rank: usize::MAX,
+                            ver,
+                            tier,
+                            model: CatalogModel {
+                                id: Arc::from(canonical_id),
+                                provider: VoiceProvider::Google,
+                                upstream_model: Arc::from(upstream_model),
+                                transport,
+                                short: Arc::from(disp.as_str()),
+                                label: Arc::from(disp),
+                                hint: Arc::from(hint),
+                            },
+                        });
+                    }
+                }
+            }
+            page_token = root
+                .get("nextPageToken")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            if page_token.is_none() {
+                break;
+            }
+        }
+
+        found.sort_by(|a, b| {
+            let a_rt = matches!(a.model.transport, ModelTransport::RealtimeWs);
+            let b_rt = matches!(b.model.transport, ModelTransport::RealtimeWs);
+            b_rt.cmp(&a_rt)
+                .then_with(|| b.ver.cmp(&a.ver))
+                .then_with(|| a.curated_rank.cmp(&b.curated_rank))
+                .then_with(|| b.tier.cmp(&a.tier))
+                .then_with(|| a.model.id.cmp(&b.model.id))
+        });
+
+        let out: Vec<CatalogModel> = found.into_iter().take(14).map(|c| c.model).collect();
+        if out.is_empty() {
+            Ok(builtin_provider_models(VoiceProvider::Google))
         } else {
-            None
+            Ok(out)
+        }
+    }
+
+    async fn fetch_openrouter_models(
+        &self,
+        cfg: &OpenRouterConfig,
+        shutdown: &CancellationToken,
+    ) -> Result<Vec<CatalogModel>, String> {
+        let req = self
+            .client_for(&cfg.models_url)
+            .get(&*cfg.models_url)
+            .header(header::AUTHORIZATION, format!("Bearer {}", cfg.api_key));
+        let root = self.fetch_json_value(req, shutdown).await?;
+        let items = root
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "缺少 data 数组".to_string())?;
+
+        struct Candidate {
+            curated_rank: usize,
+            created: i64,
+            model: CatalogModel,
+        }
+        let mut seen = std::collections::HashSet::<String>::new();
+        let mut found = Vec::<Candidate>::new();
+
+        for item in items {
+            let Some(raw_id) = item.get("id").and_then(Value::as_str).map(str::trim) else {
+                continue;
+            };
+            if raw_id.contains(':')
+                || !raw_id.contains('/')
+                || !is_safe_model_id(raw_id)
+                || has_date_or_snapshot_suffix(raw_id)
+            {
+                continue;
+            }
+            let lower = raw_id.to_ascii_lowercase();
+            if lower.starts_with("openrouter/")
+                || lower.contains("router")
+                || lower.contains("/auto")
+                || lower.contains("4o")
+            {
+                continue;
+            }
+            let arch = item.get("architecture");
+            let has_audio_in = arch
+                .and_then(|a| a.get("input_modalities"))
+                .and_then(Value::as_array)
+                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("audio")));
+            let has_text_out = arch
+                .and_then(|a| a.get("output_modalities"))
+                .and_then(Value::as_array)
+                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("text")));
+            if !has_audio_in || !has_text_out {
+                continue;
+            }
+
+            let canonical_id = format!("openrouter:{raw_id}");
+            if !seen.insert(canonical_id.clone()) {
+                continue;
+            }
+            let created = item.get("created").and_then(Value::as_i64).unwrap_or(0);
+
+            if let Some((idx, spec)) = lookup_canonical_index(&canonical_id) {
+                found.push(Candidate {
+                    curated_rank: idx,
+                    created,
+                    model: spec.to_catalog_model(),
+                });
+            } else {
+                let raw_name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.split_once(": ").map(|(_, rest)| rest.trim()).unwrap_or(s))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| humanize_model_slug(raw_id));
+                let label = if lower.starts_with("google/") && !raw_name.ends_with("(OR)") {
+                    format!("{raw_name} (OR)")
+                } else {
+                    raw_name.clone()
+                };
+                let vendor = raw_id.split('/').next().unwrap_or("OpenRouter");
+                let hint = format!("OpenRouter · {vendor} 音频理解转写");
+                found.push(Candidate {
+                    curated_rank: usize::MAX,
+                    created,
+                    model: CatalogModel {
+                        id: Arc::from(canonical_id),
+                        provider: VoiceProvider::OpenRouter,
+                        upstream_model: Arc::from(raw_id),
+                        transport: ModelTransport::OpenRouterChatAudio,
+                        short: Arc::from(raw_name),
+                        label: Arc::from(label),
+                        hint: Arc::from(hint),
+                    },
+                });
+            }
+        }
+
+        found.sort_by(|a, b| {
+            a.curated_rank
+                .cmp(&b.curated_rank)
+                .then_with(|| b.created.cmp(&a.created))
+                .then_with(|| a.model.id.cmp(&b.model.id))
+        });
+
+        let out: Vec<CatalogModel> = found.into_iter().take(18).map(|c| c.model).collect();
+        if out.is_empty() {
+            Ok(builtin_provider_models(VoiceProvider::OpenRouter))
+        } else {
+            Ok(out)
         }
     }
 
@@ -1167,7 +2072,7 @@ impl VoiceService {
                 )
             })?
         } else {
-            lookup_model(&req.model).ok_or_else(|| {
+            self.resolve_model(&req.model).ok_or_else(|| {
                 ApiError::new(
                     StatusCode::BAD_REQUEST,
                     "invalid_voice_model",
@@ -1240,7 +2145,7 @@ impl VoiceService {
                     )
                 })?;
                 self.transcribe_chat_audio(
-                    spec,
+                    &spec,
                     &cfg.api_url,
                     &cfg.api_key,
                     true,
@@ -1260,7 +2165,7 @@ impl VoiceService {
                         format!("未配置 {} API Key", spec.provider.display_name()),
                     )
                 })?;
-                self.transcribe_google(spec, cfg, raw_b64, format, req.context.as_ref(), shutdown)
+                self.transcribe_google(&spec, cfg, raw_b64, format, req.context.as_ref(), shutdown)
                     .await
             }
             ModelTransport::OpenAiMultipartStt => {
@@ -1272,7 +2177,7 @@ impl VoiceService {
                     )
                 })?;
                 self.transcribe_openai_http(
-                    spec,
+                    &spec,
                     cfg,
                     &decoded,
                     format,
@@ -1290,7 +2195,7 @@ impl VoiceService {
                     )
                 })?;
                 self.transcribe_chat_audio(
-                    spec,
+                    &spec,
                     &cfg.chat_url,
                     &cfg.api_key,
                     false,
@@ -1356,7 +2261,7 @@ impl VoiceService {
     #[allow(clippy::too_many_arguments)]
     async fn transcribe_chat_audio(
         &self,
-        spec: &'static ModelSpec,
+        spec: &ResolvedModel,
         api_url: &str,
         api_key: &str,
         is_openrouter: bool,
@@ -1397,7 +2302,7 @@ impl VoiceService {
             ])
         };
         let mut payload = json!({
-            "model": spec.upstream_model,
+            "model": &*spec.upstream_model,
             "stream": true,
             "messages": messages,
         });
@@ -1494,7 +2399,7 @@ impl VoiceService {
 
     async fn transcribe_google(
         &self,
-        spec: &'static ModelSpec,
+        spec: &ResolvedModel,
         cfg: &GoogleConfig,
         raw_b64: &str,
         format: &str,
@@ -1620,7 +2525,7 @@ impl VoiceService {
 
     async fn transcribe_openai_http(
         &self,
-        spec: &'static ModelSpec,
+        spec: &ResolvedModel,
         cfg: &OpenAiConfig,
         audio_bytes: &[u8],
         format: &str,
@@ -1631,7 +2536,7 @@ impl VoiceService {
         let prompt = build_compact_stt_prompt(context);
         let body = build_multipart_transcription_body(
             boundary,
-            spec.upstream_model,
+            &spec.upstream_model,
             &prompt,
             format,
             audio_bytes,
@@ -1782,7 +2687,7 @@ impl VoiceService {
                 }
             }
         } else {
-            match lookup_model(&start.model) {
+            match self.resolve_model(&start.model) {
                 Some(s) if s.is_realtime() => s,
                 _ => {
                     let _ = browser
@@ -1913,7 +2818,7 @@ impl VoiceService {
     async fn pump_openai_realtime(
         &self,
         mut browser: AxumWebSocket,
-        spec: &'static ModelSpec,
+        spec: ResolvedModel,
         cfg: OpenAiConfig,
         in_rate: u32,
         context: Option<&VoiceContext>,
@@ -1923,7 +2828,8 @@ impl VoiceService {
         let auth_val = format!("Bearer {}", cfg.api_key);
         let proxy = self.proxy.clone();
         let url = cfg.realtime_url.clone();
-        let upstream_model = spec.upstream_model;
+        let upstream_model = spec.upstream_model.clone();
+        let canonical_id = &*spec.canonical_id;
 
         let setup_fut = async move {
             let mut ws = connect_upstream_ws(
@@ -1937,7 +2843,7 @@ impl VoiceService {
                 Ok(Some(Ok(_))) => {}
                 _ => return Err("OpenAI 实时语音未返回初始化事件".to_string()),
             }
-            let mut transcription = json!({"model": upstream_model});
+            let mut transcription = json!({"model": &*upstream_model});
             if !prompt.is_empty() {
                 transcription["prompt"] = Value::String(prompt);
             }
@@ -1997,7 +2903,7 @@ impl VoiceService {
                 json!({
                     "type": "ready",
                     "provider": "openai",
-                    "model": spec.canonical_id,
+                    "model": canonical_id,
                 })
                 .to_string()
                 .into(),
@@ -2028,7 +2934,7 @@ impl VoiceService {
             if total_samples_24k == 0 {
                 let _ = browser
                     .send(AxumWsMessage::Text(
-                        json!({"type": "done", "text": "", "model": spec.canonical_id})
+                        json!({"type": "done", "text": "", "model": canonical_id})
                             .to_string()
                             .into(),
                     ))
@@ -2069,7 +2975,7 @@ impl VoiceService {
                 } => {
                     let text = if looks_like_refusal(&accumulated) { String::new() } else { accumulated.clone() };
                     let _ = browser.send(AxumWsMessage::Text(
-                        json!({"type": "done", "text": text, "model": spec.canonical_id}).to_string().into()
+                        json!({"type": "done", "text": text, "model": canonical_id}).to_string().into()
                     )).await;
                     break;
                 }
@@ -2108,7 +3014,7 @@ impl VoiceService {
                                         committed = true;
                                         if total_samples_24k == 0 {
                                             let _ = browser.send(AxumWsMessage::Text(
-                                                json!({"type": "done", "text": "", "model": spec.canonical_id}).to_string().into()
+                                                json!({"type": "done", "text": "", "model": canonical_id}).to_string().into()
                                             )).await;
                                             break;
                                         }
@@ -2159,7 +3065,7 @@ impl VoiceService {
                                     }
                                     if committed {
                                         let _ = browser.send(AxumWsMessage::Text(
-                                            json!({"type": "done", "text": final_txt, "model": spec.canonical_id}).to_string().into()
+                                            json!({"type": "done", "text": final_txt, "model": canonical_id}).to_string().into()
                                         )).await;
                                         break;
                                     } else {
@@ -2184,7 +3090,7 @@ impl VoiceService {
                             if committed {
                                 let text = if looks_like_refusal(&accumulated) { String::new() } else { accumulated };
                                 let _ = browser.send(AxumWsMessage::Text(
-                                    json!({"type": "done", "text": text, "model": spec.canonical_id}).to_string().into()
+                                    json!({"type": "done", "text": text, "model": canonical_id}).to_string().into()
                                 )).await;
                             } else {
                                 let _ = browser.send(AxumWsMessage::Text(
@@ -2204,7 +3110,7 @@ impl VoiceService {
     async fn pump_google_realtime(
         &self,
         mut browser: AxumWebSocket,
-        spec: &'static ModelSpec,
+        spec: ResolvedModel,
         cfg: GoogleConfig,
         in_rate: u32,
         context: Option<&VoiceContext>,
@@ -2213,13 +3119,14 @@ impl VoiceService {
         let prompt = build_compact_stt_prompt(context);
         let ws_url = append_url_key(&cfg.realtime_url, &cfg.api_key);
         let proxy = self.proxy.clone();
-        let upstream_model = spec.upstream_model;
+        let upstream_model = spec.upstream_model.clone();
+        let canonical_id = &*spec.canonical_id;
 
         let setup_fut = async move {
             let mut ws = connect_upstream_ws(&ws_url, &[], proxy.as_deref()).await?;
             let setup = json!({
                 "setup": {
-                    "model": upstream_model,
+                    "model": &*upstream_model,
                     "generationConfig": {
                         "responseModalities": ["TEXT"]
                     }
@@ -2282,7 +3189,7 @@ impl VoiceService {
                 json!({
                     "type": "ready",
                     "provider": "google",
-                    "model": spec.canonical_id,
+                    "model": canonical_id,
                 })
                 .to_string()
                 .into(),
@@ -2320,7 +3227,7 @@ impl VoiceService {
             if total_samples_16k == 0 {
                 let _ = browser
                     .send(AxumWsMessage::Text(
-                        json!({"type": "done", "text": "", "model": spec.canonical_id})
+                        json!({"type": "done", "text": "", "model": canonical_id})
                             .to_string()
                             .into(),
                     ))
@@ -2356,7 +3263,7 @@ impl VoiceService {
                     }
                     let text = if looks_like_refusal(&committed_text) { String::new() } else { committed_text.clone() };
                     let _ = browser.send(AxumWsMessage::Text(
-                        json!({"type": "done", "text": text, "model": spec.canonical_id}).to_string().into()
+                        json!({"type": "done", "text": text, "model": canonical_id}).to_string().into()
                     )).await;
                     break;
                 }
@@ -2409,7 +3316,7 @@ impl VoiceService {
                                         committed = true;
                                         if total_samples_16k == 0 {
                                             let _ = browser.send(AxumWsMessage::Text(
-                                                json!({"type": "done", "text": "", "model": spec.canonical_id}).to_string().into()
+                                                json!({"type": "done", "text": "", "model": canonical_id}).to_string().into()
                                             )).await;
                                             break;
                                         }
@@ -2439,7 +3346,7 @@ impl VoiceService {
                                 }
                                 let text = if looks_like_refusal(&committed_text) { String::new() } else { committed_text };
                                 let _ = browser.send(AxumWsMessage::Text(
-                                    json!({"type": "done", "text": text, "model": spec.canonical_id}).to_string().into()
+                                    json!({"type": "done", "text": text, "model": canonical_id}).to_string().into()
                                 )).await;
                             } else {
                                 let _ = browser.send(AxumWsMessage::Text(
@@ -2494,7 +3401,7 @@ impl VoiceService {
                             }
                             let text = if looks_like_refusal(&committed_text) { String::new() } else { committed_text };
                             let _ = browser.send(AxumWsMessage::Text(
-                                json!({"type": "done", "text": text, "model": spec.canonical_id}).to_string().into()
+                                json!({"type": "done", "text": text, "model": canonical_id}).to_string().into()
                             )).await;
                             break;
                         }
