@@ -191,6 +191,8 @@ const SdkUI = {
   },
 
   closeToolbar(view) {
+    cancelAnimationFrame(view.footerLayoutFrame);
+    view.footerLayoutFrame = null; view.footerLayoutControls = null;
     view.voiceInput?.destroy(); view.voiceInput = null;
     view.steerSend?.controller.abort(); view.steerSend = null;
     view.toolbarObserver?.disconnect(); view.toolbarObserver = null;
@@ -634,6 +636,17 @@ const SdkUI = {
     });
   },
   layoutFooter(view, controls) {
+    view.footerLayoutControls = controls;
+    if (view.footerLayoutFrame != null) return;
+    const pane = view.pane;
+    view.footerLayoutFrame = requestAnimationFrame(() => {
+      view.footerLayoutFrame = null;
+      const latest = view.footerLayoutControls;
+      view.footerLayoutControls = null;
+      if (view.pane === pane && pane?.isConnected) this.layoutFooterNow(view, latest);
+    });
+  },
+  layoutFooterNow(view, controls) {
     const row = view.pane.querySelector('.sdk-status-row'), gauges = row.querySelector('.sdk-gauges');
     const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
     const trigger = view.pane.querySelector('#sdk-more');

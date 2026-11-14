@@ -24,7 +24,8 @@ from sdk_usage_fixtures import assert_inline_usage, assert_reset_countdown
 def single_row(page):
     page.wait_for_function("""() => {
       const row = document.querySelector('.sdk-pane .sdk-status-row');
-      return row && Math.abs(CodexSdkView.toolbarWidth - row.clientWidth) <= 1;
+      return row && Math.abs(CodexSdkView.toolbarWidth - row.clientWidth) <= 1
+        && row.scrollWidth <= row.clientWidth + 1;
     }""")
     measurements = page.locator('.sdk-pane .sdk-status-row').evaluate("""row => {
       const bounds = row.getBoundingClientRect();

@@ -121,14 +121,17 @@ def exercise(browser, base, source, screenshots, events):
             'ok': True, 'usage': {'tokens': {'total_tokens': 123456789},
                 'context': {'percent': 25, 'used_tokens': 50000, 'max_tokens': 200000}},
             'quota': {'buckets': [{'group': long_quota, 'remaining_percent': 30}, {'group':long_quota,'window':'seven_day','remaining_percent':80,'resets_at':'2027-01-15T08:00:00Z'}]}}))
-        quota_rows = [{'group':'Gemini Models' if source=='agy' else source,'window':'5h','remaining_percent':80},
-                      {'group':'Gemini Models' if source=='agy' else source,'window':'weekly','remaining_percent':60}]
+        quota_rows = [{'group':long_quota,'window':'5h','remaining_percent':80},
+                      {'group':long_quota,'window':'weekly','remaining_percent':60}]
         if source=='agy':
             quota_rows += [{'group':'Claude and GPT models','window':'5h','remaining_percent':95},
                            {'group':'Claude and GPT models','window':'7d','remaining_percent':50}]
+        # Account snapshots are authoritative over the session usage fallback.
+        # Put the long-label fixture there too, including cached refresh reads.
         for bucket in quota_rows:
             bucket['resets_at'] = '2027-01-15T08:00:00Z'
-        context.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':source,'buckets':quota_rows}]}))
+        context.route('**/api/quotas**',lambda route:route.fulfill(json={'agents':[{
+            'source':source,'captured_at':'2027-01-01T00:00:00Z','buckets':quota_rows}]}))
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
         row = page.locator(f'#side .item[data-uid^="{source}:"]').first
@@ -142,7 +145,7 @@ def exercise(browser, base, source, screenshots, events):
         model = pane.locator('#sdk-model')
         expect(model.locator('option[value="long"]')).to_have_count(1)
         page.wait_for_function('NativeSdkView.nativeEffort === "low"')
-        expect(model).to_be_visible()
+        reveal(page, '#sdk-model')
         expect(pane.locator('.sdk-status-row > .sdk-gauges')).to_have_attribute('title', re.compile('重置剩余'))
         assert_reset_countdown(page, pane.locator('.sdk-status-row > .sdk-gauges'), 1800000000)
         assert_reset_countdown(page, pane.locator('.sdk-gauge[title*="重置剩余"]').last, 1800000000)
@@ -165,6 +168,8 @@ def exercise(browser, base, source, screenshots, events):
                     'agy':('mode','自动模式'),'opencode':('native_agent','构建')})[source]
         expect(page.locator(f'#native-sdk-{key} option:checked')).to_have_text(label)
         if source=='claude':expect(page.locator('#native-sdk-fast_mode option:checked')).to_have_text('Fast 关闭')
+        page.wait_for_function('''() => [...document.querySelectorAll('.native-sdk-pane .sdk-native-setting:not([hidden])')]
+          .every(e => e.parentElement.classList.contains('sdk-pickers'))''')
         for control in page.locator('.native-sdk-pane .sdk-native-setting:not([hidden])').all():
             assert control.evaluate('e=>e.parentElement.classList.contains("sdk-pickers")')
         expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
@@ -305,6 +310,7 @@ def exercise(browser, base, source, screenshots, events):
                 else:
                     expect(status).to_be_disabled()
             page.screenshot(path=str(screenshots/f'{source}-status-{state}-{label[:3]}-{theme}.png'))
+        for bucket in quota_rows[:2]: bucket['group'] = 'Gemini Models' if source=='agy' else source
         uid=row.get_attribute('data-uid')
         context.route('**/api/live*',lambda route:route.fulfill(json={'known':True,'uids':[uid],'working_uids':[],'tmux_uids':[]}))
         context.route('**/api/term/list*',lambda route:route.fulfill(json={'enabled':True,'sources':{source:True},'pending':[],

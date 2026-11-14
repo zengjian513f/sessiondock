@@ -85,6 +85,12 @@ def exercise(browser, base, streams, shots, width, theme):
           window.switchTasks=[];
           new PerformanceObserver(l=>{for(const x of l.getEntries())switchTasks.push(x.duration)}).observe({type:'longtask'});
         }''')
+        profiler = context.new_cdp_session(page)
+        profiler.send('Performance.enable')
+        def layout_counts():
+            return {x['name']: x['value'] for x in profiler.send('Performance.getMetrics')['metrics']
+                    if x['name'] in ('LayoutCount', 'RecalcStyleCount')}
+        before_layout = layout_counts()
         def select(uid):
             if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
             began = time.monotonic()
@@ -96,7 +102,8 @@ def exercise(browser, base, streams, shots, width, theme):
                 page.wait_for_function('SdkView.connected && !SdkView.discovering')
                 expect(page.locator('.sdk-history')).to_contain_text(f'会话 {i} 的历史结论')
                 expect(page.locator('#sdk-send')).to_be_enabled()
-        metrics = {'click_ms': timings.copy(), 'long_tasks_ms': page.evaluate('switchTasks')}
+        metrics = {'click_ms': timings.copy(), 'long_tasks_ms': page.evaluate('switchTasks'),
+                   'layout': {key: value-before_layout[key] for key, value in layout_counts().items()}}
         (shots/f'{width}-{theme}-switches.json').write_text(json.dumps(metrics))
         print(f'SWITCHES {width}/{theme}: {metrics}', flush=True)
         term_refreshes = [r for r in background if '/term/list' in r.request.url]
