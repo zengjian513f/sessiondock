@@ -13,12 +13,15 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_queue_browser import QueueServer
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_actions_browser import environment
-from history_fixtures import BINARY
+from history_fixtures import BINARY, codex_row
+from sdk_ui_fixtures import start_sdk
 
 
 class CompactionServer(QueueServer):
     async def _handle(self, writer, message):
-        if message.get('method') == 'thread/turns/list' and getattr(self, 'offline_consumed', None):
+        if message.get('method') == 'turn/steer' and getattr(self, 'defer_steer', False):
+            await self.send(writer, {'id': message['id'], 'result': {'turnId': self.turn}})
+        elif message.get('method') == 'thread/turns/list' and getattr(self, 'offline_consumed', None):
             await self.send(writer, {'id': message['id'], 'result': {'data': [self.offline_consumed], 'nextCursor': None}})
         elif message.get('method') == 'turn/start' and self.compact_next:
             self.compact_next = False
@@ -26,6 +29,12 @@ class CompactionServer(QueueServer):
             self.current_text = message['params']['input'][0]['text']
             await self.notify('thread/status/changed', {'status': {'type': 'active'}})
             await self.notify('turn/started', {'turn': {'id': self.turn, 'status': 'inProgress', 'items': []}})
+            if getattr(self, 'terminal_before_reply', None):
+                turn, self.turn = self.turn, None
+                await self.notify('turn/completed', {'turn': {'id': turn, 'status': self.terminal_before_reply, 'items': []}})
+                await self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+                await self.send(writer, {'id': message['id'], 'result': {'turn': {'id': turn}}})
+                return
             await self.send(writer, {'id': message['id'], 'result': {'turn': {'id': self.turn}}})
             await self.notify('item/started', {'turnId': self.turn, 'item': {'id': 'compact', 'type': 'contextCompaction'}})
         else:
@@ -46,12 +55,7 @@ def open_page(browser, base, width, theme):
     page.goto(base, wait_until='networkidle')
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
     expect(page.locator('.sdk-history')).to_be_visible()
-    # Opening an idle session is read-only; start it through the user control.
-    if not page.locator('#sdk-input').is_visible():
-        button = page.locator('#a-session-toggle')
-        expect(button).to_have_attribute('aria-label', '启动会话')
-        if not button.is_visible(): page.locator('#a-more').click()
-        button.click()
+    start_sdk(page)
     expect(page.locator('#sdk-input')).to_be_visible()
     expect(page.locator('#sdk-input')).to_be_enabled()
     page.locator('#sdk-input').click()
@@ -106,9 +110,31 @@ def main():
                         starts = len(fake.methods('turn/start'))
                         page.reload(wait_until='networkidle')
                         expect(row).to_have_count(0)
-                        expect(accepted).to_be_visible()
+                        ended = page.locator('.sdk-queue details').filter(has_text=text)
+                        expect(ended.locator('summary')).to_have_text('回合已中断，未见输入记录')
+                        expect(accepted).to_be_hidden()
                         assert len(fake.methods('turn/start')) == starts
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'interrupted-{mode}-{width}.png'))
+                        ended.locator('summary').click()
+                        expect(accepted).to_be_visible()
+                        expect(accepted).not_to_contain_text('等待原生记录')
+                        page.locator('#sdk-input').fill('保留这份草稿')
+                        page.route('**/api/codex-sdk/queue', lambda route: route.fulfill(status=503,
+                            json={'error': 'synthetic dismiss failure'}), times=1)
+                        ended.get_by_role('button', name='移除提示').click()
+                        expect(page.locator('#sdk-status-menu')).to_contain_text('移除提示失败')
+                        expect(accepted).to_be_visible()
+                        if args.screenshots: page.screenshot(path=str(args.screenshots/f'receipt-{mode}-{width}.png'))
+                        receipt_id = accepted.get_attribute('data-receipt-id')
+                        ended.get_by_role('button', name='移除提示').click()
+                        expect(ended).to_have_count(0)
+                        page.reload(wait_until='networkidle')
+                        expect(accepted).to_have_count(0)
+                        expect(page.locator('#sdk-input')).to_have_value('保留这份草稿')
+                        receipt = next(row for row in json.loads((root/'state/codex-sdk-queue.json').read_text())[THREAD]
+                                       if row['id'] == receipt_id)
+                        assert receipt['state'] == 'sent' and receipt['text'] == text
+                        assert receipt['turn_status'] == 'interrupted' and receipt['receipt_dismissed']
                         assert len(fake.methods('turn/start')) == starts
                         expect(page.locator('#sdk-send')).to_have_text('发送')
                         fake.compact_next = True
@@ -125,8 +151,53 @@ def main():
                         expect(status).to_have_attribute('data-state', 'working')
                         assert not fake.methods('thread/compact/start')
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'continued-{mode}-{width}.png'))
-                        fake.complete(); context.close()
+                        # The reported case: an async answer was accepted by
+                        # steer, then interrupted before a native userMessage.
+                        fake.defer_steer = True
+                        asyncio.run_coroutine_threadsafe(fake.notify('item/completed', {
+                            'turnId': fake.turn, 'item': {'id': f'async-{mode}-{width}',
+                            'type': 'agentMessage', 'delivery': 'async',
+                            'questions': [{'title': '是否继续这次修改？请确认这些设置是否需要同时应用到所有现有会话，并保留已经完成的工作、尚未发送的草稿与后台任务。原生处理仍在继续，可以在核对后补充说明。', 'options': ['继续', '稍后']}],
+                            'text': '是否继续这次修改？'}}), fake.loop).result(timeout=5)
+                        with corpus.paths['sdk'].open('a') as native:
+                            native.write(json.dumps(codex_row('response_item', {'type': 'function_call',
+                                'name': 'request_user_input_async', 'call_id': f'async-{mode}-{width}',
+                                'arguments': json.dumps({'questions': [{'title': '是否继续这次修改？',
+                                    'options': ['继续', '稍后']}]}, ensure_ascii=False)})) + '\n')
+                        question = page.locator('[data-sdk-async-question]')
+                        question.get_by_label('继续', exact=True).check()
+                        question.get_by_role('button', name='提交回答').click()
+                        answer = page.locator('.sdk-accepted').filter(has_text='是否继续这次修改？')
+                        expect(answer).to_be_visible()
+                        steers = len(fake.methods('turn/steer'))
+                        page.locator('#sdk-stop').click()
+                        expect(answer).to_be_hidden()
+                        notice = page.locator('.sdk-queue details').filter(has_text='是否继续这次修改？')
+                        expect(notice.locator('summary')).to_have_text('回合已中断，未见输入记录')
+                        notice.locator('summary').click()
+                        if args.screenshots: page.screenshot(path=str(args.screenshots/f'async-receipt-{mode}-{width}.png'))
+                        notice.get_by_role('button', name='移除提示').click()
+                        expect(answer).to_have_count(0)
+                        page.reload(wait_until='networkidle')
+                        expect(answer).to_have_count(0)
+                        expect(question).to_have_count(0)
+                        assert len(fake.methods('turn/steer')) == steers
+                        fake.defer_steer = False
+                        context.close()
                         print(f'PASS {width} {theme}: automatic compact/reload/no manual RPC/interrupt without send regression/native consumption/continued turn', flush=True)
+                    for status in ('completed', 'failed'):
+                        context, page = open_page(browser, base, 1280, 'light')
+                        fake.compact_next = True; fake.terminal_before_reply = status
+                        text = '回合先于接收回执结束 ' + status
+                        page.locator('#sdk-input').fill(text); page.locator('#sdk-send').click()
+                        ended = page.locator('.sdk-queue details').filter(has_text=text)
+                        expect(ended.locator('summary')).to_have_text('回合已结束，未见输入记录')
+                        expect(page.locator('.sdk-queued')).to_have_count(0)
+                        ended.locator('summary').click()
+                        ended.get_by_role('button', name='移除提示').click()
+                        expect(ended).to_have_count(0)
+                        context.close()
+                    fake.terminal_before_reply = None
                     fake.compact_next = True
                     context, page = open_page(browser, base, 1280, 'dark')
                     page.locator('#sdk-input').fill('restart while compacting')
@@ -147,6 +218,21 @@ def main():
                     assert len(fake.methods('turn/start')) == starts_before_restart
                     context.close()
                     print('PASS service restart preserves completed delivery without replay', flush=True)
+                # Legacy receipts have no terminal status. Recover the exact
+                # older turn, without inventing consumption or changing sent.
+                ledger = root/'state/codex-sdk-queue.json'
+                legacy = json.loads(ledger.read_text())
+                legacy[THREAD][-1].pop('turn_status', None)
+                ledger.write_text(json.dumps(legacy))
+                fake.offline_consumed = {'id': entries[-1]['turn_id'], 'status': 'interrupted', 'items': []}
+                with server(corpus, args.binary, root/'app.sock', env) as base:
+                    context, page = open_page(browser, base, 1280, 'dark')
+                    recovered = page.locator('.sdk-queue details').filter(has_text='restart while compacting')
+                    expect(recovered.locator('summary')).to_have_text('回合已中断，未见输入记录')
+                    assert len(fake.methods('turn/start')) == starts_before_restart
+                    assert not page.locator('.sdk-queued').count()
+                    context.close()
+                    print('PASS legacy terminal receipt recovered without replay', flush=True)
                 fake.offline_consumed = {'id': entries[-1]['turn_id'], 'status': 'completed', 'items': [{
                     'id': 'consumed-while-offline', 'type': 'userMessage',
                     'content': [{'type': 'text', 'text': 'restart while compacting'}]}]}

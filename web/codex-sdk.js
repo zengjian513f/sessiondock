@@ -927,12 +927,39 @@ const CodexSdkView = {
     const contents = JSON.stringify([!!this.turn, this.summary?.queue || [], this.summary?.accepted || []]);
     if (holder._sdkQueueBusy || holder._sdkQueueContents === contents) return;
     holder._sdkQueueContents = contents;
+    const expanded = new Set([...holder.querySelectorAll('details[open]')].map(node => node.dataset.receiptId));
     holder.replaceChildren();
     for (const item of this.summary?.accepted || []) {
-      const {card} = ConversationUI.queuedMessage(item.text, '已发送，等待原生记录',
+      if (item.receipt_dismissed) continue;
+      const ended = ['completed', 'interrupted', 'failed'].includes(item.turn_status);
+      const state = ended
+        ? `${item.turn_status === 'interrupted' ? '回合已中断' : '回合已结束'}，未见输入记录`
+        : '已发送，等待原生记录';
+      const {card, actions} = ConversationUI.queuedMessage(item.text, state,
         {uid: this.uid, agent: this.agent, className: 'sdk-accepted'});
       card.dataset.receiptId = item.id;
-      holder.append(card);
+      if (!ended) { holder.append(card); continue; }
+      // A terminal turn cannot keep an unconsumed receipt in a waiting state.
+      // Retain the evidence in the existing disclosure/queue styles.
+      const details = el('details', 'event-details');
+      details.dataset.receiptId = item.id;
+      details.open = expanded.has(item.id);
+      details.append(el('summary', '', state), card);
+      const dismiss = el('button', 'queued-send-dismiss', '移除提示');
+      dismiss.type = 'button';
+      dismiss.title = '保留投递回执，不重新发送消息';
+      dismiss.onclick = async () => {
+        const generation = this.generation;
+        holder._sdkQueueBusy = true; dismiss.disabled = true;
+        try { await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action: 'dismiss'}); }
+        catch (error) { if (this.current(generation)) this.setNotice(`移除提示失败：${error.message}`, 'blocked', true); }
+        finally {
+          holder._sdkQueueBusy = false; holder._sdkQueueContents = null;
+          if (this.current(generation)) this.paintQueue();
+        }
+      };
+      actions.append(dismiss);
+      holder.append(details);
     }
     for (const item of this.summary?.queue || []) {
       const state = item.state === 'failed' ? (item.error || '发送失败') : item.state === 'sending' ? '正在发送…' : '已排队，当前回合结束后发送';
@@ -1299,6 +1326,11 @@ const CodexSdkQuestions = {
       if (item.type === 'agentMessage' && item.questions?.length) pending.set(item.id, item.questions);
     }
     const scope = JSON.stringify([view.uid, view.agent]);
+    // Accepted answers still supersede their historical question after reload,
+    // including when only the terminal receipt's notice has been dismissed.
+    for (const row of [...(view.summary?.queue || []), ...(view.summary?.accepted || [])]) {
+      if (row.id?.startsWith('sdk-question:')) pending.delete(row.id.slice('sdk-question:'.length));
+    }
     for (const card of view.live.querySelectorAll('[data-sdk-async-question]')) {
       if (!pending.has(card.dataset.sdkAsyncQuestion)) card.remove();
     }

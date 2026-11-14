@@ -812,6 +812,7 @@ impl Inner {
                     for item in turn["items"].as_array().into_iter().flatten() {
                         self.queue.consumed(thread.id(), id, item)?;
                     }
+                    self.queue.settle_turn(thread.id(), turn)?;
                 }
             }
             cursor = page["nextCursor"].clone();
@@ -905,6 +906,13 @@ impl Inner {
             .cloned();
         if let Some(thread) = thread {
             thread.apply(method, params.clone());
+            if method == "turn/completed" {
+                if let Err(error) = self.queue.settle_turn(&thread_id, &params["turn"]) {
+                    eprintln!("Codex receipt persistence: {error}");
+                } else {
+                    self.queue_event(&thread);
+                }
+            }
             if matches!(method, "item/started" | "item/completed")
                 && params["item"]["type"] == "userMessage"
             {

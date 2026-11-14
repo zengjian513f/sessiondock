@@ -304,7 +304,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
 | POST `/api/codex-sdk/turn` `{uid, request_id?, text?, attachments?, quotes?, model?, effort?, expected_turn_id?}` | With `expected_turn_id`, direct native steer; otherwise server-owned FIFO input; starts immediately when idle, otherwise waits; repeated `request_id` returns the same submission; staged attachments are resolved once |
-| POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); no implicit steering |
+| POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); `dismiss` acknowledges an unconsumed receipt from a terminal turn without resending or cancelling input |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
 | GET `/api/codex-sdk/models?uid=&refresh=` | `model/list` on the selected provider connection (cached 5 minutes per connection and persisted across restarts under `<SESSIONDOCK_STATE_DIR>/models/codex-sdk.json` when `uid` is omitted; `refresh=1` forces a fresh `model/list`) |
@@ -694,7 +694,15 @@ An accepted input has completed delivery even while waiting for native consumpti
 so it no longer has a pending-send bubble or retry/cancel controls. A read-only accepted
 receipt retains its text until the native `userMessage` arrives, including across page reload
 and service restart. Native consumption replaces that receipt; interruption does not turn
-it back into a failed send. Refreshing must not submit it again. See the synthetic
+it back into a failed send. DELTA (BUG-20261114-053237-efca19): a native terminal turn
+settles an unconsumed receipt as “回合已中断/结束，未见输入记录”, collapsed by default.
+The user can expand it and remove its notice; the durable receipt retains its text,
+completed delivery and terminal status. This action does not start a session, cancel
+native input or authorize a resend. Live completion and paginated recovery of older
+turns use the same settlement, including completion before the acceptance RPC returns.
+Accepted async answers, including dismissed receipts, suppress the corresponding
+historical question card after reload; removing a notice does not reopen its question.
+Refreshing must not submit it again. See the synthetic
 [automatic-compaction browser regression](../tests/codex_sdk_compaction_browser.py)
 for progress/reconnect, completion/continued processing, interruption without send regression and
 service-restart recovery; it validates the bridge, not a real model's threshold.

@@ -343,6 +343,7 @@ pub async fn turn(
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QueueAction {
+    Dismiss,
     Cancel,
     Steer,
     Retry,
@@ -364,6 +365,7 @@ pub async fn queue_action(
     let sdk = service(&state)?;
     let thread = thread_id(&state, &body.uid, &body.agent).await?;
     let action = match body.action {
+        QueueAction::Dismiss => "dismiss",
         QueueAction::Cancel => "cancel",
         QueueAction::Steer => "steer",
         QueueAction::Retry => "retry",

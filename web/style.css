@@ -2736,9 +2736,9 @@ header .btn[data-session-docked] { display: none; }
 
 .sdk-queue:empty { display: none; }
 .sdk-queued .mb { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
-.sdk-queued .queued-send-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.sdk-queued .queued-send-dismiss { margin-left: 0; min-height: 24px; }
-.sdk-queued .queued-send-state { flex: 1 1 auto; }
+:is(.sdk-queued, .sdk-accepted) .queued-send-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+:is(.sdk-queued, .sdk-accepted) .queued-send-dismiss { margin-left: 0; min-height: 24px; }
+:is(.sdk-queued, .sdk-accepted) .queued-send-state { flex: 1 1 auto; }
 
 .sdk-pickers > .sdk-action { flex: none; width: var(--sdk-status-row-height); min-width: 0; height: var(--sdk-status-row-height); padding: 3px; }
 .sdk-pickers > .sdk-action .sdk-action-label { display: none; }
@@ -2773,9 +2773,9 @@ header .btn[data-session-docked] { display: none; }
 .msg.hashit > .message-bubble { border-color: color-mix(in srgb, #ffb020 70%, var(--border)); }
 
 .msg.sdk-queued { opacity: 1; }
-.sdk-queued .queued-send-foot { font-size: 11px; line-height: 1.4; }
+:is(.sdk-queued, .sdk-accepted) .queued-send-foot { font-size: 11px; line-height: 1.4; }
 .sdk-queue-actions { display: inline-flex; flex: none; gap: 6px; margin-left: auto; }
-.sdk-queued .queued-send-dismiss { color: var(--text); }
+:is(.sdk-queued, .sdk-accepted) .queued-send-dismiss { color: var(--text); }
 
 /* Conversation mode uses the SDK status/usage strip without SDK controls. */
 #right:has(#conversation-status:not(.hidden)) > #composer .composer-status-slot { position: static; }

@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright, expect
 from codex_sdk_browser import build, server, THREAD
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY, codex_row
+from sdk_ui_fixtures import start_sdk
 
 QUESTIONS = [
     {'title': '气泡折叠规则：助手正文完整显示，用户长输入和思考保留折叠。你希望采用哪种？',
@@ -36,6 +37,7 @@ def main():
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.goto(base, wait_until='networkidle')
                     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+                    start_sdk(page)
                     expect(page.locator('#sdk-input')).to_be_visible()
                     page.locator('#sdk-input').click()
                     page.wait_for_function('CodexSdkView.connected')

@@ -17,6 +17,7 @@ from codex_sdk_actions_browser import environment
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
+from sdk_ui_fixtures import start_sdk
 
 
 class QueueServer(ControlsServer):
@@ -72,6 +73,7 @@ def open_page(browser, base, width, theme):
     page = context.new_page()
     page.goto(base, wait_until='networkidle')
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
+    start_sdk(page)
     expect(page.locator('#sdk-input')).to_be_enabled()
     page.locator('#sdk-input').click()
     page.wait_for_function('CodexSdkView.connected')

@@ -27,6 +27,10 @@ pub(super) struct Input {
     pub native_item_id: Option<String>,
     #[serde(default)]
     pub direct_steer: bool,
+    #[serde(default)]
+    pub turn_status: Option<String>,
+    #[serde(default)]
+    pub receipt_dismissed: bool,
 }
 
 type Document = HashMap<String, Vec<Input>>;
@@ -97,9 +101,41 @@ impl Queue {
                 .into_iter()
                 .flatten()
                 .filter(|item| item.state == "sent" && !item.text.is_empty())
-                .map(|item| json!({"id":item.id,"text":item.text,"turn_id":item.turn_id}))
+                .map(|item| json!({"id":item.id,"text":item.text,"turn_id":item.turn_id,"turn_status":item.turn_status,"receipt_dismissed":item.receipt_dismissed}))
                 .collect::<Vec<_>>()
         )
+    }
+
+    pub(super) fn settle_turn(&self, thread: &str, turn: &Value) -> Result<(), RpcError> {
+        let (Some(id), Some(status)) = (turn["id"].as_str(), turn["status"].as_str()) else {
+            return Ok(());
+        };
+        if !matches!(status, "completed" | "interrupted" | "failed") {
+            return Ok(());
+        }
+        for item in turn["items"].as_array().into_iter().flatten() {
+            self.consumed(thread, id, item)?;
+        }
+        let inputs: Vec<_> = self
+            .rows
+            .lock()
+            .expect("queue")
+            .get(thread)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                matches!(row.state.as_str(), "sending" | "sent")
+                    && row.turn_id.as_deref() == Some(id)
+                    && row.native_item_id.is_none()
+                    && row.turn_status.as_deref() != Some(status)
+            })
+            .cloned()
+            .collect();
+        for mut input in inputs {
+            input.turn_status = Some(status.into());
+            self.update(thread, input)?;
+        }
+        Ok(())
     }
 
     pub(super) fn consumed(&self, thread: &str, turn: &str, item: &Value) -> Result<(), RpcError> {
@@ -197,6 +233,10 @@ impl Queue {
                 item.native_item_id = old.native_item_id.clone();
                 item.turn_id = old.turn_id.clone();
             }
+            if item.turn_id == old.turn_id && item.turn_status.is_none() {
+                item.turn_status = old.turn_status.clone();
+            }
+            item.receipt_dismissed |= old.receipt_dismissed;
         }
         if item.state == "cancelled" || (item.state == "sent" && item.native_item_id.is_some()) {
             item.text.clear();
@@ -263,6 +303,8 @@ impl CodexSdk {
                     turn_id: None,
                     native_item_id: None,
                     direct_steer: false,
+                    turn_status: None,
+                    receipt_dismissed: false,
                 },
             )?;
             live.cancel_capacity_retry();
@@ -304,6 +346,8 @@ impl CodexSdk {
                 turn_id: None,
                 native_item_id: None,
                 direct_steer: true,
+                turn_status: None,
+                receipt_dismissed: false,
             };
             self.inner.queue.update(thread, item.clone())?;
             self.inner.deliver(&live, item, Some(expected_turn)).await?;
@@ -327,12 +371,22 @@ impl CodexSdk {
     ) -> Result<Value, RpcError> {
         let lock = self.inner.queue.lock(thread);
         let _guard = lock.lock().await;
-        let live = self.inner.ensure(thread).await?;
         let mut item = self
             .inner
             .queue
             .get(thread, id)
             .ok_or(RpcError::UnknownRequest)?;
+        if action == "dismiss" && item.state == "sent" && item.turn_status.is_some() {
+            // Acknowledge only the notice. Keep the completed delivery and its
+            // unconsumed text; dismissal must never cancel or replay native input.
+            item.receipt_dismissed = true;
+            self.inner.queue.update(thread, item)?;
+            if let Some(live) = self.inner.threads.lock().expect("threads").get(thread) {
+                self.inner.queue_event(live);
+            }
+            return Ok(json!({"state":"sent","receipt_dismissed":true}));
+        }
+        let live = self.inner.ensure(thread).await?;
         if matches!(item.state.as_str(), "sent" | "sending") {
             return Err(RpcError::UnknownRequest);
         }
@@ -403,6 +457,8 @@ impl Inner {
         item.input.retain(|part| part["type"] == "text");
         item.state = "sending".into();
         item.error = None;
+        item.turn_id = steer.clone();
+        item.turn_status = None;
         self.queue.update(live.id(), item.clone())?;
         self.queue_event(live);
         let mut params = json!({"threadId":live.id(),"input":item.input});
@@ -438,6 +494,9 @@ impl Inner {
             }
         }
         self.queue.update(live.id(), item)?;
+        // A fast turn may finish before its acceptance RPC returns.
+        self.queue
+            .settle_turn(live.id(), &live.summary()["last_turn"])?;
         self.queue_event(live);
         Ok(())
     }
