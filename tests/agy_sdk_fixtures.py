@@ -93,7 +93,31 @@ steered_queue=queue.Queue()
 class ControlHandler(BaseHTTPRequestHandler):
     def log_message(self,*_): pass
     def do_POST(self):
-        payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        body=self.rfile.read(int(self.headers['Content-Length']))
+        if self.path.endswith('/StreamAgentStateUpdates'):
+            assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
+            assert self.headers.get('Content-Type')=='application/connect+json'
+            assert body[0]==0 and int.from_bytes(body[1:5],'big')==len(body)-5
+            payload=json.loads(body[5:])
+            assert payload['conversationId']==sid and payload['disableRehydration'] is True
+            for key in ('initialStepsPageBounds','initialGeneratorMetadatasPageBounds','initialExecutorMetadatasPageBounds'):
+                assert payload[key]=={'startIndex':1,'endIndexExclusive':1}
+            mode=(root/'context-mode').read_text().strip() if (root/'context-mode').exists() else ''
+            if mode=='reject':
+                self.send_response(503);self.end_headers();return
+            usage=json.loads((root/'context-usage.json').read_text()) if (root/'context-usage.json').exists() else None
+            update={'conversationId':sid if mode!='wrong-sid' else 'unrelated','contextWindowUsage':usage}
+            data=json.dumps({'update':update}).encode()
+            framed=bytes([2 if mode=='end' else 0])+len(data).to_bytes(4,'big')+data
+            self.send_response(200);self.send_header('Content-Type','application/connect+json');self.end_headers()
+            # Split the envelope header and leave the stream open: readers must
+            # finish after one complete state frame, not wait for HTTP EOF.
+            self.wfile.write(framed[:3]);self.wfile.flush()
+            threading.Event().wait(.01)
+            self.wfile.write(framed[3:]);self.wfile.flush()
+            threading.Event().wait(6)
+            return
+        payload=json.loads(body)
         if self.path.endswith('/UpdateConversationAnnotations'):
             assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
             assert payload['cascadeId']==sid and payload['mergeAnnotations'] is True

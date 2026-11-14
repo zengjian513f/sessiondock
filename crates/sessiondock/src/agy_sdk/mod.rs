@@ -1,5 +1,6 @@
 //! Native Agy headless NDJSON bridge. No PTY, mirror writes or approval emulation.
 //! See docs/agy-sdk.md for the verified protocol and coexistence boundary.
+mod context;
 mod control;
 mod transcript;
 mod transport;
@@ -37,6 +38,7 @@ struct Live {
     commands: mpsc::UnboundedSender<Command>,
     stop: CancellationToken,
     done: CancellationToken,
+    context_read: tokio::sync::Mutex<()>,
 }
 
 struct Data {
@@ -57,6 +59,8 @@ struct Data {
     diagnostics: String,
     usage: Value,
     step_usage: Value,
+    context_usage: Value,
+    usage_errors: Value,
     mode: Option<String>,
     runtime: Option<Turn>,
 }
@@ -297,7 +301,7 @@ impl Bridge {
         match method {
             "models" => self.process.models(self.shutdown.clone()).await,
             "create" => self.create(target, input).await,
-            "usage" => { let live=self.open(&target).await?;let data=live.data.lock().unwrap();Ok(json!({"usage":data.usage,"step_usage":data.step_usage})) },
+            "usage" => { let live=self.open(&target).await?;context::refresh(&self.process, &live).await;let data=live.data.lock().unwrap();Ok(json!({"usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors})) },
             "settings" => {
                 let live=self.open(&target).await?;let mut data=live.data.lock().unwrap();
                 if let Some(mode)=choice(&input,"mode") { data.mode=Some(mode); }
@@ -581,6 +585,7 @@ impl Bridge {
             commands,
             stop: CancellationToken::new(),
             done: CancellationToken::new(),
+            context_read: tokio::sync::Mutex::new(()),
             events,
             data: Mutex::new(Data {
                 seq: 0,
@@ -599,12 +604,15 @@ impl Bridge {
                 diagnostics: String::new(),
                 usage: Value::Null,
                 step_usage: Value::Null,
+                context_usage: Value::Null,
+                usage_errors: json!({}),
                 mode: None,
                 runtime: None,
             }),
         });
         sessions.native.insert(sid, live.clone());
         sessions.keys.insert(key, live.clone());
+        context::watch(self.process.clone(), live.clone(), self.shutdown.clone());
         let process = self.process.clone();
         let running = live.clone();
         let shutdown = self.shutdown.clone();
@@ -716,7 +724,7 @@ impl Live {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
             "items":data.items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
-            "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
+            "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
     fn snapshot(&self, data: &Data) -> Value {

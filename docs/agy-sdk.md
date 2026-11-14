@@ -220,6 +220,19 @@ DELTA：底栏展示原生 `result.usage` 累计 Token；`step_update.usage` 在
 不发送模型 turn；与设置页共享持久快照和查询，缓存与刷新条件见[额度合同](quotas.md)。
 打开先显示已有数据，不等待原生启动；明细及菜单条件见[SDK 界面合同](sdk-ui.md)。
 
+DELTA（BUG-20261114-141520-4b1627）：上下文从当前 SDK 所拥有实例的
+Connect `StreamAgentStateUpdates` 初始快照读取 `contextWindowUsage`，
+使用原生 `estimatedTokensUsed / maxContextTokens`，复用底栏上下文进度条。
+只查询本实例 PID/CSRF 授权和对应 SID；关闭历史分页区间，读取一帧即关闭订阅。
+有网页订阅时每五秒刷新，网页 `/context` 和 `/usage` 也刷新；不启动原生进程、
+不发送模型回合、不取累计 Token 推算。原生压缩后的估计按新测量更新；
+字段缺失、窗口未知或实例退出时隐藏，查询失败显示用量错误并撤下旧百分比。
+原生 NDJSON 与 transcript 不含这个测量，不能从它们替代读取。
+[Agy 用量浏览器](../tests/agy_usage_browser.py)覆盖刷新、压缩估计、缺失、错误与身份不匹配；
+[真实上下文浏览器](../tests/agy_context_real_browser.py)使用隔离 HOME 与 loopback 合成模型，
+核对原生测量、同 PID/SID、刷新及零额外模型回合。
+
+
 模型目录与新建会话共用解析：带强度后缀的原生模型已固定 effort。SDK 模型框将这些
 变体合并为一个模型，强度框只提供目录中实际存在的档位；选择后传对应原生模型 ID，
 并清除旧的独立 effort。包含基础模型的分组可选择“CLI 默认”。无变体的普通模型保留

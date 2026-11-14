@@ -92,6 +92,7 @@ impl Control {
             "annotations":{"title":title},"mergeAnnotations":true}),
         )
         .await
+        .map(|_| ())
     }
 
     pub async fn steer(
@@ -112,9 +113,31 @@ impl Control {
             }),
         )
         .await
+        .map(|_| ())
     }
 
-    async fn request(&self, pid: u32, method: &str, body: serde_json::Value) -> Result<(), String> {
+    pub async fn context(&self, pid: u32, sid: &str) -> Result<serde_json::Value, String> {
+        self.request(
+            pid,
+            "StreamAgentStateUpdates",
+            json!({
+                "conversationId": sid, "disableRehydration": true,
+                "subscriberId": "sessiondock-context",
+                // Nonzero empty slices avoid the native zero/default = full-history behavior.
+                "initialStepsPageBounds": {"startIndex":1,"endIndexExclusive":1},
+                "initialGeneratorMetadatasPageBounds": {"startIndex":1,"endIndexExclusive":1},
+                "initialExecutorMetadatasPageBounds": {"startIndex":1,"endIndexExclusive":1}
+            }),
+        )
+        .await
+    }
+
+    async fn request(
+        &self,
+        pid: u32,
+        method: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let log = tokio::fs::read_to_string(&self.log).await.map_err(
             |_| "agy_sdk_control_unavailable: 无法取得本实例的原生管理接口；任务继续运行。",
         )?;
@@ -137,10 +160,24 @@ impl Control {
             token: String::new(),
             tls: false,
         };
-        let body = serde_json::to_vec(&body).unwrap();
+        let streaming = method == "StreamAgentStateUpdates";
+        let mut body = serde_json::to_vec(&body).unwrap();
+        if streaming {
+            let mut framed = vec![0];
+            framed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            framed.append(&mut body);
+            body = framed;
+        }
         let path = format!("/exa.language_server_pb.LanguageServerService/{method}");
         let headers = [
-            ("Content-Type", "application/json"),
+            (
+                "Content-Type",
+                if streaming {
+                    "application/connect+json"
+                } else {
+                    "application/json"
+                },
+            ),
             ("Connect-Protocol-Version", "1"),
             ("x-codeium-csrf-token", self.token.as_str()),
         ];
@@ -156,7 +193,8 @@ impl Control {
             let client = Client::default();
             let response = client.open(&target, request()).await?;
             let mut status = response.status;
-            let mut bytes = response.into_body().read_to_end(usize::MAX).await?;
+            let mut bytes =
+                response_bytes(response.into_body(), streaming && status == 200).await?;
             // Newer native servers use a self-signed TLS listener but retain the
             // same startup label. Retry only an explicit HTTP-to-HTTPS rejection,
             // which cannot have executed the mutation. Never retry unknown results.
@@ -180,7 +218,7 @@ impl Control {
                     .map_err(|_| crate::hub::client::ClientError::ConnectionFailed)?;
                 let response = client.open_on_stream(&target, request(), socket).await?;
                 status = response.status;
-                bytes = response.into_body().read_to_end(usize::MAX).await?;
+                bytes = response_bytes(response.into_body(), streaming && status == 200).await?;
             }
             Ok::<_, crate::hub::client::ClientError>((status, bytes))
         })
@@ -200,13 +238,9 @@ impl Control {
                 outcome.0
             ));
         }
-        if serde_json::from_slice::<serde_json::Value>(&outcome.1).is_err() {
-            return Err(
-                "agy_sdk_control_transport: 原生响应格式无法确认；未终结运行时，请核对操作结果。"
-                    .into(),
-            );
-        }
-        Ok(())
+        serde_json::from_slice(&outcome.1).map_err(|_| {
+            "agy_sdk_control_transport: 原生响应格式无法确认；未终结运行时，请核对操作结果。".into()
+        })
     }
 }
 
@@ -216,4 +250,29 @@ impl Drop for Control {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
     }
+}
+
+// Read one Connect envelope and drop the subscription immediately. A streaming
+// response need not close its HTTP body after its initial state snapshot.
+async fn response_bytes(
+    mut body: crate::hub::client::Body,
+    streaming: bool,
+) -> Result<Vec<u8>, crate::hub::client::ClientError> {
+    if !streaming {
+        return body.read_to_end(usize::MAX).await;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.read().await? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= 5 {
+            let length = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
+            if bytes.len() >= length + 5 {
+                if bytes[0] != 0 {
+                    return Ok(Vec::new());
+                }
+                return Ok(bytes[5..5 + length].to_vec());
+            }
+        }
+    }
+    Ok(Vec::new())
 }

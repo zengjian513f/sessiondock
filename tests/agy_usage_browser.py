@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Agy cached status and conditional token details, using a private synthetic CLI."""
+from contextlib import ExitStack
+from types import SimpleNamespace
 import argparse
 import json
 import os
@@ -11,6 +13,9 @@ from unittest.mock import patch
 from playwright.sync_api import expect, sync_playwright
 from agy_sdk_browser import select_sdk, send
 from agy_sdk_fixtures import AgyFixture
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
+from sdkhost_fixtures import stop_private_sdkhosts
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
 from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
@@ -74,8 +79,11 @@ def exercise(browser, base, fixture, screenshots):
         page.keyboard.press('Escape')
     page.set_viewport_size({'width':1280,'height':900})
     page.emulate_media(color_scheme='light')
+    (fixture.root/'context-usage.json').write_text(json.dumps({'estimatedTokensUsed':235426,'maxContextTokens':256000}))
     send(page,'用量下拉实际发送 synthetic turn')
     expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply')
+    expect(footer).to_have_attribute('title',re.compile('已用 92.0%'))
+    expect(footer).to_have_attribute('title',re.compile('235,426 / 256,000 tokens'))
     page.locator('#sdk-input').fill('保留草稿 retained draft')
     for width in (1280,390,320):
         page.set_viewport_size({'width':width,'height':900})
@@ -118,7 +126,7 @@ def exercise(browser, base, fixture, screenshots):
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()
     expect(footer).to_have_attribute('title',re.compile('剩余 9%'))
-    expect(footer.locator('.sdk-gauge.low')).to_be_visible()
+    expect(footer.locator('.sdk-quota-group .sdk-gauge.low')).to_be_visible()
     page.wait_for_function('!NativeSdkView.loadingUsage')
     (fixture.root/'quota-fail').touch()
     refresh_usage(page)
@@ -146,6 +154,32 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function('!NativeSdkView.loadingUsage')
     refresh_usage(page)
     expect(footer).not_to_have_attribute('title',re.compile('Delayed native quota diagnostic.'))
+    # Native state updates independently of cumulative result.usage, including
+    # compaction, missing estimates, native errors and identity mismatches.
+    page.set_viewport_size({'width':1280,'height':900})
+    for usage, expected in [({'estimatedTokensUsed':'12800','maxContextTokens':'256000','estimatedAfterCompaction':True},'已用 5.0%'),
+                            ({'estimatedTokensUsed':0,'maxContextTokens':256000},'已用 0.0%')]:
+        (fixture.root/'context-usage.json').write_text(json.dumps(usage))
+        expect(footer).to_have_attribute('title',re.compile(expected),timeout=15000)
+        expect(footer).to_have_attribute('title',re.compile('累计 Token：12,800'))
+    for usage in ({}, {'estimatedTokensUsed':50}, {'estimatedTokensUsed':50,'maxContextTokens':0}):
+        (fixture.root/'context-usage.json').write_text(json.dumps(usage))
+        page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
+        expect(footer).not_to_have_attribute('title',re.compile('已用 .*tokens'))
+    (fixture.root/'context-usage.json').write_text(json.dumps({'estimatedTokensUsed':64000,'maxContextTokens':256000}))
+    for mode in ('reject','wrong-sid','end'):
+        (fixture.root/'context-mode').write_text(mode)
+        page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
+        expect(footer).to_have_attribute('title',re.compile('用量 context'))
+        expect(footer).not_to_have_attribute('title',re.compile('已用 .*tokens'))
+    (fixture.root/'context-mode').unlink()
+    page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
+    expect(footer).to_have_attribute('title',re.compile('已用 25.0%'))
+    expect(footer).not_to_have_attribute('title',re.compile('用量 context'))
+    page.reload(wait_until='domcontentloaded')
+    expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_have_attribute('title',re.compile('已用 25.0%'))
     assert len(fixture.inputs())==before,'usage refresh must never submit a native turn'
     assert not errors, errors
     context.close()
@@ -162,16 +196,51 @@ def main():
     if args.frontend:
         os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str(args.frontend.resolve())
     args.screenshots.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='sd-agy-usage-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='sd-agy-usage-') as tmp, ExitStack() as cleanup:
         root = Path(tmp)
+        cleanup.callback(stop_private_sdkhosts, root)
+        port = free_port()
         fixture = AgyFixture(root, (REPO/'target/debug/ptyhost').resolve())
         with patch.dict(os.environ, fixture.env):
             initialize('--initialize-lifecycle', root/'ledger', args.binary.resolve())
             with isolated_server(Corpus(root), args.binary, host_dir=root/'host', lifecycle_dir=root/'ledger',
-                    state_dir=root/'state', launcher_config=fixture.launcher, extra_env=fixture.extra_env) as (base, _), sync_playwright() as pw:
+                    state_dir=root/'state', launcher_config=fixture.launcher, extra_env={**fixture.extra_env, **node_env(root,port,'127.0.0.0/8')}) as (base, _), sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 try:
                     exercise(browser, base, fixture, args.screenshots)
+                    hub_root=root/'hub';hub_root.mkdir()
+                    hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hub_root,[SimpleNamespace(name='AgyContextNode',token=TOKEN,port=port)])
+                    hub.start();cleanup.callback(hub.stop)
+                    page=browser.new_page(viewport={'width':1280,'height':900})
+                    page.goto(f'http://127.0.0.1:{hub.port}',wait_until='domcontentloaded')
+                    page.wait_for_function('T.listLoaded')
+                    select_sdk(page,connected=False)
+                    page.wait_for_function('NativeSdkView.pane && !NativeSdkView.historyReady')
+                    if page.evaluate('NativeSdkView.readOnly'):
+                        page.locator('#sdk-composer .composer-run-action').click()
+                    page.wait_for_function('NativeSdkView.connected')
+                    assert '~' in page.evaluate('S.sel')
+                    footer=page.locator('.native-sdk-pane .sdk-gauges')
+                    expect(footer).to_have_attribute('title',re.compile('已用 25.0%'),timeout=15000)
+                    before=len(fixture.inputs())
+                    page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
+                    page.wait_for_function('!NativeSdkView.loadingUsage')
+                    assert len(fixture.inputs())==before
+                    send(page,'hold:context')
+                    page.wait_for_function('NativeSdkView.running')
+                    (fixture.root/'context-usage.json').write_text(json.dumps({'estimatedTokensUsed':128000,'maxContextTokens':256000}))
+                    expect(footer).to_have_attribute('title',re.compile('已用 50.0%'),timeout=15000)
+                    for width,theme in ((1280,'light'),(390,'dark')):
+                        page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
+                        if not page.locator('#sdk-input').is_visible():
+                            page.locator('#side .item[data-uid="'+page.evaluate('S.sel')+'"]').click()
+                        page.screenshot(path=str(args.screenshots/f'agy-context-hub-{width}-{theme}.png'),full_page=True)
+                    page.locator('#sdk-stop').click()
+                    page.wait_for_function('!NativeSdkView.running')
+                    page.reload(wait_until='domcontentloaded')
+                    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('已用 50.0%'),timeout=15000)
+                    page.close()
+                    print('PASS Agy context through Hub: busy refresh, slash, cancellation and reload',flush=True)
                 finally:
                     browser.close()
 
