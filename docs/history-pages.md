@@ -296,10 +296,11 @@ including `counted:false`, rather than native byte offsets or `message_total`.
 Several events may share an offset; inherited events may have offset zero.
 `next` is null exactly when the initial omitted range has been filled.
 
-DELTA (BUG-20261114-062522-37e9af): SDK and ordinary conversation gaps display
-**中间还有 X 条未载入**, with X tracking the remaining omitted events. They offer
-**载入较早 N 条**, **全部载入**, and **载入较近 N 条**, where N is `partial.batch`
-(200 on older nodes). Tooltips explain that earlier messages adjoin the content
+DELTA (BUG-20261114-062522-37e9af): SDK and ordinary conversation gaps stack
+three borderless text controls vertically: **↓ 载入N条**, **载入全部X条**,
+and **↑ 载入N条**. Thin horizontal rules flank the middle control, whose X tracks
+the remaining omitted events. N is `partial.batch` (200 on older nodes).
+Tooltips explain that earlier messages adjoin the content
 above the gap, and more recent messages adjoin the content below it.
 The directional buttons request one batch with `limit=N` and
 `direction=forward|backward`. Forward reads the oldest end of the gap; backward

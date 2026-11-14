@@ -6537,10 +6537,10 @@ function historyGapNode(info) {
   const gap = el('div', 'history-gap');
   const partial = cache.get(viewKey(info.uid, info.agent))?.partial;
   const batch = partial?.batch || 200;
-  gap.appendChild(el('div', 'history-gap-summary', `中间还有 ${Number(info.omitted || 0).toLocaleString()} 条未载入`));
+  const allLabel = `载入全部${Number(info.omitted || 0).toLocaleString()}条`;
   const choices = historyPagesEnabled()
-    ? [['forward', `载入较早 ${batch} 条`], ['all', '全部载入'], ['backward', `载入较近 ${batch} 条`]]
-    : [['all', '全部载入']];
+    ? [['forward', `↓ 载入${batch}条`], ['all', allLabel], ['backward', `↑ 载入${batch}条`]]
+    : [['all', allLabel]];
   for (const [mode, label] of choices) {
     const button = el('button', `history-gap-button history-gap-${mode === 'all' ? 'load' : mode}`, label);
     button.type = 'button';
@@ -6573,7 +6573,7 @@ function historyPagesEnabled() {
 }
 
 const historyPageRequests = new Map();
-// “全部载入”连续翻页直到缺口填满；较早/较近按钮只取一批。
+// “载入全部”连续翻页直到缺口填满；向下/向上按钮只取一批。
 // 按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
 // 能关掉连续翻页，逐页检验竞争。
 let HISTORY_PAGE_CHAIN = true;

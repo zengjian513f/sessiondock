@@ -70,24 +70,33 @@ def exercise(browser, base, source, label, screenshots):
             page.locator('#a-' + mode).click()
             box = page.locator('.sdk-history' if mode == 'sdk' else '#msgs')
             gap = box.locator('.history-gap')
-            expect(gap.locator('.history-gap-summary')).to_have_text('中间还有 606 条未载入')
+            expect(gap.locator('.history-gap-load')).to_have_text('载入全部606条')
             gap.scroll_into_view_if_needed()
             name = f'{label}-{source}-{mode}-{width}-{theme}'
+            controls = gap.locator('.history-gap-button')
+            expect(controls).to_have_text(['↓ 载入200条', '载入全部606条', '↑ 载入200条'])
+            rects = [controls.nth(i).bounding_box() for i in range(3)]
+            assert all(rects[i]['y'] + rects[i]['height'] <= rects[i + 1]['y']
+                       for i in range(2)), f'{name}: controls must stack top to bottom'
+            assert max(r['x'] + r['width'] / 2 for r in rects) - min(
+                r['x'] + r['width'] / 2 for r in rects) < 1, f'{name}: controls must share a center'
+            assert controls.evaluate_all('nodes => nodes.every(n => {const s=getComputedStyle(n); '
+                'return s.borderTopWidth === "0px" && s.borderRadius === "0px" && s.boxShadow === "none"})'), name
             if screenshots:
                 page.screenshot(path=str(screenshots / f'{name}.png'), full_page=True)
                 gap.screenshot(path=str(screenshots / f'{name}-gap.png'))
             assert gap.evaluate('(g) => g.scrollWidth <= g.clientWidth'), name
-            earlier = gap.get_by_role('button', name='载入较早 200 条', exact=True)
+            earlier = gap.get_by_role('button', name='↓ 载入200条', exact=True)
             expect(earlier).to_have_attribute('title', '从中间未载入消息中，读取时间最早，紧接上方内容的最多 200 条')
             earlier.click()
-            expect(gap.locator('.history-gap-summary')).to_have_text('中间还有 406 条未载入')
+            expect(gap.locator('.history-gap-load')).to_have_text('载入全部406条')
             expect(box).to_contain_text('历史记录 0004')
             expect(box).not_to_contain_text('历史记录 0409')
-            gap.get_by_role('button', name='载入较近 200 条', exact=True).click()
-            expect(gap.locator('.history-gap-summary')).to_have_text('中间还有 206 条未载入')
+            gap.get_by_role('button', name='↑ 载入200条', exact=True).click()
+            expect(gap.locator('.history-gap-load')).to_have_text('载入全部206条')
             expect(box).to_contain_text('历史记录 0609')
             expect(box).not_to_contain_text('历史记录 0409')
-            gap.get_by_role('button', name='全部载入', exact=True).click()
+            gap.get_by_role('button', name='载入全部206条', exact=True).click()
             expect(gap).to_have_count(0)
             expect(box).to_contain_text('历史记录 0409')
             print(f'PASS {name}: gap scope, chronological labels, both ends, remaining count, completion', flush=True)

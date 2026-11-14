@@ -88,12 +88,12 @@ def exercise(browser, binary, mode, width, theme, screenshots):
                 page.locator('#a-' + view).click()
                 box = page.locator('.sdk-history' if view == 'sdk' else '#msgs')
                 expect(box.locator('.history-gap-button')).to_have_count(3)
-                expect(box.locator('.history-gap-summary')).to_have_text(f"中间还有 {state()['omitted']:,} 条未载入")
+                expect(box.locator('.history-gap-load')).to_have_text(f"载入全部{state()['omitted']:,}条")
                 for direction in ('forward', 'backward'):
                     old = page.evaluate('''() => { const e=cache.get(viewKey(S.sel,S.agent));
                         return {messages:e.msgs, partial:e.partial, end:e.end, anchor:e.anchor}; }''')
                     control = box.locator('.history-gap-' + direction)
-                    expect(control).to_have_text('载入' + ('较早' if direction == 'forward' else '较近') + ' 200 条')
+                    expect(control).to_have_text(('↓' if direction == 'forward' else '↑') + ' 载入200条')
                     if direction == 'backward':
                         page.route('**/api/messages/*/page?*', lambda route: route.fulfill(
                             status=503, json={'error': 'Synthetic backward read failure'}), times=1)
@@ -117,7 +117,7 @@ def exercise(browser, binary, mode, width, theme, screenshots):
                     assert current['messages'] == old['messages'][:at] + data['messages'] + old['messages'][at:]
                     assert current['partial']['head'] == at + (200 if direction == 'forward' else 0)
                     assert current['partial']['omitted'] == old['partial']['omitted'] - 200
-                    expect(box.locator('.history-gap-summary')).to_have_text(f"中间还有 {current['partial']['omitted']:,} 条未载入")
+                    expect(box.locator('.history-gap-load')).to_have_text(f"载入全部{current['partial']['omitted']:,}条")
                     assert current['partial']['resume']['stop'] == current['partial']['head'] + current['partial']['omitted']
                     assert (current['end'], current['anchor']) == (old['end'], old['anchor'])
                     page.wait_for_function('''([selector, top]) => Math.abs(document.querySelector(selector).getBoundingClientRect().top-top)<12''',
