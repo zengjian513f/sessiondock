@@ -174,6 +174,12 @@ user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能
 `items` 仅为当前桥接接受/观察的实时消息，与普通历史区独立。原生步骤消息的
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
+DELTA：普通历史保留每条投影的 `native_step_index`、`native_step_status`。
+SDK 连接后保留已完成原生步骤的完整历史（含工具结果、设置说明和分页缺口），
+只接入该边界之后的实时步骤；未知步骤身份的待回显输入仍保留。
+历史更新时同时重算实时尾部，避免旧快照覆盖已落盘的新答复。缺少步骤字段的旧节点
+沿用原有按用户身份衔接。验收见 [Agy 历史衔接浏览器](../tests/agy_sdk_history_join_browser.py)。
+
 广播 lag 后 facade 应使用 bridge/reset 触发重新订阅，不能把缺口解释为任务结束。
 配置持久 state dir 时，实时消息从宿主输出重建，正在执行及闲置的 child 跨节点服务重启。
 绑定记录运行时及当前输入的输出起点；各输入使用独立传输 ID，恢复只回放该输入的

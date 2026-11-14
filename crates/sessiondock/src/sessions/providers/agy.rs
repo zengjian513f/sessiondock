@@ -233,6 +233,7 @@ fn command_exit_code(content: &str) -> Option<i64> {
 
 impl Parser<'_> {
     pub(super) fn agy(&mut self, record: &Value, end: u64) -> Result<(), String> {
+        let first_event = self.events.len();
         let ts = normalized(&record["created_at"]);
         // The native format references media files by URI; it never embeds
         // image bytes. Keep normal selected-view file grants and validation.
@@ -392,6 +393,15 @@ impl Parser<'_> {
                 } else {
                     self.skipped.note("Agy 记录类型", other);
                 }
+            }
+        }
+        // A turn ID identifies its USER_INPUT, not the individual native step.
+        // Keep the step on every projection (including tool calls and metadata)
+        // so SDK replay can join the persisted transcript without replacing it.
+        if let Some(index) = record["step_index"].as_u64() {
+            for event in &mut self.events[first_event..] {
+                event.message["native_step_index"] = json!(index);
+                event.message["native_step_status"] = record["status"].clone();
             }
         }
         Ok(())

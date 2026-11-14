@@ -33,6 +33,27 @@ function nativeSdkIsolateRaw(raw) {
   };
 }
 
+// Full transcripts contain tool results and metadata absent from headless
+// replay. Retain the persisted prefix, including its pagination gap, and join
+// only newer native steps. A user turn ID alone cannot locate that boundary.
+function nativeSdkAgyHistoryJoin(view) {
+  if (!view.uid?.startsWith('agy:')) return null;
+  const messages = view.historyData?.messages || [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (Number.isInteger(message.native_step_index)
+        && ['DONE', 'ERROR'].includes(message.native_step_status))
+      return {step: message.native_step_index, cut: i + 1};
+  }
+  return null;
+}
+
+function nativeSdkAgyStep(item) {
+  if (Number.isInteger(item.native?.step_index)) return item.native.step_index;
+  const match = /:step:(\d+)(?::thinking)?$/.exec(item.native_id || item.id || '');
+  return match ? Number(match[1]) : null;
+}
+
 function nativeSdkSnapshotDelta(before, change) {
   if (change === null) return before;
   switch (change.kind) {
@@ -407,10 +428,15 @@ const NativeSdkView = {
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     const source = String(this.uid).split(':')[0];
+    const agyJoin = nativeSdkAgyHistoryJoin(this);
     const filteredRaw = this.uid.startsWith('kiro:')
       ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
       : this.uid.startsWith('agy:')
-      ? rawItems.filter(item => !(item?.role === 'system' && item.native_type === 'checkpoint'))
+      ? rawItems.filter(item => {
+        if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
+        const step = nativeSdkAgyStep(item);
+        return !agyJoin || step === null || step > agyJoin.step;
+      })
       : rawItems;
     this.itemCache ||= new WeakMap();
     const mappedItems = new Array(filteredRaw.length);
@@ -435,6 +461,7 @@ const NativeSdkView = {
     }
     this.items = mappedItems;
     this.setConnected(true);
+    if (source === 'agy') this.agyJoinedHistory = this.historyData;
     this.paintHistory();
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
     const tailComplete = !this.running && !requests.size;
@@ -588,6 +615,14 @@ const NativeSdkView = {
 
   paintHistory() {
     if (!this.history || !this.historyData) return;
+    // History may advance without another SDK event (including delayed native
+    // transcript writes). Reconcile both containers in the same paint.
+    if (this.uid.startsWith('agy:') && this.connected && this.raw
+        && this.agyJoinedHistory !== this.historyData) {
+      this.agyJoinedHistory = this.historyData;
+      this.applySnapshot(this.raw);
+      return;
+    }
     if (this.historyMessageTimeRefreshed !== this.historyData) {
       SdkUI.refreshMessageTimes(this);
       this.historyMessageTimeRefreshed = this.historyData;
@@ -595,8 +630,11 @@ const NativeSdkView = {
     const fullMessages = this.historyData.messages || [];
     let messages = fullMessages;
     let cut = messages.length;
+    const join = this.connected && nativeSdkAgyHistoryJoin(this);
     const first = this.items?.find(item => item.role === 'user');
-    if (first) {
+    if (join) {
+      cut = join.cut; messages = messages.slice(0, cut);
+    } else if (first) {
       const identity = NativeSdkControls.messageIdentity(this, first);
       const at = messages.findIndex(message => message.role === 'user' && identity
         && NativeSdkControls.messageIdentity(this, message) === identity);

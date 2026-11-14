@@ -31,6 +31,7 @@ alone after both pools (timing assertions). Summary and JSON keep the plan
 order; `--jobs 1` runs everything serially in that order.
 
 [quota_sync_browser.py](../tests/quota_sync_browser.py) covers quota updates across open SDK views, dialogs and tabs on node/Hub.
+[agy_sdk_history_join_browser.py](../tests/agy_sdk_history_join_browser.py) covers delayed connection, sparse replay behind persisted answers, native step identity, pagination, history catchup, reload and actual fake-CLI transport on node/Hub.
 [agy_task_notice_browser.py](../tests/agy_task_notice_browser.py) covers compact background-command completion notices in Agy history and live SDK views on node/Hub, success/failure, full output disclosure, literal fallbacks, subsequent turns, wide/narrow and light/dark layouts.
 [external_quota_browser.py](../tests/external_quota_browser.py) covers external Codex account refresh and shared snapshots on node/Hub.
 [codex_quota_order_browser.py](../tests/codex_quota_order_browser.py) covers concurrent Codex quota notification order, shared tabs, confirming reads, failure recovery and legitimate decreases/resets on node/Hub.

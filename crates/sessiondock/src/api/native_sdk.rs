@@ -38,8 +38,8 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
     let uid = uid.to_owned();
     let agent = agent.to_owned();
     state.reader.run(move |store| {
-        let scope = store.native_scope(&uid, &agent)?;
         let snapshot = store.snapshot(&uid, &agent)?;
+        let scope = snapshot.native_scope()?;
         Ok(json!({"uid":uid,"session_id":scope.session_id,"cwd":snapshot.metadata()["cwd"],"source":scope.source,"agent":agent,
             "native_uid":snapshot.view.sources.first().map(|candidate|candidate.uid.as_str()),
             "observed_model":snapshot.metadata()["model"]}))
