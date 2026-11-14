@@ -4949,6 +4949,13 @@ function sessionComposerEnded(uid = S.sel) {
 }
 
 function renderComposer() {
+  // Embedded views own the visible editor. Refreshing the covered CLI editor
+  // hydrates drafts and forces layout of the newly inserted SDK history.
+  if (SessionContentView.kind) {
+    $('#composer').classList.add('hidden');
+    $('#conversation-status')?.classList.add('hidden');
+    return;
+  }
   const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
   const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(S.sel) : sessionSourceOf(S.sel) !== 'kiro';
   const enabled=(conversationSendEnabled() || shell) && (hasChat || shell);
@@ -4974,7 +4981,15 @@ function renderComposer() {
 }
 
 function autoGrow(ta) {
-  ConversationUI.resizeInput(ta, {minHeight: 36, maxHeight: 180});
+  const resize = () => ConversationUI.resizeInput(ta, {minHeight: 36, maxHeight: 180});
+  if (ta.id !== 'cinput') { resize(); return; }
+  // Closing one embedded pane can expose the CLI editor only until the next
+  // pane opens in the same task. Measure once, after the final view is known.
+  if (ta._growFrame != null) return;
+  ta._growFrame = requestAnimationFrame(() => {
+    ta._growFrame = null;
+    if (ta.isConnected && !SessionContentView.kind && !ta.closest('.hidden')) resize();
+  });
 }
 
 function syncComposerMode() {
@@ -5252,6 +5267,9 @@ function resetComposerPendingNotice() {
 }
 
 function renderComposerInputStatus() {
+  // Late CHECK/draft replies still update their model, but must not render
+  // hidden questions or scroll the covered ordinary conversation.
+  if (SessionContentView.kind) return;
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);

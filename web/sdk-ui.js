@@ -3,6 +3,17 @@
 // Source-neutral SDK view contract. Providers own snapshots, status semantics,
 // settings and protocol actions; history uses the ordinary conversation cache.
 const SdkUI = {
+  historyViews: new Map(),
+  retainHistory(view) {
+    if (!view.history?._sdkPlan) return;
+    const key = viewKey(view.uid, view.agent), entry = cache.get(key);
+    if (!entry) return;
+    this.historyViews.delete(key);
+    this.historyViews.set(key, {entry, node: view.history});
+    // Keep only a few recently viewed DOM trees; this is a rendering cache,
+    // not a live SDK connection or a second history/read-model authority.
+    while (this.historyViews.size > 4) this.historyViews.delete(this.historyViews.keys().next().value);
+  },
   reconnectEvents(view) {
     if (!view.pane || view.readOnly || !view.es
         || view.uid !== S.sel || view.agent !== S.agent) return;
@@ -86,7 +97,19 @@ const SdkUI = {
     view.box._followLive = () => !!(view.uid?.startsWith('codex:') ? view.turn : view.running);
     watchBottom(view.box);
     view.history = pane.querySelector('.sdk-history');
-    if (historyReady) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
+    const key = viewKey(view.uid, view.agent), retained = this.historyViews.get(key);
+    this.historyViews.delete(key);
+    if (retained && cache.get(key) === retained.entry) {
+      view.history.replaceWith(retained.node);
+      view.history = retained.node;
+      // Gap controls carry request/generation state. Recreate just that slot
+      // so a cancelled page cannot leave the reentered view's button disabled.
+      for (const entry of view.history._sdkPlan.entries) if (entry.plan.gap) entry.node.remove();
+      // Optional decoration may have been interrupted while this view left.
+      paintSyntax(view.history);
+      renderFormulae(view.history);
+    }
+    if (historyReady && !view.history._sdkPlan) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
     view.live = pane.querySelector('.sdk-live');
     view.toolGroupNodes = new Map();
     view.notice = pane.querySelector('.sdk-status');

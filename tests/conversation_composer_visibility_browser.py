@@ -43,7 +43,7 @@ def exercise_start(browser, base, screenshots, label):
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         expect(page.locator('#cinput')).to_be_focused()
         expect(page.locator('#cinput')).to_have_value(draft)
-        page.locator('#cinput').press('End')
+        page.locator('#cinput').press('Control+End')
         page.locator('#cinput').press_sequentially(' after start')
         expect(page.locator('#cinput')).to_have_value(draft + ' after start')
         assert len(launches) == 1, launches

@@ -33,10 +33,10 @@ def snapshots(event="sdk", replay=True):
         def log_message(self, *args): pass
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     server.daemon_threads = True
-    def publish():
+    def publish(packet=None):
         server.packet['seq'] += 1
         with lock:
-            for messages in clients: messages.put(copy.deepcopy(server.packet))
+            for messages in clients: messages.put(copy.deepcopy(server.packet if packet is None else packet))
     server.publish = publish
     server.url = f'http://127.0.0.1:{server.server_port}/events'
     worker = threading.Thread(target=server.serve_forever, daemon=True)

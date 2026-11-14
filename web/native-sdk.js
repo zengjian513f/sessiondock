@@ -1235,6 +1235,7 @@ const SdkView = new Proxy({
   close() {
     this.discovering = false;
     const uid = this.active.uid, agent = this.active.agent;
+    SdkUI.retainHistory(this.active);
     CodexSdkView.close(); NativeSdkView.close();
     if (uid) queueMicrotask(() => {
       if (!this.active.pane && S.sel === uid && S.agent === agent) watchSession(uid, agent);

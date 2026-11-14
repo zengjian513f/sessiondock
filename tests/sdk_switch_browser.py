@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -33,6 +34,8 @@ def history(index, count):
         rows.append({'id': f'{tid}-final', 'role': 'assistant', 'turn_id': tid,
                      'phase': 'final', 'text': f'会话 {index} 的历史结论 {turn}\n\n'
                      '| 检查项 | 结果 |\n| --- | --- |\n' + '| 合成数据 | 保留完整记录 |\n' * 12})
+        if turn == 0:
+            rows[-1]['text'] += '\n公式 $x^2 + 1$\n\n```python\nprint("retained history")\n```'
     return rows
 
 
@@ -83,6 +86,7 @@ def exercise(browser, base, streams, shots, width, theme):
         page.route(re.compile(r'/api/(?:term/list|live)\?force=1(?:&|$)'), lambda r: background.append(r))
         page.evaluate('''() => {
           window.switchTasks=[];
+          window.savedHistories = new Map();
           new PerformanceObserver(l=>{for(const x of l.getEntries())switchTasks.push(x.duration)}).observe({type:'longtask'});
         }''')
         profiler = context.new_cdp_session(page)
@@ -102,6 +106,12 @@ def exercise(browser, base, streams, shots, width, theme):
                 page.wait_for_function('SdkView.connected && !SdkView.discovering')
                 expect(page.locator('.sdk-history')).to_contain_text(f'会话 {i} 的历史结论')
                 expect(page.locator('#sdk-send')).to_be_enabled()
+                if lap == 0:
+                    page.evaluate('uid=>savedHistories.set(uid, SdkView.history.firstChild)', uid)
+                else:
+                    assert page.evaluate('uid=>savedHistories.get(uid)===SdkView.history.firstChild', uid), 'warm switch rebuilt unchanged history'
+                    expect(page.locator('.sdk-history .katex').first).to_be_attached()
+                    expect(page.locator('.sdk-history code.code-block[data-syntax-done]').first).to_be_attached()
         metrics = {'click_ms': timings.copy(), 'long_tasks_ms': page.evaluate('switchTasks'),
                    'layout': {key: value-before_layout[key] for key, value in layout_counts().items()}}
         (shots/f'{width}-{theme}-switches.json').write_text(json.dumps(metrics))
@@ -149,12 +159,84 @@ def exercise(browser, base, streams, shots, width, theme):
         page.wait_for_function('uid=>SdkView.uid===uid && SdkView.connected', arg=uids[-1])
         expect(page.locator('.sdk-history')).to_contain_text('会话 3 的历史结论')
         expect(page.locator('#sdk-input')).to_have_value('')
+        # Receive text/new items while switching without waiting for discovery.
+        page.evaluate('''() => {
+          window.hiddenComposerReads = 0;
+          const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
+          Object.defineProperty(document.querySelector('#cinput'), 'scrollHeight', {
+            get() { if (SessionContentView.kind) hiddenComposerReads++; return height.get.call(this); }
+          });
+        }''')
+        for i, uid in enumerate(uids):
+            raw = streams[i].packet['raw']
+            if uid.startswith('codex:'):
+                raw['turn'] = {'id': f'live-{i}', 'status': 'inProgress'}
+                raw['items'] = [{'id': f'live-tool-{j}', 'type': 'commandExecution',
+                                 'command': f'check {j}', 'status': 'completed',
+                                 'aggregatedOutput': '检查结果\n' * 50} for j in range(40)]
+                raw['items'].append({'id': 'live-answer', 'type': 'agentMessage', 'text': f'实时会话 {i}: '})
+            else:
+                raw['running'] = True
+                raw['items'] = [{'id': 'live-answer', 'role': 'assistant', 'turn_id': f'live-{i}',
+                                 'text': f'实时会话 {i}: '}]
+            streams[i].publish()
+        stopped = threading.Event()
+        def push():
+            tick = 0
+            while not stopped.wait(.03):
+                tick += 1
+                for i, uid in enumerate(uids):
+                    raw = streams[i].packet['raw']
+                    text = f'增量{tick} '
+                    if tick % 20 == 0:
+                        item = {'id': f'live-answer-{tick}', 'text': f'实时会话 {i} 新消息{tick}: '}
+                        item.update({'type': 'agentMessage'} if uid.startswith('codex:')
+                                    else {'role': 'assistant', 'turn_id': f'live-{i}'})
+                        raw['items'].append(item)
+                        event = {'type': 'event', 'method': 'item/started', 'raw': {'item': item}}
+                    else:
+                        raw['items'][-1]['text'] += text
+                        event = {'type': 'event', 'method': 'item/agentMessage/delta',
+                                 'raw': {'itemId': raw['items'][-1]['id'], 'delta': text}}
+                    streams[i].publish(event if uid.startswith('codex:') else None)
+        worker = threading.Thread(target=push, daemon=True); worker.start()
+        try:
+            for lap in range(3):
+                for uid in uids:
+                    select(uid)
+                    page.wait_for_timeout(60)
+            for i, uid in enumerate(uids):
+                select(uid)
+                expect(page.locator('.sdk-live')).to_contain_text(f'实时会话 {i}')
+                expect(page.locator('.sdk-live')).to_contain_text('增量')
+                expect(page.locator('#sdk-input')).to_have_value('正在切换时编辑的草稿' if i == 0 else '')
+        finally:
+            stopped.set(); worker.join()
+        for i, uid in enumerate(uids):
+            select(uid)
+            expect(page.locator('.sdk-live')).to_contain_text(streams[i].packet['raw']['items'][-1]['text'])
+        reads = page.evaluate('hiddenComposerReads')
+        print(f'STREAM SWITCHES {width}/{theme}: hidden composer height reads={reads}', flush=True)
+        assert reads == 0, f'hidden ordinary composer forced layout during SDK updates: {reads}'
+        page.screenshot(path=str(shots/f'{width}-{theme}-stream.png'), full_page=True)
         # The ordinary conversation is built lazily when actually selected.
         page.locator('#a-chat').click()
         expect(page.locator('#msgs:visible')).to_contain_text('会话 3 的历史结论')
+        editor = page.locator('#cinput')
+        editor.fill('切回普通对话后继续编辑\n' * 12)
+        page.wait_for_function('document.querySelector("#cinput").getBoundingClientRect().height >= 170')
+        editor.fill('保留跨视图草稿')
+        page.wait_for_function('document.querySelector("#cinput").getBoundingClientRect().height < 70')
+        page.screenshot(path=str(shots/f'{width}-{theme}-chat.png'), full_page=True)
         page.locator('#a-sdk').click()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('.sdk-history')).to_contain_text('会话 3 的历史结论')
+        expect(page.locator('#sdk-input')).to_have_value('保留跨视图草稿')
+        page.locator('#sdk-input').fill('')
+        page.wait_for_function('''() => {
+          const draft = composerDrafts.get(composerDraftOwner(S.sel));
+          return draft.text === '' && draft.editVersion === draft.savedVersion;
+        }''')
         if width == 1440:
             # The runtime request's own timeout must still resolve discovery
             # through the existing unknown-owner fallback, unlike an obsolete
