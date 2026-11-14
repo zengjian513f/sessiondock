@@ -115,6 +115,13 @@ thread/resume、thread/turns/list 或 turn/start；全部操作不调用真实�
 状态可读、草稿保留，布局未改变。文档链接、AGENTS、品牌及 diff 空白检查通过。
 本次只发布前端，不重建后端、ptyhost 或 sdkhost。
 
+`a740899f` 已提交推送，按 dry-run 对全部七个前端目标执行 web-only 发布，使用上述
+独立验证结果（部署门 `--test none`）。Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均成功
+重启且健康，前端版本为 `20261114T052938719440Z`；后端仍为统一宿主版本
+`20261114T022448035832Z`，ptyhost 保留。Orion 正式 SSH 探测超时，前端待补发。
+三个资源代理按组件范围排除。报告：
+`target/deploy/20261114-052938-a740899f/report-20261114-053017.json`。
+
 ## BUG-20261112-075842-b01ef4：Agy 非图片附件被跳过
 
 Cetus 原生完整 transcript 的 `media` 包含 4 张图片、1 个 `application/json`
