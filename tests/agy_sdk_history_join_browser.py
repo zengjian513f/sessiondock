@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
 from agy_history_browser import record, write_transcript
 from agy_sdk_fixtures import SID
-from claude_sdk_browser import open_sdk, send, wait_snapshot
+from claude_sdk_browser import open_sdk, send, snapshot, wait_snapshot
 from history_fixtures import BINARY, encoded
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
@@ -128,19 +128,32 @@ def exercise_transport(browser, base, peer):
     page = context.new_page()
     page.goto(base); page.wait_for_function('T.listLoaded')
     uid = page.locator('#side .item[data-uid^="agy:"]').first.get_attribute('data-uid')
+    text = 'verify persisted join ' + ('hub' if '~' in uid else 'node')
+    opens = []
+    page.on('request', lambda request: opens.append(request.url) if request.url.endswith('/api/native-sdk/open') else None)
     open_sdk(page, peer, expect, uid=uid)
-    send(page, 'verify persisted join')
-    expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: verify persisted join')
+    # Subscription observes an attached runtime. It must not repeat the full
+    # native writer scan from /open (nor grant permission to send).
+    peer.occupy()
+    try:
+        assert snapshot(page, uid)['type'] == 'snapshot'
+        blocked = page.request.post(base + '/api/native-sdk/open', data={'uid': uid})
+        assert blocked.status == 409, blocked.text()
+    finally: peer.unoccupy()
+    send(page, text)
+    expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: ' + text)
     wait_snapshot(page, uid, lambda raw: not raw['running'])
     page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
-    expect(page.locator('.sdk-history')).to_contain_text('Synthetic Agy reply: verify persisted join')
+    expect(page.locator('.sdk-history')).to_contain_text('Synthetic Agy reply: ' + text)
     expect(page.locator('.sdk-live [data-role=user]')).to_have_count(0)
+    opens.clear()
     page.reload(); page.wait_for_function('T.listLoaded')
     open_sdk(page, peer, expect, uid=uid)
-    expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: verify persisted join')
-    assert len(peer.inputs('verify persisted join')) == 1
+    expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: ' + text)
+    assert not opens, ('re-entry must subscribe without reopening', opens)
+    assert len(peer.inputs(text)) == 1
     context.close()
-    print('PASS real transport with fake CLI: open, send, native persist, reconnect without resend', flush=True)
+    print(text, 'PASS real transport with fake CLI: open, send, native persist, reconnect without resend', flush=True)
 
 
 def main():
@@ -164,9 +177,17 @@ def main():
                 finally: hub.stop()
             finally: browser.close()
         transport_root = root / 'transport'; transport_root.mkdir()
-        with provider('agy', transport_root, args.binary) as (base, peer, _):
+        with provider('agy', transport_root, args.binary) as (base, peer, extra):
             browser = pw.chromium.launch(headless=True)
-            try: exercise_transport(browser, base, peer)
+            try:
+                exercise_transport(browser, base, peer)
+                hub_root = transport_root / 'hub'; hub_root.mkdir()
+                hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
+                          [SimpleNamespace(name='TransportNode', token=TOKEN,
+                           port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':', 1)[1]))])
+                hub.start()
+                try: exercise_transport(browser, f'http://127.0.0.1:{hub.port}', peer)
+                finally: hub.stop()
             finally:
                 browser.close()
                 stop_private_sdkhosts(transport_root)

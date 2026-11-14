@@ -496,7 +496,7 @@ pub async fn events(
     } else {
         format!("{}:{}", uid, query.agent)
     };
-    let native = if source == "kiro" {
+    let native = if matches!(source, "kiro" | "agy") {
         // An SSE subscription is observation, including after process exit or
         // browser reconnection. Never turn it into a replacement native launch.
         match state.native_sdks.subscribe(source, &key) {

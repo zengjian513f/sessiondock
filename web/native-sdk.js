@@ -135,7 +135,8 @@ const NativeSdkView = {
     this.mountToolbar(generation);
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
-    if (!this.observeExternal()) void this.start(generation);
+    if (!this.observeExternal()) void this.start(generation, false,
+      source === 'agy' && S.liveSdk.has(agent ? `${uid}:${agent}` : uid));
   },
 
   observeExternal() {
@@ -202,12 +203,15 @@ const NativeSdkView = {
       {source: this.uid.split(':')[0], items: pending.raw?.items?.length || 0});
   },
 
-  async start(generation, reconnecting = false) {
+  async start(generation, reconnecting = false, observing = false) {
     if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     const read = new AbortController(); this.openRead = read;
     this.setNotice(reconnecting ? '重连中' : '连接中', 'connecting');
     try {
-      const data = await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
+      // Live ownership was already confirmed by /api/live. Re-entering that
+      // Agy view only subscribes; explicit Start still performs /open checks.
+      const data = observing && this.uid.startsWith('agy:') ? {}
+        : await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
       if (!this.current(generation)) return;
       if (String(this.uid).startsWith('kiro:') && typeof findTermForSession === 'function'
           && findTermForSession(this.uid) && !S.liveSdk.has(this.uid) && !data?.capabilities && !data?.raw?.capabilities) {
@@ -1146,7 +1150,7 @@ const SdkView = new Proxy({
     // Attach to the observed running instance without replacing history/drafts.
     view.readOnly = false;
     view.pane.querySelector('#sdk-composer').hidden = false;
-    void view.start(view.generation);
+    void view.start(view.generation, false, view.uid.startsWith('agy:'));
   },
   retryOpen() {
     this.syncRunning();
