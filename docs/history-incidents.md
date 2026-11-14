@@ -24,6 +24,13 @@ Chromium 的 `codex_sdk_compaction_browser.py`、`codex_sdk_questions_browser.py
 规则入口与品牌检查通过；clippy 保留 42 项既有警告。规则入口检查在本次快照执行，
 共享目录中其他会话尚未登记的新增套件不纳入本次结果。未调用真实模型。
 
+修复 `f0ae5a5e` 已提交推送。正式构建及七目标发布使用同一提交，独立验证后以
+`--test none` 发布服务和前端：Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已重启并健康，
+版本 `20261114T054759853658Z`；Orion 正式 SSH 尝试超时。ptyhost、sdkhost 二进制和
+三个资源代理未变更，保留原有宿主与回滚。发布后只读核对原报告的持久回执，已恢复为
+`sent` / `interrupted`，未修改原生会话或重发回答。报告：
+`target/deploy/20261114-054759-f0ae5a5e/report-20261114-055209.json`。
+
 ## BUG-20261113-231335-4ef293：Agy 额度核对与首条消息位置
 
 用户报告 Agy SDK 用量异常、首条输入出现在后面，补充 Gemini App 显示 0%，
