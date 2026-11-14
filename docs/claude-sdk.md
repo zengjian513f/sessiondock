@@ -2,7 +2,7 @@
 
 `claude_sdk::Bridge` 使用 Claude Code 的持久双向 `stream-json` 子进程，
 不发送 PTY 按键，不模拟 Codex app-server，不写原生 JSONL 或只读镜像。
-普通历史仍由现有 Claude read-model 提供；配置持久 state dir 时由
+普通历史仍由现有 Claude read-model 提供；统一由
 [独立 SDK 宿主](sdkhost.md)持有原生进程，桥接快照及待回答请求可跨节点服务重启恢复。
 
 ## 启用与接入

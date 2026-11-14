@@ -2,7 +2,7 @@
 
 `agy_sdk::Bridge` 使用 Agy 的 headless NDJSON 协议，不使用 PTY、不模拟
 Codex app-server、不写原生数据库或只读镜像。原生读模型合同见 [agy.md](agy.md)。
-Linux、macOS 与 Windows 使用同一协议适配器；配置持久目录时由独立 SDK 宿主持有进程，
+Linux、macOS 与 Windows 使用同一协议适配器；统一由独立 SDK 宿主持有进程，
 重连附着原实例。外部数据库占用使用各平台的只读文件持有者证据。
 
 ## 原生机制与证据
@@ -104,7 +104,7 @@ Linux 使用 fd/inode，macOS 使用 lsof，Windows 使用 Restart Manager。排
 同时打开数据库；使用 SDK 时应先正常退出同一 SID 的独立 TUI。此限制不能表述为
 支持原生共享写入或完整互斥保证。其他 SID 不受影响。
 
-接收后的进程不依赖 SSE 连接或网页存活。配置持久 state dir 时，通过
+接收后的进程不依赖 SSE 连接或网页存活。统一通过
 [独立 SDK 宿主](sdkhost.md)持有进程和管道，节点服务重启后重新附着并回放输出。读写失败、native ERROR、进程异常退出和
 中断保留可见错误，不自动重发已交给 CLI 的正文。节点 shutdown 只断开宿主连接；回合取消不终结运行时。
 stderr 保存在实时快照的 `diagnostics`；已知敏感环境值及常见凭据字段先做遮盖，

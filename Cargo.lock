@@ -1627,10 +1627,14 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sdkhost"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "futures-util",
  "libc",
  "sdkhost-client",
+ "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "windows-sys 0.61.2",
 ]
 

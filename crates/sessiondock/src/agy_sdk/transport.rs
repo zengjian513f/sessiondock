@@ -9,8 +9,8 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, Command},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::Command,
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -86,8 +86,13 @@ impl ProcessConfig {
         secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
         secrets.dedup();
         Ok(Self {
-            host_dir: state_dir.map(|dir| dir.join("sdkhost")),
-            adapter_dir: state_dir.map(|dir| dir.join("sdk-adapters/agy")),
+            host_dir: Some(
+                crate::sdk_common::host::state_dir(state_dir.map(|p| p.as_path())).join("sdkhost"),
+            ),
+            adapter_dir: Some(
+                crate::sdk_common::host::state_dir(state_dir.map(|p| p.as_path()))
+                    .join("sdk-adapters/agy"),
+            ),
             profile,
             home,
             model_cwd: launcher_home.ok_or_else(|| {
@@ -235,10 +240,21 @@ impl ProcessConfig {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let output = tokio::select! {
-            _=shutdown.cancelled()=>return Err("agy_sdk_shutdown".into()),
-            output=tokio::time::timeout(Duration::from_secs(15),command.output())=>output.map_err(|_|"agy_sdk_models_timeout")?.map_err(|error|format!("agy_sdk_models: {error}"))?,
-        };
+        let root = self
+            .host_dir
+            .as_ref()
+            .expect("SDK host directory")
+            .parent()
+            .unwrap();
+        let output = crate::sdk_common::host::query(
+            root,
+            "agy-models",
+            &command,
+            Duration::from_secs(15),
+            shutdown,
+        )
+        .await
+        .map_err(|e| format!("agy_sdk_models: {e}"))?;
         if !output.status.success() {
             return Err(format!(
                 "agy_sdk_models_failed: {}; {}",
@@ -255,17 +271,14 @@ impl ProcessConfig {
 }
 
 pub(super) struct Native {
-    child: Option<Child>,
-    host: Option<sdkhost_client::Client>,
+    host: sdkhost_client::Client,
     pump: Option<JoinHandle<()>>,
-    pub input: Option<ChildStdin>,
     output: BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>>,
     line: Vec<u8>,
     pub stdout_offset: u64,
     pub received_at: Option<String>,
     live_start: u64,
     pub key: Option<String>,
-    stderr: Option<JoinHandle<String>>,
     pub sid: String,
     pub cwd: String,
     pub model: Option<String>,
@@ -280,22 +293,8 @@ impl Drop for Native {
         if let Some(pump) = self.pump.take() {
             pump.abort();
         }
-        if let Some(stderr) = self.stderr.take() {
-            stderr.abort();
-        }
     }
 }
-
-// Launch fields mirror the native CLI; lifecycle and host binding are explicit.
-type NativeStreams = (
-    Option<Child>,
-    Option<sdkhost_client::Client>,
-    Option<ChildStdin>,
-    std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-    Option<JoinHandle<String>>,
-    Option<JoinHandle<()>>,
-    u32,
-);
 
 impl Native {
     pub fn pid(&self) -> u32 {
@@ -351,116 +350,80 @@ impl Native {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let (child, host, input, stdout, stderr, pump, pid): NativeStreams =
-            if let (Some(dir), Some((key, recovering, start))) = (&process.host_dir, binding) {
-                let host = if recovering {
-                    sdkhost_client::Client::attach(dir, key).await
-                } else {
-                    sdkhost_client::Client::launch_or_attach(dir, key, &command).await
-                }
-                .map_err(|error| format!("agy_sdk_host: {error}"))?;
-                let pid = host
-                    .status()
-                    .await
-                    .map_err(|e| format!("agy_sdk_host: {e}"))?
-                    .pid;
-                let (reader, mut writer) = tokio::io::duplex(65536);
-                let stream_host = host.clone();
-                let pump = tokio::spawn(async move {
-                    // Reuse the original init for identity checks, then resume
-                    // at the durable beginning of the selected input's output.
-                    if start > 0 {
-                        let mut init = Vec::new();
-                        let mut offset = 0;
-                        loop {
-                            let Ok(chunk) = stream_host
-                                .read(sdkhost_client::Stream::Stdout, offset)
-                                .await
-                            else {
-                                return;
-                            };
-                            offset = chunk.next_offset;
-                            init.extend(&chunk.bytes);
-                            if let Some(end) = init.iter().position(|byte| *byte == b'\n') {
-                                if writer.write_all(&init[..=end]).await.is_err() {
-                                    return;
-                                }
-                                break;
-                            }
-                            if chunk.eof {
-                                return;
-                            }
-                        }
-                    }
-                    let mut offset = start;
-                    while let Ok(chunk) = stream_host
+        let transient_key = format!(
+            "agy-query-{}",
+            crate::sdk_common::uuid_v4().map_err(|e| e.to_string())?
+        );
+        let (key, recovering, start) = binding.unwrap_or((&transient_key, false, 0));
+        let dir = process.host_dir.as_ref().expect("SDK host directory");
+        let host = if recovering {
+            sdkhost_client::Client::attach(dir, key).await
+        } else {
+            sdkhost_client::Client::launch_or_attach(dir, key, &command).await
+        }
+        .map_err(|error| format!("agy_sdk_host: {error}"))?;
+        let pid = host
+            .status()
+            .await
+            .map_err(|e| format!("agy_sdk_host: {e}"))?
+            .pid;
+        let (reader, mut writer) = tokio::io::duplex(65536);
+        let stream_host = host.clone();
+        let pump = tokio::spawn(async move {
+            // Reuse the original init for identity checks, then resume
+            // at the durable beginning of the selected input's output.
+            if start > 0 {
+                let mut init = Vec::new();
+                let mut offset = 0;
+                loop {
+                    let Ok(chunk) = stream_host
                         .read(sdkhost_client::Stream::Stdout, offset)
                         .await
-                    {
-                        offset = chunk.next_offset;
-                        if !chunk.bytes.is_empty() && writer.write_all(&chunk.bytes).await.is_err()
-                        {
-                            break;
+                    else {
+                        return;
+                    };
+                    offset = chunk.next_offset;
+                    init.extend(&chunk.bytes);
+                    if let Some(end) = init.iter().position(|byte| *byte == b'\n') {
+                        if writer.write_all(&init[..=end]).await.is_err() {
+                            return;
                         }
-                        if chunk.eof {
-                            break;
-                        }
+                        break;
                     }
-                });
-                (
-                    None,
-                    Some(host),
-                    None,
-                    Box::pin(reader),
-                    None,
-                    Some(pump),
-                    pid,
-                )
-            } else {
-                let mut child = command
-                    .spawn()
-                    .map_err(|error| format!("agy_sdk_spawn: {error}"))?;
-                let pid = child.id().ok_or("agy_sdk_child_missing")?;
-                let input = child.stdin.take();
-                let stdout = child.stdout.take().ok_or("agy_sdk_stdout_missing")?;
-                let mut stderr = child.stderr.take().ok_or("agy_sdk_stderr_missing")?;
-                let redactor = process.clone();
-                let stderr = tokio::spawn(async move {
-                    let mut bytes = Vec::new();
-                    let _ = stderr.read_to_end(&mut bytes).await;
-                    redactor.redact(&String::from_utf8_lossy(&bytes))
-                });
-                (
-                    Some(child),
-                    None,
-                    input,
-                    Box::pin(stdout),
-                    Some(stderr),
-                    None,
-                    pid,
-                )
-            };
-        process.owned.lock().unwrap().insert(pid);
-        let live_start = if let Some(host) = &host {
-            host.status()
+                    if chunk.eof {
+                        return;
+                    }
+                }
+            }
+            let mut offset = start;
+            while let Ok(chunk) = stream_host
+                .read(sdkhost_client::Stream::Stdout, offset)
                 .await
-                .map(|s| s.stdout_len)
-                .unwrap_or(u64::MAX)
-        } else {
-            0
-        };
+            {
+                offset = chunk.next_offset;
+                if !chunk.bytes.is_empty() && writer.write_all(&chunk.bytes).await.is_err() {
+                    break;
+                }
+                if chunk.eof {
+                    break;
+                }
+            }
+        });
+        process.owned.lock().unwrap().insert(pid);
+        let live_start = host
+            .status()
+            .await
+            .map(|s| s.stdout_len)
+            .unwrap_or(u64::MAX);
         let mut native = Self {
-            child,
             host,
-            input,
-            output: BufReader::new(stdout),
+            output: BufReader::new(Box::pin(reader)),
             line: Vec::new(),
             stdout_offset: 0,
             received_at: None,
             live_start,
-            key: binding.map(|(key, _, _)| key.to_owned()),
-            stderr,
-            pump,
+            key: Some(key.to_owned()),
+            pump: Some(pump),
             sid: String::new(),
             cwd: String::new(),
             model: None,
@@ -540,10 +503,8 @@ impl Native {
         }
         let mut bytes = std::mem::take(&mut self.line);
         self.stdout_offset += bytes.len() as u64;
-        self.received_at = self.host.as_ref().map_or_else(
-            || Some(crate::sdk_message_time::now()),
-            |host| crate::sdk_message_time::hosted(host, self.stdout_offset, self.live_start),
-        );
+        self.received_at =
+            crate::sdk_message_time::hosted(&self.host, self.stdout_offset, self.live_start);
         if bytes.last() == Some(&b'\n') {
             bytes.pop();
         }
@@ -559,7 +520,8 @@ impl Native {
         let mut bytes = serde_json::to_vec(&json!({"event":"user","message":{"content":text}}))
             .map_err(|_| "agy_sdk_encode")?;
         bytes.push(b'\n');
-        if let Some(host) = &self.host {
+        {
+            let host = &self.host;
             let existing = host
                 .receipt(request)
                 .await
@@ -583,17 +545,8 @@ impl Native {
             if receipt.state != "written" {
                 return Err(format!("agy_sdk_write_uncertain: {}", receipt.state));
             }
-            return Ok(());
+            Ok(())
         }
-        let input = self.input.as_mut().ok_or("agy_sdk_stdin_closed")?;
-        input
-            .write_all(&bytes)
-            .await
-            .map_err(|error| format!("agy_sdk_write_uncertain: {error}; 输入不会自动重发。"))?;
-        input
-            .flush()
-            .await
-            .map_err(|error| format!("agy_sdk_flush_uncertain: {error}; 输入不会自动重发。"))
     }
 
     pub fn check_event(&self, event: &Value) -> Result<(), String> {
@@ -609,7 +562,8 @@ impl Native {
     }
 
     pub async fn close_input(&mut self) -> Result<(), String> {
-        if let Some(host) = &self.host {
+        {
+            let host = &self.host;
             if !host
                 .status()
                 .await
@@ -620,8 +574,6 @@ impl Native {
                     .await
                     .map_err(|e| format!("agy_sdk_eof: {e}"))?;
             }
-        } else {
-            self.input.take();
         }
         Ok(())
     }
@@ -695,9 +647,10 @@ impl Native {
             "agy.sdk.kill_requested",
             json!({
             "session_id":self.sid,"host_key":self.key,"native_pid":self.pid,
-            "stdout_offset":self.stdout_offset,"hosted":self.host.is_some()}),
+            "stdout_offset":self.stdout_offset,"hosted":true}),
         );
-        if let Some(host) = &self.host {
+        {
+            let host = &self.host;
             {
                 let signal = host.signal(9).await;
                 crate::log::transition(
@@ -709,44 +662,33 @@ impl Native {
                 );
             }
             let _ = host.wait().await;
-        } else if let Some(child) = &mut self.child {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
         }
     }
 
     pub async fn finish(&mut self, shutdown: CancellationToken) -> Result<ExitStatus, String> {
-        if let Some(host) = &self.host {
-            return tokio::select! {
+        {
+            let host = &self.host;
+            tokio::select! {
                 _=shutdown.cancelled()=>Err("agy_sdk_shutdown".into()),
                 result=host.wait()=>result.map(host_exit_status).map_err(|error|format!("agy_sdk_wait: {error}")),
-            };
-        }
-        let child = self.child.as_mut().ok_or("agy_sdk_child_missing")?;
-        tokio::select! {
-            _=shutdown.cancelled()=>Err("agy_sdk_shutdown".into()),
-            result=child.wait()=>result.map_err(|error|format!("agy_sdk_wait: {error}")),
+            }
         }
     }
 
     /// Inspect an ended output stream without waiting for a still-running child.
     pub async fn exit_status(&mut self) -> Result<Option<ExitStatus>, String> {
-        if let Some(host) = &self.host {
-            return host
-                .status()
+        {
+            let host = &self.host;
+            host.status()
                 .await
                 .map(|status| status.exit.map(host_exit_status))
-                .map_err(|error| format!("agy_sdk_status: {error}"));
+                .map_err(|error| format!("agy_sdk_status: {error}"))
         }
-        self.child
-            .as_mut()
-            .ok_or("agy_sdk_child_missing")?
-            .try_wait()
-            .map_err(|error| format!("agy_sdk_status: {error}"))
     }
 
     pub async fn diagnostics(&mut self) -> String {
-        if let Some(host) = &self.host {
+        {
+            let host = &self.host;
             let mut bytes = Vec::new();
             let mut offset = 0;
             while let Ok(chunk) = host.read(sdkhost_client::Stream::Stderr, offset).await {
@@ -757,22 +699,12 @@ impl Native {
                     break;
                 }
             }
-            return self.process.redact(&String::from_utf8_lossy(&bytes));
-        }
-        let Some(mut task) = self.stderr.take() else {
-            return String::new();
-        };
-        match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
-            Ok(Ok(text)) => text,
-            _ => {
-                task.abort();
-                "agy_sdk_stderr: diagnostic pipe did not close\n".into()
-            }
+            self.process.redact(&String::from_utf8_lossy(&bytes))
         }
     }
 
     pub async fn close(mut self, shutdown: CancellationToken) -> Result<String, String> {
-        self.input.take();
+        self.close_input().await?;
         // Startup-only process has received no user message; EOF asks the native CLI to exit.
         let result = tokio::time::timeout(Duration::from_secs(5), self.finish(shutdown)).await;
         match result {
@@ -790,18 +722,4 @@ impl Native {
     }
 }
 
-fn host_exit_status(exit: sdkhost_client::Exit) -> ExitStatus {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(
-            exit.code
-                .map_or_else(|| exit.signal.unwrap_or(1), |code| code << 8),
-        )
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::ExitStatusExt;
-        ExitStatus::from_raw(exit.code.unwrap_or(1) as u32)
-    }
-}
+use crate::sdk_common::host::exit_status as host_exit_status;

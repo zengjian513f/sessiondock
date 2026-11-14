@@ -100,6 +100,7 @@ pub fn app_pair_with_shutdown(
     let endpoint = codex_sdk::Endpoint::from_config(
         config.codex_app_server.as_deref(),
         config.roots.codex.as_deref(),
+        config.state_dir.as_deref(),
     );
     let built = build_app(
         config,
@@ -140,6 +141,7 @@ pub async fn prepare_app(
                 launcher.codex_remote = codex_sdk::Endpoint::from_config(
                     config.codex_app_server.as_deref(),
                     config.roots.codex.as_deref(),
+                    config.state_dir.as_deref(),
                 )
                 .map(|endpoint| endpoint.with_launcher(Some(&launcher)))
                 .and_then(|endpoint| endpoint.tui_remote());
@@ -164,6 +166,7 @@ pub async fn prepare_app(
     let codex_endpoint = codex_sdk::Endpoint::from_config(
         config.codex_app_server.as_deref(),
         config.roots.codex.as_deref(),
+        config.state_dir.as_deref(),
     )
     .map(|endpoint| endpoint.with_launcher(launcher.as_ref()));
     let lifecycle = match (config.lifecycle_dir.clone(), launcher) {

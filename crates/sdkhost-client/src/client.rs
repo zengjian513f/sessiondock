@@ -64,6 +64,9 @@ pub struct Response {
 }
 #[derive(Serialize, Deserialize)]
 pub struct LaunchSpec {
+    /// Optional caller-owned deadline for disposable probes, not interactive sessions.
+    #[serde(default)]
+    pub lifetime_ms: Option<u64>,
     pub program: Vec<u8>,
     pub args: Vec<Vec<u8>>,
     pub env: Vec<(Vec<u8>, Vec<u8>)>,
@@ -87,6 +90,7 @@ impl LaunchSpec {
             }
         }
         Self {
+            lifetime_ms: None,
             program: platform::encode(cmd.get_program()),
             args: cmd.get_args().map(platform::encode).collect(),
             env: env.into_iter().collect(),
@@ -183,14 +187,7 @@ impl Client {
             return Self::attach(dir, key).await;
         }
         private_dir(&destination)?;
-        let executable = std::env::var_os("SESSIONDOCK_SDKHOST_BIN")
-            .or_else(|| std::env::var_os("SDKHOST"))
-            .map(PathBuf::from)
-            .unwrap_or(std::env::current_exe()?.with_file_name(if cfg!(windows) {
-                "sdkhost.exe"
-            } else {
-                "sdkhost"
-            }));
+        let executable = executable()?;
         #[cfg(windows)]
         {
             let destination = destination.clone();
@@ -410,4 +407,16 @@ impl Client {
             Err(error) => self.offline(Request::Remove, error).await,
         }
     }
+}
+
+/// Installed host binary, shared by native processes and opaque channel workers.
+pub fn executable() -> io::Result<PathBuf> {
+    Ok(std::env::var_os("SESSIONDOCK_SDKHOST_BIN")
+        .or_else(|| std::env::var_os("SDKHOST"))
+        .map(PathBuf::from)
+        .unwrap_or(std::env::current_exe()?.with_file_name(if cfg!(windows) {
+            "sdkhost.exe"
+        } else {
+            "sdkhost"
+        })))
 }

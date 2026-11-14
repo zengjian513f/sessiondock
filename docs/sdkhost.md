@@ -1,7 +1,7 @@
 # 独立 SDK 进程宿主
 
 `crates/sdkhost` 是独立可执行文件，`crates/sdkhost-client` 是通道客户端。
-宿主不依赖 sessiondock crate，不识别 SDK 来源、JSON-RPC、NDJSON、模型、
+宿主不依赖 sessiondock crate，不识别 SDK 来源、原生协议消息、模型、
 会话、工具或审批。它只持有子进程及三条标准流，传输不透明字节。
 
 ## 生命周期与边界
@@ -10,10 +10,29 @@
 browser → SessionDock 协议适配层 → 私有本地 IPC → sdkhost → stdin/stdout/stderr → CLI
 ```
 
-Agy、Claude、Grok 的协议解析仍在 SessionDock；Codex 与 OpenCode 沿用各自
-已经独立的原生服务，不增加另一层协议代理。Linux、macOS、Windows 上配置 state dir 后，stdio
-SDK 使用独立宿主。未配置持久目录的开发模式保留进程内行为，不宣称支持重启恢复。
-Windows 使用本地 named pipe，Unix 使用 Unix socket；不打开网络监听。
+DELTA（统一宿主）：所有八个 harness（Codex、OpenCode、Claude、CodeBuddy、Droid、Grok、Agy、Kiro）
+统一经过 sdkhost。适配层负责来源协议和业务投影；宿主持有运行实例及持续通信通道，
+不能只用统一启动函数代替宿主。开发模式未配置 state dir 时也使用进程专属的私有临时
+目录，不再直接启动原生子进程；临时目录不提供跨节点进程的自动发现。
+
+| 来源 | 宿主持有的运行实例与通道 | 服务重启后的恢复依据 |
+| --- | --- | --- |
+| Claude、CodeBuddy、Droid | 原生双向流进程及三条标准流 | 协议检查点、待回答请求、公共持久发送账本 |
+| Grok、Kiro | ACP 进程及三条标准流 | RPC 账本、投影检查点及原始输出游标 |
+| Agy | headless 原生进程及三条标准流 | 原生身份、输入绑定、原始输出起点 |
+| Codex | 长期 WebSocket 通道；本节点启动的 app-server listener 也由宿主持有 | 同一原生连接、初始化结果、RPC 编号、输出游标及待回答请求 |
+| OpenCode | 长期命令通道及其原生机器客户端 | 宿主保存的调用结果；带原生 ID 的创建/输入复用原调用；原生共享服务提供会话快照 |
+
+Codex 已有原生 daemon 和显式端点、OpenCode 已有共享 daemon 仍由原有所有者管理。
+sdkhost 持有到它们的通信工作实例，不冒充外部 daemon 的进程所有者，也不终止独立 TUI。
+Codex 的 WebSocket worker 只转换不透明文本帧与行记录，不解释 JSON-RPC；OpenCode
+使用通用命令 worker，只有 argv、cwd、退出状态和输出，不理解 API 或会话。
+这两个 worker 均由外层 sdkhost 托管，服务停机不关闭原生连接、不取消已交付调用。
+模型与 Kiro 目录探测也经宿主执行；一次性探测把既有超时传给宿主，节点退出后仍能
+回收这些无用户回合的探测进程。交互运行实例不设置该超时。
+
+Windows 使用本地 named pipe，Unix 使用 Unix socket；宿主控制面不打开网络监听。
+`SDKHOST_CHANNEL_TOKEN` 仅经启动管道的环境传递，不写适配器检查点或命令记录。
 
 网页连接断开、SSE 断开、节点服务 shutdown 只释放客户端连接，不关闭原生 stdin，
 也不发送停止信号。显式停止、原生中断及适配层既有空闲回收策略仍可结束自己持有的
@@ -72,7 +91,7 @@ DELTA（Windows）：宿主启动时脱离调用方 Job，只继承显式列出�
 ## 适配层恢复
 
 私有 `<state>/sdk-adapters/` 由 SessionDock 拥有，记录原生运行时绑定及协议状态。
-成功打开的可信目标保存在 `native-sdk-bindings.json`，服务启动时仅复接已有宿主，
+stdio 来源成功打开的可信目标保存在 `native-sdk-bindings.json`，服务启动时仅复接已有宿主，
 即使主回复已完成也能恢复后台运行状态；显式停止移除绑定，不会自动重新启动。
 Agy 连续回合复用宿主及原生进程，绑定记录当前输入的输出起点；恢复从原始输出
 重建该轮投影，并使用该输入独立的传输 ID 核对写入回执。Claude/Grok 保留协议状态、输出游标、待回答请求和稳定编号的发送记录；
@@ -115,3 +134,9 @@ loopback 转发运行，原生进程与文件仍位于被测系统。2026-11-11 
 Windows、macOS 上均通过；这验证适配协议及平台宿主，不替代每种真实 CLI 的功能验收。
 Windows Codex 的真实原生监听器验证见 [Codex SDK](codex-sdk.md)，占用检测见
 [原生 SDK 共同行为](native-sdk.md)。
+
+[统一 harness 浏览器](../tests/sdkhost_harness_browser.py)操作生产 SDK 页面，验证 Codex
+原生 WebSocket 和宿主 PID 跨服务重启保持不变、停服期间输出持续落盘、初始化不重发、
+待审批恢复并只回答一次；OpenCode 复用命令宿主、恢复原生审批且 prompt 不重复。
+公共发送账本位于 `sdk_common/outbox.rs`，公共进程配置、实例绑定及查询位于
+`sdk_common/host.rs`，命令通道位于 `sdk_common/commands.rs`。

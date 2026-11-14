@@ -16,7 +16,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, mpsc, oneshot, watch};
+use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::lifecycle::{
@@ -155,7 +155,9 @@ pub fn new(
     }
     let bridge = Arc::new(Bridge {
         root: root.clone(),
-        state_dir: config.state_dir.clone(),
+        state_dir: Some(crate::sdk_common::host::state_dir(
+            config.state_dir.as_deref(),
+        )),
         profile,
         proc_root: config.proc_root.clone(),
         shutdown,

@@ -5,23 +5,15 @@ use sdkhost_client::{Client, Stream};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 
 enum Transport {
-    Host {
-        client: Client,
-    },
-    Child {
-        stdin: AsyncMutex<ChildStdin>,
-        child: AsyncMutex<Child>,
-    },
+    Host { client: Client },
 }
 
 pub(crate) struct Session {
@@ -185,7 +177,7 @@ impl Session {
                 .await
                 .map(SpawnedSession::Fresh);
         }
-        Self::spawn_child(uid, sid, cwd, command, shutdown).await
+        Err("kiro_sdk_host: missing host binding".into())
     }
 
     pub(super) async fn attach_existing(
@@ -572,67 +564,6 @@ impl Session {
         Ok(())
     }
 
-    async fn spawn_child(
-        uid: &str,
-        sid: &str,
-        cwd: &str,
-        mut command: Command,
-        shutdown: CancellationToken,
-    ) -> Result<SpawnedSession, String> {
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("spawn kiro acp failed: {e}"))?;
-        let pid = child.id().unwrap_or(0);
-        let stdin = child.stdin.take().ok_or("missing stdin")?;
-        let stdout = child.stdout.take().ok_or("missing stdout")?;
-        let stderr = child.stderr.take().ok_or("missing stderr")?;
-        let mut state = LiveState::new();
-        state.uid = uid.into();
-        state.session_id = sid.into();
-        state.cwd = cwd.into();
-        let session = Self::make(
-            state,
-            pid,
-            Transport::Child {
-                stdin: AsyncMutex::new(stdin),
-                child: AsyncMutex::new(child),
-            },
-        );
-        let s = session.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = s.record_stderr(&line, 0);
-            }
-        });
-        let s = session.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if s.observe_line(&line, None, None).is_err() {
-                    break;
-                }
-            }
-            s.dead.store(true, Ordering::Release);
-            live::mark_exit(&s, &s.exit_error("kiro acp process exited"));
-            s.done.cancel();
-            s.changed.notify_waiters();
-        });
-        let s = session.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = shutdown.cancelled() => { let _ = s.kill().await; },
-                _ = s.stop_token.cancelled() => {},
-            }
-        });
-        Ok(SpawnedSession::Fresh(session))
-    }
-
     fn enqueue(
         st: &mut LiveState,
         key: &str,
@@ -697,23 +628,6 @@ impl Session {
                 Ok(None) => Err("original write outcome unknown; will not resend".into()),
                 Err(error) => Err(error.to_string()),
             },
-            Transport::Child { stdin, .. } => {
-                if rpc.delivery.is_some()
-                    || self.dead.load(Ordering::Acquire)
-                    || self.unavailable.load(Ordering::Acquire)
-                {
-                    return Err("kiro_sdk_write_unknown".into());
-                }
-                let mut stdin = stdin.lock().await;
-                match stdin.write_all(&bytes).await {
-                    Ok(()) => stdin
-                        .flush()
-                        .await
-                        .map(|_| "written".into())
-                        .map_err(|e| e.to_string()),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
         };
         let delivery = result.unwrap_or_else(|error| format!("unknown: {error}"));
         let mut st = self.state.lock().unwrap();
@@ -1043,16 +957,11 @@ impl Session {
                         .await
                         .map_err(|e| format!("kiro_sdk_stop_wait: {e}"))?;
                 }
-                Transport::Child { child, .. } => child
-                    .lock()
-                    .await
-                    .kill()
-                    .await
-                    .map_err(|e| format!("kiro_sdk_stop: {e}"))?,
             }
         }
         if self.unavailable.load(Ordering::Acquire) {
-            if let Transport::Host { client } = &self.transport {
+            {
+                let Transport::Host { client } = &self.transport;
                 // A stopped reader must still drain the exact host after stop.
                 let mut caught = None;
                 self.read_host(client, 0, &mut caught, CancellationToken::new())

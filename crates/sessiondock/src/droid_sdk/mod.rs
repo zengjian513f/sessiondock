@@ -18,7 +18,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, mpsc, oneshot, watch};
+use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::lifecycle::{
@@ -30,13 +30,13 @@ type StaticErrorKind = Option<&'static str>;
 type ControlReply = oneshot::Sender<Result<Value, String>>;
 
 pub struct Bridge {
+    writer_admission: AsyncMutex<()>,
     root: PathBuf,
     state_dir: Option<PathBuf>,
     profile: CliProfile,
     proc_root: PathBuf,
     shutdown: CancellationToken,
     state: Mutex<BridgeState>,
-    writer_admission: AsyncMutex<()>,
 }
 
 #[derive(Default)]
@@ -160,23 +160,21 @@ pub fn new(
         ));
     }
     let bridge = Arc::new(Bridge {
+        writer_admission: AsyncMutex::new(()),
         root: root.clone(),
-        state_dir: config.state_dir.clone(),
+        state_dir: Some(crate::sdk_common::host::state_dir(
+            config.state_dir.as_deref(),
+        )),
         profile,
         proc_root: config.proc_root.clone(),
         shutdown,
         state: Mutex::default(),
-        writer_admission: AsyncMutex::new(()),
     });
     Ok(Some(bridge))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn parse_json(text: &str) -> Result<Value, String> {
-    crate::sdk_common::parse_json(text).map_err(|_| "droid_sdk: invalid native JSON".into())
 }
 
 fn capabilities() -> Value {

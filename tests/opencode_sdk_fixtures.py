@@ -155,6 +155,8 @@ class FakeOpenCode:
         return self
 
     def __exit__(self, *_):
+        from sdkhost_fixtures import stop_private_sdkhosts
+        stop_private_sdkhosts(self.root)
         self.closed.set()
         self.server.shutdown()
         self.server.server_close()

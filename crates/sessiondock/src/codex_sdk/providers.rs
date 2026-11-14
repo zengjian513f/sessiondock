@@ -53,6 +53,7 @@ impl Endpoint {
             explicit: false,
             provider: Some(provider.to_owned()),
             launcher: self.launcher.clone(),
+            host_state: self.host_state.clone(),
         })
     }
 }
@@ -185,6 +186,7 @@ impl Inner {
                         explicit: false,
                         provider: Some(provider.clone()),
                         launcher: self.endpoint.launcher.clone(),
+                        host_state: self.endpoint.host_state.clone(),
                     };
                     if let Ok(c) =
                         Connection::open(self.clone(), &endpoint, next_generation()).await

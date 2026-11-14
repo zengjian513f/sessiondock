@@ -6,9 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::{BufRead, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -175,11 +173,9 @@ impl CatalogCache {
         }
         let fp = crate::model_cache::profile_fingerprint(profile);
         let disk_seed = {
-            let needs_disk = self
-                .entries
-                .lock()
-                .ok()
-                .is_some_and(|entries| entries.get(&profile.id).is_none_or(|e| e.fingerprint != fp));
+            let needs_disk = self.entries.lock().ok().is_some_and(|entries| {
+                entries.get(&profile.id).is_none_or(|e| e.fingerprint != fp)
+            });
             if needs_disk {
                 self.load_disk_entry(profile, &fp)
             } else {
@@ -658,77 +654,44 @@ fn grok(profile: &CliProfile) -> Catalog {
 }
 
 fn grok_model_state(profile: &CliProfile) -> Option<serde_json::Value> {
-    let executable = super::launcher::current_executable(&profile.executable).ok()?;
-    let mut command = Command::new(executable);
-    command
-        .args(&profile.args)
-        .args(["agent", "--no-leader", "stdio"]);
-    for name in &profile.env_remove {
-        command.env_remove(name);
-    }
-    command.envs(&profile.env);
-    for name in super::launcher::DENIED_ENV {
-        command.env_remove(name);
-    }
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt;
-        let parent = std::process::id();
-        // This dedicated probe owns no session or native work. Do not leave it
-        // behind if the HTTP service exits while initialize is pending.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::getppid() != parent as i32 {
-                    libc::raise(libc::SIGKILL);
-                }
-                Ok(())
-            });
-        }
-    }
-    super::launcher::background_command(&mut command);
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let mut command = crate::sdk_common::host::command(profile);
+    command.args(["agent", "--no-leader", "stdio"]);
+    let root = crate::sdk_common::host::state_dir(None).join("sdkhost");
+    crate::sdk_common::private_dir(&root).ok()?;
+    let key = format!("grok-models-{}", crate::sdk_common::uuid_v4().ok()?);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .ok()?;
-    let outcome = (|| {
-        let mut stdin = child.stdin.take()?;
-        let stdout = child.stdout.take()?;
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            for line in std::io::BufReader::new(stdout)
-                .lines()
-                .map_while(Result::ok)
-            {
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                if value["id"] == 1 {
-                    let _ = sender.send(value["result"]["_meta"]["modelState"].clone());
-                    break;
+    runtime.block_on(async {
+        let mut spec = sdkhost_client::LaunchSpec::from_command(&command);
+        spec.lifetime_ms = Some(15_000);
+        let client = sdkhost_client::Client::launch_spec(&root, &key, spec).await.ok()?;
+        let outcome = tokio::time::timeout(Duration::from_secs(15), async {
+            let mut bytes = serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+                "params":{"protocolVersion":1,"clientInfo":{"name":"sessiondock-models","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}}})).ok()?;
+            bytes.push(b'\n');
+            if client.write("initialize", &bytes).await.ok()?.state != "written" { return None; }
+            let mut offset = 0; let mut buffer = Vec::new();
+            loop {
+                let chunk = client.read(sdkhost_client::Stream::Stdout, offset).await.ok()?;
+                offset = chunk.next_offset; buffer.extend(chunk.bytes);
+                while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+                    let line: Vec<_> = buffer.drain(..=end).collect();
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&line)
+                        && value["id"] == 1 {
+                        let state = value["result"]["_meta"]["modelState"].clone();
+                        return state["availableModels"].is_array().then_some(state);
+                    }
                 }
+                if chunk.eof { return None; }
             }
-        });
-        writeln!(stdin, "{}", serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-            "params":{"protocolVersion":1,"clientInfo":{"name":"sessiondock-models","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}}})).ok()?;
-        stdin.flush().ok()?;
-        let state = receiver.recv_timeout(Duration::from_secs(15)).ok()?;
-        state["availableModels"].is_array().then_some(state)
-    })();
-    // Terminate only this dedicated no-session probe, including its wrappers.
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    outcome
+        }).await.ok().flatten();
+        let _ = client.signal(9).await;
+        let _ = client.wait().await;
+        let _ = client.remove().await;
+        outcome
+    })
 }
 
 /// `agy models`: one `id\tdisplay name` per line on stdout, with progress
@@ -1020,53 +983,29 @@ fn run_bounded(
     args: &[&str],
     timeout: Duration,
 ) -> Option<String> {
-    let executable = super::launcher::current_executable(&profile.executable).ok()?;
-    let mut command = Command::new(executable);
-    command.args(&profile.args).args(args);
-    for name in &profile.env_remove {
-        command.env_remove(name);
-    }
-    command.envs(&profile.env);
-    for name in super::launcher::DENIED_ENV {
-        command.env_remove(name);
-    }
+    let mut command = crate::sdk_common::host::command(profile);
+    command.args(args);
     if cwd.is_dir() {
         command.current_dir(cwd);
     }
-    super::launcher::background_command(&mut command);
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let root = crate::sdk_common::host::state_dir(None);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .ok()?;
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        bytes
-    });
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status))
-                if matches!(profile.source, Source::Agy | Source::Kiro) && !status.success() =>
-            {
-                return None;
-            }
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    let output = runtime
+        .block_on(crate::sdk_common::host::query(
+            &root,
+            "models",
+            &command,
+            timeout,
+            tokio_util::sync::CancellationToken::new(),
+        ))
+        .ok()?;
+    if matches!(profile.source, Source::Agy | Source::Kiro) && !output.status.success() {
+        return None;
     }
-    reader
-        .join()
-        .ok()
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// A model or effort the CLI receives as one argument value: nonempty,

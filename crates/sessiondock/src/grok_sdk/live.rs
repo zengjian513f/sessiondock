@@ -217,9 +217,6 @@ impl Live {
             Err(error) => json!({"status":"failed","error":error,"id":self.turn}),
         };
     }
-    pub fn receive(&mut self, message: &Value) -> Option<Value> {
-        self.receive_at(message, Some(crate::sdk_message_time::now()))
-    }
     pub fn receive_at(&mut self, message: &Value, received: Option<String>) -> Option<Value> {
         self.message_time =
             crate::sdk_message_time::MessageTime::new(&message["params"]["update"], received);

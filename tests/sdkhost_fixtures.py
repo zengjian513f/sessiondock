@@ -10,7 +10,7 @@ import socket
 import time
 
 
-def stop_private_sdkhosts(root):
+def stop_private_sdkhosts(root, *, host_dir=None):
     root = Path(root).resolve()
     failures = []
 
@@ -21,7 +21,7 @@ def stop_private_sdkhosts(root):
             return False
         try:
             return (Path('/proc') / str(pid) / 'stat').read_text().rsplit(')', 1)[1].split()[0] != 'Z'
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return False
 
     def wait_exited(pid):
@@ -42,13 +42,25 @@ def stop_private_sdkhosts(root):
             client.sendall(json.dumps(request).encode() + b'\n')
             with client.makefile('rb') as response:
                 value = json.loads(response.readline())
+        if isinstance(request, dict) and 'Signal' in request and value.get('error') == 'child already exited':
+            status = json.loads((path.parent / 'status.json').read_text())
+            assert status['exit'] is not None, status
+            return None
         assert not value.get('error'), value
         return value['value']
 
-    for path in (root / 'state/sdkhost').glob('*/control.sock'):
+    directory = Path(host_dir).resolve() if host_dir else root / 'state/sdkhost'
+    assert directory.is_relative_to(root)
+    for path in directory.glob('*/control.sock'):
         try:
             host_pid = int((path.parent / 'host.pid').read_text())
-            status = rpc(path, 'Status')
+            try:
+                status = rpc(path, 'Status')
+            except (ConnectionResetError, json.JSONDecodeError):
+                # An explicit UI stop may finish between connect and the ACK.
+                # Only accept the durable exit record, then verify both PIDs.
+                status = json.loads((path.parent / 'status.json').read_text())
+                assert status['exit'] is not None, status
             if status['exit'] is None or not (status.get('stdout_eof', False) and status.get('stderr_eof', False)):
                 try:
                     rpc(path, {'Signal': {'signal': signal.SIGKILL}})

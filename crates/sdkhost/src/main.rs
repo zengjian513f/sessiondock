@@ -1,4 +1,8 @@
 //! Owns an opaque child process and durable byte streams, independently of clients.
+#[cfg(any(unix, windows))]
+mod channel;
+#[cfg(any(unix, windows))]
+mod commands;
 #[cfg(windows)]
 mod windows;
 #[cfg(any(unix, windows))]
@@ -350,6 +354,14 @@ mod host {
             i32,
             tokio::sync::oneshot::Sender<io::Result<()>>,
         )>();
+        if let Some(milliseconds) = spec.lifetime_ms {
+            let signals = signals.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+                let (reply, _) = tokio::sync::oneshot::channel();
+                let _ = signals.send((9, reply));
+            });
+        }
         let notify = Arc::new(Notify::new());
         let state = Arc::new(Mutex::new(State {
             dir: dir.clone(),
@@ -538,7 +550,18 @@ mod host {
 #[cfg(any(unix, windows))]
 #[tokio::main]
 async fn main() {
-    if let Err(e) = host::run().await {
+    let args: Vec<_> = std::env::args_os().collect();
+    let result = if args.get(1).is_some_and(|a| a == "--websocket") {
+        match args.get(2) {
+            Some(address) => channel::run(address).await,
+            None => Err(std::io::Error::other("missing WebSocket address")),
+        }
+    } else if args.get(1).is_some_and(|a| a == "--commands") {
+        commands::run(&args[2..]).await
+    } else {
+        host::run().await
+    };
+    if let Err(e) = result {
         eprintln!("sdkhost: {e}");
         std::process::exit(1);
     }

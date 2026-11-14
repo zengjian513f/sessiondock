@@ -1,6 +1,4 @@
 //! ACP interpretation remains in the web service; sdkhost only owns byte pipes.
-#[path = "legacy_transport.rs"]
-mod legacy;
 use super::{fresh_id, live::Live};
 use sdkhost_client::{Client, Stream};
 use serde_json::{Value, json};
@@ -54,7 +52,6 @@ pub(super) fn private_dir(path: &Path) -> io::Result<()> {
     crate::sdk_common::private_dir(path)
 }
 pub(super) struct Connection {
-    legacy: Option<Arc<legacy::Connection>>,
     journal: Mutex<Journal>,
     journal_path: PathBuf,
     wake: Notify,
@@ -70,32 +67,7 @@ pub(super) struct Connection {
 }
 impl Connection {
     pub fn hosted(&self) -> bool {
-        self.legacy.is_none()
-    }
-    pub fn spawn_legacy(
-        command: tokio::process::Command,
-        live: Arc<Mutex<Live>>,
-        shutdown: CancellationToken,
-    ) -> Result<Arc<Self>, String> {
-        let legacy = legacy::Connection::spawn(command, live.clone(), shutdown)?;
-        Ok(Arc::new(Self {
-            journal: Mutex::new(Journal {
-                next: 1,
-                entries: vec![],
-            }),
-            journal_path: PathBuf::new(),
-            wake: Notify::new(),
-            pending: Mutex::new(HashMap::new()),
-            live,
-            alive: legacy.alive.clone(),
-            stop: legacy.stop.clone(),
-            done: legacy.done.clone(),
-            pid: legacy.pid,
-            generation: legacy.generation,
-            initialized: Mutex::new(Value::Null),
-            resumed: false,
-            legacy: Some(legacy),
-        }))
+        true
     }
 
     pub async fn spawn(
@@ -182,7 +154,6 @@ impl Connection {
             (state.generation, state.initialized.clone())
         };
         let connection = Arc::new(Self {
-            legacy: None,
             journal: Mutex::new(journal),
             journal_path,
             wake: Notify::new(),
@@ -202,9 +173,6 @@ impl Connection {
         Ok(connection)
     }
     pub fn send(&self, frame: Value) -> Result<(), String> {
-        if let Some(legacy) = &self.legacy {
-            return legacy.send(frame);
-        }
         if !self.alive.load(Ordering::Acquire) {
             return Err("grok_sdk_disconnected".into());
         }
@@ -243,9 +211,6 @@ impl Connection {
         params: Value,
         accepted: Option<Value>,
     ) -> Result<oneshot::Receiver<Reply>, String> {
-        if let Some(legacy) = &self.legacy {
-            return legacy.begin_request(method, params);
-        }
         if !self.alive.load(Ordering::Acquire) {
             return Err("grok_sdk_disconnected".into());
         }

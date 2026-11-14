@@ -21,9 +21,9 @@ against Codex CLI 0.163.0.
 ## Runtime topology
 
 ```text
-browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ codex app-server daemon
-                                                            ▲
-                                       default `codex` TUI ─┘ (same daemon, same thread)
+browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel ─WebSocket─▶ native app-server
+                                                                            ▲
+                                                        default Codex TUI ──┘
 ```
 
 - DELTA (provider routing): new sessions default to `openai`. Existing sessions
@@ -36,9 +36,15 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   identifies whether the shared process matches the requested provider. A missing
   provider listener starts on demand with `codex -c model_provider=… app-server
   --listen unix://…`, using the same `CODEX_HOME`, native authentication and history.
-  Additional sockets and private logs live under `<CODEX_HOME>/sd-providers/`,
-  with UTF-8 provider IDs encoded as hexadecimal filenames (not hashes).
-  Detached listeners survive ordinary SessionDock restarts; observations and
+  Additional sockets live under `<CODEX_HOME>/sd-providers/`, with UTF-8 provider
+  IDs encoded as hexadecimal filenames (not hashes); process output lives in the
+  private sdkhost directory.
+  Listeners launched by SessionDock belong to sdkhost. Its separate opaque
+  WebSocket channel keeps the native subscription alive during service outages.
+  The adapter persists initialization, RPC numbering, output position and pending
+  server requests; reconnecting to that channel does not initialize it again.
+  Existing external daemons retain their original owner.
+  Hosted listeners survive ordinary SessionDock restarts; observations and
   subscription recovery discover them without starting historical sessions.
   A connection failure resets only that connection's threads; generations are
   unique across listeners. Model lists are cached per connection.

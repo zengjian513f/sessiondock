@@ -1,10 +1,7 @@
 //! SessionDock-owned Kiro identity and ACP/native read-only history projections.
 use crate::{
     config::Config,
-    lifecycle::{
-        launcher::{CliProfile, DENIED_ENV},
-        model::Source,
-    },
+    lifecycle::{launcher::CliProfile, model::Source},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -16,10 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Command,
-};
+use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 mod native;
@@ -62,6 +56,7 @@ pub(crate) struct Catalog {
     pub scope: String,
     pub profile: CliProfile,
     pub native_root: PathBuf,
+    host_state: PathBuf,
     manifest: Mutex<Manifest>,
     rpc_gate: tokio::sync::Mutex<()>,
     native_observed: Mutex<BTreeMap<PathBuf, native::Version>>,
@@ -181,6 +176,7 @@ impl Catalog {
             scope,
             profile,
             native_root: native_root.clone(),
+            host_state: crate::sdk_common::host::state_dir(config.state_dir.as_deref()),
             manifest: Mutex::new(manifest),
             rpc_gate: tokio::sync::Mutex::new(()),
             native_observed: Mutex::new(BTreeMap::new()),
@@ -282,18 +278,10 @@ impl Catalog {
     }
 
     pub fn command(&self, cwd: &str) -> Command {
-        let mut command = Command::new(&self.profile.executable);
+        let mut command = crate::sdk_common::host::command(&self.profile);
         command
-            .args(&self.profile.args)
             .args(["acp", "--agent-engine=v3", "--auth-method=cli"])
             .current_dir(cwd);
-        for key in &self.profile.env_remove {
-            command.env_remove(key);
-        }
-        for key in DENIED_ENV {
-            command.env_remove(key);
-        }
-        command.envs(&self.profile.env);
         if !self.profile.env.contains_key("HOME")
             && let Some(home) = account_home(&self.native_root)
         {
@@ -558,39 +546,49 @@ impl Catalog {
     pub async fn request(&self, method: &str, params: &Value) -> Result<Value, String> {
         let _gate = self.rpc_gate.lock().await;
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-        let mut command = self.command(&cwd.to_string_lossy());
-        command
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-        let mut child = command.spawn().map_err(|e| e.to_string())?;
-        let mut stdin = child.stdin.take().ok_or("Kiro stdin unavailable")?;
-        let mut stdout =
-            BufReader::new(child.stdout.take().ok_or("Kiro stdout unavailable")?).lines();
+        let command = self.command(&cwd.to_string_lossy());
+        let mut spec = sdkhost_client::LaunchSpec::from_command(&command);
+        spec.lifetime_ms = Some(30_000);
+        let key = format!("kiro-catalog-{}", random_key()?);
+        crate::sdk_common::private_dir(&self.host_state).map_err(|e| e.to_string())?;
+        let client =
+            sdkhost_client::Client::launch_spec(&self.host_state.join("sdkhost"), &key, spec)
+                .await
+                .map_err(|e| e.to_string())?;
+        let mut stdout = crate::sdk_common::host::Lines::new(client.clone());
         let operation = async {
             async fn rpc(
-                stdin: &mut tokio::process::ChildStdin,
-                stdout: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+                stdout: &mut crate::sdk_common::host::Lines,
                 id: u64,
                 method: &str,
                 params: &Value,
             ) -> Result<Value, String> {
                 let frame = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-                stdin
-                    .write_all(format!("{frame}\n").as_bytes())
+                let receipt = stdout
+                    .client
+                    .write(&format!("rpc-{id}"), format!("{frame}\n").as_bytes())
                     .await
                     .map_err(|e| e.to_string())?;
-                while let Some(line) = stdout.next_line().await.map_err(|e| e.to_string())? {
+                if receipt.state != "written" {
+                    return Err("Kiro catalog write unknown".into());
+                }
+                while let Some(line) = stdout.next().await.map_err(|e| e.to_string())? {
                     let Ok(message) = serde_json::from_str::<Value>(&line) else {
                         continue;
                     };
                     if message.get("method").is_some() && message.get("id").is_some() {
                         let response = json!({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32601,"message":"Read-only catalog client does not implement this request"}});
-                        stdin
-                            .write_all(format!("{response}\n").as_bytes())
+                        let receipt = stdout
+                            .client
+                            .write(
+                                &format!("reply:{}", message["id"]),
+                                format!("{response}\n").as_bytes(),
+                            )
                             .await
                             .map_err(|e| e.to_string())?;
+                        if receipt.state != "written" {
+                            return Err("Kiro catalog reply unknown".into());
+                        }
                     } else if message["id"] == id {
                         if let Some(error) = message.get("error") {
                             return Err(error.to_string());
@@ -603,7 +601,7 @@ impl Catalog {
                         .into(),
                 )
             }
-            let init = rpc(&mut stdin, &mut stdout, 1, "initialize", &json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock-catalog","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}})).await?;
+            let init = rpc(&mut stdout, 1, "initialize", &json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock-catalog","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}})).await?;
             let caps = &init["agentCapabilities"];
             let advertised = if let Some(name) = method.strip_prefix("session/") {
                 caps["sessionCapabilities"][name].is_object()
@@ -622,15 +620,15 @@ impl Catalog {
             if !advertised {
                 return Err(format!("Kiro 未广告 {method} 能力"));
             }
-            rpc(&mut stdin, &mut stdout, 2, method, params).await
+            rpc(&mut stdout, 2, method, params).await
         };
         let result = tokio::time::timeout(Duration::from_secs(30), operation)
             .await
             .map_err(|_| "Kiro catalog request timeout".to_owned())
             .and_then(|r| r);
-        drop(stdin);
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        let _ = client.signal(9).await;
+        let _ = client.wait().await;
+        let _ = client.remove().await;
         result
     }
 }

@@ -1012,6 +1012,7 @@ impl Launcher {
                                 socket: socket.to_owned(),
                                 home: None,
                                 launcher: None,
+                                host_state: remote.host_state.clone(),
                             };
                             selected.ensure(&executable)
                         } else {

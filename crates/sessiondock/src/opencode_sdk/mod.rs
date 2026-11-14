@@ -101,7 +101,12 @@ pub fn new(
         ));
     }
     Ok(Some(Arc::new(Bridge {
-        transport: Transport::new(profile, shutdown),
+        transport: Transport::new(
+            profile,
+            shutdown,
+            crate::sdk_common::host::state_dir(config.state_dir.as_deref()),
+            root,
+        )?,
         root: root.clone(),
         proc_root: config.proc_root.clone(),
         sessions: Mutex::new(HashMap::new()),

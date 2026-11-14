@@ -126,7 +126,9 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
     };
     let bridge = Arc::new(Bridge {
         root,
-        state_dir: config.state_dir.clone(),
+        state_dir: Some(crate::sdk_common::host::state_dir(
+            config.state_dir.as_deref(),
+        )),
         home,
         profile,
         proc_root: config.proc_root.clone(),
@@ -455,23 +457,16 @@ impl Bridge {
         live: Arc<Mutex<Live>>,
         identity: Option<&str>,
     ) -> Result<Arc<Connection>, String> {
-        let connection = if let Some(root) = &self.state_dir {
-            let checkpoint = self.checkpoint_path(identity.unwrap_or(&fresh_id()))?;
-            Connection::spawn(
-                self.command(cwd)?,
-                live.clone(),
-                self.shutdown.clone(),
-                root,
-                checkpoint,
-            )
-            .await?
-        } else {
-            Connection::spawn_legacy(
-                self.command(cwd)?,
-                live.clone(),
-                self.shutdown.child_token(),
-            )?
-        };
+        let root = self.state_dir.as_ref().expect("SDK host state");
+        let checkpoint = self.checkpoint_path(identity.unwrap_or(&fresh_id()))?;
+        let connection = Connection::spawn(
+            self.command(cwd)?,
+            live.clone(),
+            self.shutdown.clone(),
+            root,
+            checkpoint,
+        )
+        .await?;
         if connection.resumed {
             let initialized = live.lock().unwrap().initialized.clone();
             if initialized["protocolVersion"] != 1 {

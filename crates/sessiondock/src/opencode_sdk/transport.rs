@@ -1,16 +1,10 @@
 //! OpenCode v2's documented `api` machine client. No terminal input, database
 //! writes or private service-registration/credential-file reads.
-use std::{
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
-};
-
+use crate::lifecycle::launcher::CliProfile;
+use base64::Engine;
 use serde_json::Value;
-use tokio::{io::AsyncReadExt, process::Command};
+use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
-
-use crate::lifecycle::launcher::{CliProfile, DENIED_ENV};
 
 static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
     [
@@ -24,41 +18,18 @@ static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::Lazy
 });
 
 pub(super) struct Transport {
-    pub profile: CliProfile,
     pub shutdown: CancellationToken,
     secrets: Vec<String>,
-}
-
-// OpenCode's machine client can exit before a large pipe write drains. A
-// regular private file makes its stdout synchronous; retain it through wait,
-// read the complete response, and remove it on every return path.
-struct CapturedOutput(PathBuf);
-
-impl CapturedOutput {
-    fn create() -> Result<(Self, std::fs::File), String> {
-        let path = std::env::temp_dir().join(super::random_id("sessiondock-opencode-stdout-")?);
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options
-            .open(&path)
-            .map_err(|e| format!("OpenCode API stdout 文件不可用: {e}"))?;
-        Ok((Self(path), file))
-    }
-}
-
-impl Drop for CapturedOutput {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+    commands: crate::sdk_common::commands::Commands,
 }
 
 impl Transport {
-    pub fn new(profile: CliProfile, shutdown: CancellationToken) -> Self {
+    pub fn new(
+        profile: CliProfile,
+        shutdown: CancellationToken,
+        root: PathBuf,
+        scope: &Path,
+    ) -> std::io::Result<Self> {
         let mut secrets: Vec<String> = std::env::vars()
             .chain(profile.env.clone())
             .filter_map(|(name, value)| {
@@ -72,11 +43,16 @@ impl Transport {
             .collect();
         secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
         secrets.dedup();
-        Self {
-            profile,
+        Ok(Self {
+            commands: crate::sdk_common::commands::Commands::new(
+                root,
+                "opencode",
+                scope,
+                profile.clone(),
+            )?,
             shutdown,
             secrets,
-        }
+        })
     }
 
     pub async fn api(
@@ -106,7 +82,8 @@ impl Transport {
         if let Some(body) = body {
             args.extend(["--data".into(), body.to_string()]);
         }
-        let output = self.run(cwd, &args).await?;
+        let identity = body_identity(method, path, &args);
+        let output = self.run_identified(cwd, &args, identity.as_deref()).await?;
         if output.iter().all(u8::is_ascii_whitespace) {
             return Ok(Value::Null);
         }
@@ -114,61 +91,25 @@ impl Transport {
     }
 
     async fn run(&self, cwd: &Path, args: &[String]) -> Result<Vec<u8>, String> {
-        if self.shutdown.is_cancelled() {
-            return Err("OpenCode SDK 已关闭".into());
-        }
-        let executable = std::fs::canonicalize(&self.profile.executable)
-            .map_err(|e| format!("OpenCode CLI 不可用: {e}"))?;
-        let (capture, stdout) = CapturedOutput::create()?;
-        let mut command = Command::new(executable);
-        command.args(&self.profile.args).args(args);
-        for name in &self.profile.env_remove {
-            command.env_remove(name);
-        }
-        command.envs(&self.profile.env);
-        for name in DENIED_ENV {
-            command.env_remove(name);
-        }
-        command
-            .current_dir(cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
-        #[cfg(windows)]
-        command.creation_flags(0x08000000);
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("OpenCode API 启动失败: {e}"))?;
-        let mut stderr = child.stderr.take().ok_or("OpenCode API stderr 不可用")?;
-        let err = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stderr.read_to_end(&mut bytes).await.map(|_| bytes)
-        });
-        let status = tokio::select! {
-            result = child.wait() => result.map_err(|e| e.to_string()),
-            _ = self.shutdown.cancelled() => Err("OpenCode SDK 已关闭".into()),
-            _ = tokio::time::sleep(Duration::from_secs(30)) => Err("OpenCode API 请求超时；原生已接收的输入不会重发".into()),
-        };
-        if status.is_err() {
-            #[cfg(unix)]
-            if let Some(pid) = child.id() {
-                // Only the process group created above, never a TUI/server.
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
-            }
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-        }
-        let output = tokio::fs::read(&capture.0)
+        self.run_identified(cwd, args, None).await
+    }
+
+    async fn run_identified(
+        &self,
+        cwd: &Path,
+        args: &[String],
+        identity: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        let result = self
+            .commands
+            .run(cwd, args, identity, &self.shutdown)
             .await
+            .map_err(|e| format!("OpenCode API: {e}"))?;
+        let output: Vec<u8> = base64::engine::general_purpose::STANDARD
+            .decode(result["stdout"].as_str().ok_or("OpenCode stdout missing")?)
             .map_err(|e| e.to_string())?;
-        let diagnostic = err
-            .await
-            .map_err(|e| e.to_string())?
+        let diagnostic: Vec<u8> = base64::engine::general_purpose::STANDARD
+            .decode(result["stderr"].as_str().ok_or("OpenCode stderr missing")?)
             .map_err(|e| e.to_string())?;
         if !diagnostic.iter().all(u8::is_ascii_whitespace) {
             crate::log::warn(
@@ -176,8 +117,7 @@ impl Transport {
                 serde_json::json!({"detail":self.redact(&String::from_utf8_lossy(&diagnostic))}),
             );
         }
-        let status = status?;
-        if !status.success() {
+        if result["success"] != true {
             let native: Option<Value> = serde_json::from_slice(&output).ok();
             let detail = native
                 .as_ref()
@@ -191,7 +131,7 @@ impl Transport {
                 detail.push_str("; ");
                 detail.push_str(diagnostic.trim());
             }
-            return Err(format!("OpenCode API {}: {}", status, detail));
+            return Err(format!("OpenCode API {}: {}", result["code"], detail));
         }
         Ok(output)
     }
@@ -220,4 +160,15 @@ pub(super) fn encoded(value: &str) -> String {
         }
     }
     out
+}
+
+// Native creation/message identity is stable across facade retries. Read-only
+// observations are fresh; repeated settings and interrupt remain explicit actions.
+fn body_identity(method: &str, path: &str, args: &[String]) -> Option<String> {
+    if method != "POST" {
+        return None;
+    }
+    let body: Value = serde_json::from_str(args.last()?).ok()?;
+    let id = body["id"].as_str()?;
+    Some(format!("{method}:{path}:{id}"))
 }

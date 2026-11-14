@@ -16,6 +16,7 @@ import tempfile
 import time
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO
+from frontend_paths import frontend_dir
 from popups import on_popup
 from sdk_ui_fixtures import start_sdk
 
@@ -28,7 +29,7 @@ def main():
     args = parser.parse_args()
     command = json.loads(os.environ['SDK_PLATFORM_WORKER']) if 'SDK_PLATFORM_WORKER' in os.environ else [
         sys.executable, str(REPO / 'tests/sdk_platform_fixtures.py'), '--source', args.source,
-        '--binary', str(args.binary), '--driver', str(args.driver), '--web', str(REPO / 'web')]
+        '--binary', str(args.binary), '--driver', str(args.driver), '--web', str(frontend_dir())]
     with tempfile.TemporaryDirectory(prefix='sdk-platform-browser-') as tmp:
         log = (Path(tmp) / 'worker.log').open('w+')
         worker = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
@@ -85,7 +86,7 @@ def main():
                         page.wait_for_timeout(100)
                     raise AssertionError(('input did not complete', request, rows))
                 def native_pids():
-                    return {row['pid'] for row in control('evidence')['hosts'] if row['exit'] is None}
+                    return {row['pid'] for row in control('evidence')['hosts'] if row['exit'] is None and not row['key'].startswith('kiro-catalog-')}
                 try:
                     uid = open_sdk()
                     first = send('platform first input'); settled(first)

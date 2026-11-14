@@ -134,9 +134,6 @@ fn message(live: &mut Live, n: &Value) {
         live.model = Some(model.into());
     }
 }
-pub(super) fn observe(session: &Session, frame: Value) {
-    observe_at(session, frame, None, Some(crate::sdk_message_time::now()));
-}
 pub(super) fn observe_at(
     session: &Session,
     frame: Value,

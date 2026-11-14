@@ -4,46 +4,13 @@ use crate::sdk_common::private_dir;
 use sdkhost_client::{Client, Stream};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone)]
-pub(super) struct Sender {
-    entries: Arc<Mutex<Vec<Entry>>>,
-    path: PathBuf,
-    wake: Arc<tokio::sync::Notify>,
-    closed: Arc<AtomicBool>,
-}
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct Entry {
-    id: String,
-    frame: Value,
-}
-impl Sender {
-    pub fn send(&self, frame: Value) -> Result<(), String> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err("claude_sdk_disconnected".into());
-        }
-        let mut entries = lock(&self.entries);
-        // Native IDs also make replayed automatic protocol replies idempotent.
-        let native_id = frame["uuid"]
-            .as_str()
-            .or_else(|| frame["request_id"].as_str())
-            .or_else(|| frame["response"]["request_id"].as_str());
-        let id = match native_id {
-            Some(id) => format!("{}:{id}", frame["type"].as_str().unwrap_or("frame")),
-            None => uuid()?,
-        };
-        if entries.iter().any(|entry| entry.id == id) {
-            return Ok(());
-        }
-        entries.push(Entry { id, frame });
-        if let Err(error) = save_atomic(&self.path, &*entries) {
-            // The writer reads this same queue: never expose an entry whose
-            // persistence failed, or let its retry look already accepted.
-            entries.pop();
-            return Err(format!("claude_sdk_outbox: {error}"));
-        }
-        self.wake.notify_one();
-        Ok(())
-    }
+use crate::sdk_common::outbox::{Entry, Sender};
+fn frame_id(frame: &Value) -> Option<String> {
+    frame["uuid"]
+        .as_str()
+        .or_else(|| frame["request_id"].as_str())
+        .or_else(|| frame["response"]["request_id"].as_str())
+        .map(|id| format!("{}:{id}", frame["type"].as_str().unwrap_or("frame")))
 }
 fn error(error: impl std::fmt::Display) -> String {
     format!("claude_sdk_host: {error}")
@@ -211,8 +178,8 @@ impl Bridge {
                 live.control_requests.clear();
                 live.save_checkpoint().map_err(error)?;
             }
-            let mut command = tokio::process::Command::new(&self.profile.executable);
-            command.args(&self.profile.args).args([
+            let mut command = crate::sdk_common::host::command(&self.profile);
+            command.args([
                 "--print",
                 "--input-format",
                 "stream-json",
@@ -243,13 +210,7 @@ impl Bridge {
                     command.arg(format!("--effort={effort}"));
                 }
             }
-            for name in &self.profile.env_remove {
-                command.env_remove(name);
-            }
-            command.envs(&self.profile.env);
-            for name in launcher::DENIED_ENV {
-                command.env_remove(name);
-            }
+
             command
                 .env("CLAUDE_CONFIG_DIR", self.native_home()?)
                 .env("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1")
@@ -268,6 +229,8 @@ impl Bridge {
             Err(e) => return Err(error(e)),
         };
         let sender = Sender {
+            identity: frame_id,
+            source: "claude",
             entries: Arc::new(Mutex::new(entries)),
             path: outbox_path,
             wake: Arc::new(tokio::sync::Notify::new()),

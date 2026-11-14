@@ -54,16 +54,30 @@ class FakeAppServer:
         return self
 
     def __exit__(self, *exc):
+        async def close():
+            self.listener.close()
+            clients = list(self.clients)
+            for writer in clients:
+                writer.close()
+            await asyncio.gather(*(writer.wait_closed() for writer in clients), return_exceptions=True)
+            # Let client handlers observe EOF before stopping the event loop.
+            tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self.listener.wait_closed()
+        asyncio.run_coroutine_threadsafe(close(), self.loop).result(5)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(5)
+        self.loop.close()
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
         if self.tcp:
-            listener = self.loop.run_until_complete(asyncio.start_server(self._client, "127.0.0.1", 0))
-            self.socket_path = f"ws://127.0.0.1:{listener.sockets[0].getsockname()[1]}"
+            self.listener = self.loop.run_until_complete(asyncio.start_server(self._client, "127.0.0.1", 0))
+            self.socket_path = f"ws://127.0.0.1:{self.listener.sockets[0].getsockname()[1]}"
         else:
-            self.loop.run_until_complete(asyncio.start_unix_server(self._client, path=self.socket_path))
+            self.listener = self.loop.run_until_complete(asyncio.start_unix_server(self._client, path=self.socket_path))
         self.ready.set()
         self.loop.run_forever()
 
@@ -87,6 +101,7 @@ class FakeAppServer:
         try:
             head = await reader.readuntil(b"\r\n\r\n")
         except (asyncio.IncompleteReadError, ConnectionError):
+            writer.close()
             return  # A reachability probe connects and leaves.
         if self.token is not None:
             headers = dict(line.split(":", 1) for line in head.decode("latin1").split("\r\n")[1:] if ":" in line)
@@ -119,6 +134,7 @@ class FakeAppServer:
         finally:
             if writer in self.clients:
                 self.clients.remove(writer)
+            writer.close()
 
     async def _frame(self, reader, writer):
         payload = b""

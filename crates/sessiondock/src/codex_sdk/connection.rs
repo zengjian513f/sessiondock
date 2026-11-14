@@ -13,7 +13,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use super::{Endpoint, Inner};
@@ -57,10 +57,11 @@ type Waiter = oneshot::Sender<Result<Value, RpcError>>;
 
 pub struct Connection {
     pub socket: std::path::PathBuf,
-    out: mpsc::UnboundedSender<String>,
+    channel: Arc<super::channel::Channel>,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, Waiter>>,
     closed: CancellationToken,
+    done: CancellationToken,
     generation: u64,
 }
 
@@ -78,6 +79,16 @@ impl Connection {
         endpoint: &Endpoint,
         generation: u64,
     ) -> Result<Arc<Self>, RpcError> {
+        let mut channels = inner.channels.lock().await;
+        if let Some(existing) = channels
+            .get(&endpoint.socket)
+            .and_then(std::sync::Weak::upgrade)
+        {
+            if !existing.is_closed() {
+                return Ok(existing);
+            }
+            existing.done.cancelled().await;
+        }
         let managed = super::managed::is_managed(&endpoint.socket);
         let credentials = if managed {
             let endpoint = endpoint.clone();
@@ -93,72 +104,110 @@ impl Connection {
         } else {
             None
         };
-        let closed = CancellationToken::new();
-        let out = if managed || super::websocket::is_websocket(&endpoint.socket) {
-            let request = match &credentials {
-                Some((url, token)) => super::websocket::request_with_token(url, token),
-                None => super::websocket::request(endpoint.socket.to_str().expect("WebSocket URL")),
-            }
-            .map_err(|error| RpcError::Unavailable(error.into()))?;
-            let value = credentials
-                .as_ref()
-                .map(|(url, _)| url.as_str())
-                .unwrap_or_else(|| endpoint.socket.to_str().expect("WebSocket URL"));
-            let address = super::websocket::address(value).expect("validated address");
-            let socket = tokio::time::timeout(Duration::from_secs(10), async {
-                let stream = tokio::net::TcpStream::connect(address)
-                    .await
-                    .map_err(|error| RpcError::Unavailable(error.to_string()))?;
-                tokio_tungstenite::client_async(request, stream)
-                    .await
-                    .map_err(|_| {
-                        RpcError::Unavailable(
-                            "WebSocket 握手失败；检查 listener 和 capability token".into(),
-                        )
-                    })
-            })
-            .await
-            .map_err(|_| RpcError::Unavailable("WebSocket 连接超时".into()))??
-            .0;
-            spawn_io(inner, socket, generation, closed.clone())?
-        } else {
-            #[cfg(unix)]
-            {
-                let stream = connect(endpoint).await?;
-                let (socket, _) = tokio_tungstenite::client_async("ws://localhost/", stream)
-                    .await
-                    .map_err(|error| RpcError::Unavailable(format!("握手失败：{error}")))?;
-                spawn_io(inner, socket, generation, closed.clone())?
-            }
-            #[cfg(not(unix))]
-            {
-                return Err(RpcError::Unavailable(
-                    "此平台需要配置 loopback WebSocket".into(),
-                ));
-            }
-        };
-
+        let (address, token): (std::ffi::OsString, Option<String>) =
+            if let Some((url, token)) = credentials {
+                (url.into(), Some(token))
+            } else if super::websocket::is_websocket(&endpoint.socket) {
+                let url = endpoint.socket.to_str().expect("WebSocket URL").to_owned();
+                super::websocket::request(&url).map_err(|e| RpcError::Unavailable(e.into()))?;
+                (
+                    url.into(),
+                    Some(
+                        std::env::var(super::websocket::TOKEN_ENV)
+                            .map_err(|e| RpcError::Unavailable(e.to_string()))?,
+                    ),
+                )
+            } else {
+                #[cfg(unix)]
+                {
+                    let _ = connect(endpoint).await?;
+                    let mut address = std::ffi::OsString::from("unix://");
+                    address.push(&endpoint.socket);
+                    (address, None)
+                }
+                #[cfg(not(unix))]
+                {
+                    return Err(RpcError::Unavailable(
+                        "此平台需要配置 loopback WebSocket".into(),
+                    ));
+                }
+            };
+        let channel =
+            super::channel::Channel::open(&inner.host_state, endpoint, &address, token.as_deref())
+                .await?;
         let connection = Arc::new(Self {
             socket: endpoint.socket.clone(),
-            out,
-            next_id: AtomicI64::new(1),
+            next_id: AtomicI64::new(channel.next_id()),
+            channel,
             pending: Mutex::new(HashMap::new()),
-            closed,
+            closed: CancellationToken::new(),
+            done: CancellationToken::new(),
             generation,
         });
         connection.attach_reader();
-        connection
-            .request(
-                "initialize",
-                json!({
-                    "clientInfo": {"name": "sessiondock", "title": "SessionDock",
-                        "version": env!("CARGO_PKG_VERSION")},
-                    "capabilities": {"experimentalApi": true},
-                }),
-            )
-            .await?;
-        connection.send(json!({"method": "initialized", "params": {}}));
+        spawn_io(inner.clone(), connection.clone());
+        if let Err(error) = connection
+            .channel
+            .enqueue(super::channel::Channel::initialize_frame())
+        {
+            connection.close();
+            connection.done.cancelled().await;
+            return Err(error);
+        }
+        let initialized = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(frame) = connection.channel.initialized() {
+                    return Ok(frame);
+                }
+                if connection.is_closed() {
+                    return Err(connection.channel.startup_error().await);
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(RpcError::Unavailable(
+                "Codex channel initialize timed out".into(),
+            ))
+        });
+        let initialized = match initialized {
+            Ok(frame) => frame,
+            Err(error) => {
+                connection.close();
+                connection.done.cancelled().await;
+                return Err(error);
+            }
+        };
+        if let Some(error) = initialized.get("error") {
+            connection.close();
+            connection.done.cancelled().await;
+            // Initialization was explicitly rejected: this channel has not
+            // subscribed to a thread or accepted a turn. Retire only the relay.
+            let _ = connection.channel.client.signal(9).await;
+            let _ = connection.channel.client.wait().await;
+            return Err(RpcError::Remote {
+                code: error["code"].as_i64().unwrap_or(0),
+                message: error["message"]
+                    .as_str()
+                    .unwrap_or("initialize failed")
+                    .into(),
+            });
+        }
+        connection.send(json!({"method":"initialized","params":{}}))?;
+        channels.insert(endpoint.socket.clone(), Arc::downgrade(&connection));
         Ok(connection)
+    }
+
+    pub(super) fn restore_requests(self: &Arc<Self>, inner: &Inner, thread: &str) {
+        for frame in self.channel.pending(thread) {
+            inner.server_request(
+                self,
+                frame["id"].clone(),
+                frame["method"].as_str().unwrap_or(""),
+                frame["params"].clone(),
+            );
+        }
     }
 
     fn attach_reader(self: &Arc<Self>) {
@@ -168,8 +217,8 @@ impl Connection {
             .insert(self.generation, Arc::downgrade(self));
     }
 
-    fn send(&self, message: Value) {
-        let _ = self.out.send(message.to_string());
+    fn send(&self, message: Value) -> Result<(), RpcError> {
+        self.channel.enqueue(message)
     }
 
     pub async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, RpcError> {
@@ -179,7 +228,10 @@ impl Connection {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("pending").insert(id, tx);
-        self.send(json!({"method": method, "id": id, "params": params}));
+        if let Err(error) = self.send(json!({"method": method, "id": id, "params": params})) {
+            self.pending.lock().expect("pending").remove(&id);
+            return Err(error);
+        }
         // HTTP cancellation (including the Hub's shorter timeout) must not
         // cancel detection of a stalled native connection. Never replay the RPC.
         let connection = self.clone();
@@ -209,12 +261,11 @@ impl Connection {
         if self.is_closed() {
             return Err(RpcError::Disconnected);
         }
-        self.send(json!({"id": id, "result": result}));
-        Ok(())
+        self.send(json!({"id": id, "result": result}))
     }
 
     pub fn refuse(&self, id: Value, method: &str) {
-        self.send(json!({"id": id, "error": {"code": -32601,
+        let _ = self.send(json!({"id": id, "error": {"code": -32601,
             "message": format!("SessionDock does not handle {method}")}}));
     }
 
@@ -250,7 +301,7 @@ fn current(generation: u64) -> Option<Arc<Connection>> {
 }
 
 #[cfg(unix)]
-async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStream, RpcError> {
+pub(super) async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStream, RpcError> {
     match tokio::net::UnixStream::connect(&endpoint.socket).await {
         Ok(stream) => return Ok(stream),
         Err(error) if endpoint.autostart_home.is_none() => {
@@ -262,154 +313,98 @@ async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStream, RpcError
         Err(_) => {}
     }
     let home = endpoint.autostart_home.as_ref().expect("autostart home");
+    let directory = endpoint.socket.parent().expect("Codex socket directory");
+    crate::sdk_common::private_dir(directory).map_err(|e| RpcError::Unavailable(e.to_string()))?;
+    let mut command = endpoint
+        .launcher
+        .as_ref()
+        .map(crate::sdk_common::host::command)
+        .unwrap_or_else(|| tokio::process::Command::new("codex"));
     if let Some(provider) = &endpoint.provider {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        let directory = endpoint.socket.parent().expect("provider socket directory");
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(directory)
-            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(endpoint.socket.with_extension("log"))
-            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
-        let mut command = tokio::process::Command::new("codex");
-        command
-            .args([
-                "-c",
-                &format!("model_provider={}", json!(provider)),
-                "app-server",
-                "--listen",
-                &format!("unix://{}", endpoint.socket.display()),
-            ])
-            .env("CODEX_HOME", home)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(log)
-            .kill_on_drop(false);
-        // Match detached native hosts: service restart must not kill a turn.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
-        for _ in 0..CONNECT_ATTEMPTS {
-            if let Ok(stream) = tokio::net::UnixStream::connect(&endpoint.socket).await {
-                return Ok(stream);
-            }
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|e| RpcError::Unavailable(e.to_string()))?
-            {
-                return Err(RpcError::Unavailable(format!(
-                    "provider {provider} 进程退出：{status}；日志：{}",
-                    endpoint.socket.with_extension("log").display()
-                )));
-            }
-            tokio::time::sleep(CONNECT_PAUSE).await;
-        }
-        return Err(RpcError::Unavailable(format!(
-            "provider {provider} 启动超时"
-        )));
+        command.args(["-c", &format!("model_provider={}", json!(provider))]);
     }
-    // The same daemon a default `codex` TUI starts; it outlives SessionDock.
-    let started = tokio::process::Command::new("codex")
-        .args(["app-server", "daemon", "start"])
-        .env("CODEX_HOME", home)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(false)
-        .status();
-    match tokio::time::timeout(Duration::from_secs(60), started).await {
-        Ok(Ok(status)) if status.success() => {}
-        Ok(Ok(status)) => {
-            return Err(RpcError::Unavailable(format!(
-                "codex app-server daemon start 退出：{status}"
-            )));
-        }
-        Ok(Err(error)) => {
-            return Err(RpcError::Unavailable(format!(
-                "无法启动 codex app-server daemon：{error}"
-            )));
-        }
-        Err(_) => {
-            return Err(RpcError::Unavailable(
-                "启动 codex app-server daemon 超时".into(),
-            ));
-        }
-    }
-    let mut last = String::new();
+    command
+        .args([
+            "app-server",
+            "--listen",
+            &format!("unix://{}", endpoint.socket.display()),
+        ])
+        .env("CODEX_HOME", home);
+    let record = crate::sdk_common::host::directory(
+        &endpoint.host_state.join("sdk-adapters/codex-listeners"),
+        endpoint.socket.as_os_str(),
+    )
+    .map_err(|e| RpcError::Unavailable(e.to_string()))?;
+    let client = crate::sdk_common::host::instance(
+        &endpoint.host_state,
+        &record,
+        "codex-listener",
+        &command,
+    )
+    .await
+    .map_err(|e| RpcError::Unavailable(e.to_string()))?;
     for _ in 0..CONNECT_ATTEMPTS {
-        match tokio::net::UnixStream::connect(&endpoint.socket).await {
-            Ok(stream) => return Ok(stream),
-            Err(error) => last = error.to_string(),
+        if let Ok(stream) = tokio::net::UnixStream::connect(&endpoint.socket).await {
+            return Ok(stream);
+        }
+        if let Some(exit) = client
+            .status()
+            .await
+            .map_err(|e| RpcError::Unavailable(e.to_string()))?
+            .exit
+        {
+            return Err(RpcError::Unavailable(format!(
+                "Codex listener exited: {exit:?}"
+            )));
         }
         tokio::time::sleep(CONNECT_PAUSE).await;
     }
-    Err(RpcError::Unavailable(format!(
-        "{}：{last}",
-        endpoint.socket.display()
-    )))
+    Err(RpcError::Unavailable("Codex listener 启动超时".into()))
 }
 
-fn spawn_io<S>(
-    inner: Arc<Inner>,
-    socket: tokio_tungstenite::WebSocketStream<S>,
-    generation: u64,
-    closed: CancellationToken,
-) -> Result<mpsc::UnboundedSender<String>, RpcError>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message;
-
-    let (mut sink, mut stream) = socket.split();
-    let (out, mut outgoing) = mpsc::unbounded_channel::<String>();
-    let shutdown = inner.shutdown.clone();
+fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
     tokio::spawn(async move {
-        let reason = loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break "shutdown",
-                _ = closed.cancelled() => break "request timed out",
-                message = outgoing.recv() => {
-                    let Some(message) = message else { break "closed" };
-                    if sink.send(Message::text(message)).await.is_err() {
-                        break "write failed";
-                    }
+        let channel = &connection.channel;
+        let mut offset = channel.offset();
+        let mut buffer = Vec::new();
+        let mut sent = 0;
+        let result: Result<(), RpcError> = async {
+            loop {
+                if inner.shutdown.is_cancelled() || connection.closed.is_cancelled() { return Ok(()); }
+                let entries = channel.entries();
+                for entry in &entries[sent..] { channel.write(entry).await?; sent += 1; }
+                let chunk = tokio::select! {
+                    _ = inner.shutdown.cancelled() => return Ok(()),
+                    _ = connection.closed.cancelled() => return Ok(()),
+                    _ = channel.wake.notified() => continue,
+                    result = channel.client.read(sdkhost_client::Stream::Stdout, offset) => result.map_err(|e| RpcError::Unavailable(e.to_string()))?,
+                };
+                offset = chunk.next_offset;
+                buffer.extend(&chunk.bytes);
+                while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+                    let line: Vec<_> = buffer.drain(..=end).collect();
+                    let record: Value = serde_json::from_slice(&line).map_err(|e| RpcError::Unavailable(e.to_string()))?;
+                    let consumed = offset - buffer.len() as u64;
+                    if let Some(text) = record.as_str() {
+                        let frame: Value = serde_json::from_str(text).map_err(|e| RpcError::Unavailable(e.to_string()))?;
+                        channel.observe(&frame, consumed)?;
+                        dispatch(&inner, connection.generation(), text);
+                    } else { channel.observe(&Value::Null, consumed)?; }
                 }
-                frame = stream.next() => {
-                    let text = match frame {
-                        Some(Ok(Message::Text(text))) => text.to_string(),
-                        Some(Ok(Message::Binary(bytes))) => String::from_utf8_lossy(&bytes).into_owned(),
-                        Some(Ok(Message::Ping(payload))) => {
-                            let _ = sink.send(Message::Pong(payload)).await;
-                            continue;
-                        }
-                        Some(Ok(Message::Close(_))) | None => break "closed",
-                        Some(Ok(_)) => continue,
-                        Some(Err(_)) => break "read failed",
-                    };
-                    dispatch(&inner, generation, &text);
-                }
+                if chunk.eof { return Err(RpcError::Disconnected); }
             }
-        };
-        if let Some(connection) = current(generation) {
-            connection.close();
-        }
-        inner.disconnected(generation, reason);
+        }.await;
+        connection.close();
+        inner.disconnected(
+            connection.generation(),
+            if result.is_ok() {
+                "shutdown"
+            } else {
+                "hosted channel closed"
+            },
+        );
+        connection.done.cancel();
     });
-    Ok(out)
 }
 
 fn dispatch(inner: &Inner, generation: u64, text: &str) {

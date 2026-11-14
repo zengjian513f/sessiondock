@@ -23,6 +23,7 @@ from history_fixtures import BINARY
 from hub_fixtures import FakeNode, Hub
 from kiro_sdk_fixtures import KiroFixture
 from kiro_sdk_browser import select_sdk
+from sdk_ui_fixtures import start_sdk
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
 
@@ -131,7 +132,7 @@ def main():
                     assert sum(r['sid'] == a.sid for r in page.evaluate('S.sessions')) == 1
                     select_sdk(page, legacy_uid)
                     with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/open') and r.request.method == 'POST') as opened:
-                        page.locator('#sdk-input').click()
+                        start_sdk(page)
                     assert opened.value.ok, opened.value.text()
                     page.locator('#sdk-input').fill('ACCOUNT_A_CACHED_MARKER')
                     page.locator('#sdk-send').click()

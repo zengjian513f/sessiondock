@@ -78,7 +78,7 @@ create/load 明确发送 `_meta.yoloMode: false`、`autoMode: false`。
 Grok 自身的原生权限规则仍适用；桥接只转发实际收到的审批。
 
 浏览器/SSE 离开不会取消已接受的工作。桥接持有进程、快照及请求，重新打开可继续
-查看或回答。配置持久 state dir 时由[独立 SDK 宿主](sdkhost.md)持有 ACP 子进程，
+查看或回答。统一由[独立 SDK 宿主](sdkhost.md)持有 ACP 子进程，
 共享 shutdown 只断开连接；重启恢复原协议状态、输出游标和待回答请求；
 不触碰外部 TUI、共享 leader 或其他 CLI 进程。
 

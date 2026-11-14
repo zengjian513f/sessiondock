@@ -3,12 +3,9 @@
 //! same native process; observation never starts a replacement.
 use super::{Endpoint, RpcError, websocket};
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::Path};
 #[cfg(windows)]
-use std::{
-    process::{Command, Stdio},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+use std::{fs, io, path::Path};
 
 #[derive(Serialize, Deserialize)]
 struct Record {
@@ -51,39 +48,14 @@ fn identity(pid: u32) -> Result<u64, crate::runtime::process::IdentityFailure> {
 }
 
 #[cfg(windows)]
-fn private_directory(path: &Path) -> io::Result<()> {
-    use std::os::windows::process::CommandExt;
-    fs::create_dir_all(path)?;
-    if fs::symlink_metadata(path)?.file_type().is_symlink() {
-        return Err(io::Error::other("Codex listener directory is a link"));
-    }
-    // Set the ACL before creating any token/record. Only the service user's
-    // SID receives inheritable access; no profile scripts or user config run.
-    let script = "$ErrorActionPreference='Stop'; $p=$env:SESSIONDOCK_CODEX_PRIVATE_DIR; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); [System.IO.Directory]::SetAccessControl($p,$acl)";
-    let status = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("SESSIONDOCK_CODEX_PRIVATE_DIR", path)
-        .creation_flags(0x08000000)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !status.success() {
-        return Err(io::Error::other("cannot protect Codex listener directory"));
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
 pub(super) fn ensure(endpoint: &Endpoint) -> Result<(), RpcError> {
-    use std::os::windows::process::CommandExt;
     let failure = |e: io::Error| RpcError::Unavailable(e.to_string());
     let path = &endpoint.socket;
     let directory = path
         .parent()
         .ok_or_else(|| failure(io::Error::other("listener directory missing")))?;
     if endpoint.autostart_home.is_some() {
-        private_directory(directory).map_err(failure)?;
+        crate::sdk_common::private_dir(directory).map_err(failure)?;
     }
     // The OS lock releases even if the launching service crashes. Concurrent
     // browser/TUI/service requests all inspect the record under the same lock.
@@ -148,20 +120,7 @@ pub(super) fn ensure(endpoint: &Endpoint) -> Result<(), RpcError> {
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let token_path = path.with_extension("token");
     fs::write(&token_path, &token).map_err(failure)?;
-    let log = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path.with_extension("log"))
-        .map_err(failure)?;
-    let mut command = Command::new(&profile.executable);
-    command.args(&profile.args);
-    for key in &profile.env_remove {
-        command.env_remove(key);
-    }
-    command.envs(&profile.env);
-    for key in crate::lifecycle::launcher::DENIED_ENV {
-        command.env_remove(key);
-    }
+    let mut command = crate::sdk_common::host::command(profile);
     command
         .env("CODEX_HOME", home)
         .current_dir(home)
@@ -175,13 +134,7 @@ pub(super) fn ensure(endpoint: &Endpoint) -> Result<(), RpcError> {
             "capability-token",
             "--ws-token-file",
         ])
-        .arg(&token_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(log);
-    // Break away from the service job: a service restart cannot kill turns.
-    // Refuse a job that disallows breakaway rather than claiming persistence.
-    command.creation_flags(0x00000008 | 0x00000200 | 0x01000000);
+        .arg(&token_path);
     // Persist launch intent before CreateProcess. If this service dies between
     // spawn and recording the child identity, a later service must not create
     // an untracked duplicate. An incomplete intent remains visibly unavailable.
@@ -196,25 +149,34 @@ pub(super) fn ensure(endpoint: &Endpoint) -> Result<(), RpcError> {
     )
     .map_err(failure)?;
     drop(reservation);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            let _ = fs::remove_file(path);
-            return Err(failure(error));
-        }
-    };
-    let result = (|| {
-        let started = identity(child.id())
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(failure)?;
+    let result = runtime.block_on(async {
+        let binding = crate::sdk_common::host::directory(
+            &endpoint.host_state.join("sdk-adapters/codex-listeners"),
+            path.as_os_str(),
+        )
+        .map_err(failure)?;
+        let client = crate::sdk_common::host::instance(
+            &endpoint.host_state,
+            &binding,
+            "codex-listener",
+            &command,
+        )
+        .await
+        .map_err(failure)?;
+        let status = client.status().await.map_err(failure)?;
+        let started = identity(status.pid)
             .map_err(|e| RpcError::Unavailable(format!("Codex listener identity: {e:?}")))?;
-        // Publish the incarnation before waiting for readiness. A crash during
-        // startup can then reattach rather than launch an invisible duplicate.
         crate::sdk_common::save_atomic(
             path,
             &Record {
                 url: url.clone(),
-                pid: child.id(),
+                pid: status.pid,
                 started,
-                provider: provider.to_owned(),
+                provider: provider.into(),
             },
         )
         .map_err(failure)?;
@@ -223,23 +185,15 @@ pub(super) fn ensure(endpoint: &Endpoint) -> Result<(), RpcError> {
             if websocket::reachable_with_token(&url, &token) {
                 return Ok(());
             }
-            if let Some(status) = child.try_wait().map_err(failure)? {
-                return Err(RpcError::Unavailable(format!(
-                    "Codex listener 退出：{status}"
-                )));
+            if client.status().await.map_err(failure)?.exit.is_some() {
+                return Err(RpcError::Unavailable("Codex listener 退出".into()));
             }
             if Instant::now() >= deadline {
                 return Err(RpcError::Unavailable("Codex listener 启动超时".into()));
             }
-            std::thread::sleep(Duration::from_millis(100));
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-    })();
-    if result.is_err() {
-        // Only the exact Child created by this attempt; never an attached PID.
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = fs::remove_file(path);
-    }
+    });
     result
 }
 

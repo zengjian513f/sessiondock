@@ -1,5 +1,8 @@
 //! Shared checkpoint writes and diagnostics for the native SDK adapters.
 
+pub(crate) mod commands;
+pub(crate) mod host;
+pub(crate) mod outbox;
 pub(crate) mod projection;
 pub(crate) mod usage;
 pub(crate) mod writers;
@@ -7,24 +10,6 @@ pub(crate) mod writers;
 use crate::lifecycle::launcher::CliProfile;
 use crate::sessions::native_json;
 use std::{io, path::Path};
-
-pub(crate) async fn write_input(
-    mut stdin: tokio::process::ChildStdin,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
-    failed: tokio_util::sync::CancellationToken,
-) {
-    use tokio::io::AsyncWriteExt;
-    while let Some(frame) = rx.recv().await {
-        let mut line = frame.to_string();
-        line.push('\n');
-        if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
-            failed.cancel();
-            return;
-        }
-    }
-    let _ = stdin.shutdown().await;
-    failed.cancel();
-}
 
 #[cfg(target_os = "linux")]
 pub(crate) fn process_owned(

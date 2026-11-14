@@ -12,6 +12,7 @@
 
 mod actions;
 mod capacity;
+mod channel;
 mod connection;
 mod controls;
 mod live;
@@ -53,6 +54,7 @@ pub struct Endpoint {
     pub explicit: bool,
     pub provider: Option<String>,
     pub launcher: Option<crate::lifecycle::launcher::CliProfile>,
+    pub host_state: PathBuf,
 }
 
 /// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
@@ -68,6 +70,7 @@ pub struct TuiRemote {
     /// `CODEX_HOME` the daemon is started in; `None` never starts one.
     pub home: Option<PathBuf>,
     pub launcher: Option<crate::lifecycle::launcher::CliProfile>,
+    pub host_state: PathBuf,
 }
 
 impl TuiRemote {
@@ -89,6 +92,7 @@ impl TuiRemote {
                 autostart_home: self.home.clone(),
                 explicit: false,
                 provider,
+                host_state: self.host_state.clone(),
                 launcher: self.launcher.clone().or_else(|| {
                     Some(crate::lifecycle::launcher::CliProfile {
                         id: "codex-listener".into(),
@@ -109,43 +113,19 @@ impl TuiRemote {
         }
         #[cfg(unix)]
         {
-            use std::{os::unix::net::UnixStream, process::Stdio};
-            let reachable = || UnixStream::connect(&self.socket).is_ok();
-            if reachable() {
-                return true;
-            }
-            let Some(home) = &self.home else {
-                return false;
+            let endpoint = Endpoint {
+                socket: self.socket.clone(),
+                autostart_home: self.home.clone(),
+                explicit: self.home.is_none(),
+                provider: None,
+                launcher: self.launcher.clone(),
+                host_state: self.host_state.clone(),
             };
-            let Ok(mut child) = std::process::Command::new(codex)
-                .args(["app-server", "daemon", "start"])
-                .env("CODEX_HOME", home)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            else {
-                return false;
-            };
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let started = loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status.success(),
-                    Ok(None) if Instant::now() < deadline => {
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    _ => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break false;
-                    }
-                }
-            };
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while started && !reachable() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            started && reachable()
+            let _ = codex;
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .is_ok_and(|runtime| runtime.block_on(connection::connect(&endpoint)).is_ok())
         }
         #[cfg(not(unix))]
         {
@@ -162,6 +142,7 @@ impl Endpoint {
     pub fn from_config(
         explicit: Option<&str>,
         codex_root: Option<&std::path::Path>,
+        state_dir: Option<&std::path::Path>,
     ) -> Option<Self> {
         if let Some(value) = explicit.filter(|value| value.starts_with("ws://")) {
             websocket::request(value).ok()?;
@@ -171,6 +152,7 @@ impl Endpoint {
                 explicit: true,
                 provider: None,
                 launcher: None,
+                host_state: crate::sdk_common::host::state_dir(state_dir),
             });
         }
         if cfg!(windows) && explicit.is_none() {
@@ -181,6 +163,7 @@ impl Endpoint {
                 explicit: false,
                 provider: Some("openai".into()),
                 launcher: None,
+                host_state: crate::sdk_common::host::state_dir(state_dir),
             });
         }
         if !cfg!(unix) {
@@ -194,6 +177,7 @@ impl Endpoint {
                 explicit: true,
                 provider: None,
                 launcher: None,
+                host_state: crate::sdk_common::host::state_dir(state_dir),
             }),
             None => {
                 let home = codex_root?.parent()?.to_path_buf();
@@ -205,6 +189,7 @@ impl Endpoint {
                     explicit: false,
                     provider: None,
                     launcher: None,
+                    host_state: crate::sdk_common::host::state_dir(state_dir),
                 })
             }
         }
@@ -235,6 +220,7 @@ impl Endpoint {
                 socket: self.socket.clone(),
                 home: None,
                 launcher: self.launcher.clone(),
+                host_state: self.host_state.clone(),
             });
         }
         let home = self.autostart_home.as_ref()?;
@@ -244,6 +230,7 @@ impl Endpoint {
                 socket: self.socket.clone(),
                 home: Some(home.clone()),
                 launcher: self.launcher.clone(),
+                host_state: self.host_state.clone(),
             });
         }
         let own = std::env::var_os("CODEX_HOME")
@@ -259,6 +246,7 @@ impl Endpoint {
             socket: self.socket.clone(),
             home: Some(home.clone()),
             launcher: self.launcher.clone(),
+            host_state: self.host_state.clone(),
         })
     }
 }
@@ -272,6 +260,8 @@ type AccountRead = Result<(Value, String), RpcError>;
 
 pub(crate) struct Inner {
     endpoint: Endpoint,
+    host_state: PathBuf,
+    channels: tokio::sync::Mutex<HashMap<PathBuf, std::sync::Weak<Connection>>>,
     connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
     providers: tokio::sync::Mutex<HashMap<String, Arc<Connection>>>,
     routes: Mutex<HashMap<String, String>>,
@@ -355,11 +345,13 @@ impl CodexSdk {
             .map(|dir| dir.join("models/codex-sdk.json"));
         let queue = queue::Queue::open(state_dir.clone())?;
         let receipts = receipts::Receipts::open(state_dir.clone())?;
-        let retention = retention::Retention::open(state_dir, &endpoint.socket)?;
+        let retention = retention::Retention::open(state_dir.clone(), &endpoint.socket)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
+                host_state: crate::sdk_common::host::state_dir(state_dir.as_deref()),
                 endpoint,
                 queue,
+                channels: tokio::sync::Mutex::new(HashMap::new()),
                 connection: tokio::sync::Mutex::new(None),
                 providers: tokio::sync::Mutex::new(HashMap::new()),
                 routes: Mutex::new(HashMap::new()),
@@ -772,6 +764,7 @@ impl Inner {
                 self.recover_active_turn(connection, &thread).await?;
                 self.recover_receipts(connection, &thread).await?;
                 self.queue_event(&thread);
+                connection.restore_requests(self, thread_id);
                 Ok(thread)
             }
             Err(error) => {
@@ -958,6 +951,7 @@ impl Inner {
             Some(thread) if supported => {
                 thread.request(connection.generation(), id, method, params)
             }
+            None if supported => {} // Retained in the channel until its thread is restored.
             _ => connection.refuse(id, method),
         }
     }
