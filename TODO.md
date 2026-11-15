@@ -60,8 +60,8 @@
 
 ## Frontend delivery
 
-- [ ] Orion、Cetus 补发活动会话切换前端 `3826b07c`（版本
-  `20261115T171504354969Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、Vela
+- [ ] Orion、Cetus 补发活动会话切换与大快照分批前端 `095c41a3`（版本
+  `20261115T232519265717Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、Vela
   已仅更新前端、重启并健康，资源代理未变。
 
 - [ ] 继续缩短大 SDK 快照提交后的分组／布局：消息构建已分批且切走可取消，
