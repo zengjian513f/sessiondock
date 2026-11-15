@@ -20,7 +20,7 @@ from sdk_usage_fixtures import refresh_usage
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--screenshots', type=Path, required=True)
+    parser.add_argument('--screenshots', '--output', type=Path, default=Path(tempfile.gettempdir()) / 'sessiondock-quota-sync')
     args = parser.parse_args()
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-quota-sync-') as temp, ExitStack() as stack:
