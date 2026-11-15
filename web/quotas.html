@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="session-info-root">
+<html lang="zh-CN" class="session-info-root quota-root">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -27,10 +27,13 @@
 <script defer src="cycle-usage.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="quotas.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 </head>
-<body class="session-info-page">
+<body class="session-info-page quota-page">
 <header class="si-header"><a href="./">← 会话列表</a><h1>Agent 用量</h1><button id="quota-refresh" type="button">刷新</button></header>
 <main class="si-main">
+<div id="quota-tabs" class="quota-tabs" role="tablist" aria-label="Agent 类型" hidden></div>
+<div class="quota-body">
 <p id="quota-status" class="si-caption" role="status">正在读取…</p>
 <div id="quota-agents"></div>
+</div>
 </main>
 </body></html>

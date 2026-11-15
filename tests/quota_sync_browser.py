@@ -96,7 +96,7 @@ def main():
                 tab.unroute('**/api/quotas/refresh')
                 tab.route('**/api/quotas/refresh', lambda r: r.fulfill(status=503, json={'error': 'offline'}))
                 tab.locator('#quota-refresh').click()
-                expect(tab.locator('#quota-status')).to_contain_text('读取失败')
+                expect(tab.locator('#quota-status')).to_contain_text('节点暂不可达')
                 expect(gauge).to_have_text('31.9%')
                 tab.unroute('**/api/quotas/refresh')
                 page.set_viewport_size({'width': 1280, 'height': 900})

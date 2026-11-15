@@ -98,14 +98,17 @@ def main():
             assert page.url.rstrip('/')==hubbase
             machine=page.locator('#quota-dialog')
             expect(machine).to_be_visible()
-            expect(machine.get_by_role('table')).to_have_count(3)
+            expect(machine.get_by_role('tab')).to_have_count(3)
+            expect(machine.get_by_role('table')).to_have_count(1)
             for name in ('Codex','Claude Code','Agy'):
+                machine.get_by_role('tab',name=name,exact=True).click()
                 table=machine.get_by_role('table',name=name,exact=True)
                 headers={'Codex':['机器','窗口','已使用','API 价值','重置倒计时','Credits','重置卡','采集'],
                          'Claude Code':['机器','窗口','已使用','API 价值','重置倒计时','采集'],
                          'Agy':['机器','额度组','窗口','已使用','API 价值','重置倒计时','采集']}
                 expect(table.get_by_role('columnheader')).to_have_text(headers[name])
                 expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
+            machine.get_by_role('tab',name='Codex',exact=True).click()
             expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
             expect(machine.locator('section[data-source=codex]')).to_contain_text('91%')
             expect(page.locator('#quota-refresh')).to_be_disabled()
@@ -163,13 +166,17 @@ def main():
                     if width==390: page.locator('#header-more-btn').click()
                     page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
                     expect(page.locator('#quota-refresh')).to_be_enabled()
-                    for bar in machine.get_by_role('progressbar').all():
-                        geometry=bar.evaluate("n => {const s=getComputedStyle(n),b=n.nextElementSibling,r=n.getBoundingClientRect(),t=b.getBoundingClientRect();return [s.width,s.height,s.borderRadius,Math.abs((r.y+r.height/2)-(t.y+t.height/2))<1,t.x>=r.right]}")
-                        assert geometry==['40px','6px','3px',True,True],geometry
+                    for name in ('Codex','Agy','Claude Code'):
+                        machine.get_by_role('tab',name=name,exact=True).click()
+                        for bar in machine.get_by_role('progressbar').all():
+                            geometry=bar.evaluate("n => {const s=getComputedStyle(n),b=n.nextElementSibling,r=n.getBoundingClientRect(),t=b.getBoundingClientRect();return [s.width,s.height,s.borderRadius,Math.abs((r.y+r.height/2)-(t.y+t.height/2))<1,t.x>=r.right]}")
+                            assert geometry==['40px','6px','3px',True,True],geometry
+                        page.screenshot(path=str(out/f'{name}-{theme}-{width}.png'),full_page=True)
                     high=machine.locator('section[data-source=claude] .sdk-gauge.low')
                     expect(high).to_have_count(1)
                     assert high.locator('u').evaluate('n => getComputedStyle(n).backgroundColor')=='rgb(229, 72, 77)'
                     assert high.locator('b').evaluate('n => getComputedStyle(n).color')=='rgb(229, 72, 77)'
+                    machine.get_by_role('tab',name='Codex',exact=True).click()
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out/f'{theme}-{width}.png'),full_page=True)
                     if width==390:

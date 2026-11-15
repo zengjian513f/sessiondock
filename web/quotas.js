@@ -4,10 +4,68 @@ async function initQuotas(container) {
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
+  const tabs = container.querySelector('#quota-tabs');
+  const viewport = container.querySelector('.quota-body');
   const cycles = initCycleUsage(()=>render());
   const names = {codex:'Codex', kiro:'Kiro', agy:'Agy', claude:'Claude Code', droid:'Droid'};
   let nodes = [], hub = false, stopped = false;
+  let selected = 'codex';
+  const positions = new Map(), buttons = new Map();
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
+  function select(source, focus=false) {
+    if(buttons.get(source)?.hidden)return;
+    positions.set(selected,viewport.scrollTop);
+    selected=source;
+    for(const [key,button] of buttons) {
+      const active=key===selected;
+      button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;
+      const panel=container.querySelector(`#quota-panel-${key}`);
+      if(panel)panel.hidden=!active;
+    }
+    viewport.scrollTop=positions.get(selected) || 0;
+    if(focus)buttons.get(source).focus({preventScroll:true});
+  }
+  for(const [source,name] of Object.entries(names)) {
+    const button=el('button','quota-tab',name);
+    button.type='button';button.id=`quota-tab-${source}`;button.hidden=true;
+    button.setAttribute('role','tab');button.setAttribute('aria-controls',`quota-panel-${source}`);
+    button.setAttribute('aria-selected',String(source===selected));button.tabIndex=source===selected?0:-1;
+    button.onclick=()=>select(source);
+    button.onkeydown=event=>{
+      const keys=[...buttons.keys()].filter(key=>!buttons.get(key).hidden);
+      let index=keys.indexOf(source);
+      if(event.key==='ArrowRight')index=(index+1)%keys.length;
+      else if(event.key==='ArrowLeft')index=(index+keys.length-1)%keys.length;
+      else if(event.key==='Home')index=0;
+      else if(event.key==='End')index=keys.length-1;
+      else return;
+      event.preventDefault();select(keys[index],true);
+      buttons.get(keys[index]).scrollIntoView({block:'nearest',inline:'nearest'});
+    };
+    buttons.set(source,button);tabs.append(button);
+  }
+  // Keep the connected scrollers, rows and focused cells alive while values
+  // change. Clearing the page briefly collapsed its height and clamped scrollTop.
+  function update(current, next) {
+    if(current.nodeType===Node.TEXT_NODE) {
+      if(current.nodeValue!==next.nodeValue)current.nodeValue=next.nodeValue;
+      return;
+    }
+    for(const attr of [...current.attributes])if(!next.hasAttribute(attr.name))current.removeAttribute(attr.name);
+    for(const attr of next.attributes)if(current.getAttribute(attr.name)!==attr.value)current.setAttribute(attr.name,attr.value);
+    const children=[...current.childNodes], used=new Set();
+    const key=node=>node.nodeType===Node.ELEMENT_NODE ? node.dataset.key || node.id : null;
+    for(const [index,child] of [...next.childNodes].entries()) {
+      const identity=key(child);
+      const old=identity ? children.find(node=>key(node)===identity) : children[index];
+      const match=old && !used.has(old) && key(old)===identity && old.nodeType===child.nodeType && old.nodeName===child.nodeName;
+      const target=match?old:child;
+      if(match)update(old,child);
+      used.add(target);
+      if(current.childNodes[index]!==target)current.insertBefore(target,current.childNodes[index] || null);
+    }
+    for(const child of children)if(!used.has(child))child.remove();
+  }
   async function request(path, method='GET') {
     const response=await fetch(path,{method,cache:'no-store'});
     if(!response.ok) throw new Error([502,503,504].includes(response.status)?'节点暂不可达':`读取失败（HTTP ${response.status}）`);
@@ -27,26 +85,39 @@ async function initQuotas(container) {
     const cell=el('td','quota-time',countdown(value));
     if (value) {
       cell.dataset.deadline=value;
-      cell.title=(expiry ? '已返回卡片的最近到期：' : '')+new Date(value).toLocaleString();
-      if (!expiry) UsageUI.title(cell,()=>`重置剩余 ${countdown(value)}；${new Date(value).toLocaleString()}`);
+      cell.dataset.expiry=String(expiry);
+      cell.title=(expiry ? '已返回卡片的最近到期：' : `重置剩余 ${countdown(value)}；`)+new Date(value).toLocaleString();
     }
     return cell;
   }
   function tick() {
-    for (const cell of root.querySelectorAll('[data-deadline]')) cell.textContent=countdown(cell.dataset.deadline);
+    for (const cell of root.querySelectorAll('[data-deadline]')) {
+      const value=cell.dataset.deadline,label=countdown(value);
+      if(cell.textContent!==label)cell.textContent=label;
+      cell.title=(cell.dataset.expiry==='true'?'已返回卡片的最近到期：':`重置剩余 ${label}；`)+new Date(value).toLocaleString();
+    }
   }
   function render() {
-    const offsets = new Map([...root.querySelectorAll('.quota-scroll')].map(n => [n.dataset.source, n.scrollLeft]));
-    root.replaceChildren();
+    if(stopped)return;
+    const sources=Object.keys(names).filter(source=>nodes.some(node=>node.clients?.some(client=>client.source===source && client.installed)));
+    const previous=selected;
+    if(!sources.includes(selected))selected=sources[0] || selected;
+    tabs.hidden=!sources.length;
+    for(const [source,button] of buttons) {
+      button.hidden=!sources.includes(source);button.tabIndex=source===selected?0:-1;
+      button.setAttribute('aria-selected',String(source===selected));
+    }
+    const next=el('div');next.id=root.id;
     for (const [source, name] of Object.entries(names)) {
       const installedNodes=nodes.filter(node => node.clients?.some(client => client.source===source && client.installed));
       if (!installedNodes.length) continue;
       const grouped=['agy','droid'].includes(source), codex=source==='codex';
       const section=el('section','quota-agent');section.dataset.source=source;
-      const heading=el('h2','',name);heading.id=`quota-${source}-heading`;section.append(heading);
+      section.id=`quota-panel-${source}`;section.hidden=source!==selected;
+      section.setAttribute('role','tabpanel');section.setAttribute('aria-labelledby',`quota-tab-${source}`);
       const scroll=el('div','quota-scroll');scroll.dataset.source=source;
       scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',`${name} 额度表，可横向滚动`);
-      const table=el('table','client-matrix quota-table');table.setAttribute('aria-labelledby',heading.id);
+      const table=el('table','client-matrix quota-table');table.setAttribute('aria-label',name);
       const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','已使用'],['api','API 价值'],['reset','重置倒计时'],
         ...(codex ? [['credits','Credits'],['cards','重置卡']] : []),['captured','采集']];
       const columns=el('colgroup'), head=el('thead'), labels=el('tr');
@@ -63,8 +134,10 @@ async function initQuotas(container) {
         const buckets=codex ? all.filter(b=>!credits.includes(b) && b!==cards) : all;
         const rows=buckets.length ? buckets : [null];
         const body=el('tbody','quota-node');body.dataset.node=node.id;
+        body.dataset.key=`node:${node.id}`;
         for (const [index, bucket] of rows.entries()) {
           const row=el('tr');
+          row.dataset.key=`bucket:${bucket?.id ?? index}`;
           if (index===0) {
             const machine=el('th','quota-machine-name',node.name);machine.scope='rowgroup';machine.rowSpan=rows.length;row.append(machine);
           }
@@ -101,7 +174,7 @@ async function initQuotas(container) {
               if (cards?.expires_at) {
                 const expiry=deadline(cards.expires_at,true);
                 const detail=el('div','quota-card-expiry');
-                detail.textContent=expiry.textContent;detail.dataset.deadline=cards.expires_at;detail.title=expiry.title;
+                detail.textContent=expiry.textContent;detail.dataset.deadline=cards.expires_at;detail.dataset.expiry='true';detail.title=expiry.title;
                 card.append(detail);
               }
               row.append(balance,card);
@@ -117,9 +190,10 @@ async function initQuotas(container) {
         }
         table.append(body);
       }
-      scroll.append(table);section.append(scroll);root.append(section);
-      scroll.scrollLeft=offsets.get(source) || 0;
+      scroll.append(table);section.append(scroll);next.append(section);
     }
+    update(root,next);
+    if(previous!==selected)viewport.scrollTop=positions.get(selected) || 0;
   }
   const accountKey=(node,source)=>`${hub ? node.id : ''}:${source}`;
   function accept(node,data) {
@@ -177,7 +251,7 @@ async function initQuotas(container) {
     const dialog=document.createElement('dialog');
     dialog.id='quota-dialog';dialog.className='app-dialog';
     dialog.setAttribute('aria-labelledby','quota-title');
-    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 用量</h2><button id="quota-refresh" class="btn" type="button">刷新</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="quota-body"><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
+    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 用量</h2><button id="quota-refresh" class="btn" type="button">刷新</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div id="quota-tabs" class="quota-tabs" role="tablist" aria-label="Agent 类型" hidden></div><div class="quota-body"><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
     dialog.querySelector('.modal-close').onclick=()=>dialog.close();
     dialog.addEventListener('click',e=>{if(e.target===dialog) dialog.close();});
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});

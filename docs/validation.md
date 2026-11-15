@@ -38,6 +38,8 @@ order; `--jobs 1` runs everything serially in that order.
 
 [quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
 Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
+[quota_tabs_browser.py](../tests/quota_tabs_browser.py) covers Agent tab navigation, page/dialog layouts,
+and vertical/horizontal scroll and focus retention during periodic, delayed and broadcast updates on node/Hub.
 
 [agent_usage_browser.py](../tests/agent_usage_browser.py) exercises native usage collection,
 cycle API-equivalent cost divided by official used percentage, incremental/deduplicated reads,
