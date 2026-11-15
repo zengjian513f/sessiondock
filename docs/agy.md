@@ -175,7 +175,8 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   `write_to_file` 的 `TargetFile`、`CodeContent` 为字符串时显示完整写入内容，原内容
   标记不可用，不按 `Overwrite` 猜测修改前的文件。
   原始调用可在同一卡片展开，缺失字段和未知结构保留普通工具展示。GENERIC 的显示名为
-  “工具结果”，不把原生类型名当作正文；`native_type` 仍为 `GENERIC`。错误正文为空时
+  “工具结果”，独立结果的名称使用共用工具卡片标题栏，与输出正文分区，
+  不拼入正文预览、全文或复制内容；不把原生类型名当作正文；`native_type` 仍为 `GENERIC`。错误正文为空时
   回退到原生 `error` 字符串，避免丢失失败记录。全文、分页、增量和搜索使用同一投影。
   **DELTA**：GENERIC 只有在原生 `Created At`、`Completed At`
   时间头及紧随其后的 `The command exited with code N.` 结构成立时投影 `exit_code`，

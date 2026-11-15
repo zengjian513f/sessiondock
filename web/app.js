@@ -8785,8 +8785,14 @@ function toolEntry(m) {
   if (m.role !== 'tool') {
     // 落单的工具输出(没配到调用): 保持独立块
     if (!appendAgyOutputPreview(entry, m)) {
+      if (m.name) {
+        entry.classList.add('tool-result-card');
+        const head = el('div', 'tool-head');
+        head.appendChild(el('code', '', m.name));
+        entry.appendChild(head);
+      }
       addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
-                    m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
+                    m.text, toolOutputPath(m));
     }
     if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
     entry.insertAdjacentHTML('beforeend', nativeFileLinks(m.native_files));

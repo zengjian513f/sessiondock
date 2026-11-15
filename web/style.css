@@ -1566,7 +1566,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-entry {
   margin-bottom: 6px; padding: 0; border: 0; background: transparent;
 }
-.tool-entry[data-role="tool"] {
+.tool-entry:is([data-role="tool"], .tool-result-card) {
   border: 1px solid var(--border); border-radius: var(--bubble-radius); overflow: hidden;
   background: var(--bubble-tool); color: var(--terminal-fg); box-shadow: var(--shadow);
 }
@@ -1592,11 +1592,11 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 }
 .tool-head > .tool-toggle { margin-left: auto; }
 .tool-head > .tool-meta + .tool-toggle { margin-left: 0; }
-.tool-entry[data-role="tool"] > :is(.tool-head, pre) {
+.tool-entry:is([data-role="tool"], .tool-result-card) > :is(.tool-head, pre) {
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
 }
-.tool-entry[data-role="tool"]:has(> .tool-head:hover),
-.tool-entry[data-role="tool"]:focus-within {
+.tool-entry:is([data-role="tool"], .tool-result-card):has(> .tool-head:hover),
+.tool-entry:is([data-role="tool"], .tool-result-card):focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .tool-head:hover { background: color-mix(in srgb, var(--bubble-tool) 96%, var(--terminal-fg)); }
@@ -1611,7 +1611,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   margin-top: 0; border-top: 0; border-radius: 0; border-style: solid;
   box-shadow: none; opacity: .92;
 }
-.tool-entry[data-role="tool"] > .tool-args { border-top: 1px solid var(--border); }
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-args { border-top: 1px solid var(--border); }
 .tool-entry > .tool-args-close {
   display: block; width: 100%; margin: 0; padding: 3px 10px;
   border: 0; border-top: 1px solid var(--border); border-radius: 0;
@@ -1626,13 +1626,13 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-entry > .tool-status.err { color: #e5534b; }
 .tool-entry > .tool-out { margin-top: 3px; }
 .tool-entry > .tool-out.err { border-color: color-mix(in srgb, #e5534b 45%, var(--border)); }
-.tool-entry[data-role="tool"]:has(> .tool-status.err) {
+.tool-entry:is([data-role="tool"], .tool-result-card):has(> .tool-status.err) {
   border-color: color-mix(in srgb, #e5534b 45%, var(--border));
 }
-.tool-entry[data-role="tool"] > .tool-out {
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out {
   margin-top: 0; border-top: 1px solid var(--border);
 }
-.tool-entry[data-role="tool"] > .tool-out.err {
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out.err {
   border-top-color: color-mix(in srgb, #e5534b 45%, var(--border));
 }
 
@@ -1845,8 +1845,8 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-out-actions > .more { flex: 1; }
 
 /* 已配对的调用、状态、输出是一张卡；操作栏只是卡内最后一个分区。 */
-.tool-entry[data-role="tool"] > pre:has(+ .tool-out-actions) { border-radius: 0; }
-.tool-entry[data-role="tool"] > .tool-out-actions {
+.tool-entry:is([data-role="tool"], .tool-result-card) > pre:has(+ .tool-out-actions) { border-radius: 0; }
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out-actions {
   border: 0; border-top: 1px solid var(--border); border-radius: 0;
   background: transparent;
 }

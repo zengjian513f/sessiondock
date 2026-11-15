@@ -32,6 +32,8 @@ WRITE_BODY = '\n'.join(f'print("保留写入行 {i}")' for i in range(96)) + '\n
 CHECKPOINT = '# Resuming from a compaction\n\n## Progress Summary\n压缩摘要 agycheckpointbody'
 COMMAND_HEADER = ('Created At: 2026-10-16T16:48:00+08:00\r\n'
                   'Completed At: 2026-10-16T16:48:01+08:00\r\n\r\n')
+WAIT_OUTPUT = (COMMAND_HEADER.replace('\r\n', '\n').rstrip() + '\n') * 2 + (
+    'Waiting for a message that calls on you by name, or on @all posted after #94.')
 MULTILINE = '\n'.join(f'多行短正文 {i}' for i in range(80))
 SETTINGS = [
     'The user changed setting `Model Selection` from None to Gemini 3.8 Flash (High). '
@@ -98,6 +100,7 @@ def fixtures():
               record(11, 'GENERIC', COMMAND_HEADER
                      + 'Output:\r\nThe command exited with code 9.\r\nagyordinaryoutput'),
               record(12, 'PLANNER_RESPONSE', FINAL),
+              record(13, 'GENERIC', WAIT_OUTPUT),
               record(14, 'USER_INPUT', '检查多行内容的收缩'),
               record(15, 'PLANNER_RESPONSE', MULTILINE)]
     for setting in SETTINGS:
@@ -252,6 +255,24 @@ def run(binary, screenshots):
                             expect(file_result.locator('.tool-status')).to_have_text('文件内容 · report.py · 行 1–2 / 2')
                             expect(file_result.locator(':scope > .tool-out')).to_contain_text('1: print("agyfilepreview")')
                             expect(file_result).not_to_contain_text('The following code has been modified')
+                            waiting = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='Waiting for a message')
+                            expect(waiting.locator(':scope > .tool-head')).to_have_text('工具结果')
+                            expect(waiting.locator(':scope > .tool-out')).to_have_text(WAIT_OUTPUT)
+                            expect(waiting.locator('.tool-toggle')).to_have_count(0)
+                            assert waiting.locator('.tool-out').evaluate(
+                                '(e) => getComputedStyle(e).borderTopWidth') == '1px'
+                            # Plain and error results share the header; labels never enter the output.
+                            plain = page.locator('#msgs .tool-entry').filter(has_text='Updated statusline.py')
+                            expect(plain.locator('.tool-head')).to_have_text('工具结果')
+                            expect(plain.locator('.tool-out')).to_have_text('Updated statusline.py')
+                            error_result = page.locator('#msgs .tool-entry').filter(has_text='agyerroronly')
+                            expect(error_result.locator('.tool-head')).to_have_text('工具结果')
+                            expect(error_result.locator('.tool-out.err')).to_have_text('读取文档失败 agyerroronly')
+                            waiting.scroll_into_view_if_needed()
+                            page.evaluate('document.fonts.ready')
+                            page.wait_for_timeout(250)  # Let scrolled text finish painting before visual review.
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-result-page.png'))
+                            waiting.screenshot(path=str(screenshots / f'{theme}-{width}-result.png'))
                             multiline = page.locator('#msgs .msg[data-role=assistant]').filter(has_text='多行短正文 79')
                             expect(multiline.get_by_role('button', name='展开全文', exact=False)).to_have_count(0)
                             assert multiline.locator('.mb').evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')
