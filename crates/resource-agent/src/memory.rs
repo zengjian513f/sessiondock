@@ -71,11 +71,11 @@ pub fn slow_cpu_budget() -> std::io::Result<Option<std::path::PathBuf>> {
     fs::create_dir_all(&slow)?;
     fs::write(slow.join("cgroup.type"), "threaded")?;
     fs::write(root.join("cgroup.subtree_control"), "+cpu")?;
-    fs::write(slow.join("cpu.max"), "20000 100000")?;
+    fs::write(slow.join("cpu.max"), "10000 100000")?;
     let sampler = root.join("fast-sampler");
     fs::create_dir_all(&sampler)?;
     fs::write(sampler.join("cgroup.type"), "threaded")?;
-    fs::write(sampler.join("cpu.max"), "50000 100000")?;
+    fs::write(sampler.join("cpu.max"), "40000 100000")?;
     Ok(Some(slow))
 }
 

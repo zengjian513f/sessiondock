@@ -383,12 +383,13 @@ the NVIDIA compute query. PSS failure never substitutes RSS. PSS uses a separate
 service; the main collector has 80%, preserving the total one-core budget.
 Uninterruptible page-table walks can overrun a kernel scheduling period, and a
 child CPU quota alone cannot isolate the main service from that cost. Within the
-main service, the sampler has 50% and MBM/GPU share 20%, leaving request headroom.
+main service, the sampler has 40% and MBM/GPU share 10%, leaving request headroom.
 Only collector workers and their helper children enter these groups, never
 monitored workloads. Standalone runs retain post-read CPU pacing. Expensive scans
 can take longer; PSS timestamps are captured before reading, so CPU quota delays
-never rejuvenate an old observation;
-metric timestamps retain the oldest contributing sample through aggregation.
+never rejuvenate an old observation.
+The report timestamp is the start of the complete sampling cycle, including
+process discovery; metric timestamps retain the oldest contributing sample through aggregation.
 GPU queries also run independently, about every 10 seconds; values older than
 30 seconds are unavailable. PSS cache entries expire after 60 seconds.
 

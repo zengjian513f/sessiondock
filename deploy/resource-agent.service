@@ -36,7 +36,7 @@ TasksMax=124
 # Connection evidence is retained by age; do not use OOM restarts as eviction.
 MemoryMax=infinity
 # Main service 80% + PSS service 20% = the previous one-core budget.
-# Fast sampler 50%, MBM/GPU 20%, leaving main-service headroom for requests.
+# Fast sampler 40%, MBM/GPU 10%, leaving main-service headroom for requests.
 CPUQuota=80%
 CPUWeight=10
 Nice=10

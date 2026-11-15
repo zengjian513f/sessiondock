@@ -154,7 +154,7 @@ do not create threads. Health reads a completed snapshot independently of
 attribution work, and unchanged bindings reuse prepared resource samples.
 
 The supplied main unit delegates only its own CPU subtree. Its fast sampler has
-50% of one core and MBM/GPU workers share 20%, leaving request headroom within the
+40% of one core and MBM/GPU workers share 10%, leaving request headroom within the
 main unit's 80% quota. PSS runs in `resource-agent-pss.service` with a separate 20%
 quota: large kernel page-table reads can overrun a scheduling period, so a child
 quota alone cannot protect the parent. The configured total remains one core;

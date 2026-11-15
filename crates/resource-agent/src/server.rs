@@ -854,12 +854,12 @@ impl ResourceSampler {
         root: &Path,
         snapshot: &Snapshot,
         node: &str,
-        io: &IoWindow,
-        io_lost: u64,
+        io: (&IoWindow, u64),
         slow_cache: &SlowObservations,
+        sampled_at: f64,
     ) -> Resources {
+        let (io, io_lost) = io;
         let sampled = Instant::now();
-        let sampled_at = now();
         let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64;
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64;
         let previous = self
@@ -1402,9 +1402,9 @@ pub fn run() -> io::Result<()> {
         &config.proc_root,
         &snapshot,
         &config.node_id,
-        &io_window,
-        0,
+        (&io_window, 0),
         &SlowObservations::default(),
+        now(),
     );
     let report = Arc::new(engine.update(&snapshot, data.sampled_at, status.clone()));
     let published_report = Arc::new(Mutex::new(Published {
@@ -1698,6 +1698,7 @@ pub fn run() -> io::Result<()> {
             }
             if sampled.elapsed() >= Duration::from_secs(2) {
                 sampled = Instant::now();
+                let sampled_at = now();
                 let snapshot = linux::collect_uid(&worker_config.proc_root, worker_config.uid);
                 let slow = slow_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 let (io_window, io_lost) = {
@@ -1711,9 +1712,9 @@ pub fn run() -> io::Result<()> {
                     &worker_config.proc_root,
                     &snapshot,
                     &worker_config.node_id,
-                    &io_window,
-                    io_lost,
+                    (&io_window, io_lost),
                     &slow,
+                    sampled_at,
                 );
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 let lost_events = lost.load(Ordering::Relaxed);
