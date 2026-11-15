@@ -141,7 +141,10 @@ CLI/launcher prerequisite before the generic unlinked-terminal message.
 
 A new CLI session may carry the picker's `model` and `effort`; empty or absent
 means the CLI's own default, and a resume or takeover keeps the session's own
-setting. They are persisted in the receipt's spec (omitted when absent, so older
+setting (for Agy, whose `--conversation <sid>` otherwise reads global
+`settings.json`, `create(resume_uid)` and `takeover` persist the session's
+verified native `resume_model` and pass `--settings {"model":"…"}` unless the
+profile already specifies `--model` or `--settings`). New-session choices are persisted in the receipt's spec (omitted when absent, so older
 receipts and binaries are unaffected) and passed as single argument values:
 Claude `--model X --effort Y`, Codex `-m X -c model_reasoning_effort="Y"`, Grok
 `-m X --reasoning-effort Y`, Agy `--model X` with optional `--effort Y`. OpenCode's TUI has no model option, so the model

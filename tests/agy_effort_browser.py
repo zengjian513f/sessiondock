@@ -32,8 +32,10 @@ def choose(page, key, value):
 
 
 def turn(page, fixture, text, model, effort=None):
-    send(page, text)
-    page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
+    request = send(page, text)['request_id']
+    page.wait_for_function(
+        'id => NativeSdkView.raw && !NativeSdkView.raw.running && NativeSdkView.raw.last_turn?.id === id',
+        arg=request)
     row = fixture.peer.inputs(text)[-1]
     assert (row['model'], row['effort']) == (model, effort), row
     return row

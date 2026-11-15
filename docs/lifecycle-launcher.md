@@ -67,7 +67,11 @@ missing identity templates no longer disable a source:
 
 - Claude new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - Codex new: no assigned SID; resume: `resume <sid>`.
-- Agy new: no assigned SID; default resume argv: `--conversation <sid>`.
+- Agy new: no assigned SID; default resume argv: `--conversation <sid>` (plus
+  session-scoped `--settings {"model":"…"}` when the native session has a
+  recorded model and the profile sets neither `--model` nor `--settings`, so
+  resume preserves the conversation's model instead of falling back to global
+  `settings.json`).
   Its read-only native mirror and conversation DB fd evidence provide the
   pending-to-native identity path. Model choice uses `--model`; optional effort
   uses `--effort`. The real CLI browser test covers composer input, menus and

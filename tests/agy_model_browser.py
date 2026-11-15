@@ -81,6 +81,7 @@ def exercise(browser, fixture, screenshots):
             expect(page.locator('.sdk-live')).to_contain_text('Agy running model-observed')
             agy_selected(page, 'low')
             assert fixture.peer.inputs()[-1]['model'] is None, 'observed model became a launch override'
+            assert json.loads(fixture.peer.inputs()[-1]['settings']) == {'model': 'Synthetic Agy (Low)'}
             pid = fixture.native_pid()
             page.locator('#sdk-input').fill('draft retained across reconnect')
         finally:
@@ -126,6 +127,7 @@ def exercise(browser, fixture, screenshots):
             agy_selected(page, 'low')
             expect(page.locator('.dhead')).to_contain_text('Synthetic Agy (Low)')
             assert fixture.peer.inputs()[-1]['model'] == MODEL
+            assert fixture.peer.inputs()[-1]['settings'] is None
             assert fixture.native_pid() != pid, 'explicit model changes still rebuild the native runtime'
             page.locator('#a-chat').click()
             expect(page.locator('#msgs')).to_be_visible()

@@ -1016,3 +1016,14 @@ pub fn valid_choice(text: &str) -> bool {
         && !text.starts_with('-')
         && !text.chars().any(|c| c.is_whitespace() || c.is_control())
 }
+
+/// Verified native session model restored via JSON session settings on Agy
+/// resume (may be a human-readable catalog label such as `Gemini 4 Carbon (High)`
+/// or a model ID).
+pub fn valid_resume_model(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty()
+        && trimmed == text
+        && text.len() <= 200
+        && !text.chars().any(char::is_control)
+}

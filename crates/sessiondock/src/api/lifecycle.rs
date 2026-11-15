@@ -450,13 +450,14 @@ pub(super) async fn prepare_cwd(raw: String, create: bool) -> Result<PreparedCwd
         )
     })?
 }
-/// Resolve a main-session native scope and its inventory cwd from one frozen
-/// snapshot. Missing sessions are 404; conflicting/unsupported/subagent
-/// identities are 409. Nothing here trusts a client-provided path or SID.
+/// Resolve a main-session native scope, its inventory cwd, and its verified
+/// native model from one frozen snapshot. Missing sessions are 404;
+/// conflicting/unsupported/subagent identities are 409. Nothing here trusts a
+/// client-provided path or SID.
 async fn resolve_resume(
     state: &AppState,
     uid: String,
-) -> Result<(crate::sessions::NativeScope, Option<String>), ApiError> {
+) -> Result<(crate::sessions::NativeScope, Option<String>, Option<String>), ApiError> {
     if let Some(service) = &state.transfer
         && service
             .locked(&uid)
@@ -484,15 +485,21 @@ async fn resolve_resume(
                     message: "原生会话身份缺失、冲突或不支持续接；不会按显示 SID、文件名或目录猜测"
                         .into(),
                 })?;
-            let cwd = snapshot.list["sessions"]
+            let row = snapshot.list["sessions"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .find(|row| row["uid"] == scope.uid)
+                .find(|row| row["uid"] == scope.uid);
+            let cwd = row
                 .and_then(|row| row["cwd"].as_str())
                 .filter(|cwd| !cwd.is_empty())
                 .map(str::to_owned);
-            Ok((scope, cwd))
+            let model = row
+                .and_then(|row| row["model"].as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(str::to_owned);
+            Ok((scope, cwd, model))
         })
         .await
 }
@@ -638,9 +645,10 @@ pub async fn create(
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let entry = select_entry(service, body.source, body.resume_uid.is_some())?.clone();
     let mut _kiro_mode = None;
+    let mut resume_model = None;
     let resume = match body.resume_uid {
         Some(uid) => {
-            let (scope, _) = resolve_resume(&state, uid).await?;
+            let (scope, _, native_model) = resolve_resume(&state, uid).await?;
             if source_of(&scope) != Some(body.source) {
                 return Err(ApiError::new(
                     StatusCode::CONFLICT,
@@ -666,6 +674,10 @@ pub async fn create(
             }
             if body.source == Source::Kiro {
                 check_external_kiro(&state, &scope.session_id).await?;
+            }
+            if body.source == Source::Agy {
+                resume_model =
+                    native_model.filter(|m| crate::lifecycle::models::valid_resume_model(m));
             }
             Some((scope.session_id, scope.uid))
         }
@@ -702,6 +714,9 @@ pub async fn create(
             ));
         }
         spec.with_choice(model, effort).map_err(|_| invalid())?
+    } else if resume_model.is_some() {
+        spec.with_resume_model(resume_model)
+            .map_err(|_| invalid())?
     } else {
         spec
     };
@@ -869,7 +884,7 @@ pub async fn takeover(
     let request_id = crate::lifecycle::store::fresh_request_id()
         .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
-    let (scope, cwd) = resolve_resume(&state, body.uid).await?;
+    let (scope, cwd, native_model) = resolve_resume(&state, body.uid).await?;
     let source = source_of(&scope).ok_or_else(invalid)?;
     let _kiro_mode = if source == Source::Kiro {
         Some(
@@ -973,6 +988,14 @@ pub async fn takeover(
         )
     })?;
     let spec = build_spec(&entry, &cwd, Some((scope.session_id, scope.uid)))?;
+    let spec = if source == Source::Agy {
+        spec.with_resume_model(
+            native_model.filter(|m| crate::lifecycle::models::valid_resume_model(m)),
+        )
+        .map_err(|_| invalid())?
+    } else {
+        spec
+    };
     let spec = codex_provider_socket(&state, service, &entry, spec).await?;
     let record = service
         .create(request_id.clone(), spec)

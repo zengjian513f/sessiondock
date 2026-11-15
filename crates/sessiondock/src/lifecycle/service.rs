@@ -965,6 +965,9 @@ impl Core {
                         spec.effort().map(str::to_owned),
                     )
                 })
+                .and_then(|normalized| {
+                    normalized.with_resume_model(spec.resume_model().map(str::to_owned))
+                })
                 .map(|normalized| {
                     let normalized = normalized.with_continuation(spec.continuation().cloned());
                     match spec.codex_socket() {

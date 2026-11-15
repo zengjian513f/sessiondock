@@ -8291,6 +8291,8 @@ function planMessages(msgs, { openTail = false } = {}) {
 
 const baseMessageRole = role => String(role || '').split('·', 1)[0];
 const isTurnStart = m => TURN_START_ROLES.has(m?.role);
+const isTurnSettingsNotice = m => m?.role === 'system'
+  && m?.native_type === 'USER_SETTINGS_CHANGE';
 const sameNativeTurn = (a, b) => a?.turn_id != null && b?.turn_id != null
   && String(a.turn_id) === String(b.turn_id);
 const isTurnAssistant = m => baseMessageRole(m?.role) === 'assistant';
@@ -8433,9 +8435,12 @@ function planTurn(messages, options = {}) {
   }
   // Claude 会把同一次含文字/图片的 user 记录拆成多个规范化气泡。相邻且
   // turn_id 相同的部分是一份输入，全部留在顶层，不能把图片折进“过程”。
+  // Agy 同一 USER_INPUT 步骤附带的 USER_SETTINGS_CHANGE（如模型切换）同样属于
+  // 本轮输入头，保留在顶层时间线，不收进折叠的“本轮过程”。
   let promptEnd = 1;
-  while (promptEnd < messages.length && isTurnStart(messages[promptEnd])
-         && sameNativeTurn(messages[0], messages[promptEnd])) promptEnd++;
+  while (promptEnd < messages.length
+         && ((isTurnStart(messages[promptEnd]) && sameNativeTurn(messages[0], messages[promptEnd]))
+             || isTurnSettingsNotice(messages[promptEnd]))) promptEnd++;
   return planTurnSegment(messages, promptEnd, options);
 }
 

@@ -809,6 +809,20 @@ impl Launcher {
                 }
             }
         }
+        if spec.source() == Source::Agy
+            && let Some(model) = spec.resume_model()
+            && !argv.iter().skip(1).any(|arg| {
+                let arg = arg.to_string_lossy();
+                matches!(arg.as_ref(), "--model" | "--settings")
+                    || arg.starts_with("--model=")
+                    || arg.starts_with("--settings=")
+            })
+        {
+            argv.extend([
+                OsString::from("--settings"),
+                OsString::from(serde_json::json!({ "model": model }).to_string()),
+            ]);
+        }
         if spec.source() == Source::Droid && (spec.model().is_some() || spec.effort().is_some()) {
             argv.extend([
                 OsString::from("--settings"),

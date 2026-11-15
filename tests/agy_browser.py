@@ -6,10 +6,12 @@ discovery or composer SEND is assumed. The unavailable-CLI case explicitly
 overrides the capability response; it does not test installation probing.
 """
 
+from contextlib import closing
 import argparse
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,17 +20,33 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
+from agy_history_browser import SCHEMA, record, write_transcript
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from private_hosts import private_hosts
 from popups import on_popup
 from send_browser import initialize
 
+RESUME_SID = '60651e8e-37aa-4e49-bc34-000000000001'
+RESUME_TITLE = 'Agy 续接模型保持'
+RESUME_MODEL = 'Gemini 4 Carbon (High)'
+GLOBAL_MODEL = 'Gemini 4 Argon (Medium)'
+
 FAKE = r'''
 import json, os, sys, termios
 from pathlib import Path
 args = sys.argv[1:]
+def opt(flag):
+    for i, a in enumerate(args):
+        if a == flag and i + 1 < len(args): return args[i + 1]
+    return None
+settings_file = Path(os.environ['HOME']) / '.gemini/antigravity-cli/settings.json'
+saved = json.loads(settings_file.read_text()) if settings_file.is_file() else {}
+session_settings = json.loads(opt('--settings')) if opt('--settings') else {}
+active_model = opt('--model') or session_settings.get('model') or saved.get('model') or ''
+conv = opt('--conversation')
+held_db = (Path(os.environ['HOME']) / '.gemini/antigravity-cli/conversations' / f'{conv}.db').open('rb') if conv else None
 with Path(os.environ['AGY_TEST_ARGV']).open('a') as log:
-    log.write(json.dumps({'argv': args, 'cwd': os.getcwd(), 'pid': os.getpid()}) + '\n')
+    log.write(json.dumps({'argv': args, 'cwd': os.getcwd(), 'pid': os.getpid(), 'active_model': active_model}) + '\n')
 if '--version' in args:
     print('1.2.16', flush=True)
     sys.exit(0)
@@ -37,7 +55,7 @@ if not sys.stdin.isatty():
 settings = termios.tcgetattr(0)
 settings[3] &= ~termios.ECHO
 termios.tcsetattr(0, termios.TCSANOW, settings)
-print('AGY_PTY_READY', flush=True)
+print('AGY_PTY_READY model=' + active_model, flush=True)
 for line in sys.stdin:
     print('AGY_CONFIRMED:' + line.rstrip('\r\n'), flush=True)
 '''
@@ -228,12 +246,52 @@ def run(browser, base, root):
         page.reload(wait_until='networkidle')
         expect(item).to_have_count(0)
         assert not pending(page, base, receipt['record_id'])
+        # Resume/takeover of a recorded Agy session preserves its native model
+        # via session-scoped --settings even when global settings.json differs.
+        seeded = page.locator('#side .item').filter(has_text=RESUME_TITLE)
+        expect(seeded).to_have_count(1)
+        seeded.click()
+        expect(page.locator('.dhead')).to_contain_text(RESUME_MODEL)
+        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/takeover') as resumed:
+            page.locator('#a-term').click()
+        assert resumed.value.status == 200, resumed.value.text()
+        expect(page.locator('#termpane')).to_be_visible()
+        wait_screen(page, 'AGY_PTY_READY model=' + RESUME_MODEL)
+        launches = [json.loads(line) for line in (root / 'argv.jsonl').read_text().splitlines()]
+        resumed_launch = next(r for r in reversed(launches) if '--conversation' in r['argv'])
+        assert resumed_launch['argv'][:3] == ['--conversation', RESUME_SID, '--settings'], resumed_launch
+        assert json.loads(resumed_launch['argv'][3]) == {'model': RESUME_MODEL}, resumed_launch
+        assert resumed_launch['active_model'] == RESUME_MODEL, resumed_launch
+        settings_file = root / 'home/.gemini/antigravity-cli/settings.json'
+        assert json.loads(settings_file.read_text()) == {'model': GLOBAL_MODEL}
         check_phone(page)
         assert not errors, errors
-        print('PASS agy: new_pending, argv, icon, keyboard PTY, reload and discard', flush=True)
+        print('PASS agy: new_pending, argv, icon, keyboard PTY, reload, discard and resume model preservation', flush=True)
     finally:
         context.close()
     check_unavailable(browser, base)
+
+
+def seed_resume_session(root):
+    native = root / 'home/.gemini/antigravity-cli'
+    native.mkdir(parents=True, exist_ok=True)
+    (native / 'settings.json').write_text(json.dumps({'model': GLOBAL_MODEL}))
+    (native / 'conversations').mkdir(parents=True, exist_ok=True)
+    (native / 'conversations' / f'{RESUME_SID}.db').write_bytes(b'')
+    with closing(sqlite3.connect(native / 'conversation_summaries.db')) as db, db:
+        db.execute(SCHEMA)
+        db.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
+                   (RESUME_SID, RESUME_TITLE, '2026-10-16T08:49:00Z',
+                    json.dumps([(root / 'work').as_uri()]), '', 'DONE', 2, 'fixture'))
+    first = record(0, 'USER_INPUT', '保持当前会话模型')
+    first['content'] += (
+        '\n<USER_SETTINGS_CHANGE>\n'
+        f'The user changed setting `Model Selection` from None to {RESUME_MODEL}. '
+        "No need to comment on this change if the user doesn't ask about it. "
+        'If reporting what model you are, please use a human readable name instead of the exact string.\n'
+        '</USER_SETTINGS_CHANGE>')
+    write_transcript(native, RESUME_SID, [first, record(1, 'PLANNER_RESPONSE', '已完成首轮分析。')])
+    return native
 
 
 def main():
@@ -250,10 +308,14 @@ def main():
     host_binary = args.ptyhost.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-') as tmp, private_hosts(Path(tmp)):
         root = Path(tmp).resolve()
-        for name in ('home', 'host', 'ledger', 'state', 'work', 'bin', 'claude', 'codex', 'grok', 'opencode'):
+        for name in ('home', 'host', 'ledger', 'state', 'work', 'bin', 'claude', 'codex', 'grok', 'opencode', 'mirror', 'proc'):
             (root / name).mkdir(mode=0o700)
+        native = seed_resume_session(root)
         fake = root / 'bin/agy'
-        fake.write_text('#!' + str(Path(sys.executable).resolve()) + '\n' + FAKE)
+        script = root / 'bin/agy_impl.py'
+        script.write_text(FAKE)
+        py = str(Path(sys.executable).resolve())
+        fake.write_text(f'#!/bin/bash\nexec -a agy "{py}" "{script}" "$@"\n')
         fake.chmod(0o700)
         env = {'HOME': str(root / 'home'), 'PATH': str(root / 'bin') + ':/usr/bin:/bin',
             'TERM': 'xterm-256color', 'LANG': 'C.UTF-8', 'AGY_TEST_ARGV': str(root / 'argv.jsonl'),
@@ -272,7 +334,9 @@ def main():
                         file_roots=(root / 'work',), file_write_roots=(root / 'work',),
                         trash_dir=root / 'trash', audit_dir=root / 'audit',
                         extra_env={'SESSIONDOCK_OPENCODE_ROOT': str(root / 'opencode'),
-                            'SESSIONDOCK_OPENCODE_DB': str(root / 'opencode/empty.db')}) as (base, _), sync_playwright() as pw:
+                            'SESSIONDOCK_OPENCODE_DB': str(root / 'opencode/empty.db'),
+                            'SESSIONDOCK_AGY_HOME': str(native),
+                            'SESSIONDOCK_AGY_ROOT': str(root / 'mirror')}) as (base, _), sync_playwright() as pw:
                     options = {'headless': True}
                     if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                         options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']

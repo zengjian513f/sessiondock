@@ -62,20 +62,28 @@ impl Bridge {
                 transport::validate_sid(&sid)?;
                 let path = self.mirror.join("cli").join(&sid);
                 let uid = crate::sessions::uid_for("agy", &path);
-                let (model, effort) = {
+                let (model, observed, effort) = {
                     let data = live.data.lock().unwrap();
-                    (data.model.clone(), data.effort.clone())
+                    (
+                        data.model.clone(),
+                        data.observed_model.clone(),
+                        data.effort.clone(),
+                    )
                 };
-                self.install(
+                let observed_model = super::transcript::model(&self.process, &sid)
+                    .await
+                    .or(observed);
+                let forked = self.install(
                     uid.clone(),
                     sid.clone(),
                     live.cwd.clone(),
                     model.clone(),
                     effort,
                 )?;
+                forked.observe_model(observed_model.clone());
                 result["uid"] = json!(uid);
                 result["session"] = json!({"uid":uid,"source":"agy","sid":sid,"cwd":live.cwd,
-                    "path":path,"title":"分支会话","model":model});
+                    "path":path,"title":"分支会话","model":model.or(observed_model)});
             }
             Ok::<_, String>(result)
         }

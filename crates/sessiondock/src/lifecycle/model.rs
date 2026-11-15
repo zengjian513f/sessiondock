@@ -244,6 +244,10 @@ pub struct LaunchSpec {
     /// session's own setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    /// Verified native model restored on Agy resume (`--settings`) so Agy CLI
+    /// keeps the conversation's recorded model instead of global `settings.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -311,6 +315,7 @@ impl LaunchSpec {
             cwd,
             launch,
             model: None,
+            resume_model: None,
             effort: None,
             continuation: None,
         };
@@ -326,6 +331,14 @@ impl LaunchSpec {
     ) -> Result<Self, Error> {
         self.model = model.filter(|value| !value.is_empty());
         self.effort = effort.filter(|value| !value.is_empty());
+        self.validate()?;
+        Ok(self)
+    }
+    /// Verified native model restored for an Agy resume launch.
+    pub fn with_resume_model(mut self, model: Option<String>) -> Result<Self, Error> {
+        self.resume_model = model
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         self.validate()?;
         Ok(self)
     }
@@ -345,6 +358,9 @@ impl LaunchSpec {
     }
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
+    }
+    pub fn resume_model(&self) -> Option<&str> {
+        self.resume_model.as_deref()
     }
     pub fn effort(&self) -> Option<&str> {
         self.effort.as_deref()
@@ -377,6 +393,13 @@ impl LaunchSpec {
                 return Err(Error::InvalidSpec);
             }
         }
+        if let Some(model) = &self.resume_model
+            && (self.source != Source::Agy
+                || !matches!(self.launch, Launch::Resume { .. })
+                || !super::models::valid_resume_model(model))
+        {
+            return Err(Error::InvalidSpec);
+        }
         self.launch.validate(self.source)
     }
     pub(super) fn verify_directory(&self) -> Result<(), Error> {
@@ -387,6 +410,7 @@ impl LaunchSpec {
             self.launch.clone(),
         )?
         .with_choice(self.model.clone(), self.effort.clone())?
+        .with_resume_model(self.resume_model.clone())?
         .with_continuation(self.continuation.clone());
         checked.codex_socket = self.codex_socket.clone();
         if checked == *self {

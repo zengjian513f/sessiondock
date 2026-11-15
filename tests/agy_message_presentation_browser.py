@@ -148,9 +148,15 @@ def run(binary, screenshots):
                             page.locator('#side .item').filter(has_text=TITLE).click()
                             expect(page.locator('#msgs')).to_contain_text('已修复并完成验证')
                             expect(page.locator('#detail .dhead')).not_to_contain_text('跳过未知的Agy记录类型')
-                            # Default process is folded; final Markdown stays visible.
+                            # Default process is folded; final Markdown and turn-level settings notices stay visible.
                             expect(page.locator('#msgs > .turn-process.folded')).to_have_count(1)
                             expect(page.locator('#msgs .mb table')).to_have_count(1)
+                            top_notices = page.locator('#msgs > .native-settings')
+                            expect(top_notices).to_have_count(2)
+                            expect(top_notices.nth(0).locator('summary')).to_contain_text('模型：未设置 → Gemini 3.8 Flash (High)')
+                            expect(top_notices.nth(1).locator('summary')).to_contain_text('模型：Gemini 3.8 Flash (High) → Claude Opus 5.5 (Medium)')
+                            top_notices.nth(0).scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-folded-timeline.png'))
                             page.get_by_role('button', name='展开本轮过程', exact=True).click()
                             groups = page.get_by_role('button', name='展开工具调用组', exact=True)
                             while groups.count():

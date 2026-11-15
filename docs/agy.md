@@ -145,7 +145,8 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
 - `USER_INPUT`：仅去除 CLI 外层 `<USER_REQUEST>`，保留用户自己的正文与内层
   同名文本，作为原生回显对账依据。尾部 `<ADDITIONAL_METADATA>` 识别为
   `native_metadata`，不混入用户正文；`<USER_SETTINGS_CHANGE>` 独立显示为
-  “设置变更”的系统气泡。**DELTA（2026-10-16 自动折叠）**：已识别的原生
+  “设置变更”的系统气泡，并与所属 `USER_INPUT` 一同留在回合顶层时间线，不收进折叠的
+  “本轮过程”。**DELTA（2026-10-16 自动折叠）**：已识别的原生
   `The user changed setting` 说明默认只显示一行旧值 → 新值，`Model Selection`
   标为“模型”；点击展开完整原文，未知结构仍保留原有正文。其他完整尾部 tag 保留类型和正文，显示“附加信息”；
   不完整结构保留原文，不按正文里的代码/HTML tag 推断系统消息。

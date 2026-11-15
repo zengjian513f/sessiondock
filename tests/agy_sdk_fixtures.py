@@ -176,7 +176,7 @@ for line in sys.stdin:
     message=json.loads(line)
     assert message['event']=='user',message
     text=message['message']['content']
-    record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
+    record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'settings':option('--settings'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
     resumed=index>0
     while not steered_queue.empty():
         _,carry_text=steered_queue.get_nowait()

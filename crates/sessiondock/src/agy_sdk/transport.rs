@@ -335,6 +335,19 @@ impl Native {
         }
         if let Some(model) = model {
             command.arg("--model").arg(model);
+        } else if let Some(sid) = sid
+            && !process.profile.args.iter().any(|arg| {
+                matches!(arg.as_str(), "--model" | "--settings")
+                    || arg.starts_with("--model=")
+                    || arg.starts_with("--settings=")
+            })
+            && let Some(observed) = super::transcript::model(&process, sid)
+                .await
+                .filter(|m| crate::lifecycle::models::valid_resume_model(m))
+        {
+            command
+                .arg("--settings")
+                .arg(serde_json::json!({ "model": observed }).to_string());
         }
         // Concrete catalog variants already fix effort, including persisted
         // settings or queued turns created by an older frontend.
