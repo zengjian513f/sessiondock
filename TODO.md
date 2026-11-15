@@ -3,8 +3,8 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
-- [ ] Orion、Cetus 补发 Agent 周期用量与百分比等值估算 `3534d55a`
-  （版本 `20261115T112530882011Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
+- [ ] Orion、Cetus 补发 Agent 周期用量及 API 价值列修正 `61a76d83`
+  （版本 `20261115T154936436603Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
   Hub、Vela 已部署、重启并健康，原生会话宿主保持运行。
 
 - [ ] Orion、Cetus 补发周期性读取及 Hub 快照修复的后端快照 `db78edd0`
