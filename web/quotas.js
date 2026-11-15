@@ -4,7 +4,7 @@ async function initQuotas(container) {
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
-  const cycles = initCycleUsage(container);
+  const cycles = initCycleUsage(()=>render());
   const names = {codex:'Codex', kiro:'Kiro', agy:'Agy', claude:'Claude Code', droid:'Droid'};
   let nodes = [], hub = false, stopped = false;
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
@@ -47,7 +47,7 @@ async function initQuotas(container) {
       const scroll=el('div','quota-scroll');scroll.dataset.source=source;
       scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',`${name} 额度表，可横向滚动`);
       const table=el('table','client-matrix quota-table');table.setAttribute('aria-labelledby',heading.id);
-      const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','已使用'],['reset','重置倒计时'],
+      const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','已使用'],['api','API 价值'],['reset','重置倒计时'],
         ...(codex ? [['credits','Credits'],['cards','重置卡']] : []),['captured','采集']];
       const columns=el('colgroup'), head=el('thead'), labels=el('tr');
       for (const [key,label] of fields) {
@@ -86,7 +86,8 @@ async function initQuotas(container) {
             gauge.append(bar,el('b','',`${used.toLocaleString(undefined,{maximumFractionDigits:1})}%`));
             remaining.append(gauge);
           } else remaining.append(el('b','',bucket?.remaining_text ?? 'N/A'));
-          row.append(remaining,deadline(bucket?.resets_at));
+          const api=el('td');cycles.paint(api,node,source,bucket);
+          row.append(remaining,api,deadline(bucket?.resets_at));
           if (index===0) {
             if (codex) {
               const balance=el('td','quota-credits');balance.rowSpan=rows.length;
@@ -145,7 +146,6 @@ async function initQuotas(container) {
             request(base.replace(/quotas$/, 'clients'))
           ]);
           if(clients.status==='fulfilled') node.clients=clients.value.clients || [];
-          cycles.render();
           if(quotas.status==='fulfilled') {accept(node,quotas.value);}
           else if(collect) throw quotas.reason;
           else node.error=quotas.reason.message;
@@ -161,7 +161,7 @@ async function initQuotas(container) {
     } catch(error) {status.textContent=`读取失败 · ${error.message}`;}
     finally {refresh.disabled=false;}
   }
-  refresh.addEventListener('click',()=>load(true));
+  refresh.addEventListener('click',async()=>{await load(true);await cycles.refresh();});
   // Only update the local clock; opening and the refresh button collect quotas.
   const timer=setInterval(tick,1000);
   const stopClock=()=>{stopped=true;cycles.stop();UsageUI.watchers.delete(root);clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
@@ -177,7 +177,7 @@ async function initQuotas(container) {
     const dialog=document.createElement('dialog');
     dialog.id='quota-dialog';dialog.className='app-dialog';
     dialog.setAttribute('aria-labelledby','quota-title');
-    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 用量</h2><button id="quota-refresh" class="btn" type="button">刷新额度</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="quota-body"><div id="usage-cycles"></div><h2 class="usage-official">官方额度</h2><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
+    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 用量</h2><button id="quota-refresh" class="btn" type="button">刷新</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="quota-body"><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
     dialog.querySelector('.modal-close').onclick=()=>dialog.close();
     dialog.addEventListener('click',e=>{if(e.target===dialog) dialog.close();});
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});

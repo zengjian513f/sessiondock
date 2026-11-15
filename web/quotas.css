@@ -4,24 +4,27 @@
 .quota-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .quota-table { table-layout: fixed; min-width: 600px; }
 .quota-col-machine { width: 18%; }
-.quota-col-group { width: 21%; }
 .quota-col-window { width: 12%; }
 .quota-col-remaining { width: 16%; }
+.quota-col-api { width: 19%; }
 .quota-col-reset { width: 18%; }
-.quota-col-captured { width: 15%; }
-[data-source="claude"] .quota-table { min-width: 500px; }
-[data-source="claude"] .quota-col-window { width: 17%; }
-[data-source="claude"] .quota-col-remaining { width: 20%; }
-[data-source="claude"] .quota-col-reset { width: 22%; }
-[data-source="claude"] .quota-col-captured { width: 23%; }
-[data-source="codex"] .quota-table { min-width: 780px; }
+.quota-col-captured { width: 17%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-machine { width: 15%; }
+.quota-col-group { width: 20%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-window { width: 10%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-remaining { width: 13%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-api { width: 17%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-reset { width: 13%; }
+:is([data-source="agy"], [data-source="droid"]) .quota-col-captured { width: 12%; }
+[data-source="codex"] .quota-table { min-width: 900px; }
 [data-source="codex"] .quota-col-machine { width: 14%; }
-[data-source="codex"] .quota-col-window { width: 17%; }
+[data-source="codex"] .quota-col-window { width: 12%; }
 [data-source="codex"] .quota-col-remaining { width: 12%; }
-[data-source="codex"] .quota-col-reset { width: 17%; }
-.quota-col-credits { width: 10%; }
-.quota-col-cards { width: 16%; }
-[data-source="codex"] .quota-col-captured { width: 14%; }
+[data-source="codex"] .quota-col-api { width: 17%; }
+[data-source="codex"] .quota-col-reset { width: 13%; }
+.quota-col-credits { width: 9%; }
+.quota-col-cards { width: 11%; }
+[data-source="codex"] .quota-col-captured { width: 12%; }
 .quota-card-expiry { color: var(--muted); font-size: 11px; margin-top: 4px; }
 .quota-table th, .quota-table td { padding: 5px 8px; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
 .quota-table .quota-credits { text-align: right; font-variant-numeric: tabular-nums; }
@@ -43,31 +46,6 @@
 #quota-status { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 #quota-status:empty { display: none; }
 
-.usage-toolbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
-.usage-toolbar h2, .usage-toolbar h3 { margin: 0 auto 0 0; font-size: 13px; }
-.usage-toolbar h2, .usage-official { font-size: 14px; }
-.usage-official { margin: 16px 0 8px; }
-.usage-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0; overflow-wrap: anywhere; }
-.usage-note:empty { display: none; }
-.usage-node { margin: 12px 0; }
-.usage-cycle { border-top: 1px solid var(--border); padding: 8px 0; }
-.usage-cycle-name { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; }
-.usage-metrics { display: grid; grid-template-columns: 1fr .8fr 1fr; margin: 8px 0; gap: 12px; }
-.usage-metrics > div { min-width: 0; }
-.usage-metrics dt { color: var(--muted); font-size: 12px; }
-.usage-metrics dd { margin: 4px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.usage-details { font-size: 12px; }
-.usage-details summary { cursor: pointer; color: var(--accent); width: fit-content; padding: 3px 0; }
-.usage-model { margin: 10px 0 2px; overflow-wrap: anywhere; }
-.usage-price-link { display: inline-block; margin-right: 12px; overflow-wrap: anywhere; }
-.usage-settings { padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; }
-.usage-settings h3 { font-size: 13px; margin: 0 0 10px; }
-.usage-setting { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; font-size: 12px; }
-.usage-setting input[type=number] { width: 100px; }
-@media(min-width:721px) {
-  .usage-cycle { display: grid; grid-template-columns: minmax(140px,1fr) minmax(0,3fr); column-gap: 16px; }
-  .usage-cycle-name { align-self: center; }
-  .usage-metrics { margin: 0; text-align: right; }
-  .usage-cycle > .usage-note, .usage-cycle > .usage-details { grid-column: 1 / -1; }
-}
-@media(max-width:480px) { .usage-metrics { gap: 6px; } .usage-metrics dd { font-size: 14px; } }
+.quota-api { font-variant-numeric: tabular-nums; }
+.quota-api small { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; white-space: nowrap; }
+.quota-api:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

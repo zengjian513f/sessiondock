@@ -42,7 +42,11 @@ impl AgentUsage {
         .collect::<serde_json::Map<String, Value>>();
         let directory = config.state_dir.as_ref().map(|p| p.join("agent-usage"));
         let value = directory.as_ref().map(|dir|json!({"directory":dir,"roots":roots,
-            "quota_dir":config.state_dir.as_ref().unwrap().join("quotas"),"prices":dir.join("prices.json")})).unwrap_or(Value::Null);
+            "quota_dir":config.state_dir.as_ref().unwrap().join("quotas"),"prices":dir.join("prices.json"),
+            "default_prices":dir.join("default-prices.json"),
+            "transfer_dir":config.state_dir.as_ref().unwrap().join("transfers"),
+            "trash_dir":config.trash_dir,
+            "codex_archive":config.roots.codex.as_ref().and_then(|p|p.parent()).map(|p|p.join("archived_sessions"))})).unwrap_or(Value::Null);
         let service = Arc::new(Self {
             directory,
             config: value,
@@ -134,6 +138,10 @@ impl AgentUsage {
             crate::quotas::save(&dir.join("config.json"), &config)?;
             // Code and default prices belong to the running committed artifact.
             std::fs::write(dir.join("collector.py"), SCRIPT)?;
+            crate::quotas::save(
+                &dir.join("default-prices.json"),
+                &serde_json::from_str::<Value>(PRICES)?,
+            )?;
             if !dir.join("prices.json").exists() {
                 crate::quotas::save(
                     &dir.join("prices.json"),
@@ -145,7 +153,7 @@ impl AgentUsage {
         .await
         .map_err(std::io::Error::other)??;
         if collect {
-            tokio::select! { _=self.shutdown.cancelled()=>return Ok(()), _=self.quotas.collect()=>{} }
+            tokio::select! { _=self.shutdown.cancelled()=>return Ok(()), _=self.quotas.collect_cached(None)=>{} }
         }
         let python = std::env::var_os("SESSIONDOCK_USAGE_PYTHON")
             .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into());

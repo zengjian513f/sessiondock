@@ -100,9 +100,9 @@ def main():
             expect(machine.get_by_role('table')).to_have_count(3)
             for name in ('Codex','Claude Code','Agy'):
                 table=machine.get_by_role('table',name=name,exact=True)
-                headers={'Codex':['机器','窗口','已使用','重置倒计时','Credits','重置卡','采集'],
-                         'Claude Code':['机器','窗口','已使用','重置倒计时','采集'],
-                         'Agy':['机器','额度组','窗口','已使用','重置倒计时','采集']}
+                headers={'Codex':['机器','窗口','已使用','API 价值','重置倒计时','Credits','重置卡','采集'],
+                         'Claude Code':['机器','窗口','已使用','API 价值','重置倒计时','采集'],
+                         'Agy':['机器','额度组','窗口','已使用','API 价值','重置倒计时','采集']}
                 expect(table.get_by_role('columnheader')).to_have_text(headers[name])
                 expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
             expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
@@ -152,7 +152,7 @@ def main():
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==2
             (root/'used').write_text('25')
-            page.get_by_role('button',name='刷新额度',exact=True).click()
+            page.get_by_role('button',name='刷新',exact=True).click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             for theme in ('light','dark'):
@@ -218,7 +218,7 @@ def main():
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
-            page.get_by_role('button',name='刷新额度',exact=True).click()
+            page.get_by_role('button',name='刷新',exact=True).click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('31%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.reload()
