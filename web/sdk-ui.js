@@ -397,11 +397,10 @@ const SdkUI = {
     view.liveTurns = groups;
   },
 
-  paintHistory(view, messages, {tailComplete = true, decorate, actions = ''} = {}) {
+  paintHistory(view, messages, {tailComplete = true, decorate, actions = '', partial = view.historyData.partial} = {}) {
     S.autoOpen = 0; S.markCapped = false;
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
-    const partial = view.historyData.partial;
     const split = partial ? Math.min(partial.head, messages.length) : 0;
     const visible = message => message.event_kind !== 'compact';
     const plan = partial

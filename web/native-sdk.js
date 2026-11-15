@@ -43,7 +43,7 @@ function nativeSdkAgyHistoryJoin(view) {
     const message = messages[i];
     if (Number.isInteger(message.native_step_index)
         && ['DONE', 'ERROR'].includes(message.native_step_status))
-      return {step: message.native_step_index, cut: i + 1};
+      return nativeSdkAgyJoinNotices(view, message.native_step_index, i + 1);
   }
   return null;
 }
@@ -52,6 +52,32 @@ function nativeSdkAgyStep(item) {
   if (Number.isInteger(item.native?.step_index)) return item.native.step_index;
   const match = /:step:(\d+)(?::thinking)?$/.exec(item.native_id || item.id || '');
   return match ? Number(match[1]) : null;
+}
+
+function nativeSdkAgyJoinNotices(view, step, cut) {
+  const messages = view.historyData.messages, notices = new Map();
+  const head = view.historyData.partial?.head;
+  let anchor = null, addedHead = 0;
+  for (const item of view.raw?.items || []) {
+    const index = nativeSdkAgyStep(item);
+    if (index !== null) {
+      anchor = Math.max(anchor ?? index, index);
+    } else if (item.role === 'user') {
+      anchor = null;
+    } else if (item.role === 'system' && item.native_type !== 'checkpoint'
+        && anchor !== null && anchor <= step) {
+      // Bridge notices have no native step of their own. Keep their position
+      // after the preceding replay step when that step moves into history.
+      // Timestamps are display metadata, not a substitute for stream order.
+      let at = messages.findIndex(message => Number.isInteger(message.native_step_index)
+        && message.native_step_index > anchor);
+      if (at < 0 || at > cut) at = cut;
+      notices.set(item, {at, message: SdkUI.messageTime(view, nativeSdkMessage(item, 'agy'))});
+      if (head && (at < head || (at === head && anchor <= messages[head - 1]?.native_step_index))) addedHead++;
+    }
+  }
+  return {step, cut, notices,
+    partial: head ? {...view.historyData.partial, head: head + addedHead} : view.historyData.partial};
 }
 
 function nativeSdkSnapshotDelta(before, change) {
@@ -124,6 +150,7 @@ const NativeSdkView = {
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
+    this.historyNotices = null;
     this.nativeModel = this.nativeEffort = null;
     const generation = ++this.generation;
     const source = String(uid).split(':')[0];
@@ -438,6 +465,7 @@ const NativeSdkView = {
       : this.uid.startsWith('agy:')
       ? rawItems.filter(item => {
         if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
+        if (agyJoin?.notices.has(item)) return false;
         const step = nativeSdkAgyStep(item);
         return !agyJoin || step === null || step > agyJoin.step;
       })
@@ -638,6 +666,13 @@ const NativeSdkView = {
     const first = this.items?.find(item => item.role === 'user');
     if (join) {
       cut = join.cut; messages = messages.slice(0, cut);
+      const slots = new Map();
+      for (const {at, message} of join.notices.values()) {
+        if (!slots.has(at)) slots.set(at, []);
+        slots.get(at).push(message);
+      }
+      if (slots.size) messages = messages.flatMap((message, index) => [...(slots.get(index) || []), message])
+        .concat(slots.get(cut) || []);
     } else if (first) {
       const identity = NativeSdkControls.messageIdentity(this, first);
       const at = messages.findIndex(message => message.role === 'user' && identity
@@ -653,12 +688,16 @@ const NativeSdkView = {
     const tailComplete = cut < fullMessages.length
       || (this.connected ? !this.running && !(this.requests?.size || this.raw?.requests?.length) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
+    const notices = JSON.stringify(join ? [...join.notices.values()] : []);
     if (this.historyRenderedData === this.historyData && this.historyCut === cut
+        && this.historyNotices === notices
         && this.historyActions===actions && this.historyTailComplete === tailComplete) return;
+    this.historyNotices = notices;
     this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
     this.historyTailComplete = tailComplete;
-    SdkUI.paintHistory(this, messages, {tailComplete, actions, decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
+    SdkUI.paintHistory(this, messages, {tailComplete, actions, partial: join ? join.partial : this.historyData.partial,
+      decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
   },
 
   requestCard(request) {

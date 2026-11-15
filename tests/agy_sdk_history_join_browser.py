@@ -17,6 +17,11 @@ from sdk_selection_fixtures import snapshots
 from sdkhost_fixtures import stop_private_sdkhosts
 
 
+def expand_turns(page):
+    while page.locator('.sdk-msgs .turn-process.folded').count():
+        page.locator('.sdk-msgs .turn-process.folded > .turn-toolbar .fold-toggle').first.click()
+
+
 def exercise(browser, base, peer, label, screenshots):
     for width, theme in [(1280, 'light'), (390, 'dark')]:
         records = [record(0, 'USER_INPUT', '首条输入：核对完整历史。')]
@@ -77,6 +82,27 @@ def exercise(browser, base, peer, label, screenshots):
             expect(page.locator('.sdk-history [data-role=user]')).to_have_count(3)
             expect(page.locator('.sdk-history')).to_contain_text('保留模型设置说明')
             assert page.evaluate('''() => NativeSdkView.history.querySelector('[data-role=user]').compareDocumentPosition(NativeSdkView.history.querySelector('.history-gap')) & Node.DOCUMENT_POSITION_FOLLOWING''')
+            # Step-less bridge notices belong to the preceding native step,
+            # including a head notice before the pagination gap. An SSE replay
+            # alone (no history change) must invalidate the history rendering.
+            def notice(name):
+                return {'id': 'agy:error:' + name, 'role': 'system', 'error': True,
+                        'content': name, 'received_at': '2026-10-04T00:00:00Z'}
+            raw['items'].insert(1, notice('headnotice'))
+            raw['items'].insert(-1, notice('cancelnotice'))
+            events.publish()
+            expect(page.locator('.sdk-history')).to_contain_text('cancelnotice')
+            expect(page.locator('.sdk-live')).not_to_contain_text('cancelnotice')
+            expand_turns(page)
+            assert page.evaluate('''() => {
+              const rows = [...NativeSdkView.history.querySelectorAll('[data-role=system]')];
+              const head = rows.find(node => node.textContent.includes('headnotice'));
+              const cancel = rows.find(node => node.textContent.includes('cancelnotice'));
+              const users = NativeSdkView.history.querySelectorAll('[data-role=user]');
+              return !!(head.compareDocumentPosition(NativeSdkView.history.querySelector('.history-gap')) & Node.DOCUMENT_POSITION_FOLLOWING)
+                && !!(users[1].compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING)
+                && !!(cancel.compareDocumentPosition(users[2]) & Node.DOCUMENT_POSITION_FOLLOWING);
+            }''')
             # Fill the middle via the real history pagination endpoint.
             page.locator('.sdk-history .history-gap-load').click()
             expect(page.locator('.sdk-history .history-gap')).to_have_count(0, timeout=30000)
@@ -123,7 +149,7 @@ def exercise(browser, base, peer, label, screenshots):
             print(f'PASS {label} {width} {theme}: delayed connect, sparse replay, stable first input, native tools, gap fill, live append, history catchup, reload', flush=True)
 
 
-def exercise_transport(browser, base, peer):
+def exercise_transport(browser, base, peer, screenshots):
     context = browser.new_context(viewport={'width': 1280, 'height': 900})
     page = context.new_page()
     page.goto(base); page.wait_for_function('T.listLoaded')
@@ -152,8 +178,52 @@ def exercise_transport(browser, base, peer):
     expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: ' + text)
     assert not opens, ('re-entry must subscribe without reopening', opens)
     assert len(peer.inputs(text)) == 1
+    # Reproduce the report through the real bridge: cancel a turn, then send
+    # new work and let native history advance past the bridge-only notice.
+    expand_turns(page)
+    notices = page.locator('.sdk-msgs [data-role=system]').filter(has_text='agy_sdk_interrupted:')
+    notice_count = notices.count() + 1
+    send(page, 'hold:join-cancel')
+    expect(page.locator('#sdk-stop')).to_be_visible()
+    page.locator('#sdk-stop').click()
+    wait_snapshot(page, uid, lambda raw: not raw['running'])
+    notice = notices.last
+    expect(notices).to_have_count(notice_count)
+    for index in range(2):
+        followup = f'after cancellation {text} {index}'
+        send(page, followup)
+        wait_snapshot(page, uid, lambda raw: not raw['running'])
+        page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
+        answer = page.locator('.sdk-history [data-role=assistant]').filter(has_text='Synthetic Agy reply: ' + followup)
+        expect(answer).to_have_count(1)
+        expand_turns(page)
+        expect(notices).to_have_count(notice_count)
+        user = page.locator('.sdk-history [data-role=user]').filter(has_text=followup)
+        expect(user).to_have_count(1)
+        assert notice.evaluate('(node, next) => !!(node.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)', user.element_handle()), page.evaluate('''() => ({
+          raw: NativeSdkView.raw.items.map(m => [m.id, m.role, nativeSdkAgyStep(m)]),
+          history: NativeSdkView.historyData.messages.map(m => [m.role, m.native_step_index, m.text]),
+          notices: [...nativeSdkAgyHistoryJoin(NativeSdkView).notices.values()]
+        })''')
+        assert notice.evaluate('(node, next) => !!(node.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)', answer.element_handle())
+    page.reload(); page.wait_for_function('T.listLoaded')
+    open_sdk(page, peer, expect, uid=uid)
+    expand_turns(page)
+    expect(notices).to_have_count(notice_count)
+    expect(answer).to_have_count(1)
+    assert notice.evaluate('(node, next) => !!(node.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)', answer.element_handle())
+    if screenshots:
+        for width, theme in [(1280, 'light'), (390, 'dark')]:
+            page.set_viewport_size({'width': width, 'height': 900})
+            page.emulate_media(color_scheme=theme)
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            if not page.locator('.sdk-pane').is_visible():
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+            expect(page.locator('.sdk-pane')).to_be_visible()
+            page.locator('.sdk-msgs').evaluate('box => box.scrollTop = box.scrollHeight')
+            page.screenshot(path=str(screenshots / f'cancel-{text.split()[-1]}-{width}-{theme}.png'), full_page=True)
     context.close()
-    print(text, 'PASS real transport with fake CLI: open, send, native persist, reconnect without resend', flush=True)
+    print(text, 'PASS real transport with fake CLI: open, send, native persist, cancel, two later turns, reconnect and stable notice order', flush=True)
 
 
 def main():
@@ -180,13 +250,13 @@ def main():
         with provider('agy', transport_root, args.binary) as (base, peer, extra):
             browser = pw.chromium.launch(headless=True)
             try:
-                exercise_transport(browser, base, peer)
+                exercise_transport(browser, base, peer, args.screenshots)
                 hub_root = transport_root / 'hub'; hub_root.mkdir()
                 hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
                           [SimpleNamespace(name='TransportNode', token=TOKEN,
                            port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':', 1)[1]))])
                 hub.start()
-                try: exercise_transport(browser, f'http://127.0.0.1:{hub.port}', peer)
+                try: exercise_transport(browser, f'http://127.0.0.1:{hub.port}', peer, args.screenshots)
                 finally: hub.stop()
             finally:
                 browser.close()

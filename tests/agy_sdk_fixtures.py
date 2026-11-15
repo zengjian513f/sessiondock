@@ -343,6 +343,8 @@ for line in sys.stdin:
             threading.Event().wait(0.02)
         if cancelled.is_set():
             record({'kind':'turn_cancelled','sid':sid,'pid':os.getpid()})
+            native_record('PLANNER_RESPONSE','Agy running '+token+' ',status='ERROR')
+            step('agent_response',state='ERROR');advance()
             result('CANCELED',error='synthetic native cancellation')
             continue
         if steered_seen:
@@ -364,7 +366,7 @@ for line in sys.stdin:
         step('agent_response',state='ACTIVE',text_delta='Synthetic Agy reply: ')
         step('agent_response',state='DONE',text_delta=text);advance()
         answer='Synthetic Agy reply: '+text
-    native_record('PLANNER_RESPONSE',answer)
+    native_record('PLANNER_RESPONSE',answer,step_index=index-1)
     with sqlite3.connect(native/'conversation_summaries.db') as catalog:
         catalog.execute('UPDATE conversation_summaries SET step_count=?,last_modified_time=? WHERE conversation_id=?',(index,'2026-10-18T00:00:01Z',sid))
     result('SUCCESS',answer)
