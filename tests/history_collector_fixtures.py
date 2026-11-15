@@ -98,17 +98,11 @@ def real_collector(root, binary, node, count):
                     with socket.socket(socket.AF_UNIX) as client:
                         client.settimeout(.5);client.connect(str(root/'collector.sock'))
                         client.sendall(b'{"op":"health"}\n')
-                        try: client.recv(1024)
-                        except OSError: pass
-                    time.sleep(.1)
-                    assert child.poll() is None,'thread creation failure killed collector'
+                        assert json.loads(client.makefile('rb').readline())['ok']
+                    assert child.poll() is None,'collector stopped with thread creation disabled'
                 finally:
                     resource.prlimit(child.pid,resource.RLIMIT_NPROC,(soft,hard))
-                deadline=time.monotonic()+3
-                while not any('resource.request_spawn_failed' in item.read_text() for item in path.with_suffix('.runtime-logs').glob('*.jsonl')):
-                    assert time.monotonic()<deadline,'request spawn failure not exercised'
-                    time.sleep(.1)
-                print('Request thread creation failure logged; collector stayed alive',flush=True)
+                print('Requests succeeded with thread creation disabled',flush=True)
             print(f'Loaded {count} historical records; first health {(time.monotonic()-started):.3f}s', flush=True)
             assert time.monotonic()-started < 20, 'recovery blocked startup'
             yield (size, None), [exhaust_request_threads]

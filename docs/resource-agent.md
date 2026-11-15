@@ -147,8 +147,10 @@ of 2,048. Previous boot scopes are deleted: they cannot explain a current proces
 incarnation. Cumulative usage history is a separate ledger and is unchanged.
 Rolling back to a JSON-only binary needs an explicit SQLite export; the backup
 cannot recover later changes. The existing CPU quota, task and memory settings
-are unchanged. Request thread creation errors close that connection and log a
-warning instead of panicking the collector.
+are unchanged. Four persistent request workers share a bounded pending queue;
+backpressure waits for capacity without rejecting valid requests. New connections
+do not create threads. Health reads a completed snapshot independently of
+attribution work, and unchanged bindings reuse prepared resource samples.
 
 The supplied unit starts with I/O probes off and memory-bandwidth monitoring on.
 Memory bandwidth uses monitor-only resctrl groups where supported; it never

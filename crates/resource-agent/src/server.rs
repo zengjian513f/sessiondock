@@ -286,8 +286,22 @@ impl PreparedResources {
             inactive: std::sync::OnceLock::new(),
         }
     }
-    fn rebind(&self, report: &Report) -> Self {
-        Self::new(self.raw.clone(), report)
+    fn rebind(self: &Arc<Self>, report: &Report) -> Arc<Self> {
+        let processes: BTreeSet<_> = self
+            .raw
+            .samples
+            .iter()
+            .map(|sample| &sample.process)
+            .collect();
+        let bindings: Vec<_> = report
+            .bindings
+            .iter()
+            .filter(|binding| processes.contains(&binding.process))
+            .collect();
+        if serde_json::to_vec(&bindings).ok() == serde_json::to_vec(&self.raw.bindings).ok() {
+            return self.clone();
+        }
+        Arc::new(Self::new(self.raw.clone(), report))
     }
     fn raw(&self) -> &Resources {
         &self.raw
@@ -430,7 +444,11 @@ impl Response {
 
 // Report readers use the last completed sample without joining attribution or
 // persistence work. Publishing only swaps an Arc under this short-held lock.
-type PublishedReport = Arc<Mutex<Arc<Report>>>;
+struct Published {
+    report: Arc<Report>,
+    health: Value,
+}
+type PublishedReport = Arc<Mutex<Published>>;
 type PublishedUsage = Arc<Mutex<Arc<Value>>>;
 
 fn usage_response(published: &PublishedUsage) -> Response {
@@ -469,7 +487,7 @@ impl State {
             self.resources.raw().sampled_at,
             self.status.clone(),
         ));
-        self.resources = Arc::new(self.resources.rebind(&self.report));
+        self.resources = self.resources.rebind(&self.report);
         self.publish_report();
     }
     fn publish_report(&self) {
@@ -478,18 +496,28 @@ impl State {
                 .published_report
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            std::mem::replace(&mut *published, self.report.clone())
+            std::mem::replace(
+                &mut *published,
+                Published {
+                    report: self.report.clone(),
+                    health: self.health(),
+                },
+            )
         };
         // Releasing a boot-long report can itself be expensive. Never do that
         // while holding the publication lock used by liveness readers.
         drop(previous);
     }
+    fn health(&self) -> Value {
+        json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id,
+            "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,
+            "collector":self.status,"processes":self.snapshot.entries.len(),
+            "fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits})
+    }
     fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
             Request::Usage => Ok(usage_response(&self.usage)),
-            Request::Health => Ok(Response::Value(
-                json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits,"runtime_log":crate::runtime_log::snapshot()}),
-            )),
+            Request::Health => Ok(Response::Value(self.health())),
             Request::Probe {
                 enabled,
                 lease_id,
@@ -1238,8 +1266,21 @@ fn serve(
     let response = match decoded {
         Ok(Request::Usage) => Ok(usage_response(&published_usage)),
         Ok(Request::Report) => Ok(Response::Report(
-            published.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            published
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .report
+                .clone(),
         )),
+        Ok(Request::Health) => {
+            let mut health = published
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .health
+                .clone();
+            health["runtime_log"] = crate::runtime_log::snapshot();
+            Ok(Response::Value(health))
+        }
         Ok(request) => state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1363,7 +1404,10 @@ pub fn run() -> io::Result<()> {
         &SlowObservations::default(),
     );
     let report = Arc::new(engine.update(&snapshot, data.sampled_at, status.clone()));
-    let published_report = Arc::new(Mutex::new(report.clone()));
+    let published_report = Arc::new(Mutex::new(Published {
+        report: report.clone(),
+        health: Value::Null,
+    }));
     let mut usage = crate::usage::Ledger::open(
         &config.state.with_extension("usage.json"),
         &config.node_id,
@@ -1383,6 +1427,10 @@ pub fn run() -> io::Result<()> {
         exits: 0,
         diagnostic: diagnostic.clone(),
     }));
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .publish_report();
     let (sender, receiver) = mpsc::sync_channel(8192);
     let lost = Arc::new(AtomicU64::new(0));
     let mut tracer = if config.events {
@@ -1619,6 +1667,7 @@ pub fn run() -> io::Result<()> {
                 }
             }
             if sampled.elapsed() >= Duration::from_secs(2) {
+                sampled = Instant::now();
                 let snapshot = linux::collect_uid(&worker_config.proc_root, worker_config.uid);
                 let slow = slow_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 let (io_window, io_lost) = {
@@ -1652,7 +1701,6 @@ pub fn run() -> io::Result<()> {
                 let report = s.report.clone();
                 drop(s);
                 usage.observe(resources.raw(), &report);
-                sampled = Instant::now();
             }
             if saved_at.elapsed() >= Duration::from_secs(30) {
                 let saved = worker_state
@@ -1701,33 +1749,48 @@ pub fn run() -> io::Result<()> {
             );
         }
     });
+    // Reuse a fixed set of request threads and their allocator arenas. Blocking
+    // enqueue applies backpressure without rejecting otherwise valid requests.
+    let (requests, pending) = mpsc::sync_channel::<UnixStream>(32);
+    let pending = Arc::new(Mutex::new(pending));
+    let mut request_workers = Vec::new();
+    for index in 0..4 {
+        let pending = pending.clone();
+        let state = state.clone();
+        let published = published_report.clone();
+        let published_usage = published_usage.clone();
+        let uid = config.uid;
+        let worker = std::thread::Builder::new()
+            .name(format!("resource-request-{index}"))
+            .spawn(move || {
+                loop {
+                    let stream = pending.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(stream) = stream else { break };
+                    let started = Instant::now();
+                    let result = serve(
+                        stream,
+                        state.clone(),
+                        published.clone(),
+                        published_usage.clone(),
+                        uid,
+                    );
+                    if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
+                        crate::runtime_log::emit(
+                            "warn",
+                            "resource.request",
+                            json!({"duration_ms":started.elapsed().as_millis(),
+                            "error_kind":result.err().map(|e|e.kind().to_string())}),
+                        );
+                    }
+                }
+            })?;
+        request_workers.push(worker);
+    }
     while !STOP.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
-                let state = state.clone();
-                let published = published_report.clone();
-                let published_usage = published_usage.clone();
-                let uid = config.uid;
-                if let Err(error) = std::thread::Builder::new()
-                    .name("resource-request".into())
-                    .spawn(move || {
-                        let started = Instant::now();
-                        let result = serve(stream, state, published, published_usage, uid);
-                        if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
-                            crate::runtime_log::emit(
-                                "warn",
-                                "resource.request",
-                                json!({"duration_ms":started.elapsed().as_millis(),
-                            "error_kind":result.err().map(|e|e.kind().to_string())}),
-                            );
-                        }
-                    })
-                {
-                    crate::runtime_log::emit(
-                        "warn",
-                        "resource.request_spawn_failed",
-                        json!({"error":error.to_string()}),
-                    );
+                if requests.send(stream).is_err() {
+                    break;
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -1742,6 +1805,10 @@ pub fn run() -> io::Result<()> {
                 STOP.store(true, Ordering::Relaxed);
             }
         }
+    }
+    drop(requests);
+    for worker in request_workers {
+        let _ = worker.join();
     }
     for child in tracer.as_mut().into_iter() {
         unsafe {

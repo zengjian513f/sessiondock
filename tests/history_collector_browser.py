@@ -134,16 +134,14 @@ def main():
                             # ordinary live readers need only a completed sample.
                             page.evaluate("() => { window.collectorBusy = fetch('api/process-links').then(r => r.body.cancel()); }")
                             page.wait_for_timeout(100)
-                        live_started = time.monotonic()
-                        page.evaluate('''() => { window.liveReads = Promise.all(Array.from({length:3},
-                            () => fetch('api/live?force=1').then(r => {if(!r.ok) throw Error(r.status); return r.json()}))); }''')
+                        page.evaluate('''() => { const started = performance.now(); window.liveReads = Promise.all(Array.from({length:3},
+                            () => fetch('api/live?force=1').then(r => {if(!r.ok) throw Error(r.status); return r.json()}))).then(() => performance.now() - started); }''')
                         started = time.monotonic()
                         page.locator(f'#side .item[data-uid="{corpus.uid(f"small-{i}")}"]').click()
                         clicked = round((time.monotonic()-started)*1000)
                         expect(page.locator('#msgs')).to_contain_text(f'History {i} answer')
                         times.append(round((time.monotonic() - started) * 1000))
-                        page.evaluate('() => window.liveReads')
-                        live_times.append(round((time.monotonic() - live_started) * 1000))
+                        live_times.append(round(page.evaluate('() => window.liveReads')))
                         print(f'Cold history {i}: {times[-1]} ms; live {live_times[-1]} ms; click {clicked} ms', flush=True)
                         if args.agent_binary:
                             page.evaluate('() => window.collectorBusy')
