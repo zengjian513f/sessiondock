@@ -36,6 +36,9 @@
   首次选择后等待 `/api/codex-sdk/open` 超时，尚未到达停止断言。
   本次 `--case normal` 的节点/Hub、宽窄屏停止、保留蓝灯与卸载灭灯回归通过。
 
+- [ ] Orion、Cetus 补发 BUG-20261115-043012-a301cc 的自动换行、输出末尾滚动区与
+  待卸载蓝灯修复 `a3275115`：两目标正式部署 SSH 尝试均超时。
+
 ## Frontend delivery
 
 - [ ] 核对 Codex 底栏 125% 缩放时的窄栏溢出：`codex_sdk_layout_browser.py`
