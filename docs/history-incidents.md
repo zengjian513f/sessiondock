@@ -1834,3 +1834,9 @@ Orion、Cetus 正式 SSH 尝试超时，补发项记录于 TODO。三个资源�
 Pavo、Hub、Vela 已部署、重启并健康，既有宿主保留；Orion、Cetus 的 SSH 尝试超时，
 待补发已记入 TODO。资源代理按范围排除，后端/ptyhost 未替换。发布报告为
 `target/deploy/20261115-071945-aec95fe2/report-20261115-072004.json`。
+
+用户随后要求去除全部气泡蓝框：`4f5ed0f4` 删除共用轮廓样式，保留光标滚动条件。
+工具节点/Hub 四组合、普通会话两宽度、七 SDK 十五组合 Chromium 及宽窄明暗
+整页视觉检查通过。Lyra、Cygnus、Pavo、Hub、Vela 前端已部署、重启并健康；
+Orion、Cetus 正式 SSH 超时，TODO 保留待补发。报告：
+`target/deploy/20261115-074345-4f5ed0f4/report-20261115-074427.json`。
