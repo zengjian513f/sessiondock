@@ -43,7 +43,6 @@ use super::{
     },
     identity::{PROTOCOL, is_node_id, is_token},
 };
-use crate::json_compat::truthy;
 
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(10);
 /// A node that is currently online is only painted offline after this many
@@ -439,7 +438,6 @@ struct Inner {
     /// Insertion-ordered so the variant bound evicts the oldest entry.
     cache: IndexMap<CacheKey, Cached>,
     health: HashMap<String, Health>,
-    snapshot_sigs: HashMap<String, Value>,
 }
 
 pub struct Registry {
@@ -447,6 +445,7 @@ pub struct Registry {
         OnceLock<Arc<Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>>,
     path: PathBuf,
     snapshot_dir: PathBuf,
+    snapshots: Arc<super::snapshots::Snapshots>,
     networks: Vec<Network>,
     inner: Mutex<Inner>,
     wake: Notify,
@@ -474,12 +473,15 @@ impl Registry {
             transfer_links: OnceLock::new(),
             path: path.to_path_buf(),
             snapshot_dir: cache_dir.to_path_buf(),
+            snapshots: Arc::new(super::snapshots::Snapshots::new(
+                cache_dir.to_path_buf(),
+                Duration::from_secs(60),
+            )),
             networks,
             inner: Mutex::new(Inner {
                 nodes: Vec::new(),
                 cache: IndexMap::new(),
                 health: HashMap::new(),
-                snapshot_sigs: HashMap::new(),
             }),
             wake: Notify::new(),
             public_payload: identity_payload,
@@ -517,6 +519,24 @@ impl Registry {
         self
     }
 
+    pub fn with_snapshot_interval(mut self, interval: Duration) -> Self {
+        let snapshots = super::snapshots::Snapshots::new(self.snapshot_dir.clone(), interval);
+        for (key, cached) in &self.lock().cache {
+            if key.1 == "/api/sessions" && key.2.is_empty() {
+                snapshots.seed(
+                    &key.0,
+                    cached.data.get("sig").cloned().unwrap_or(Value::Null),
+                );
+            }
+        }
+        self.snapshots = Arc::new(snapshots);
+        self
+    }
+
+    pub async fn flush_snapshots(&self) {
+        self.snapshots.flush(None, true).await;
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -550,6 +570,8 @@ impl Registry {
         if !data.is_object() || !data["sessions"].is_array() {
             return;
         }
+        self.snapshots
+            .seed(&node.id, data.get("sig").cloned().unwrap_or(Value::Null));
         inner.cache.insert(
             sessions_key(&node.id),
             Cached::new(stamp, Arc::new(data), None),
@@ -561,33 +583,8 @@ impl Registry {
         });
     }
 
-    /// Decide under the lock whether the snapshot changed; the write itself
-    /// happens outside it, off the runtime.
-    fn snapshot_needed(&self, inner: &mut Inner, nid: &str, data: &Value) -> bool {
-        let sig = data.get("sig").cloned().unwrap_or(Value::Null);
-        if truthy(&sig)
-            && inner.snapshot_sigs.get(nid) == Some(&sig)
-            && self.snapshot_path(nid).exists()
-        {
-            return false;
-        }
-        inner.snapshot_sigs.insert(nid.to_string(), sig);
-        true
-    }
-
-    async fn write_snapshot(&self, nid: &str, stamp: f64, data: &Arc<Value>) {
-        let dir = self.snapshot_dir.clone();
-        let nid = nid.to_string();
-        let data = data.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            // Best effort: a full disk must not fail the probe.
-            let _ = write_snapshot_file(&dir, &nid, stamp, &data);
-        })
-        .await;
-    }
-
     fn drop_snapshot(&self, nid: &str) {
-        let _ = fs::remove_file(self.snapshot_path(nid));
+        self.snapshots.remove(nid);
     }
 
     /// Health of one node; `None` when the monitor never recorded it (or the
@@ -1225,7 +1222,7 @@ impl Registry {
                 if !data.is_object() {
                     (Some(status), ClientError::Invalid("body is not an object"))
                 } else {
-                    let (snapshot, cache_gen) = {
+                    let cache_gen = {
                         let mut inner = self.lock();
                         let cache_gen = if let Some(generation) = reused_gen {
                             // Same payload, seen now: offline rows report this
@@ -1263,14 +1260,16 @@ impl Registry {
                                 ..Health::default()
                             },
                         );
-                        (
-                            canonical_sessions && self.snapshot_needed(&mut inner, &node.id, &data),
-                            cache_gen,
-                        )
+                        if canonical_sessions
+                            && inner
+                                .nodes
+                                .iter()
+                                .any(|current| current == node && current.enabled())
+                        {
+                            self.snapshots.update(&node.id, stamp, data.clone());
+                        }
+                        cache_gen
                     };
-                    if snapshot {
-                        self.write_snapshot(&node.id, stamp, &data).await;
-                    }
                     return (
                         Fetched {
                             data,
@@ -1286,9 +1285,10 @@ impl Registry {
         // Errors intentionally omit URL / token / upstream text.
         let waited = if search { client.search_idle } else { timeout };
         let (code, reason) = request_failure(Some(&error), status, waited);
-        let (prior, cached) = {
+        let (prior, cached, went_offline) = {
             let mut inner = self.lock();
             let prior = inner.health.get(&node.id).cloned().unwrap_or_default();
+            let mut went_offline = false;
             // A failed search says nothing about the node's live/terminal APIs.
             if !search {
                 let checked = now();
@@ -1314,11 +1314,15 @@ impl Registry {
                     // probe that finally gave up on the node.
                     prior.offline_since.or(Some(failed_since))
                 };
+                went_offline = prior.online == Some(true) && !tentative;
                 inner.health.insert(node.id.clone(), state);
             }
             let cached = self.cached(&inner, &node.id, path, &key);
-            (prior, cached)
+            (prior, cached, went_offline)
         };
+        if went_offline {
+            self.snapshots.flush(Some(&node.id), true).await;
+        }
         let (cache_gen, mut data) = match &cached {
             Some(cached) => {
                 let (generation, data) = cached.stale_with_gen(path);
@@ -1870,7 +1874,12 @@ fn now() -> f64 {
 }
 
 /// `hub-cache/<nid>.sessions.json` = `{stamp, data}`, 0600, temp + rename.
-fn write_snapshot_file(dir: &Path, nid: &str, stamp: f64, data: &Value) -> io::Result<()> {
+pub(super) fn write_snapshot_file(
+    dir: &Path,
+    nid: &str,
+    stamp: f64,
+    data: &Value,
+) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1909,6 +1918,7 @@ fn private_create(path: &Path) -> io::Result<fs::File> {
 
 /// The monitor task: `check_all` every interval or as soon as nudged.
 pub struct Monitor {
+    snapshots: tokio::task::JoinHandle<()>,
     task: tokio::task::JoinHandle<()>,
     shutdown: CancellationToken,
 }
@@ -1933,6 +1943,7 @@ impl Monitor {
         // monitor existed does not schedule a second immediate pass.
         let _ = registry.wake.notified().now_or_never();
         let stop = shutdown.clone();
+        let snapshots = tokio::spawn(registry.snapshots.clone().run(shutdown.clone()));
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -1946,11 +1957,16 @@ impl Monitor {
                 }
             }
         });
-        Self { task, shutdown }
+        Self {
+            task,
+            snapshots,
+            shutdown,
+        }
     }
 
     pub async fn stop(self) {
         self.shutdown.cancel();
         let _ = self.task.await;
+        let _ = self.snapshots.await;
     }
 }

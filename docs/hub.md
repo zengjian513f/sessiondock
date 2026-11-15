@@ -80,8 +80,20 @@ UI 快照和替换基线产生的空闲 heap 页；保留仍被引用的列表�
 检查预热后的 RSS 不随重复投影持续累积，并继续过滤、展开和打开远端子会话。
 `/api/sessions` 且 query 只含 `force`/`sig` 的完整答复统一存为 `(nid,"/api/sessions","")`，
 签名变化替换当前列表，不保留每个旧签名对应的完整列表，
-并按 `sig` 变化写 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，0600，`.tmp`+rename，
-在阻塞线程池缓冲写入，序列化借用载荷而不再复制整个列表，失败忽略）。启动/重新启用时加载快照：缓存有了，健康记录为
+快照写入见下述 DELTA。文件仍为 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，
+0600，`.tmp`+rename，在阻塞线程池缓冲写入，序列化借用载荷，失败不影响在线服务）。
+
+DELTA：冻结 Python 基线 `Registry.save_snapshot` 在 `sig` 每次变化时立即整写。
+现在每节点只保留最新待写列表；周期写入默认最多每 60 秒一次，可用正整数秒
+`SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS` 配置。在线列表即时更新；独立定时器
+保证最后一次变化即使没有后续请求也会落盘。在线转离线立即补写，Hub 正常退出在
+请求与监控结束后补写所有待写快照；这两种补写不受周期上限限制。同节点写入串行，
+删除节点使已排队写入失效。写入失败保留待写值，下个周期重试。
+异常退出最多丢失一个写入间隔内尚未落盘的变化（磁盘写入失败除外）；离线列表
+仍从最后成功写入的快照恢复。`hub_cache_browser.py` 覆盖限频、离线补写、正常退出
+补写、不变不写和重启后的页面。
+
+启动/重新启用时加载快照：缓存有了，健康记录为
 `{online:null,last_seen:stamp}`，直到监控探过。`stale_payload(path, cached)`：给
 `sessions`/`pending` 行加 `stale:true,last_seen`；`/api/term/list` 另置
 `enabled:false,sources:{}`；无缓存则 `{}`。离线副本按缓存条目首次读取时构建一次，
@@ -336,6 +348,7 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 | `SESSIONDOCK_HUB_BIND` | Hub 监听（默认 `127.0.0.1:8742`） | 必须是 loopback 地址（Hub 自身无鉴权） |
 | `SESSIONDOCK_HUB_NODES` | `hub-nodes.json` 注册表 | 缺省 `~/.local/share/sessiondock/hub-nodes.json`；不存在即空注册表，首次保存递归创建父目录 |
 | `SESSIONDOCK_HUB_CACHE_DIR` | 离线会话快照目录 | 缺省是注册表旁的 `hub-cache`；保存快照时递归创建，读写失败不影响在线 Hub |
+| `SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS` | 周期快照最小写入间隔 | 正整数秒，默认 60；离线及正常退出时补写不受限 |
 | `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 IP/CIDR（严格） | 主机位非零即拒；缺省 `127.0.0.0/8,::1/128,10.0.0.0/24` |
 | `SESSIONDOCK_WEB_DIR` | 前端快照（hub 模式） | 必须是存在的目录 |
 | `SESSIONDOCK_AUDIT_DIR` | `hub.node.*.changed` 记录（可选） | 未配置则不记显示/顺序变更 |

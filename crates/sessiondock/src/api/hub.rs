@@ -266,6 +266,7 @@ pub fn open_registry(config: &HubConfig) -> std::io::Result<Registry> {
         config.networks.clone(),
         &config.cache_dir,
     )?
+    .with_snapshot_interval(config.snapshot_interval)
     .with_public_payload(namespace::public_payload))
 }
 

@@ -33,3 +33,5 @@ pub use registry::{Monitor, Network, Node, Registry, RegistryError};
 pub const BODY_LIMIT: usize = 4 * 1024 * 1024;
 
 pub mod relations;
+
+mod snapshots;

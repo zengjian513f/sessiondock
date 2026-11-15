@@ -22,6 +22,8 @@ pub struct HubConfig {
     /// `SESSIONDOCK_HUB_CACHE_DIR`: offline session snapshots; default
     /// `hub-cache` next to the registry file.
     pub cache_dir: PathBuf,
+    /// SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS: maximum periodic save frequency.
+    pub snapshot_interval: std::time::Duration,
     /// `SESSIONDOCK_HUB_NETWORKS`: CIDR list a node may be registered from.
     pub networks: Vec<Network>,
     /// The text of `networks` as configured, for `--check-config`.
@@ -47,6 +49,7 @@ impl Default for HubConfig {
             bind: "127.0.0.1:8742".parse().expect("constant socket address"),
             nodes_file: PathBuf::new(),
             cache_dir: PathBuf::new(),
+            snapshot_interval: std::time::Duration::from_secs(60),
             networks: parse_networks(DEFAULT_NETWORKS).expect("constant networks"),
             networks_text: DEFAULT_NETWORKS.to_string(),
             web_dir: "web".into(),
@@ -67,6 +70,17 @@ impl HubConfig {
     pub fn from_env() -> io::Result<Self> {
         let mut config = Self::default();
         config.integrations = crate::integrations::Integrations::from_env()?;
+        if let Ok(value) = env::var("SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS") {
+            let seconds: u64 = value
+                .parse()
+                .map_err(|_| invalid("invalid SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS"))?;
+            if seconds == 0 {
+                return Err(invalid(
+                    "SESSIONDOCK_HUB_SNAPSHOT_INTERVAL_SECS must be positive",
+                ));
+            }
+            config.snapshot_interval = std::time::Duration::from_secs(seconds);
+        }
         if let Some(bind) = env::var_os("SESSIONDOCK_HUB_BIND") {
             config.bind = bind
                 .to_str()

@@ -178,6 +178,7 @@ async fn serve(config: HubConfig) -> Result<(), Box<dyn Error>> {
     .await;
     shutdown.cancel();
     monitor.stop().await;
+    registry.flush_snapshots().await;
     if let Some(audit) = audit {
         audit.shutdown().await;
     }
