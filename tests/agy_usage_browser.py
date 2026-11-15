@@ -55,15 +55,18 @@ def exercise(browser, base, fixture, screenshots):
     with page.expect_request('**/api/native-sdk/open'):
         page.locator('#sdk-composer .composer-run-action').click()
     footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
-    expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
     assert held_open,'cold quota must render while native open is blocked'
     for route in held_open:route.continue_()
     context.unroute('**/api/native-sdk/open')
     page.wait_for_function('NativeSdkView.connected && !NativeSdkView.loadingUsage && !!NativeSdkView.raw.session_id')
-    # Screenshot 155 combination: no token data, four account windows, native
-    # model/mode not yet returned. The menu must not duplicate quota or an empty card.
+    if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+    page.locator('#sdk-model').select_option('gemini-synthetic')
+    page.wait_for_function('!NativeSdkView.settingChoices.size')
+    page.keyboard.press('Escape')
+    # No token data: only the selected pool stays inline; no empty token card.
     if page.locator('#sdk-more').is_visible():page.locator('#sdk-more').click()
-    expect(page.locator('#sdk-more-menu .sdk-quota-group')).to_have_count(0)
+    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Claude/GPT'])
     assert_usage_outside_menu(page)
     page.screenshot(path=str(screenshots/'agy-no-tokens-four-windows-1280-light.png'),full_page=True)
     page.keyboard.press('Escape')
@@ -98,8 +101,8 @@ def exercise(browser, base, fixture, screenshots):
             for text in ('累计 Token：12,800','输入 Token：12,000','输出 Token：800','缓存读取：9,000'):
                 expect(footer).to_have_attribute('title',re.compile(re.escape(text)))
             assert_usage_outside_menu(page)
-            expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
-            expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天','5小时','7天'])
+            expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini'])
+            expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天'])
             for raw in ('weekly','seven_day','7d'):expect(footer).not_to_contain_text(raw)
             expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
             if page.locator('#sdk-more').is_visible():
@@ -114,6 +117,19 @@ def exercise(browser, base, fixture, screenshots):
             assert_inline_usage(page)
             page.screenshot(path=str(screenshots/f'agy-footer-{width}-{theme}.png'),full_page=True)
             expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
+    # Select both known families and an unknown model through the real picker.
+    for model,inline,other in [('claude-synthetic',['Claude/GPT'],['Gemini']),
+                               ('unknown-synthetic',[],['Gemini','Claude/GPT']),
+                               ('gemini-synthetic',['Gemini'],['Claude/GPT'])]:
+        page.keyboard.press('Escape')
+        if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+        page.locator('#sdk-model').select_option(model)
+        page.wait_for_function('!NativeSdkView.settingChoices.size')
+        expect(footer.locator('.sdk-quota-name')).to_have_text(inline)
+        if not page.locator('#sdk-more-menu').is_visible():page.locator('#sdk-more').click()
+        expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(other)
+        expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
+    page.keyboard.press('Escape')
     context.unroute('**/api/native-sdk/usage',grouped_quota)
     context.unroute('**/api/quotas/refresh*',grouped_snapshot)
     before=len(fixture.inputs())
@@ -145,7 +161,11 @@ def exercise(browser, base, fixture, screenshots):
     refresh_usage(page)
     expect(footer).to_have_attribute('title',re.compile('Enterprise shared premium'))
     expect(footer).not_to_contain_text('缺失额度字段')
-    expect(footer).to_contain_text('100%')
+    page.locator('#sdk-more').click()
+    expect(page.locator('#sdk-more-menu .sdk-other-quotas')).to_contain_text('100%')
+    expect(page.locator('#sdk-more-menu .sdk-other-quotas')).to_contain_text('N/A')
+    page.screenshot(path=str(screenshots/'agy-usage-long-menu.png'),full_page=True)
+    page.keyboard.press('Escape')
     # The long diagnostic stays in the footer description and never opens ⋯.
     expect(footer).to_have_attribute('title',re.compile('Delayed native quota diagnostic.'))
     expect(page.locator('#sdk-more-menu')).to_be_hidden()
@@ -183,7 +203,7 @@ def exercise(browser, base, fixture, screenshots):
     assert len(fixture.inputs())==before,'usage refresh must never submit a native turn'
     assert not errors, errors
     context.close()
-    print('PASS Agy usage: conditional token details, inline quota, cached refresh/loading/failure, immediate slash, 3 widths, light/dark', flush=True)
+    print('PASS Agy usage: selected model pools, unknown model, cached refresh/loading/failure, immediate slash, 3 widths, light/dark', flush=True)
 
 
 def main():
@@ -201,6 +221,8 @@ def main():
         cleanup.callback(stop_private_sdkhosts, root)
         port = free_port()
         fixture = AgyFixture(root, (REPO/'target/debug/ptyhost').resolve())
+        (fixture.root/'init-model').write_text('gemini-synthetic')
+        (fixture.root/'models.tsv').write_text('gemini-synthetic\tGemini Synthetic\nclaude-synthetic\tClaude Synthetic\nunknown-synthetic\tUnknown Synthetic')
         with patch.dict(os.environ, fixture.env):
             initialize('--initialize-lifecycle', root/'ledger', args.binary.resolve())
             with isolated_server(Corpus(root), args.binary, host_dir=root/'host', lifecycle_dir=root/'ledger',
@@ -212,6 +234,9 @@ def main():
                     hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hub_root,[SimpleNamespace(name='AgyContextNode',token=TOKEN,port=port)])
                     hub.start();cleanup.callback(hub.stop)
                     page=browser.new_page(viewport={'width':1280,'height':900})
+                    (fixture.root/'quota-groups.json').write_text(json.dumps([
+                        {'name':'Gemini Models','buckets':[{'id':'gemini','window':'5h','remaining_fraction':.72}]},
+                        {'name':'Claude and GPT models','buckets':[{'id':'third-party','window':'5h','remaining_fraction':.43}]}]))
                     page.goto(f'http://127.0.0.1:{hub.port}',wait_until='domcontentloaded')
                     page.wait_for_function('T.listLoaded')
                     select_sdk(page,connected=False)
@@ -223,6 +248,9 @@ def main():
                     footer=page.locator('.native-sdk-pane .sdk-gauges')
                     expect(footer).to_have_attribute('title',re.compile('已用 25.0%'),timeout=15000)
                     before=len(fixture.inputs())
+                    refresh_usage(page)
+                    expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini'])
+                    page.wait_for_function('!NativeSdkView.loadingUsage')
                     page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
                     page.wait_for_function('!NativeSdkView.loadingUsage')
                     assert len(fixture.inputs())==before
@@ -234,7 +262,11 @@ def main():
                         page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
                         if not page.locator('#sdk-input').is_visible():
                             page.locator('#side .item[data-uid="'+page.evaluate('S.sel')+'"]').click()
+                        expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini'])
+                        page.locator('#sdk-more').click()
+                        expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Claude/GPT'])
                         page.screenshot(path=str(args.screenshots/f'agy-context-hub-{width}-{theme}.png'),full_page=True)
+                        page.keyboard.press('Escape')
                     page.locator('#sdk-stop').click()
                     page.wait_for_function('!NativeSdkView.running')
                     page.reload(wait_until='domcontentloaded')

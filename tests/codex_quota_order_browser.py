@@ -19,6 +19,7 @@ from sdk_ui_fixtures import start_sdk
 class QuotaServer(FakeAppServer):
     reset = 1791000000
     extra = False
+    only_special = False
 
     def _bucket(self):
         bucket = super()._bucket()
@@ -29,9 +30,9 @@ class QuotaServer(FakeAppServer):
     async def _handle(self, writer, message):
         if message.get('method') == 'account/rateLimits/read':
             bucket = self._bucket()
-            limits = {'codex': bucket}
+            limits = {} if self.only_special else {'codex': bucket}
             if self.extra:
-                limits['special'] = {'limitName': 'Special model', 'primary': {
+                limits['fake-luna'] = {'limitName': 'Fake Luna', 'primary': {
                     'usedPercent': 9, 'windowDurationMins': 300}}
             await self.send(writer, {'id': message['id'], 'result': {
                 'rateLimits': bucket, 'rateLimitsByLimitId': limits,
@@ -200,6 +201,30 @@ def main():
                     page.wait_for_timeout(200); held.pop().continue_()
                     expect(tab.locator('#conversation-status .sdk-gauge b').filter(has_text='9%')).to_have_count(1)
                     page.wait_for_function('!CodexSdkView.limitsRead')
+                    expect(page.locator('#sdk-more')).to_be_visible()
+                    page.locator('#sdk-more').click()
+                    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Fake Luna'])
+                    page.keyboard.press('Escape')
+                    if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+                    page.locator('#sdk-model').select_option('fake-luna')
+                    expect(page.locator('[data-gauge="5h"] b')).to_have_text('9%')
+                    expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
+                    if not page.locator('#sdk-more-menu').is_visible():page.locator('#sdk-more').click()
+                    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Codex'])
+                    page.screenshot(path=str(args.screenshots / f'{mode}-{width}-model-pool.png'))
+                    page.keyboard.press('Escape')
+                    if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+                    page.locator('#sdk-model').select_option('fake-sol')
+                    expect(gauge).to_have_text('0%')
+                    page.keyboard.press('Escape')
+                    # A lone unrelated model pool must not become the current pool.
+                    fake.only_special = True
+                    fake.emit(0)
+                    page.wait_for_timeout(200); held.pop().continue_()
+                    expect(page.locator('[data-gauge="5h"]')).to_be_hidden()
+                    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Fake Luna'])
+                    page.wait_for_function('!CodexSdkView.limitsRead')
+                    fake.only_special = False
                     fake.extra = False
                     fake.emit(0)
                     page.wait_for_timeout(200); held.pop().continue_()

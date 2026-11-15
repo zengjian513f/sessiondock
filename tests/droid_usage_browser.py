@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Droid ctx, cumulative tokens, credits and native account quotas via Chromium."""
 import tempfile
+import json
+import re
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 from droid_sdk_fixtures import DroidFixture
@@ -10,6 +12,7 @@ from claude_sdk_browser import open_sdk, send, wait_snapshot
 
 
 def check(page,base,f,state,out,hub=False):
+    (f.root/'models.json').write_text(json.dumps([{'id':model,'displayName':model} for model in ['claude-synthetic','glm-synthetic','custom:synthetic']]))
     page.goto(base,wait_until='networkidle')
     if hub:
         row=page.locator('#side .item[data-uid^="droid:"]').first
@@ -18,6 +21,10 @@ def check(page,base,f,state,out,hub=False):
     gauges=page.locator('.native-sdk-pane .sdk-gauges')
     expect(gauges).to_contain_text('上下文')
     expect(gauges).to_contain_text('Standard')
+    expect(gauges.locator('.sdk-quota-name')).to_have_text(['Standard'])
+    page.locator('#sdk-more').click()
+    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Core'])
+    page.keyboard.press('Escape')
     assert state['calls']==1,state
     send(page,'usage probe')
     wait_snapshot(page,f.uid,lambda r:not r['running'] and bool(r.get('usage')))
@@ -31,12 +38,32 @@ def check(page,base,f,state,out,hub=False):
     assert '1,590' in description,description
     page.screenshot(path=str(out/'sdk-wide-light.png'),full_page=True)
     (f.root/'context-fail').touch();send(page,'/usage')
-    expect(gauges).to_have_attribute('aria-description',__import__('re').compile('上下文查询失败'))
+    expect(gauges).to_have_attribute('aria-description',re.compile('上下文查询失败'))
     assert not any(frame.get('params',{}).get('text')=='/usage' for frame in f.frames())
     (f.root/'context-fail').unlink()
     page.set_viewport_size({'width':390,'height':844});page.emulate_media(color_scheme='dark')
     open_sdk(page,f,expect)
     page.screenshot(path=str(out/'sdk-mobile-dark.png'),full_page=True)
+    for model,expected in [('glm-synthetic','Standard'),('custom:synthetic',None),('claude-synthetic','Standard')]:
+        page.keyboard.press('Escape')
+        if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+        page.locator('#sdk-model').select_option(model)
+        page.wait_for_function('!NativeSdkView.settingChoices.size')
+        expect(gauges.locator('.sdk-quota-name')).to_have_text([expected] if expected else [])
+    state['used']=100
+    send(page,'/usage')
+    expect(gauges).to_contain_text('100%')
+    page.keyboard.press('Escape')
+    if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+    page.locator('#sdk-model').select_option('glm-synthetic')
+    expect(gauges.locator('.sdk-quota-name')).to_have_text(['Core'])
+    if not page.locator('#sdk-more-menu').is_visible():page.locator('#sdk-more').click()
+    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Standard'])
+    page.screenshot(path=str(out/'sdk-core-mobile-menu.png'),full_page=True)
+    page.keyboard.press('Escape')
+    state['used']=17
+    send(page,'/usage')
+    expect(gauges.locator('.sdk-quota-name')).to_have_text(['Standard'])
     page.set_viewport_size({'width':1280,'height':900});page.emulate_media(color_scheme='light')
     page.goto(base+'/quotas.html',wait_until='networkidle')
     table=page.get_by_role('table',name='Droid',exact=True)

@@ -70,9 +70,12 @@ def main():
                     expect(footer.locator('.sdk-status')).to_have_text({'working': '处理中', 'waiting': '待回答', 'failed': '执行失败', 'idle': '就绪', 'compacting': '压缩中'}[status])
                     expect(footer.locator('.sdk-gauges')).to_contain_text('26%')
                     expect(footer.locator('.sdk-gauges')).to_contain_text('9%')
-                    expect(footer.locator('.sdk-quota-name')).to_have_text(['Codex','专项模型'])
-                    expect(footer.locator('.sdk-gauge > span')).to_have_text(['5小时','7天','7天'])
-                    expect(footer.locator('.sdk-gauge.low')).to_contain_text('91%')
+                    expect(footer.locator('.sdk-gauges .sdk-quota-name')).to_have_count(0)
+                    footer.locator('#conversation-quota-more').click()
+                    expect(footer.locator('#conversation-quota-menu .sdk-quota-name')).to_have_text(['专项模型'])
+                    expect(footer.locator('#conversation-quota-menu .sdk-gauge.low')).to_contain_text('91%')
+                    page.keyboard.press('Escape')
+                    expect(footer.locator('.sdk-gauges .sdk-gauge > span')).to_have_text(['5小时','7天'])
                     expect(footer.locator('[data-balance="codex:credits"]')).to_have_text('🪙 1,235')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_text('重置卡 3 张')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_attribute('title', re.compile('最近到期'))
@@ -89,7 +92,7 @@ def main():
                     }''')
                     assert layout == {'contentHeight': 24, 'inputGap': 3 if width <= 720 else 4, 'border': '0px'}, layout
                     if status == 'working':
-                        assert_reset_countdown(page, footer.locator('.sdk-quota-windows .sdk-gauge').first, 1800000000)
+                        assert_reset_countdown(page, footer.locator('.sdk-gauges .sdk-gauge').first, 1800000000)
                     if status == 'failed':
                         footer.locator('.sdk-status').click()
                         expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()

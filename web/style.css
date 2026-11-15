@@ -2632,6 +2632,8 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-gauges > * { flex-shrink: 0; }
 .sdk-status-row .sdk-quota-group, .sdk-status-row .sdk-quota-windows { flex-wrap: nowrap; max-width: none; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
+#conversation-quota-more { font: inherit; flex: none; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
+#conversation-status:not(:has(.sdk-gauges > :not([hidden]))) > #conversation-quota-more { margin-left: auto; }
 .sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
   padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sdk-status-color); font: inherit; }
@@ -2663,6 +2665,9 @@ header .btn[data-session-docked] { display: none; }
 .sdk-quota-group, .sdk-quota-windows { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-width: 0; max-width: 100%; }
 .sdk-quota-name { max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .sdk-quota-windows { flex: none; }
+.sdk-other-quotas > .sdk-quota-group { display: grid; gap: 4px; }
+.sdk-other-quotas .sdk-quota-name { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.sdk-other-quotas .sdk-quota-windows { display: grid; width: 100%; gap: 6px; }
 .sdk-bar { display: block; flex: none; width: 40px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--border); }
 .sdk-bar > u { display: block; height: 100%; border-radius: inherit; background: var(--accent); text-decoration: none; transition: width .2s; }
 .sdk-gauge b { min-width: 3.4ch; color: var(--text); font-weight: 600; text-align: right; }
@@ -2732,6 +2737,8 @@ header .btn[data-session-docked] { display: none; }
 .sdk-usage-group { display: grid; gap: 8px; min-width: 0; }
 .sdk-usage-group + .sdk-usage-group { border-top: 1px solid var(--border); padding-top: 12px; }
 .sdk-usage-group h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
+.sdk-other-quotas.sdk-quota-separated { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.sdk-other-quotas { flex: none; font-size: 12px; }
 .sdk-usage-total { font-size: 24px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .sdk-usage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
 .sdk-usage-metric { min-width: 0; font-size: 12px; color: var(--muted); gap: 6px; overflow-wrap: anywhere; }

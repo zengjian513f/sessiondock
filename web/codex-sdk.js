@@ -336,7 +336,14 @@ const CodexSdkView = {
   paintGauges() {
     if (!this.pane) return;
     const bucket = this.limits || {};
-    const windows = [bucket.primary, bucket.secondary].filter(window => window && Number.isFinite(window.usedPercent));
+    const quota=UsageUI.quota(this.uid);
+    const model=sdkSettingValue(this,'model',this.summary?.settings?.model || this.recordedModel || '');
+    const selection=UsageUI.quotaSelection(quota,'codex',model);
+    UsageUI.paintQuotaMenu(this.pane.querySelector('#sdk-more-menu'),quota,selection.other);
+    const windows = quota ? selection.inline.flatMap(([,rows])=>rows)
+      .filter(row=>Number.isFinite(row.remaining_percent)).map(row=>({usedPercent:100-row.remaining_percent,
+        windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null}))
+      : [bucket.primary, bucket.secondary].filter(window => window && Number.isFinite(window.usedPercent));
     const slots = {'5h': null, '7d': null};
     const others = [];
     for (const window of windows) {
@@ -465,7 +472,7 @@ const CodexSdkView = {
     select.closest('label').hidden = false;
     CodexSdkControls.paintTier(this);
     sdkSyncSettings(this);
-    this.layoutToolbar();
+    this.paintGauges();
   },
 
   // ---------------------------------------------------------------- 历史

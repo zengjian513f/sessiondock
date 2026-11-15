@@ -63,6 +63,8 @@ def fake_cli():
     record({'type':'spawn','args':sys.argv[2:],'pid':os.getpid()})
     sid=None;path=None;pending={};held=False;context_used=12000;settings={'modelId':'fake-droid','reasoningEffort':'low','interactionMode':'auto','autonomyLevel':'off'}
     models=[{'id':m,'displayName':name,'supportedReasoningEfforts':['low','high']} for m,name in [('fake-droid','Synthetic Droid'),('fake-droid-2','Synthetic Droid 2')]]
+    if (log.parent/'models.json').exists():
+        models=json.loads((log.parent/'models.json').read_text());settings['modelId']=models[0]['id']
     def emit(v):print(json.dumps({'jsonrpc':'2.0','factoryApiVersion':'1.0.0',**v}),flush=True)
     def reply(v,result):emit({'id':v['id'],'type':'response','result':result})
     def note(v):emit({'type':'notification','method':'droid.session_notification','params':{'sessionId':sid,'notification':v}})

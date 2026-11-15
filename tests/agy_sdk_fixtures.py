@@ -42,7 +42,8 @@ if option('-p')=='/usage':
         threading.Event().wait(0.02)
     if (root/'quota-fail').exists():sys.exit(1)
     remaining=float((root/'quota-remaining').read_text()) if (root/'quota-remaining').exists() else 0.72
-    emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':remaining,'reset_time':'2026-10-20T00:00:00Z'}]}]}}});sys.exit(0)
+    groups=json.loads((root/'quota-groups.json').read_text()) if (root/'quota-groups.json').exists() else [{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':remaining,'reset_time':'2026-10-20T00:00:00Z'}]}]
+    emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':groups}}});sys.exit(0)
 if 'models' in args:
     print((root/'models.tsv').read_text() if (root/'models.tsv').exists() else 'synthetic-agy-low\tSynthetic Agy (Low)\nsynthetic-agy-high\tSynthetic Agy (High)');sys.exit(0)
 assert not sys.stdin.isatty(), 'SDK must not use a PTY'

@@ -10311,9 +10311,23 @@ function renderConversationUsage(row, uid) {
     if (!row.isConnected || uid !== S.sel) return;
     const gauges = row.querySelector('.sdk-gauges');
     gauges.replaceChildren();
-    UsageUI.appendQuotas(gauges,agent,source);
+    let menu=row.querySelector('#conversation-quota-menu'),trigger=row.querySelector('#conversation-quota-more');
+    if(!menu) {
+      trigger=el('button','btn','⋯');trigger.id='conversation-quota-more';trigger.type='button';
+      trigger.title='其他额度';trigger.setAttribute('aria-label','其他额度');
+      menu=el('div','new-model-menu sdk-toolbar-menu');menu.id='conversation-quota-menu';
+      menu.setAttribute('popover','auto');menu.setAttribute('aria-label','其他额度');
+      row.append(trigger,menu);ConversationUI.bindPopover(trigger,menu,row);
+    }
+    const model=cache.get(viewKey(uid,S.agent))?.meta?.model || '';
+    const selection=UsageUI.quotaSelection(agent,source,model);
+    UsageUI.appendQuotas(gauges,agent,source,selection.inline);
+    UsageUI.paintQuotaMenu(menu,agent,selection.other);
+    trigger.hidden=!selection.other.length;
+    if(trigger.hidden && menu.matches(':popover-open'))menu.hidePopover();
+    else if(menu.matches(':popover-open'))ConversationUI.placePopover(menu,trigger);
     renderConversationBalances(gauges, agent);
-    if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
+    if (!gauges.childElementCount && !selection.other.length) gauges.append(el('span', '', '用量暂无数据'));
   };
   UsageUI.watchQuota(row,UsageUI.accountKey(uid),paint);
   paint(UsageUI.quota(uid));

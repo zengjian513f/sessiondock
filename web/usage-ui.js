@@ -93,7 +93,7 @@ const UsageUI = {
     return minutes % 1440 === 0 ? `${minutes/1440}天` : minutes % 60 === 0 ? `${minutes/60}小时` : `${minutes}分钟`;
   },
   group(value) {
-    return {'Gemini Models':'Gemini','Claude and GPT models':'Claude/GPT'}[value] || value || '额度';
+    return {'Gemini Models':'Gemini','Claude and GPT models':'Claude/GPT',codex:'Codex'}[value] || value || '额度';
   },
   effort(value) { return {none:'无',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高'}[value] || value; },
   percent(value) { return value.toLocaleString(undefined,{maximumFractionDigits:1}); },
@@ -137,6 +137,62 @@ const UsageUI = {
     }
     return [...groups].map(([name,rows])=>[name,rows.sort((a,b)=>(this.minutes(a.window)||Infinity)-(this.minutes(b.window)||Infinity))]);
   },
+  quotaSelection(quota, source, model = '') {
+    const groups=this.groups((quota?.buckets || []).filter(b=>b.window != null || Number.isFinite(b.remaining_percent)));
+    const slug=value=>String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    const selected=slug(model);
+    let current=null;
+    if(source==='agy') {
+      const family=/(^|-)gemini(-|$)/.test(selected) ? 'gemini'
+        : /(^|-)(claude|gpt)(-|$)/.test(selected) ? 'third-party' : null;
+      current=groups.find(([name])=>family==='gemini' ? /^gemini(?: models)?$/i.test(name)
+        : family==='third-party' && /^(claude and gpt models|claude\/gpt)$/i.test(name));
+    } else if(source==='codex') {
+      const matches=groups.map(group=>({group,score:Math.max(0,...[group[0],...group[1].map(b=>b.id?.replace(/:(primary|secondary)$/, ''))]
+        .map(value=>{const key=slug(value);return key && key!=='codex' && (selected===key || selected.startsWith(key+'-')) ? key.length : 0;}))}));
+      current=matches.filter(match=>match.score>0).sort((a,b)=>b.score-a.score)[0]?.group;
+      current ||= groups.find(([name,rows])=>/^codex$/i.test(name) || rows.some(b=>/^codex:(primary|secondary)$/.test(b.id)));
+    } else if(source==='droid' && selected && !/^custom(-|$)/.test(selected)) {
+      // Factory consumes Standard first, then the Core pool for open models.
+      const core=/^(inkling|mistral|glm|kimi|qwen|nemotron|deepseek|minimax|muse|beam)(-|$)/.test(selected);
+      const standard=groups.find(([name])=>/^standard$/i.test(name));
+      const exhausted=standard?.[1].some(b=>Number.isFinite(b.remaining_percent) && b.remaining_percent<=0);
+      if(core && exhausted)current=groups.find(([name])=>/^core$/i.test(name));
+      else if(core || /^(claude|gpt|gemini|grok)(-|$)/.test(selected))current=standard;
+    }
+    // Single account pools do not need a model mapping. Unknown multi-pool
+    // accounts stay accessible in ⋯ without claiming an arbitrary active pool.
+    if(!current && groups.length===1 && !['agy','droid','codex'].includes(source))current=groups[0];
+    if(!current && source==='agy' && groups.length===1 && /^agy standard$/i.test(groups[0][0]))current=groups[0];
+    return {inline:current ? [current] : [],other:groups.filter(group=>group!==current)};
+  },
+  paintQuotaMenu(menu, quota, groups) {
+    let section=menu.querySelector(':scope > .sdk-other-quotas');
+    if(!section){section=el('section','sdk-usage-group sdk-other-quotas');menu.append(section);}
+    const signature=JSON.stringify([groups,quota?.captured_at,quota?.error]);
+    section.hidden=!groups.length;
+    if(section.dataset.quota===signature)return;
+    section.dataset.quota=signature;section.replaceChildren();
+    if(!groups.length)return;
+    section.append(el('h4','','其他额度'));
+    for(const [name,buckets] of groups) {
+      const group=el('div','sdk-quota-group');
+      group.append(el('span','sdk-quota-name',this.group(name)));
+      const windows=el('div','sdk-quota-windows');group.append(windows);
+      for(const bucket of buckets) {
+        const label=this.window(bucket.window);
+        const title=()=>`${name} · ${label}${this.reset(bucket.resets_at)}${quota?.captured_at ? `；更新于 ${this.time(quota.captured_at)}` : ''}`;
+        const node=Number.isFinite(bucket.remaining_percent) ? this.gauge(label,100-bucket.remaining_percent,title)
+          : el('span','sdk-gauge',`${label} ${bucket.remaining_text || 'N/A'}`);
+        this.title(node,title);windows.append(node);
+      }
+      section.append(group);
+    }
+    if(quota?.error) {
+      const error=String(quota.error),note=el('p','sdk-control-note',error.length>200 ? `${error.slice(0,200)}…` : error);
+      note.title=error;section.append(note);
+    }
+  },
   gauge(label,used,title) {
     const node=el('span','sdk-gauge');this.title(node,title);
     const value=Math.max(0,Math.min(100,used)),bar=el('i','sdk-bar'),fill=el('u','');
@@ -146,11 +202,11 @@ const UsageUI = {
     node.append(el('span','',label),bar,el('b','',display));node.classList.toggle('low',value>=80);
     return node;
   },
-  appendQuotas(holder,quota,source) {
-    const groups=this.groups(quota?.buckets).filter(([,rows])=>rows.some(bucket=>Number.isFinite(bucket.remaining_percent)));
+  appendQuotas(holder,quota,source,selection=null) {
+    const groups=(selection || this.groups(quota?.buckets)).filter(([,rows])=>rows.some(bucket=>Number.isFinite(bucket.remaining_percent)));
     for(const [name,buckets] of groups) {
       let target=holder;
-      if(source==='agy' || groups.length>1) {
+      if(source==='agy' || source==='droid' || groups.length>1) {
         const group=el('span','sdk-quota-group'),label=el('span','sdk-quota-name',this.group(name));label.title=name;
         target=el('span','sdk-quota-windows');group.append(label,target);holder.append(group);
       }

@@ -740,7 +740,7 @@ const SdkUI = {
     const list = controls.filter(Boolean);
     const rowWidth = row.clientWidth;
     const controlsMetaKey = JSON.stringify([rowWidth, row.querySelector('.composer-run-action')?.hidden,
-      [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
+      [...menu.querySelectorAll('.sdk-control-note, .sdk-reset, .sdk-other-quotas')].map(n => [n.hidden, n.textContent]),
       list.map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
     const signature = JSON.stringify([view.notice.textContent, gauges.textContent,
       row.querySelector(':scope > .sdk-credits')?.textContent, controlsMetaKey]);
@@ -861,6 +861,9 @@ const SdkUI = {
       const nextHidden = !hasChildContent(group);
       if (group.hidden !== nextHidden) group.hidden = nextHidden;
     }
+    const quotaSection=menu.querySelector(':scope > .sdk-other-quotas');
+    if(quotaSection)quotaSection.classList.toggle('sdk-quota-separated',
+      [...menu.children].slice(0,[...menu.children].indexOf(quotaSection)).some(hasContent));
     const nextTriggerHidden = !hasChildContent(menu);
     if (trigger.hidden !== nextTriggerHidden) trigger.hidden = nextTriggerHidden;
     if (trigger.hidden && menu.matches(':popover-open')) {

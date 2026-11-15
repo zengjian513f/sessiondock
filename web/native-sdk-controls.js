@@ -32,7 +32,7 @@ const NativeSdkControls = {
     view.nativeSettings=[];view.nativeActionPending=false;
     const menu = view.pane.querySelector('#sdk-more-menu');
     menu.classList.add('sdk-native-menu');
-    // ⋯ only holds controls that do not fit; usage stays in the footer and its tooltip.
+    // Other model pools share ⋯ with controls that do not fit.
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     const source = view.uid.split(':')[0], composerSteer = ['kiro','droid','agy'].includes(source);
     const actionDefs = [
@@ -164,7 +164,11 @@ const NativeSdkControls = {
     UsageUI.rememberQuota(view.uid,view.usageData?.quota);
     const quota=UsageUI.quota(view.uid) || view.usageData?.quota;
     view.usageData.quota=quota;
-    UsageUI.appendQuotas(gauges,quota,view.uid.split(':')[0]);
+    const source=view.uid.split(':')[0];
+    const model=sdkSettingValue(view,'model',view.nativeModel || view.historyData?.meta?.model || '');
+    const selection=UsageUI.quotaSelection(quota,source,model);
+    UsageUI.appendQuotas(gauges,quota,source,selection.inline);
+    UsageUI.paintQuotaMenu(view.pane.querySelector('#sdk-more-menu'),quota,selection.other);
     for(const bucket of quota?.buckets || []){
       const unit=bucket.unit || (view.uid.startsWith('kiro:') ? 'Credits' : '');
       const usedLimit=bucket.used!=null && bucket.limit!=null ? `${creditCount(bucket.used)} / ${creditCount(bucket.limit)}${unit ? ` ${unit}` : ''} · ` : '';

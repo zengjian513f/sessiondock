@@ -417,7 +417,7 @@ const NativeSdkView = {
     else ConversationUI.selectValue(effort,chosen,'选择强度');
     effort.title = `推理强度：${effort.selectedOptions[0]?.textContent || '未返回'}`;
     effort.closest('label').hidden = !efforts.length && !chosen;
-    NativeSdkControls.layout(this);
+    NativeSdkControls.paintUsage(this);
   },
 
   modelSettings(values) {

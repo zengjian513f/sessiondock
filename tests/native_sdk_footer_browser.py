@@ -174,8 +174,13 @@ def exercise(browser, base, source, screenshots, events):
         for control in page.locator('.native-sdk-pane .sdk-native-setting:not([hidden])').all():
             assert control.evaluate('e=>e.parentElement.classList.contains("sdk-pickers")')
         expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(2 if source=='opencode' else 1)
-        # Every control fits, so there is no ⋯ menu.
-        expect(page.locator('#sdk-more')).to_be_hidden()
+        # Agy has unknown model pools; they remain reachable even if controls fit.
+        if source=='agy':
+            expect(page.locator('#sdk-more')).to_be_visible()
+            page.locator('#sdk-more').click()
+            expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text([long_quota,'Claude/GPT'])
+            page.keyboard.press('Escape')
+        else:expect(page.locator('#sdk-more')).to_be_hidden()
         for width in (1440, 390, 320):
             page.set_viewport_size({'width': width, 'height': 900})
             if not page.locator('#sdk-input').is_visible():
@@ -187,7 +192,8 @@ def exercise(browser, base, source, screenshots, events):
             progress=pane.locator('.sdk-status-row [role="progressbar"][aria-label="上下文 已用"]')
             expect(progress).to_have_attribute('aria-valuenow','25.4')
             assert progress.locator('u').evaluate('e=>e.style.width')=='25.4%'
-            expect(pane.locator('.sdk-gauges')).to_contain_text('7天')
+            if source=='agy':expect(pane.locator('.sdk-gauges .sdk-quota-name')).to_have_count(0)
+            else:expect(pane.locator('.sdk-gauges')).to_contain_text('7天')
             for raw_label in ('weekly','seven_day','7d'):
                 expect(pane.locator('.sdk-gauges')).not_to_contain_text(raw_label)
             assert_inline_usage(page)
@@ -201,19 +207,21 @@ def exercise(browser, base, source, screenshots, events):
                 page.wait_for_function('e => e.scrollLeft < 1', arg=gauges.element_handle())
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
-            expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
+            expect(pane.locator(('#sdk-more-menu' if source=='agy' else '.sdk-status-row > .sdk-gauges')+' .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
             expect(gauges).to_have_attribute('title', re.compile('累计 Token：123,456,789'))
             full_tip = gauges.get_attribute('title') or ''
             assert full_tip.index('上下文') < full_tip.index('Enterprise shared') < full_tip.index('累计 Token：123,456,789'), full_tip
             assert_usage_outside_menu(page)
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)
-            # ⋯ appears only when controls overflow and then holds only those controls.
+            # ⋯ holds overflowing controls and other account pools.
             if page.locator('#sdk-more').is_visible():
                 page.locator('#sdk-more').click()
                 menu = page.locator('#sdk-more-menu')
                 expect(menu).to_be_visible()
-                expect(menu.locator('.sdk-quota-group, .sdk-gauge, .sdk-inline-usage')).to_have_count(0)
+                expect(menu.locator('.sdk-inline-usage')).to_have_count(0)
+                if source=='agy':expect(menu.locator('.sdk-quota-name')).to_have_text([long_quota,'Claude/GPT'])
+                else:expect(menu.locator('.sdk-quota-group, .sdk-gauge')).to_have_count(0)
                 expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(2 if source=='opencode' else 1)
                 for picker in page.locator('#sdk-more-menu > .new-effort').all():
                     bounds=picker.locator('.sdk-picker-label').bounding_box()
@@ -327,13 +335,20 @@ def exercise(browser, base, source, screenshots, events):
             footer=page.locator('#conversation-status')
             expect(footer).to_be_visible()
             assert_reset_countdown(page, footer.locator('.sdk-gauge[title*="重置剩余"]').first, 1800000000)
-            expect(footer.locator('.sdk-gauges')).to_contain_text('5小时')
-            expect(footer.locator('.sdk-gauges')).to_contain_text('7天')
-            expect(footer.locator('.sdk-gauges')).not_to_contain_text('weekly')
             if source=='agy':
-                expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
-            assert_single_status_row(footer)
+                expect(footer.locator('.sdk-gauges .sdk-quota-name')).to_have_count(0)
+                footer.locator('#conversation-quota-more').click()
+                expect(footer.locator('#conversation-quota-menu .sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+                expect(footer.locator('#conversation-quota-menu')).to_contain_text('5小时')
+                expect(footer.locator('#conversation-quota-menu')).to_contain_text('7天')
+                assert footer.evaluate('row=>row.scrollWidth<=row.clientWidth+1')
+            else:
+                expect(footer.locator('.sdk-gauges')).to_contain_text('5小时')
+                expect(footer.locator('.sdk-gauges')).to_contain_text('7天')
+                assert_single_status_row(footer)
+            expect(footer).not_to_contain_text('weekly')
             page.screenshot(path=str(screenshots/f'{source}-conversation-{width}-{theme}.png'))
+            page.keyboard.press('Escape')
             page.locator('#a-sdk').click()
         assert not errors, errors
         context.close()

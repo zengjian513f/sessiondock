@@ -231,19 +231,26 @@ DELTA（BUG-20261111-194813-40040b）：Codex SDK 主回合已完成但仍有已
 
 ## 用量与菜单的显示条件
 
-额度与上下文留在状态栏左侧，**不因某来源有额度就把整组额度复制到菜单**。
+上下文与当前模型所属额度组留在状态栏左侧，其他额度组收进 ⋯，不重复展示当前组。
 Codex 的重置卡是可兑换动作，仅在原生返回可用卡时出现，不是通用额度明细面板。
 普通对话和外部只读 Codex 会话先读机器额度快照，再按来源检查一分钟有效期；
 额度采集不打开会话、不发送推理请求。Codex 只读入口同时读取原生 JSONL 的最近
 上下文测量与累计 Token；缺失或压缩后尚无新测量时隐藏上下文，不推算。
 金币余额保留在底栏可见区域；模型、强度等控件在未接管时显示为禁用，窄屏仍进入 ⋯。
 
-DELTA：Claude、Grok、OpenCode、Agy、Kiro 的 ⋯ 只收纳底栏放不下的控件，宽度够时隐藏 ⋯。
-用量不进 ⋯：累计 Token、输入/输出、思考、缓存、成本、上下文、额度及查询错误
-都写在底栏用量的悬停提示与无障碍说明中；网页 `/usage`、`/context` 只后台刷新底栏，不打开菜单。
+DELTA（BUG-20261115-103739-3eb5c8）：SDK 与普通对话底栏只直显当前模型所属的
+账号额度组，其余组放入 ⋯ 的“其他额度”，即使宽屏控件全部放得下也保留该入口。
+Agy 按 Gemini 与 Claude/GPT 家族匹配；Codex 优先匹配模型专属额度 ID／名称，
+否则使用通用 Codex 组；Droid 依原生顺序先用 Standard，耗尽后仅 Core 模型显示 Core。
+普通对话使用当前历史模型，SDK 使用模型选择器的值（设置失败随原生确认值回退）。
+未知模型或未知多组关系不猜测归属，所有组仍能在菜单查看；单一公共额度池保持直显。
+Claude、Kiro 的公共额度以及 Grok、OpenCode 的会话用量不据此虚构模型组。
+菜单保留其他组的全部窗口、缺失值、重置时间、采集时间和查询失败；当前组不复制进去。
+累计 Token、输入/输出、思考、缓存、成本及上下文仍保留在底栏用量提示与无障碍说明中；
+网页 `/usage`、`/context` 只后台刷新，不自动打开菜单。
 Codex 有真实 Token 明细时仍在 ⋯ 展示累计 Token、输入、输出、缓存读取和思考（计入输出），不推算成本。
 无 Token 数据不生成空白 Token 卡片；原生步骤统计单列，不与累计值相加。
-额度组不在菜单重复展示；上下文、Token、账号额度的统计范围不得混用。
+上下文、Token、账号额度的统计范围不得混用。
 窗口、已用/剩余、分组、缺失与真实采集时间的含义见[额度合同](quotas.md)。
 
 DELTA（BUG-20261115-013511-b566b2）：底栏 `.sdk-gauges` 固定在控件左侧，内联仅展示上下文进度条与账号额度（及 Codex 金币余额）；会话累计 Token（`tok`）与会话累计 `Credits` 不在底栏内联占位，统一保留在 `.sdk-gauges` 的悬停提示与无障碍说明中（排在上下文与额度之后）。
@@ -326,7 +333,7 @@ DELTA（BUG-20261110-164720-cc1f8f）：排队气泡使用已准备的完整投�
   排队 Markdown、状态详情及窗口变化。
 - [发送回执](../tests/native_sdk_receipt_browser.py)：四来源实际发送、轻量接收状态、失败恢复与撤销。
 - [读取恢复](../tests/native_sdk_recovery_browser.py)：四来源阻塞打开时缓存可见、退避和隔离。
-- [Agy 用量](../tests/agy_usage_browser.py)：无 Token＋双额度组、直接明细、刷新与失败。
+- [Agy 用量](../tests/agy_usage_browser.py)：双额度组、模型切换、未知模型、刷新与失败。
 - [Codex 布局](../tests/codex_sdk_layout_browser.py)、[恢复](../tests/codex_sdk_recovery_browser.py)。
 - [状态详情](../tests/sdk_status_disclosure_browser.py)、[溢出](../tests/sdk_overflow_browser.py)、
   [普通对话底栏](../tests/conversation_status_browser.py)。
