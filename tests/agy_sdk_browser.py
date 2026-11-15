@@ -72,6 +72,8 @@ def select_sdk(page, uid=None, connected=True):
     expect(page.locator('#sdk-input')).to_be_visible()
     page.locator('#sdk-input').click()
     if connected:
+        from claude_sdk_browser import start_sdk_if_needed
+        start_sdk_if_needed(page)
         page.wait_for_function('NativeSdkView.connected')
     return uid
 

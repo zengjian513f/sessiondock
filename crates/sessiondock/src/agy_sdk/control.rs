@@ -138,23 +138,7 @@ impl Control {
         method: &str,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let log = tokio::fs::read_to_string(&self.log).await.map_err(
-            |_| "agy_sdk_control_unavailable: 无法取得本实例的原生管理接口；任务继续运行。",
-        )?;
-        let log = log.replace("\r\n", "\n");
-        let marker = format!("Starting language server process with pid {pid}\n");
-        let startup = log
-            .rsplit_once(&marker)
-            .map(|(_, rest)| rest)
-            .ok_or("agy_sdk_control_unavailable: 原生接口进程身份不匹配；任务继续运行。")?;
-        let port = startup
-            .lines()
-            .find_map(|line| {
-                line.split_once("Language server listening on random port at ")
-                    .and_then(|(_, tail)| tail.strip_suffix(" for HTTP"))
-                    .and_then(|port| port.parse::<u16>().ok())
-            })
-            .ok_or("agy_sdk_control_unavailable: 此 CLI 未提供本机管理接口。")?;
+        let port = super::control_log::port(&self.log, pid).await?;
         let target = Target {
             addr: ([127, 0, 0, 1], port).into(),
             token: String::new(),

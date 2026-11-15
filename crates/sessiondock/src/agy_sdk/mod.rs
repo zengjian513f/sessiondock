@@ -2,6 +2,7 @@
 //! See docs/agy-sdk.md for the verified protocol and coexistence boundary.
 mod context;
 mod control;
+mod control_log;
 mod transcript;
 mod transport;
 

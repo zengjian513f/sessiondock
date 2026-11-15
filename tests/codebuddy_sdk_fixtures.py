@@ -124,6 +124,7 @@ class CodebuddyFixture:
                         time.sleep(.05)
                 else:
                     raise AssertionError("isolated SessionDock failed to become healthy")
+                self.server_pid = child.pid
                 yield base
             except BaseException:
                 log.seek(0)

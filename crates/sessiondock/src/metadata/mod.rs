@@ -55,6 +55,7 @@ impl std::error::Error for MetadataError {}
 struct State {
     snapshot: Arc<MetadataSnapshot>,
     fingerprint: Option<String>,
+    version: Option<crate::file_version::FileVersion>,
 }
 
 pub struct MetadataStore {
@@ -66,11 +67,14 @@ impl MetadataStore {
     /// Open the configured metadata directory, creating it when needed.
     pub fn open(directory: &Path) -> Result<Self, MetadataError> {
         let disk = disk::Disk::open(directory)?;
+        let version =
+            crate::file_version::FileVersion::read(&disk.directory().join(METADATA_FILENAME));
         let (snapshot, fingerprint) = disk.load();
         Ok(Self {
             disk,
             state: Mutex::new(State {
                 snapshot: Arc::new(snapshot),
+                version: fingerprint.as_ref().and(version),
                 fingerprint,
             }),
         })
@@ -90,11 +94,17 @@ impl MetadataStore {
         state.snapshot.clone()
     }
 
-    /// Re-read the file and keep the current `Arc` when the content hash matches.
+    /// Stat first; only changed files need a read and the existing content hash.
     /// Decoding runs only after that hash differs. Missing and unreadable files
     /// still replace a fingerprinted snapshot with an empty one and clear the
     /// fingerprint; a repeated miss keeps the empty `Arc`.
     fn reload(&self, state: &mut State) {
+        let version =
+            crate::file_version::FileVersion::read(&self.disk.directory().join(METADATA_FILENAME));
+        if version.is_some() && state.version == version {
+            return;
+        }
+        state.version = None;
         match self.disk.read() {
             None => {
                 if state.fingerprint.is_some() {
@@ -103,6 +113,7 @@ impl MetadataStore {
                 }
             }
             Some(file) => {
+                state.version = version;
                 if state.fingerprint.as_deref() != Some(file.fingerprint.as_str()) {
                     state.snapshot = Arc::new(disk::Disk::decode(&file.bytes));
                     state.fingerprint = Some(file.fingerprint);
@@ -129,6 +140,9 @@ impl MetadataStore {
                 // Publish only after every durability step has succeeded.
                 state.snapshot = Arc::new(next);
                 state.fingerprint = Some(fingerprint);
+                // Recheck once after publication: a concurrent external rename
+                // must not attach its version to the bytes we just wrote.
+                state.version = None;
                 Ok(state.snapshot.clone())
             }
             Err(error) => Err(error),

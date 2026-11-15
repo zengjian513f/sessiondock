@@ -191,9 +191,9 @@ impl TrashService {
                 continue;
             };
             let m = m.as_ref().map_err(Clone::clone)?;
-            let roots = uids(&members(&m));
+            let roots = uids(&members(m));
             item["cascade_sessions"] = json!(
-                self.cascade_scope(&m, rows)?
+                self.cascade_scope(m, rows)?
                     .into_iter()
                     .filter(|r| !roots.contains(text(r, "uid")))
                     .collect::<Vec<_>>()

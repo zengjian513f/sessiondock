@@ -24,15 +24,13 @@ impl Version {
 
 #[derive(Default)]
 pub(super) struct Manifests {
-    entries: BTreeMap<
-        String,
-        (
-            Option<Version>,
-            Option<Version>,
-            Result<Manifest, TrashError>,
-        ),
-    >,
+    entries: BTreeMap<String, CachedManifest>,
 }
+type CachedManifest = (
+    Option<Version>,
+    Option<Version>,
+    Result<Manifest, TrashError>,
+);
 impl Manifests {
     pub fn read(&mut self, id: &str, path: &Path) -> Result<Manifest, TrashError> {
         let directory = Version::read(path);

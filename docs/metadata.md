@@ -215,6 +215,9 @@ checks, node/Hub restart, detach and explicit local reattachment).
 
 An in-process mutex serializes metadata updates. Each read and update reloads
 external edits, retaining the current immutable snapshot when the file is unchanged.
+Filesystem attributes (including Unix inode/change time) avoid reading and hashing
+unchanged bytes. Changed versions still use the existing content hash; missing or
+unreadable files are retried, and successful writes invalidate the cached version.
 Malformed or unsupported documents follow empty-read behavior.
 
 Writes use a unique temporary file in the same directory, flush it, and replace

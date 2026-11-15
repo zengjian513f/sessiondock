@@ -44,13 +44,8 @@ impl Disk {
         &self.directory
     }
 
-    /// Read the metadata file on every call.
-    ///
-    /// `None` is a missing or unreadable file: an empty document with no
-    /// fingerprint. Present bytes carry the existing content hash, computed
-    /// before any decode, so an unchanged snapshot can be kept without
-    /// parsing. The hash covers the bytes just read; a same-length rewrite
-    /// still differs. This is not a size, mtime, or TTL cache.
+    /// Read after a filesystem version change. The existing byte hash keeps
+    /// the immutable snapshot when a replacement has identical contents.
     pub(super) fn read(&self) -> Option<ReadBytes> {
         let Ok(bytes) = fs::read(self.directory.join(METADATA_FILENAME)) else {
             return None;

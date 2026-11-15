@@ -729,3 +729,5 @@ fn build_app(
 }
 
 pub(crate) mod session_links;
+
+mod file_version;
