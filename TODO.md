@@ -3,6 +3,10 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
+- [ ] Orion、Cetus 补发周期性读取及 Hub 快照修复的后端快照 `db78edd0`
+  （版本 `20261115T053112055239Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
+  Hub、Vela 已部署、重启并健康。验收见 [事故记录](docs/history-incidents.md)。
+
 - [ ] 核对 `codex_sdk_stalled_browser.py:74` 的静默原生连接恢复：
   BUG-20261114-233657-ab4cea 验收中，已发布基线与修复版均在等待重新连接后的
   空闲快照时超时；迟到创建、创建重启保留、调用者附属及节点/Hub 新建专项通过。
@@ -103,11 +107,11 @@
   2026-11-11 两轮正式部署的 SSH 探测均超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
   均已部署、重启并健康。这两轮无前端、ptyhost 或资源代理变更。
 
-- [ ] 更新既有综合测试的旧假设：`agy_sdk_browser.py` 在进入 SDK 后直接等待自动连接，
-  2026-11-11 在未修改的已发布基线 `bdf03fc2` 与平台补齐版均超时；
+- [ ] 核对既有综合测试的阻点：`agy_sdk_browser.py` 已按当前入口显式点击启动，
+  但额度刷新按钮禁用断言仍失败；`agy_steer_browser.py` 截取 DOM 前 80 字符
+  查找消息的断言失败。2026-11-15 两者在修复版与修复前已发布二进制均复现，
+  周期读取和 Agy 用量专项通过不等于这两个完整套件通过。
   `lifecycle_cli_browser.py` 的 `resume_sources` 精确字典漏了 `droid:false`，在 Codex 分支前失败。
-  本轮独立的平台、队列、Codex WS/TUI 与 Windows 原生 Chromium 路径已另行验证，
-  不能将这些专项结果记为上述综合套件通过。
 
 - [ ] BUG-20261110-135836-3fb287：前端整页无响应、偶尔触发浏览器结束页面提示，
   根因未定。报告内 7 次长帧最长 27.363 秒，多数缺少脚本归因；原生会话期间仍有输出。
@@ -336,6 +340,10 @@
   Claude/Codex 可能回改旧消息，继续完整投影，不直接拼接旧事件。
 
 ## Validation stability
+
+- [ ] 清理 sessiondock 严格 Clippy 的既有告警：2026-11-15 对 lib/bins 运行
+  `--locked -- -D warnings` 因 42 个既有告警失败；周期读取修改新增的告警已修复，
+  普通 Linux/macOS 构建和 Windows 交叉检查通过不能代替严格 lint。
 
 - [ ] 更新 `header_fold_browser.py` 对已有前后导航按钮的折叠预期：780px 时菜单包含
   `m-prev`、`m-next`，动作顺序断言遗漏二者；本次默认视图修改前的 `e6dffc16`
