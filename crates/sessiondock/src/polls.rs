@@ -17,18 +17,20 @@
 //! bypasses both caches and re-populates them.
 
 use std::{
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use axum::body::Bytes;
+use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::{
     lifecycle::model::Record,
     runtime::{
         Generation, RuntimeSnapshot,
-        procscan::{Scan, SessionRow},
+        procscan::{Scan, SessionRow, parse_created},
     },
 };
 
@@ -72,7 +74,7 @@ pub struct LiveKey {
     /// directory.
     pub runtime: Option<Arc<RuntimeSnapshot>>,
     pub generation: Generation,
-    pub rows: Vec<SessionRow>,
+    pub rows: Arc<[SessionRow]>,
     pub sdk_uids: Vec<String>,
     pub retained_sdk_uids: Vec<String>,
 }
@@ -86,7 +88,7 @@ impl LiveKey {
                 _ => false,
             }
             && self.generation == other.generation
-            && self.rows == other.rows
+            && (Arc::ptr_eq(&self.rows, &other.rows) || self.rows == other.rows)
             && self.sdk_uids == other.sdk_uids
             && self.retained_sdk_uids == other.retained_sdk_uids
     }
@@ -111,9 +113,38 @@ struct ReceiptsEntry {
     records: Arc<Vec<Record>>,
 }
 
+pub struct CatalogDocCache {
+    node_id: String,
+    document: Arc<Value>,
+    pub by_uid: HashMap<String, process_links::Session>,
+    pub sessions: Vec<process_links::Session>,
+    pub identities: BTreeMap<(String, String), String>,
+}
+
+struct CatalogWireEntry {
+    node_id: String,
+    boot_id: String,
+    document: Arc<Value>,
+    owners: Vec<process_links::agent::Owner>,
+    full_bytes: Arc<[u8]>,
+    bindings_bytes: Arc<[u8]>,
+}
+
+type TopologyCache = (Arc<Value>, Arc<[SessionRow]>);
+type AttributionCache = (
+    Arc<Scan>,
+    Arc<[SessionRow]>,
+    Arc<IndexMap<String, Vec<i64>>>,
+);
+pub type CatalogFrames = (Arc<[u8]>, Arc<[u8]>);
+
 #[derive(Default)]
 pub struct PollCache {
     live: Mutex<Option<LiveEntry>>,
+    topology: Mutex<Option<TopologyCache>>,
+    catalog_doc: Mutex<Option<Arc<CatalogDocCache>>>,
+    attribution: Mutex<Option<AttributionCache>>,
+    catalog_wire: Mutex<Option<CatalogWireEntry>>,
     term_list: Mutex<Option<TermEntry>>,
     receipts: Mutex<Option<ReceiptsEntry>>,
     /// Single flight for the receipt list refresh: a second poll arriving
@@ -128,6 +159,21 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl PollCache {
+    /// Cached topology rows extracted from a published `recent_document`.
+    pub fn topology(&self, document: &Arc<Value>) -> Arc<[SessionRow]> {
+        {
+            let cache = lock(&self.topology);
+            if let Some((cached_doc, rows)) = cache.as_ref()
+                && Arc::ptr_eq(cached_doc, document)
+            {
+                return rows.clone();
+            }
+        }
+        let built: Arc<[SessionRow]> = topology(document).into();
+        *lock(&self.topology) = Some((document.clone(), built.clone()));
+        built
+    }
+
     /// The `/api/live` body assembled from exactly these sources.
     pub fn live(&self, key: &LiveKey) -> Option<Arc<Value>> {
         let cache = lock(&self.live);
@@ -200,6 +246,115 @@ impl PollCache {
             generation,
             records,
         });
+    }
+
+    /// Cached collector session catalog + `(source, sid) -> uid` map for a published `document`.
+    pub fn catalog_doc(
+        &self,
+        node_id: &str,
+        document: &Arc<Value>,
+        rows: &[SessionRow],
+    ) -> Arc<CatalogDocCache> {
+        {
+            let cache = lock(&self.catalog_doc);
+            if let Some(entry) = cache.as_ref()
+                && entry.node_id == node_id
+                && Arc::ptr_eq(&entry.document, document)
+            {
+                return entry.clone();
+            }
+        }
+        let titles: HashMap<_, _> = document["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| Some((v["uid"].as_str()?, v["title"].as_str()?)))
+            .collect();
+        let mut by_uid = HashMap::with_capacity(rows.len());
+        let mut sessions = Vec::with_capacity(rows.len());
+        let mut identities = BTreeMap::new();
+        for row in rows {
+            let session = process_links::Session {
+                node_id: node_id.to_owned(),
+                source: row.source.clone(),
+                sid: row.sid.clone(),
+                title: titles.get(row.uid.as_str()).map(|s| (*s).to_owned()),
+                created: parse_created(&row.created),
+            };
+            identities.insert((row.source.clone(), row.sid.clone()), row.uid.clone());
+            by_uid.insert(row.uid.clone(), session.clone());
+            sessions.push(session);
+        }
+        sessions.sort_by(|a, b| (&a.source, &a.sid).cmp(&(&b.source, &b.sid)));
+        let built = Arc::new(CatalogDocCache {
+            node_id: node_id.to_owned(),
+            document: document.clone(),
+            by_uid,
+            sessions,
+            identities,
+        });
+        *lock(&self.catalog_doc) = Some(built.clone());
+        built
+    }
+
+    /// Cached `Scan::attribution_processes` result for an unchanged `(scan, rows)` pair.
+    pub fn attribution(
+        &self,
+        scan: &Arc<Scan>,
+        rows: &Arc<[SessionRow]>,
+    ) -> Arc<IndexMap<String, Vec<i64>>> {
+        {
+            let cache = lock(&self.attribution);
+            if let Some((cached_scan, cached_rows, owned)) = cache.as_ref()
+                && Arc::ptr_eq(cached_scan, scan)
+                && Arc::ptr_eq(cached_rows, rows)
+            {
+                return owned.clone();
+            }
+        }
+        let owned = Arc::new(scan.attribution_processes(rows));
+        *lock(&self.attribution) = Some((scan.clone(), rows.clone(), owned.clone()));
+        owned
+    }
+
+    /// Pre-serialized `Request::Catalog` frames (`bindings_only` false/true) for unchanged inputs.
+    pub fn catalog_wire(
+        &self,
+        node_id: &str,
+        boot_id: &str,
+        document: &Arc<Value>,
+        owners: &[process_links::agent::Owner],
+        sessions: &[process_links::Session],
+    ) -> std::io::Result<CatalogFrames> {
+        {
+            let cache = lock(&self.catalog_wire);
+            if let Some(entry) = cache.as_ref()
+                && entry.node_id == node_id
+                && entry.boot_id == boot_id
+                && Arc::ptr_eq(&entry.document, document)
+                && entry.owners == owners
+            {
+                return Ok((entry.full_bytes.clone(), entry.bindings_bytes.clone()));
+            }
+        }
+        let request = process_links::agent::Request::Catalog(process_links::agent::Catalog {
+            node_id: node_id.to_owned(),
+            boot_id: boot_id.to_owned(),
+            owners: owners.to_vec(),
+            sessions: sessions.to_vec(),
+        });
+        let full_bytes: Arc<[u8]> = process_links::agent::encode_request(&request, false)?.into();
+        let bindings_bytes: Arc<[u8]> =
+            process_links::agent::encode_request(&request, true)?.into();
+        *lock(&self.catalog_wire) = Some(CatalogWireEntry {
+            node_id: node_id.to_owned(),
+            boot_id: boot_id.to_owned(),
+            document: document.clone(),
+            owners: owners.to_vec(),
+            full_bytes: full_bytes.clone(),
+            bindings_bytes: bindings_bytes.clone(),
+        });
+        Ok((full_bytes, bindings_bytes))
     }
 }
 

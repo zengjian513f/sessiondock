@@ -8,11 +8,15 @@ pub async fn events(State(state): State<AppState>) -> Response {
         let state = state.clone();
         async move {
             let (sessions, live, term) = tokio::join!(
-                state.reader.run(move |store| store.list_view(false)),
+                state.reader.run(move |store| store.ui_sessions_snapshot()),
                 super::runtime::live_value(&state, false),
                 super::terminal::list_value(&state, false),
             );
-            Some(Snapshot::new(sessions.ok()?, live.ok()?, term.ok()?))
+            Some(Snapshot::from_sessions(
+                sessions.ok()?,
+                live.ok()?,
+                term.ok()?,
+            ))
         }
     });
     crate::ui_events::stream(receiver, shutdown)

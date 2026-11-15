@@ -61,6 +61,11 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   语义，不另设目录层数、路径组件、canonical root 或硬链接数量门槛。
   已配置的原生读根不存在时，该来源暂为空，不阻断其他来源或服务启动，也不创建目录；
   后续扫描会自动发现重新出现的目录。权限及其他 I/O 错误仍按原有错误语义报告。
+  在 Linux 本地文件系统（`ext4`、`btrfs`、`tmpfs`、`xfs`、`ramfs`、`f2fs`、`overlayfs`）
+  上，索引对已发现目录建立先挂载后读取的 `inotify` 缓存：未收到目录事件且不存在
+  `always_recheck` 条目（符号链接、`nlink > 1` 或非本地挂载）时，过 `CHECK_TTL`
+  后的未强制刷新直接复用候选表而不重走全树 `getdents`/`stat`；事件溢出、实例/watch
+  耗尽或非 Linux 平台自动回退为按目录遍历。
 - **stamp** = `dev/ino/size/mtime_ns`。摘要缓存以 stamp 为键：stamp 未变则
   热刷新只有 `stat`；变了只重读这一个文件。
 - **摘要字段投影**：头/尾中的完整 JSONL 行超过 64 KiB 时，结构扫描器完整验证
@@ -109,6 +114,8 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   更新排序；详情仍按需读取。点击只改变选中项，不补做已通知活动的排序。
   [`tests/ui_events_browser.py`](../tests/ui_events_browser.py) 覆盖无手动刷新的追加、
   未读、活动排序及点击稳定性，同时约束不增加未选中正文或整表请求。
+  列表文档与视图版本未变时，UI 事件观察器、列表增量传输（`list_sync`）及运行时拓扑／
+  采集目录同步直接复用已准备快照或编码帧，不重复解码与比较整份列表。
 - **当前模型**（BUG-20261003-110654-be9964）：Claude 取最近一条有效 assistant
   的 `message.model`，Codex 取最近一条有效 `turn_context.payload.model`。
   主会话跳过 Claude sidechain；子代理只读自己的文件；空值和 `<synthetic>`
@@ -304,7 +311,9 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   撤回）。`/api/sessions` 与列表调用仍按索引自己的 500 ms 窗口；
   `/api/live` 与 spawner tick 用同样的 3 s 窗口（`list_recent`）。目录遍历后如果
   每个文件的 stamp 都与上次相同（且名称索引未变），直接复用上一份快照，不重建
-  行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
+  行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档；
+  `/api/events` 观察器按已发布文档与视图装饰版本复用归一化会话快照，`/api/live`、
+  spawner 与采集器 `Catalog` 同步共享按文档指针缓存的拓扑解析、编码帧和成熟进程的启动环境摘要。
 `GET /api/sessions?children=hidden` 用于「按需展开」：初次只传主会话与 `child_count`，
 省去子会话行和 `agent_items`。点击箭头时追加 `expanded` JSON 数组，每项是
 `{source, sid, node_id}`（本地 `node_id` 可为空）；只返回这些父会话的直接附属会话和

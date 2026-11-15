@@ -82,40 +82,38 @@ pub struct Resources {
     #[serde(default)]
     pub session_measurements: Vec<SessionMeasurement>,
 }
+#[derive(Serialize)]
+struct WireMessage<'a> {
+    #[serde(flatten)]
+    request: &'a Request,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    bindings_only: bool,
+}
+
+/// Encode a newline-terminated local request frame once for reuse across polls.
+pub fn encode_request(request: &Request, bindings_only: bool) -> std::io::Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(&WireMessage {
+        request,
+        bindings_only,
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 /// One bounded-time local exchange. Application requests never enter SSH's path.
 #[cfg(unix)]
-fn response<T: serde::de::DeserializeOwned>(
+fn response_encoded<T: serde::de::DeserializeOwned>(
     path: &Path,
-    request: &Request,
-    bindings_only: bool,
+    encoded: &[u8],
 ) -> std::io::Result<Option<T>> {
-    use std::io::{BufRead, BufReader, BufWriter, Write};
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     let mut stream = UnixStream::connect(path)?;
     let timeout = Some(std::time::Duration::from_secs(2));
     stream.set_read_timeout(timeout)?;
     stream.set_write_timeout(timeout)?;
-    // serde emits punctuation and short fields separately. Buffer the catalog
-    // instead of making thousands of one-byte socket writes per observation.
-    let mut writer = BufWriter::new(&mut stream);
-    #[derive(Serialize)]
-    struct Message<'a> {
-        #[serde(flatten)]
-        request: &'a Request,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        bindings_only: bool,
-    }
-    // Older collectors ignore this optional projection and return the full report.
-    serde_json::to_writer(
-        &mut writer,
-        &Message {
-            request,
-            bindings_only,
-        },
-    )?;
-    writer.write_all(b"\n")?;
-    writer.flush()?;
-    drop(writer);
+    stream.write_all(encoded)?;
+    stream.flush()?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
     #[derive(Deserialize)]
@@ -131,6 +129,16 @@ fn response<T: serde::de::DeserializeOwned>(
         ));
     }
     Ok(response.result)
+}
+
+#[cfg(unix)]
+fn response<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    request: &Request,
+    bindings_only: bool,
+) -> std::io::Result<Option<T>> {
+    let encoded = encode_request(request, bindings_only)?;
+    response_encoded(path, &encoded)
 }
 #[cfg(unix)]
 pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Value> {
@@ -166,31 +174,67 @@ pub fn request_typed<T: serde::de::DeserializeOwned>(_: &Path, _: &Request) -> s
 /// Request the small wire projection; older collectors may still send full
 /// reports, whose extra fields are validated and skipped without allocation.
 /// The full report remains available to the coordinator.
-pub fn bindings(path: &Path, request: &Request) -> std::io::Result<Report> {
-    #[derive(Deserialize)]
-    struct Bindings {
-        version: u32,
-        node_id: String,
-        boot_id: String,
-        supported: bool,
-        sampled_at: f64,
-        bindings: Vec<Binding>,
+#[derive(Deserialize)]
+struct BindingsProjection {
+    version: u32,
+    node_id: String,
+    boot_id: String,
+    supported: bool,
+    sampled_at: f64,
+    bindings: Vec<Binding>,
+}
+
+impl From<BindingsProjection> for Report {
+    fn from(result: BindingsProjection) -> Self {
+        Self {
+            version: result.version,
+            node_id: result.node_id,
+            boot_id: result.boot_id,
+            supported: result.supported,
+            sampled_at: result.sampled_at,
+            bindings: result.bindings,
+            outgoing: Vec::new(),
+            incoming: Vec::new(),
+            connections: Vec::new(),
+            collector: None,
+        }
     }
+}
+
+pub fn bindings(path: &Path, request: &Request) -> std::io::Result<Report> {
     #[cfg(unix)]
-    let result: Bindings = response(path, request, true)?
+    let result: BindingsProjection = response(path, request, true)?
         .ok_or_else(|| std::io::Error::other("agent response has no result"))?;
     #[cfg(not(unix))]
-    let result: Bindings = request_typed(path, request)?;
-    Ok(Report {
-        version: result.version,
-        node_id: result.node_id,
-        boot_id: result.boot_id,
-        supported: result.supported,
-        sampled_at: result.sampled_at,
-        bindings: result.bindings,
-        outgoing: Vec::new(),
-        incoming: Vec::new(),
-        connections: Vec::new(),
-        collector: None,
-    })
+    let result: BindingsProjection = request_typed(path, request)?;
+    Ok(result.into())
+}
+
+#[cfg(unix)]
+pub fn request_encoded_typed<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    encoded: &[u8],
+) -> std::io::Result<T> {
+    response_encoded(path, encoded)?
+        .ok_or_else(|| std::io::Error::other("agent response has no result"))
+}
+
+#[cfg(not(unix))]
+pub fn request_encoded_typed<T: serde::de::DeserializeOwned>(
+    _: &Path,
+    _: &[u8],
+) -> std::io::Result<T> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "resource-agent requires Unix",
+    ))
+}
+
+pub fn bindings_encoded(path: &Path, encoded: &[u8]) -> std::io::Result<Report> {
+    #[cfg(unix)]
+    let result: BindingsProjection = response_encoded(path, encoded)?
+        .ok_or_else(|| std::io::Error::other("agent response has no result"))?;
+    #[cfg(not(unix))]
+    let result: BindingsProjection = request_encoded_typed(path, encoded)?;
+    Ok(result.into())
 }

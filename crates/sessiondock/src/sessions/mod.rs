@@ -458,6 +458,12 @@ struct SerializedList {
     projection: String,
 }
 
+struct UiSessionsCache {
+    document: Arc<Value>,
+    revision: u64,
+    snapshot: Arc<crate::ui_events::SessionsSnapshot>,
+}
+
 /// Dependency resolution over one index snapshot: Codex `history_base`
 /// parents by native thread id, with the graph's 501/409 codes. Paths are
 /// never joined; they come from indexed candidates.
@@ -501,6 +507,7 @@ pub struct SessionStore {
     /// concurrent renders of one view single-flight (the second waits and
     /// then hits). Never held while waiting for the list or view lock.
     serialized: Mutex<[Option<SerializedList>; 2]>,
+    ui_sessions: Mutex<Option<UiSessionsCache>>,
 }
 
 impl SessionStore {
@@ -537,6 +544,7 @@ impl SessionStore {
             views: Mutex::new(views),
             views_revision,
             serialized: Mutex::new([None, None]),
+            ui_sessions: Mutex::new(None),
         }
     }
 
@@ -769,6 +777,36 @@ impl SessionStore {
     /// The published list with cached cursor decorations and wire warnings.
     pub fn list_view(&self, force: bool) -> Result<Value, SessionError> {
         self.list_view_unless(force, "")
+    }
+
+    /// Normalized session-list and cursor snapshot for `/api/events`, cached
+    /// across observer ticks while the published document and view-decoration
+    /// revision stay unchanged.
+    pub(crate) fn ui_sessions_snapshot(
+        &self,
+    ) -> Result<Arc<crate::ui_events::SessionsSnapshot>, SessionError> {
+        let published = self.publish(false)?;
+        let document = published.document.clone();
+        let mut cache = self
+            .ui_sessions
+            .lock()
+            .map_err(|_| SessionError::new(500, "会话事件缓存锁不可用"))?;
+        if let Some(entry) = cache.as_ref()
+            && Arc::ptr_eq(&entry.document, &document)
+            && entry.revision == self.views_revision.load(Ordering::Acquire)
+        {
+            return Ok(entry.snapshot.clone());
+        }
+        let (value, revision) = self.render_view(&published, &document);
+        let snapshot = Arc::new(crate::ui_events::SessionsSnapshot::new(value));
+        if let Some(revision) = revision {
+            *cache = Some(UiSessionsCache {
+                document,
+                revision,
+                snapshot: snapshot.clone(),
+            });
+        }
+        Ok(snapshot)
     }
 
     /// `list_view`, except that when the view's signature equals `sig` the

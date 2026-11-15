@@ -6,13 +6,27 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 fn infrastructure(tree: &ProcTree, pid: u32, cmd: &str) -> bool {
     let name = cli_name(argv0_of(cmd));
-    let args: Vec<_> = cmd.split_ascii_whitespace().collect();
-    name == "ptyhost"
+    if name == "ptyhost"
         || name == "codex-code-mode-host"
-        || (cli_family(argv0_of(cmd)) == Some("codex") && tree.is_codex_app_server(pid))
-        || (name == "opencode" && args.get(1) == Some(&"serve"))
-        || args.windows(2).any(|pair| pair == ["mcp", "serve"])
         || name.starts_with("mcp-server-")
+        || (cli_family(argv0_of(cmd)) == Some("codex") && tree.is_codex_app_server(pid))
+    {
+        return true;
+    }
+    let mut iter = cmd.split_ascii_whitespace();
+    let _first = iter.next();
+    let mut prev = match iter.next() {
+        Some(second) if name == "opencode" && second == "serve" => return true,
+        Some(second) => second,
+        None => return false,
+    };
+    for token in iter {
+        if prev == "mcp" && token == "serve" {
+            return true;
+        }
+        prev = token;
+    }
+    false
 }
 
 impl ProcTree {
@@ -73,6 +87,9 @@ impl ProcTree {
         owners: &indexmap::IndexMap<String, Vec<i64>>,
         live: &BTreeSet<&str>,
     ) -> Vec<String> {
+        if live.is_empty() {
+            return Vec::new();
+        }
         let by_pid: HashMap<_, _> = owners
             .iter()
             .flat_map(|(uid, pids)| {
@@ -96,19 +113,12 @@ impl ProcTree {
                 )
             })
             .collect();
+        if by_pid.is_empty() && by_sid.is_empty() {
+            return Vec::new();
+        }
         let mut working = BTreeSet::new();
-        for directory in std::fs::read_dir(self.root())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let Some(pid) = directory
-                .file_name()
-                .to_str()
-                .and_then(|v| v.parse::<u32>().ok())
-            else {
-                continue;
-            };
+        let mut seen = HashSet::new();
+        for pid in self.pids() {
             if by_pid.contains_key(&pid) {
                 continue; // CLI main processes are alive, not necessarily working.
             }
@@ -119,7 +129,7 @@ impl ProcTree {
                 continue;
             }
             let mut current = pid;
-            let mut seen = HashSet::new();
+            seen.clear();
             let mut owner = None;
             let mut transport = false;
             // Nearest positively owned CLI wins over inherited root identity.
@@ -157,7 +167,7 @@ impl ProcTree {
             if transport {
                 continue;
             }
-            if owner.is_none() && !self.is_cli_process(pid) {
+            if owner.is_none() && !by_sid.is_empty() && !self.is_cli_process(pid) {
                 let env = self.spawn_env(pid);
                 // Thread identity precedes the Codex root; an unresolved
                 // subagent may still use its known root session.

@@ -512,6 +512,41 @@ impl MetadataSnapshot {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
 
+    pub fn nest_initialized(&self, uid: &str) -> Option<bool> {
+        self.document.sessions.get(uid)?.nest_initialized
+    }
+
+    pub fn has_uninitialized_local_nest_parents(&self) -> bool {
+        self.document.sessions.values().any(|row| {
+            row.nest_initialized == Some(false)
+                && row
+                    .nest_parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.node_id.is_none())
+        })
+    }
+
+    pub fn needs_initial_nest_parents(
+        &self,
+        found: &[(String, NestParent)],
+    ) -> Result<bool, MetadataError> {
+        let mut needed = false;
+        for (uid, parent) in found {
+            validate_uid(uid)?;
+            field(&parent.source)?;
+            field(&parent.sid)?;
+            if self
+                .document
+                .sessions
+                .get(uid)
+                .is_none_or(|row| row.nest_initialized != Some(true) && row.nest_parent.is_none())
+            {
+                needed = true;
+            }
+        }
+        Ok(needed)
+    }
+
     /// Only legacy automatic links awaiting initialization can be repaired.
     /// A user choice is never invalidated by native creation timestamps.
     pub fn without_invalid_initial_nest_parents(

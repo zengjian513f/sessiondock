@@ -99,9 +99,9 @@ def main():
                 page = browser.new_page(viewport={'width': 1280, 'height': 960})
                 page.goto(base, wait_until='networkidle')
                 page.locator('#side .item').first.click()
-                # A Codex session also offers the SDK view (docs/codex-sdk.md).
-                codex = page.locator('#side .item').first.get_attribute('data-uid').startswith('codex:')
-                assert page.locator('.session-views button:not([hidden])').evaluate_all('(buttons) => buttons.map(b => b.getAttribute("aria-label"))') == (['对话', '终端', 'Codex SDK', '信息', '资源'] if codex else ['对话', '终端', '信息', '资源'])
+                # When SDK mode is configured for this session, #a-sdk ("SDK") precedes chat.
+                sdk = page.evaluate('() => typeof SdkView !== "undefined" && SdkView.available(S.sel, S.agent)')
+                assert page.locator('.session-views button:not([hidden])').evaluate_all('(buttons) => buttons.map(b => b.getAttribute("aria-label"))') == (['SDK', '对话', '终端', '信息', '资源'] if sdk else ['对话', '终端', '信息', '资源'])
                 for width, theme in [(1280, 'light'), (390, 'light'), (390, 'dark'), (1280, 'dark')]:
                     page.set_viewport_size({'width':width, 'height':960})
                     page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)

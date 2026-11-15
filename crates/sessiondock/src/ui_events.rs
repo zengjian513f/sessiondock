@@ -14,11 +14,15 @@ use std::{
 };
 use tokio::sync::broadcast;
 
-pub struct Snapshot {
+pub struct SessionsSnapshot {
     sessions: Value,
+    cursors: BTreeMap<(String, String), Value>,
+}
+
+pub struct Snapshot {
+    sessions: Arc<SessionsSnapshot>,
     live: Value,
     term: Value,
-    cursors: BTreeMap<(String, String), Value>,
     /// Hub only: each node's draft epoch (`/api/live` `draft_epochs`).
     drafts: Value,
 }
@@ -80,12 +84,9 @@ fn row_metadata(row: &mut Value) {
         }
     }
 }
-impl Snapshot {
-    pub fn new(mut sessions: Value, mut live: Value, mut term: Value) -> Self {
-        let drafts = live
-            .as_object_mut()
-            .and_then(|live| live.remove("draft_epochs"))
-            .unwrap_or(Value::Null);
+
+impl SessionsSnapshot {
+    pub fn new(mut sessions: Value) -> Self {
         let mut cursors = BTreeMap::new();
         if let Some(rows) = sessions["sessions"].as_array_mut() {
             for row in rows.iter_mut() {
@@ -111,6 +112,42 @@ impl Snapshot {
             }
             rows.sort_by_key(|row| row["uid"].as_str().unwrap_or_default().to_owned());
         }
+        stable(&mut sessions);
+        Self { sessions, cursors }
+    }
+
+    pub fn normalized_node_envelope(nodes: &Value, errors: &Value) -> (Value, Value) {
+        let mut nodes = nodes.clone();
+        let mut errors = errors.clone();
+        stable(&mut nodes);
+        stable(&mut errors);
+        (nodes, errors)
+    }
+
+    pub fn nodes(&self) -> &Value {
+        &self.sessions["nodes"]
+    }
+
+    pub fn errors(&self) -> &Value {
+        &self.sessions["errors"]
+    }
+}
+
+impl Snapshot {
+    #[allow(dead_code)]
+    pub fn new(sessions: Value, live: Value, term: Value) -> Self {
+        Self::from_sessions(Arc::new(SessionsSnapshot::new(sessions)), live, term)
+    }
+
+    pub fn from_sessions(
+        sessions: Arc<SessionsSnapshot>,
+        mut live: Value,
+        mut term: Value,
+    ) -> Self {
+        let drafts = live
+            .as_object_mut()
+            .and_then(|live| live.remove("draft_epochs"))
+            .unwrap_or(Value::Null);
         for field in ["uids", "tmux_uids", "sdk_uids"] {
             if let Some(items) = live[field].as_array_mut() {
                 items.sort_by_key(Value::to_string);
@@ -121,25 +158,29 @@ impl Snapshot {
                 items.sort_by_key(|row| row["name"].as_str().unwrap_or_default().to_owned());
             }
         }
-        stable(&mut sessions);
         stable(&mut live);
         stable(&mut term);
         Self {
             sessions,
             live,
             term,
-            cursors,
             drafts,
         }
     }
+
     pub fn change(&self, previous: &Self) -> Option<Value> {
-        let cursors: Vec<_> = self
-            .cursors
-            .iter()
-            .filter(|(key, value)| previous.cursors.get(*key) != Some(*value))
-            .map(|(_, value)| value.clone())
-            .collect();
-        let sessions = self.sessions != previous.sessions;
+        let same_sessions = Arc::ptr_eq(&self.sessions, &previous.sessions);
+        let cursors: Vec<_> = if same_sessions {
+            Vec::new()
+        } else {
+            self.sessions
+                .cursors
+                .iter()
+                .filter(|(key, value)| previous.sessions.cursors.get(*key) != Some(*value))
+                .map(|(_, value)| value.clone())
+                .collect()
+        };
+        let sessions = !same_sessions && self.sessions.sessions != previous.sessions.sessions;
         let live = self.live != previous.live;
         let term = self.term != previous.term;
         // A node reporting a new draft epoch, or newly reachable, may hold a

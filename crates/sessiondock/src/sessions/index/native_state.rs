@@ -125,6 +125,12 @@ impl Record {
     }
 }
 
+fn same_or_grown_inode(file: &mut std::fs::File, stamp: Stamp) -> bool {
+    file.stamp().is_some_and(|after| {
+        (after.dev, after.ino) == (stamp.dev, stamp.ino) && after.size >= stamp.size
+    })
+}
+
 pub(super) fn read(
     data: &DataFile<'_>,
     mut open: impl FnMut() -> io::Result<std::fs::File>,
@@ -169,7 +175,7 @@ pub(super) fn read(
                 Some(file) => file,
                 None => {
                     let mut file = open()?;
-                    if file.stamp() != Some(data.stamp) {
+                    if !same_or_grown_inode(&mut file, data.stamp) {
                         return Err(io::Error::other("Native state scan changed during read"));
                     }
                     opened.insert(file)
@@ -368,7 +374,7 @@ fn read_title(
         }
     }
     let mut file = open()?;
-    if file.stamp() != Some(data.stamp) {
+    if !same_or_grown_inode(&mut file, data.stamp) {
         return Err(io::Error::other("Native title scan changed during read"));
     }
     file.seek(io::SeekFrom::Start(committed))?;

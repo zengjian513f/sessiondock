@@ -39,7 +39,7 @@ use crate::{
     },
     hub_config::HubConfig,
     json_compat::truthy,
-    ui_events::{EventBus, Snapshot},
+    ui_events::{EventBus, SessionsSnapshot, Snapshot},
 };
 
 /// Routes the hub answers itself (method, path); everything else is
@@ -735,23 +735,66 @@ async fn handle(
     if method == Method::GET && path == "/api/events" {
         let registry = state.registry.clone();
         let client = state.client.clone();
+        type CachedSessions = Option<(String, Arc<SessionsSnapshot>)>;
+        let cached_sessions: Arc<std::sync::Mutex<CachedSessions>> =
+            Arc::new(std::sync::Mutex::new(None));
         let receiver = state.ui_events.subscribe(move || {
             let registry = registry.clone();
             let client = client.clone();
-            let params = Vec::new();
+            let cached_sessions = cached_sessions.clone();
             async move {
+                let prev = cached_sessions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let sess_params: Vec<(String, String)> = match &prev {
+                    Some((sig, _)) => vec![("sig".to_string(), sig.clone())],
+                    None => Vec::new(),
+                };
+                let empty_params = Vec::new();
                 // Registry::fetch returns cached state for known-offline nodes;
                 // only the existing health monitor probes them for recovery.
                 let (sessions, live, term) = tokio::join!(
-                    aggregate::sessions(&registry, &client, &params),
-                    aggregate::live(&registry, &client, &params),
-                    aggregate::term_list(&registry, &client, &params),
+                    aggregate::sessions(&registry, &client, &sess_params),
+                    aggregate::live(&registry, &client, &empty_params),
+                    aggregate::term_list(&registry, &client, &empty_params),
                 );
-                let (sessions, live, term) = (sessions.ok()?, live.ok()?, term.ok()?);
-                client
-                    .work(move || Snapshot::new(sessions, live, term))
+                let (mut sessions, live, term) = (sessions.ok()?, live.ok()?, term.ok()?);
+                if sessions["unchanged"] == true {
+                    if let Some((_, prev_snap)) = &prev {
+                        let same_envelope = {
+                            let (nodes, errors) = SessionsSnapshot::normalized_node_envelope(
+                                &sessions["nodes"],
+                                &sessions["errors"],
+                            );
+                            prev_snap.nodes() == &nodes && prev_snap.errors() == &errors
+                        };
+                        if same_envelope {
+                            let snap = prev_snap.clone();
+                            return client
+                                .work(move || Snapshot::from_sessions(snap, live, term))
+                                .await
+                                .ok();
+                        }
+                    }
+                    sessions = aggregate::sessions(&registry, &client, &empty_params)
+                        .await
+                        .ok()?;
+                }
+                let sig = sessions["sig"].as_str().map(str::to_owned);
+                let (sessions_snap, snapshot) = client
+                    .work(move || {
+                        let snap = Arc::new(SessionsSnapshot::new(sessions));
+                        let full = Snapshot::from_sessions(snap.clone(), live, term);
+                        (snap, full)
+                    })
                     .await
-                    .ok()
+                    .ok()?;
+                if let Some(sig) = sig {
+                    *cached_sessions.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some((sig, sessions_snap));
+                }
+                Some(snapshot)
             }
         });
         return Ok(crate::ui_events::stream(receiver, state.shutdown.clone()));

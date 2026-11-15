@@ -76,6 +76,7 @@ pub mod names;
 mod native_state;
 pub mod summary;
 mod titles;
+mod watch;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
@@ -455,6 +456,9 @@ struct AssembledRow {
 
 #[derive(Default)]
 struct State {
+    discovery: watch::DiscoveryCache,
+    discovery_generation: Option<u64>,
+    discovered_len: usize,
     cache: HashMap<PathBuf, Cached>,
     rows: HashMap<String, CachedRow>,
     title_names: Option<Arc<names::NameIndex>>,
@@ -569,13 +573,21 @@ impl Index {
         {
             return Ok(snapshot.clone());
         }
-        let discovered = self.discover()?;
+        let (discovered, discovery_gen) = state.discovery.discover(&self.roots)?;
+        if state.snapshot.is_some()
+            && state.discovery_generation == Some(discovery_gen)
+            && state.discovered_len == state.cache.len()
+            && !self.names_changed(&state)?
+        {
+            state.checked = Some(Instant::now());
+            return Ok(state.snapshot.clone().expect("checked above"));
+        }
         // Unchanged walk: the same files with the same stamps
         // and the same names file describe the snapshot already published —
         // every row, cut and stop scan is a function of those stamps. Skip the
         // rebuild (graph, rows, serialization, signature) and only refresh
         // the TTL, so the SSE publisher's 500 ms probes and every `open`
-        // past the TTL cost a directory walk plus `stat`, not ~80 ms of CPU.
+        // past the TTL avoid rebuilding rows when stamps match.
         if state.snapshot.is_some()
             && discovered.len() == state.cache.len()
             && discovered.iter().all(|candidate| {
@@ -586,6 +598,8 @@ impl Index {
             })
             && !self.names_changed(&state)?
         {
+            state.discovery_generation = Some(discovery_gen);
+            state.discovered_len = discovered.len();
             state.checked = Some(Instant::now());
             return Ok(state.snapshot.clone().expect("checked above"));
         }
@@ -636,7 +650,7 @@ impl Index {
 
         let mut entries = BTreeMap::new();
         let mut aliases = BTreeMap::new();
-        for candidate in discovered {
+        for candidate in discovered.iter().cloned() {
             let Some(cached) = state.cache.get(&candidate.path) else {
                 continue;
             };
@@ -830,9 +844,12 @@ impl Index {
             agents,
             catalog: built.catalog,
         });
+        let has_transient = !transient.is_empty();
         for path in transient {
             state.cache.remove(&path);
         }
+        state.discovery_generation = (!has_transient).then_some(discovery_gen);
+        state.discovered_len = discovered.len();
         state.rows = next_rows;
         state.names = names;
         state.snapshot = Some(snapshot.clone());
@@ -933,48 +950,6 @@ impl Index {
             .map(|changed| changed.unwrap_or(false))
     }
 
-    fn discover(&self) -> Result<Vec<Discovered>, SessionError> {
-        let mut found = Vec::new();
-        for (source, configured) in [
-            ("claude", &self.roots.claude),
-            ("codex", &self.roots.codex),
-            ("grok", &self.roots.grok),
-            ("opencode", &self.roots.opencode),
-            ("agy", &self.roots.agy),
-            ("kiro", &self.roots.kiro),
-            ("codebuddy", &self.roots.codebuddy),
-            ("droid", &self.roots.droid),
-        ] {
-            let Some(root) = configured else { continue };
-            let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
-                Ok(dir) => dir,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => {
-                    return Err(SessionError::new(
-                        503,
-                        format!("{source} 数据源目录暂时不可枚举"),
-                    ));
-                }
-            };
-            dir.entries()
-                .map_err(|_| SessionError::new(503, format!("{source} 数据源目录暂时不可枚举")))?;
-            let mut walk = Walk {
-                root,
-                found: &mut found,
-            };
-            match source {
-                "claude" => walk.claude(&dir)?,
-                "codebuddy" => walk.codebuddy(&dir)?,
-                "droid" => walk.droid(&dir)?,
-                "codex" => walk.codex(&dir, PathBuf::new())?,
-                "opencode" | "agy" => walk.database_mirror(&dir, source)?,
-                "kiro" => walk.database_mirror(&dir, "kiro")?,
-                _ => walk.grok(&dir)?,
-            }
-        }
-        Ok(found)
-    }
-
     fn read_all(
         &self,
         pending: &[&Discovered],
@@ -989,6 +964,48 @@ impl Index {
             )
         })
     }
+}
+
+fn discover_walk(roots: &SessionRoots) -> Result<Vec<Discovered>, SessionError> {
+    let mut found = Vec::new();
+    for (source, configured) in [
+        ("claude", &roots.claude),
+        ("codex", &roots.codex),
+        ("grok", &roots.grok),
+        ("opencode", &roots.opencode),
+        ("agy", &roots.agy),
+        ("kiro", &roots.kiro),
+        ("codebuddy", &roots.codebuddy),
+        ("droid", &roots.droid),
+    ] {
+        let Some(root) = configured else { continue };
+        let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
+            Ok(dir) => dir,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                return Err(SessionError::new(
+                    503,
+                    format!("{source} 数据源目录暂时不可枚举"),
+                ));
+            }
+        };
+        dir.entries()
+            .map_err(|_| SessionError::new(503, format!("{source} 数据源目录暂时不可枚举")))?;
+        let mut walk = Walk {
+            root,
+            found: &mut found,
+        };
+        match source {
+            "claude" => walk.claude(&dir)?,
+            "codebuddy" => walk.codebuddy(&dir)?,
+            "droid" => walk.droid(&dir)?,
+            "codex" => walk.codex(&dir, PathBuf::new())?,
+            "opencode" | "agy" => walk.database_mirror(&dir, source)?,
+            "kiro" => walk.database_mirror(&dir, "kiro")?,
+            _ => walk.grok(&dir)?,
+        }
+    }
+    Ok(found)
 }
 
 /// `items.map(work)` in order, on at most `workers` scoped threads (the
@@ -1299,10 +1316,10 @@ impl Walk<'_> {
             };
             let project_path = self.root.join(&project);
             for session in subdirectories(&project_dir, &project_path) {
-                let Ok(_session_dir) = project_dir.open_dir_nofollow(&session) else {
-                    continue;
-                };
                 let path = self.root.join(&project).join(&session);
+                if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_dir()) {
+                    continue;
+                }
                 let Ok(summary) = file_metadata(&path.join("summary.json")) else {
                     continue;
                 };

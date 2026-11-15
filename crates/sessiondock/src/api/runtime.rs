@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::{
     error::ApiError,
     lifecycle::model::{BindingState, State as LaunchState},
-    polls::{LiveKey, ScanState, topology},
+    polls::{LiveKey, ScanState},
     runtime::{
         ExitReceipt, Generation, ManagedRuntime, RuntimeSnapshot, SharedError, SharedObservation,
         procscan::{Scan, ScanError, ScanSnapshot, SessionRow},
@@ -249,17 +249,18 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     // not see a spurious `reader_busy` from liveness. Only the topology
     // fields leave the reader; the document itself is neither cloned nor
     // decorated.
-    let rows = match &scanned {
+    let rows: Arc<[SessionRow]> = match &scanned {
         Ok(_) => {
+            let polls = state.polls.clone();
             state
                 .reader
                 .run_wait(&state.shutdown, move |store| {
                     let document = store.recent_document()?;
-                    Ok(topology(&document))
+                    Ok(polls.topology(&document))
                 })
                 .await?
         }
-        Err(_) => Vec::new(),
+        Err(_) => Arc::from([]),
     };
     let mut sdk_uids = BTreeSet::new();
     let mut retained_sdk_uids = BTreeSet::new();

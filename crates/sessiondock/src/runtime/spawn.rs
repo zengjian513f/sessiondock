@@ -78,6 +78,9 @@ pub fn spawn_parents(
     sessions: &[SessionRow],
     owned: &IndexMap<String, Vec<i64>>,
 ) -> BTreeMap<String, NestParent> {
+    if !owned.values().any(|pids| pids.iter().any(|pid| *pid > 0)) && scan.opencode.is_empty() {
+        return BTreeMap::new();
+    }
     let rows: HashMap<&str, &SessionRow> = sessions
         .iter()
         .map(|session| (session.uid.as_str(), session))
@@ -99,42 +102,47 @@ pub fn spawn_parents(
         }
     }
     let mut found = BTreeMap::new();
-    for (uid, pids) in owned {
-        if !rows.contains_key(uid.as_str())
-            || sessions
-                .iter()
-                .any(|row| row.continued_in.as_deref() == Some(uid.as_str()))
-        {
-            continue;
+    if owned.values().any(|pids| pids.iter().any(|pid| *pid > 0)) {
+        let continued_targets: std::collections::HashSet<&str> = sessions
+            .iter()
+            .filter_map(|row| row.continued_in.as_deref())
+            .collect();
+        for (uid, pids) in owned {
+            if !pids.iter().any(|pid| *pid > 0) {
+                continue;
+            }
+            if !rows.contains_key(uid.as_str()) || continued_targets.contains(uid.as_str()) {
+                continue;
+            }
+            // A later resume is a new process, not a newly created session.
+            if matches!((parse_created(&rows[uid.as_str()].created), scan.started_at(pids)),
+                (Some(created), Some(started)) if created + 1.0 < started)
+            {
+                continue;
+            }
+            let mut candidates = BTreeSet::new();
+            for pid in pids.iter().filter(|pid| **pid > 0) {
+                candidates.extend(spawn_candidates(
+                    scan,
+                    pid.unsigned_abs() as u32,
+                    uid,
+                    &by_key,
+                    &pid_owner,
+                ));
+            }
+            candidates.remove(uid);
+            let Some(parent) = latest_parent(&candidates, &rows, rows[uid.as_str()]) else {
+                continue;
+            };
+            found.insert(
+                uid.clone(),
+                NestParent {
+                    node_id: None,
+                    source: parent.source.clone(),
+                    sid: parent.sid.clone(),
+                },
+            );
         }
-        // A later resume is a new process, not a newly created session.
-        if matches!((parse_created(&rows[uid.as_str()].created), scan.started_at(pids)),
-            (Some(created), Some(started)) if created + 1.0 < started)
-        {
-            continue;
-        }
-        let mut candidates = BTreeSet::new();
-        for pid in pids.iter().filter(|pid| **pid > 0) {
-            candidates.extend(spawn_candidates(
-                scan,
-                pid.unsigned_abs() as u32,
-                uid,
-                &by_key,
-                &pid_owner,
-            ));
-        }
-        candidates.remove(uid);
-        let Some(parent) = latest_parent(&candidates, &rows, rows[uid.as_str()]) else {
-            continue;
-        };
-        found.insert(
-            uid.clone(),
-            NestParent {
-                node_id: None,
-                source: parent.source.clone(),
-                sid: parent.sid.clone(),
-            },
-        );
     }
     for child in sessions.iter().filter(|row| row.source == "opencode") {
         if found.contains_key(&child.uid) {
@@ -230,32 +238,33 @@ pub fn record(
     owned: &IndexMap<String, Vec<i64>>,
 ) -> Result<(), MetadataError> {
     let snapshot = metadata.snapshot();
-    let by_key: HashMap<_, _> = sessions
-        .iter()
-        .map(|row| ((row.source.as_str(), row.sid.as_str()), row))
-        .collect();
-    let invalid: Vec<_> = sessions
-        .iter()
-        .filter_map(|child| {
-            let saved = snapshot.row(&child.uid);
-            if saved["nest_initialized"] != serde_json::json!(false) {
-                return None;
-            }
-            let parent = snapshot.nest_parent(&child.uid)?;
-            if parent.node_id.is_some() {
-                return None;
-            }
-            let row = by_key.get(&(parent.source.as_str(), parent.sid.as_str()))?;
-            (newer_than_child(row, child)
-                || row.continued_in.as_deref() == Some(child.uid.as_str()))
-            .then(|| (child.uid.clone(), parent.clone()))
-        })
-        .collect();
-    if !invalid.is_empty() {
-        metadata.discard_invalid_initial_nest_parents(&invalid)?;
+    if snapshot.has_uninitialized_local_nest_parents() {
+        let by_key: HashMap<_, _> = sessions
+            .iter()
+            .map(|row| ((row.source.as_str(), row.sid.as_str()), row))
+            .collect();
+        let invalid: Vec<_> = sessions
+            .iter()
+            .filter_map(|child| {
+                if snapshot.nest_initialized(&child.uid) != Some(false) {
+                    return None;
+                }
+                let parent = snapshot.nest_parent(&child.uid)?;
+                if parent.node_id.is_some() {
+                    return None;
+                }
+                let row = by_key.get(&(parent.source.as_str(), parent.sid.as_str()))?;
+                (newer_than_child(row, child)
+                    || row.continued_in.as_deref() == Some(child.uid.as_str()))
+                .then(|| (child.uid.clone(), parent.clone()))
+            })
+            .collect();
+        if !invalid.is_empty() {
+            metadata.discard_invalid_initial_nest_parents(&invalid)?;
+        }
     }
     let found: Vec<_> = spawn_parents(scan, sessions, owned).into_iter().collect();
-    if !found.is_empty() {
+    if !found.is_empty() && snapshot.needs_initial_nest_parents(&found)? {
         let identities = sessions
             .iter()
             .map(|row| ((row.source.clone(), row.sid.clone()), row.uid.clone()))
@@ -288,9 +297,13 @@ async fn tick(state: &AppState) -> Result<(), String> {
     let (Some(scanner), Some(metadata)) = (&state.proc_scan, &state.metadata) else {
         return Ok(());
     };
-    let document = state
+    let polls = state.polls.clone();
+    let sessions = state
         .reader
-        .run_wait(&state.shutdown, |store| store.list_recent())
+        .run_wait(&state.shutdown, move |store| {
+            let document = store.recent_document()?;
+            Ok(polls.topology(&document))
+        })
         .await
         .map_err(|error| error.message)?;
     let snapshot = scanner
@@ -299,7 +312,6 @@ async fn tick(state: &AppState) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let metadata = metadata.clone();
     tokio::task::spawn_blocking(move || {
-        let sessions = SessionRow::from_list(&document);
         let active = snapshot.scan.active_processes(&sessions);
         record(&metadata, &snapshot.scan, &sessions, &active.owned).map_err(|error| error.message)
     })

@@ -131,7 +131,10 @@ def main():
                     changes = [size for path, size, data in records if path == '/api/sessions'
                         and data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert')]
                 assert changes and max(changes) < initial / 20, (initial, changes)
-                assert page.evaluate('uid=>S.sessions.find(s=>s.uid===uid).agent_items.length', uid) == 200
+                assert page.evaluate('uid=>S.sessions.find(s=>s.uid===uid).child_count', uid) == 200
+                page.evaluate('uid=>sidebarRowNode(uid,null,true)?.scrollIntoView({block:"center"})', uid)
+                page.locator(f'#side .item[data-uid="{uid}"] .nest-caret').click()
+                page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.agent_items?.length===200', arg=uid)
                 (agents / 'agent-worker-000.meta.json').write_text(json.dumps({'description':'Changed worker title', 'agentType':'reviewer'}))
                 page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.agent_items.some(a=>a.title==="Changed worker title")', arg=uid, timeout=30000)
                 child_changes = [(size, item['agents']) for path, size, data in records if path == '/api/sessions'

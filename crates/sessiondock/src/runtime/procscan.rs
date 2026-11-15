@@ -343,9 +343,29 @@ pub struct Parent {
     pub ppid: u32,
 }
 
+#[derive(Clone)]
+struct CachedSpawnEnv {
+    start_ticks: u64,
+    cmd_hash: u64,
+    env: Arc<BTreeMap<String, String>>,
+}
+
+#[derive(Default)]
+struct SharedScanMemo {
+    spawn_env: HashMap<u32, CachedSpawnEnv>,
+}
+
+fn hash_str(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[derive(Default)]
 struct Memo {
     parents: HashMap<u32, Option<Parent>>,
+    start_ticks: HashMap<u32, Option<u64>>,
     spawn_env: HashMap<u32, Arc<BTreeMap<String, String>>>,
     cmdlines: HashMap<u32, Option<Arc<str>>>,
     codex_app_servers: HashMap<u32, bool>,
@@ -359,6 +379,9 @@ pub struct ProcTree {
     /// Boot clock of this tree (`<root>/stat btime`, ticks from this process's
     /// own auxv); absent when the tree has no `stat`.
     clock: Option<ProcClock>,
+    opened_epoch: f64,
+    pids: Mutex<Option<Vec<u32>>>,
+    shared_memo: Option<Arc<Mutex<SharedScanMemo>>>,
     memo: Mutex<Memo>,
 }
 
@@ -368,8 +391,26 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn read_proc_file(path: &Path, out: &mut Vec<u8>) -> std::io::Result<()> {
+    out.clear();
+    let mut file = std::fs::File::open(path)?;
+    let mut chunk = [0u8; 4096];
+    loop {
+        match file.read(&mut chunk) {
+            Ok(0) => return Ok(()),
+            Ok(n) => out.extend_from_slice(&chunk[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 impl ProcTree {
     pub fn open(root: PathBuf) -> Self {
+        Self::open_with_memo(root, None)
+    }
+
+    fn open_with_memo(root: PathBuf, shared_memo: Option<Arc<Mutex<SharedScanMemo>>>) -> Self {
         let boot_time = std::fs::read_to_string(root.join("stat"))
             .ok()
             .and_then(|stat| ProcClock::parse_boot_time(&stat));
@@ -385,18 +426,38 @@ impl ProcTree {
                 ProcClock::DEFAULT_TICKS
             }
         };
+        let opened_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
         Self {
             root,
             clock: boot_time.map(|boot_time| ProcClock {
                 boot_time,
                 ticks_per_second,
             }),
+            opened_epoch,
+            pids: Mutex::new(None),
+            shared_memo,
             memo: Mutex::default(),
         }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub(crate) fn pids(&self) -> Vec<u32> {
+        if let Some(known) = lock(&self.pids).as_ref() {
+            return known.clone();
+        }
+        let entries: Vec<u32> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+            .collect();
+        *lock(&self.pids) = Some(entries.clone());
+        entries
     }
 
     fn pid_dir(&self, pid: u32) -> PathBuf {
@@ -416,12 +477,9 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).cmdlines.get(&pid) {
             return known.clone();
         }
-        scratch.clear();
-        let (value, daemon) = match std::fs::File::open(self.pid_dir(pid).join("cmdline"))
-            .and_then(|mut file| file.read_to_end(scratch))
-        {
-            Ok(_) if scratch.is_empty() => (Some(empty_cmdline()), false),
-            Ok(_) => {
+        let (value, daemon) = match read_proc_file(&self.pid_dir(pid).join("cmdline"), scratch) {
+            Ok(()) if scratch.is_empty() => (Some(empty_cmdline()), false),
+            Ok(()) => {
                 let daemon = parse_codex_app_server(scratch);
                 for byte in scratch.iter_mut() {
                     if *byte == 0 {
@@ -458,17 +516,39 @@ impl ProcTree {
             .unwrap_or(false)
     }
 
-    fn load_stat(&self, pid: u32) -> (Option<Parent>, Option<f64>) {
-        let stat = std::fs::read_to_string(self.pid_dir(pid).join("stat")).ok();
-        let parent = stat.as_deref().and_then(parse_parent);
+    fn load_stat(&self, pid: u32) -> (Option<Parent>, Option<f64>, Option<u64>) {
+        let mut stack = [0u8; 512];
+        let mut heap = String::new();
+        let stat_str: Option<&str> = match std::fs::File::open(self.pid_dir(pid).join("stat")) {
+            Ok(mut file) => match file.read(&mut stack) {
+                Ok(n) if n < stack.len() => std::str::from_utf8(&stack[..n]).ok(),
+                Ok(n) => {
+                    heap.push_str(&String::from_utf8_lossy(&stack[..n]));
+                    let _ = file.read_to_string(&mut heap);
+                    Some(heap.as_str())
+                }
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+        let parent = stat_str.and_then(parse_parent);
+        let ticks = stat_str.and_then(parse_start_ticks);
         let started = self.clock.and_then(|clock| {
-            let ticks = parse_start_ticks(stat.as_deref()?)?;
-            Some(clock.boot_time as f64 + ticks as f64 / clock.ticks_per_second as f64)
+            let t = ticks?;
+            Some(clock.boot_time as f64 + t as f64 / clock.ticks_per_second as f64)
         });
         let mut memo = lock(&self.memo);
         memo.parents.insert(pid, parent.clone());
+        memo.start_ticks.insert(pid, ticks);
         memo.starts.insert(pid, started);
-        (parent, started)
+        (parent, started, ticks)
+    }
+
+    fn start_ticks_of(&self, pid: u32) -> Option<u64> {
+        if let Some(known) = lock(&self.memo).start_ticks.get(&pid) {
+            return *known;
+        }
+        self.load_stat(pid).2
     }
 
     /// `(comm, ppid)`; `None` when the stat line is unreadable or malformed.
@@ -504,22 +584,45 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).spawn_env.get(&pid) {
             return known.clone();
         }
+        let shared_key = self.shared_memo.as_ref().and_then(|shared| {
+            let ticks = self.start_ticks_of(pid)?;
+            let cmd = self.cmdline(pid)?;
+            let cmd_hash = hash_str(&cmd);
+            if let Some(hit) = lock(shared).spawn_env.get(&pid)
+                && hit.start_ticks == ticks
+                && hit.cmd_hash == cmd_hash
+            {
+                return Some(Ok(hit.env.clone()));
+            }
+            Some(Err((ticks, cmd_hash)))
+        });
+        if let Some(Ok(cached)) = shared_key {
+            lock(&self.memo).spawn_env.insert(pid, cached.clone());
+            return cached;
+        }
         let mut found = BTreeMap::new();
-        if let Ok(bytes) = std::fs::read(self.pid_dir(pid).join("environ")) {
-            for entry in bytes.split(|byte| *byte == 0) {
-                let Some(eq) = entry.iter().position(|byte| *byte == b'=') else {
-                    continue;
-                };
-                let Ok(key) = std::str::from_utf8(&entry[..eq]) else {
-                    continue;
-                };
-                if SPAWN_ENV_KEYS.contains(&key) {
-                    let value = String::from_utf8_lossy(&entry[eq + 1..]);
-                    let trimmed = value.trim();
-                    if !trimmed.is_empty() {
-                        found.insert(key.to_owned(), trimmed.to_owned());
+        let mut permission_denied = false;
+        let mut bytes = Vec::new();
+        match read_proc_file(&self.pid_dir(pid).join("environ"), &mut bytes) {
+            Ok(()) => {
+                for entry in bytes.split(|byte| *byte == 0) {
+                    let Some(eq) = entry.iter().position(|byte| *byte == b'=') else {
+                        continue;
+                    };
+                    let Ok(key) = std::str::from_utf8(&entry[..eq]) else {
+                        continue;
+                    };
+                    if SPAWN_ENV_KEYS.contains(&key) {
+                        let value = String::from_utf8_lossy(&entry[eq + 1..]);
+                        let trimmed = value.trim();
+                        if !trimmed.is_empty() {
+                            found.insert(key.to_owned(), trimmed.to_owned());
+                        }
                     }
                 }
+            }
+            Err(err) => {
+                permission_denied = err.kind() == std::io::ErrorKind::PermissionDenied;
             }
         }
         let value = if found.is_empty() {
@@ -527,6 +630,22 @@ impl ProcTree {
         } else {
             Arc::new(found)
         };
+        if let (Some(shared), Some(Err((start_ticks, cmd_hash)))) = (&self.shared_memo, shared_key)
+        {
+            let mature = self
+                .started_at(pid)
+                .is_none_or(|started| self.opened_epoch - started >= 2.0);
+            if permission_denied || mature {
+                lock(shared).spawn_env.insert(
+                    pid,
+                    CachedSpawnEnv {
+                        start_ticks,
+                        cmd_hash,
+                        env: value.clone(),
+                    },
+                );
+            }
+        }
         lock(&self.memo).spawn_env.insert(pid, value.clone());
         value
     }
@@ -841,18 +960,46 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     let mut kiro_acp: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
     let mut opencode = BTreeMap::new();
     let mut stats = ScanStats::default();
-    let entries: Vec<u32> = std::fs::read_dir(tree.root())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-        .collect();
+    let entries = tree.pids();
+    if let Some(shared) = &tree.shared_memo {
+        let alive: std::collections::HashSet<u32> = entries.iter().copied().collect();
+        lock(shared).spawn_env.retain(|pid, _| alive.contains(pid));
+    }
     stats.processes = entries.len();
     let mut cmd_buf = Vec::with_capacity(512);
-    for pid in entries {
-        let Some(cmd) = tree.cmdline_with_buf(pid, &mut cmd_buf) else {
+    let mut scanned_cmds: Vec<(u32, Arc<str>, bool)> = Vec::with_capacity(entries.len());
+    for &pid in &entries {
+        if read_proc_file(&tree.pid_dir(pid).join("cmdline"), &mut cmd_buf).is_err() {
+            lock(&tree.memo).cmdlines.insert(pid, None);
+            lock(&tree.memo).codex_app_servers.insert(pid, false);
             continue;
-        };
+        }
+        if cmd_buf.is_empty() {
+            scanned_cmds.push((pid, empty_cmdline(), false));
+        } else {
+            let daemon = parse_codex_app_server(&cmd_buf);
+            for byte in cmd_buf.iter_mut() {
+                if *byte == 0 {
+                    *byte = b' ';
+                }
+            }
+            let text = match std::str::from_utf8(&cmd_buf) {
+                Ok(valid) => Arc::from(valid),
+                Err(_) => Arc::from(String::from_utf8_lossy(&cmd_buf).as_ref()),
+            };
+            scanned_cmds.push((pid, text, daemon));
+        }
+    }
+    {
+        let mut memo = lock(&tree.memo);
+        memo.cmdlines.reserve(scanned_cmds.len());
+        memo.codex_app_servers.reserve(scanned_cmds.len());
+        for &(pid, ref cmd, daemon) in &scanned_cmds {
+            memo.cmdlines.insert(pid, Some(cmd.clone()));
+            memo.codex_app_servers.insert(pid, daemon);
+        }
+    }
+    for (pid, cmd, _) in scanned_cmds {
         if cmd.is_empty() {
             continue;
         }
@@ -1154,7 +1301,7 @@ impl Scan {
     /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
     pub(crate) fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
-        if session.source == "kiro" || session.path.is_empty() {
+        if self.paths.is_empty() || session.source == "kiro" || session.path.is_empty() {
             return found;
         }
         if let Some(pids) = self.paths.get(&session.path) {
@@ -1180,12 +1327,21 @@ impl Scan {
             "droid" => &self.bare_droid,
             _ => return found,
         };
+        if processes.is_empty() {
+            return found;
+        }
         let Some(cwd) = session.cwd.as_deref() else {
             return found;
         };
         let Some(created) = parse_created(&session.created) else {
             return found;
         };
+        if !processes
+            .values()
+            .any(|bare| (-5.0..=30.0).contains(&(created - bare.started)))
+        {
+            return found;
+        }
         let cwd = resolve_path(&expand_user(cwd));
         for (pid, bare) in processes {
             let delta = created - bare.started;
@@ -1256,56 +1412,81 @@ impl Scan {
     /// ancestors belongs to the deepest fork only; unrelated sessions sharing
     /// a helper signal keep it.
     pub fn active_processes(&self, sessions: &[SessionRow]) -> ActiveProcesses {
-        let rows: IndexMap<&str, &SessionRow> = sessions
-            .iter()
-            .map(|session| (session.uid.as_str(), session))
-            .collect();
-        let raw: IndexMap<&str, BTreeSet<i64>> = sessions
-            .iter()
-            .map(|session| (session.uid.as_str(), self.pids_of(session)))
-            .collect();
-        let by_sid: HashMap<&str, &SessionRow> = sessions
-            .iter()
-            .filter(|session| session.source == "codex" && !session.sid.is_empty())
-            .map(|session| (session.sid.as_str(), session))
-            .collect();
-        let ancestors: HashMap<&str, BTreeSet<String>> = rows
-            .iter()
-            .map(|(uid, row)| (*uid, codex_ancestor_sids(row, &by_sid)))
-            .collect();
+        let mut raw: HashMap<&str, BTreeSet<i64>> = HashMap::new();
         let mut candidates: IndexMap<i64, IndexMap<&str, ()>> = IndexMap::new();
-        for (uid, pids) in &raw {
-            for pid in pids {
-                candidates.entry(*pid).or_default().insert(*uid, ());
+        for session in sessions {
+            let pids = self.pids_of(session);
+            if !pids.is_empty() {
+                for &pid in &pids {
+                    candidates
+                        .entry(pid)
+                        .or_default()
+                        .insert(session.uid.as_str(), ());
+                }
+                raw.insert(session.uid.as_str(), pids);
             }
         }
-        let mut owned: IndexMap<String, Vec<i64>> = rows
-            .keys()
-            .map(|uid| ((*uid).to_owned(), Vec::new()))
-            .collect();
-        for (pid, uids) in &candidates {
-            for uid in uids.keys() {
-                let superseded = uids.keys().any(|other| {
-                    uid != other
-                        && ancestors
-                            .get(other)
-                            .is_some_and(|chain| chain.contains(rows[uid].sid.as_str()))
-                });
-                if !superseded && let Some(pids) = owned.get_mut(*uid) {
-                    pids.push(*pid);
+        let mut owned: IndexMap<String, Vec<i64>> = IndexMap::new();
+        if !candidates.is_empty() {
+            let rows: HashMap<&str, &SessionRow> = sessions
+                .iter()
+                .map(|session| (session.uid.as_str(), session))
+                .collect();
+            let has_shared_pid = candidates.values().any(|uids| uids.len() > 1);
+            let ancestors: HashMap<&str, BTreeSet<String>> = if has_shared_pid {
+                let by_sid: HashMap<&str, &SessionRow> = sessions
+                    .iter()
+                    .filter(|session| session.source == "codex" && !session.sid.is_empty())
+                    .map(|session| (session.sid.as_str(), session))
+                    .collect();
+                candidates
+                    .values()
+                    .filter(|uids| uids.len() > 1)
+                    .flat_map(|uids| uids.keys().copied())
+                    .filter_map(|uid| Some((uid, codex_ancestor_sids(rows.get(uid)?, &by_sid))))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+            for (pid, uids) in &candidates {
+                for uid in uids.keys() {
+                    let superseded = uids.len() > 1
+                        && uids.keys().any(|other| {
+                            uid != other
+                                && ancestors
+                                    .get(other)
+                                    .is_some_and(|chain| chain.contains(rows[uid].sid.as_str()))
+                        });
+                    if !superseded {
+                        owned.entry((*uid).to_owned()).or_default().push(*pid);
+                    }
                 }
             }
-        }
-        for pids in owned.values_mut() {
-            pids.sort_unstable();
-            pids.dedup();
+            for pids in owned.values_mut() {
+                pids.sort_unstable();
+                pids.dedup();
+            }
         }
         let uids = sessions
             .iter()
             .filter(|session| {
                 let uid = session.uid.as_str();
-                owned.get(uid).is_some_and(|pids| !pids.is_empty())
-                    || (raw.get(uid).is_some_and(BTreeSet::is_empty) && self.is_live(session))
+                if owned.get(uid).is_some_and(|pids| !pids.is_empty()) {
+                    return true;
+                }
+                if raw.contains_key(uid) {
+                    return false;
+                }
+                if session.source == "kiro" {
+                    return self
+                        .kiro_acp
+                        .contains_key(&session.sid.to_ascii_lowercase());
+                }
+                if session.source == "codex" {
+                    return false;
+                }
+                let sid = Self::identity_key(session);
+                !sid.is_empty() && self.sids.contains_key(&sid)
             })
             .map(|session| session.uid.clone())
             .collect();
@@ -1434,6 +1615,7 @@ pub struct ProcScanner {
     roots: SessionRoots,
     ttl: Duration,
     cached: Mutex<Option<Arc<Scan>>>,
+    shared_memo: Arc<Mutex<SharedScanMemo>>,
     /// Held across one scan; holds the start time of the cached scan
     /// (`Scan::completed` is its completion time).
     refresh: tokio::sync::Mutex<Option<Instant>>,
@@ -1456,6 +1638,7 @@ impl ProcScanner {
             roots,
             ttl,
             cached: Mutex::new(None),
+            shared_memo: Arc::new(Mutex::new(SharedScanMemo::default())),
             refresh: tokio::sync::Mutex::new(None),
         }
     }
@@ -1486,7 +1669,10 @@ impl ProcScanner {
 
     /// One synchronous scan of the tree (tests and the blocking worker).
     pub fn scan_blocking(&self) -> Scan {
-        let tree = Arc::new(ProcTree::open(self.root.clone()));
+        let tree = Arc::new(ProcTree::open_with_memo(
+            self.root.clone(),
+            Some(self.shared_memo.clone()),
+        ));
         scan(tree, self.grok_active.as_deref(), &self.roots)
     }
 
@@ -1519,8 +1705,9 @@ impl ProcScanner {
         let root = self.root.clone();
         let grok_active = self.grok_active.clone();
         let roots = self.roots.clone();
+        let shared_memo = self.shared_memo.clone();
         let scan = tokio::task::spawn_blocking(move || {
-            let tree = Arc::new(ProcTree::open(root));
+            let tree = Arc::new(ProcTree::open_with_memo(root, Some(shared_memo)));
             scan(tree, grok_active.as_deref(), &roots)
         })
         .await

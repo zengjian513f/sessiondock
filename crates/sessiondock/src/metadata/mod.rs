@@ -226,6 +226,10 @@ impl MetadataStore {
         found: &[(String, NestParent)],
         identities: &std::collections::BTreeMap<(String, String), String>,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        let current = self.snapshot();
+        if !current.needs_initial_nest_parents(found)? {
+            return Ok(current);
+        }
         self.update(|snapshot| snapshot.with_initial_nest_parents(found, identities))
     }
 

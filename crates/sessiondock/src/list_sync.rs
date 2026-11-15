@@ -123,10 +123,68 @@ fn row_patch(index: usize, id: &str, before: &Value, after: &Value) -> Value {
     patch
 }
 
+struct CachedWire {
+    raw: axum::body::Bytes,
+    envelope: serde_json::Map<String, Value>,
+    complete: axum::body::Bytes,
+    unchanged: axum::body::Bytes,
+}
+
+impl CachedWire {
+    fn build(
+        raw: axum::body::Bytes,
+        data: &Value,
+        rows: &BTreeMap<String, Rows>,
+        version: &str,
+    ) -> Option<Self> {
+        let object = data.as_object()?;
+        let mut envelope = object.clone();
+        for name in rows.keys() {
+            envelope.remove(name);
+        }
+        let mut full = object.clone();
+        full.insert("list_version".to_owned(), json!(version));
+        let complete = axum::body::Bytes::from(
+            serde_json::to_vec(&Value::Object(full)).expect("JSON serializes"),
+        );
+        let empty_delta: BTreeMap<_, _> = rows
+            .iter()
+            .map(|(name, list)| {
+                (
+                    name.clone(),
+                    json!({"key": list.field, "remove": [], "upsert": []}),
+                )
+            })
+            .collect();
+        let mut unch = envelope.clone();
+        unch.insert(
+            "list_delta".to_owned(),
+            json!({"base": version, "collections": empty_delta}),
+        );
+        unch.insert("list_unchanged".to_owned(), json!(true));
+        unch.insert("list_version".to_owned(), json!(version));
+        let unchanged = axum::body::Bytes::from(
+            serde_json::to_vec(&Value::Object(unch)).expect("JSON serializes"),
+        );
+        Some(Self {
+            raw,
+            envelope,
+            complete,
+            unchanged,
+        })
+    }
+
+    fn matches(&self, bytes: &axum::body::Bytes) -> bool {
+        self.raw.len() == bytes.len()
+            && (std::ptr::eq(self.raw.as_ptr(), bytes.as_ptr()) || &self.raw == bytes)
+    }
+}
+
 struct Snapshot {
     scope: String,
     version: String,
     rows: BTreeMap<String, Rows>,
+    wire: Option<CachedWire>,
 }
 
 pub struct Store {
@@ -189,9 +247,65 @@ impl RemoteCache {
 }
 
 impl Store {
-    pub fn reply(&self, scope: &str, known: &str, mut data: Value) -> Value {
+    fn fast_reply(
+        &self,
+        scope: &str,
+        known: &str,
+        bytes: &axum::body::Bytes,
+    ) -> Option<axum::body::Bytes> {
+        let cache = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = cache.iter().rev().find(|entry| entry.scope == scope)?;
+        let wire = previous.wire.as_ref().filter(|w| w.matches(bytes))?;
+        if known == previous.version {
+            return Some(wire.unchanged.clone());
+        }
+        if !cache.iter().any(|s| s.scope == scope && s.version == known) {
+            return Some(wire.complete.clone());
+        }
+        None
+    }
+
+    pub fn reply_bytes(
+        &self,
+        scope: &str,
+        known: &str,
+        input: axum::body::Bytes,
+    ) -> Option<axum::body::Bytes> {
+        {
+            let cache = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(previous) = cache.iter().rev().find(|entry| entry.scope == scope)
+                && let Some(wire) = previous.wire.as_ref().filter(|w| w.matches(&input))
+            {
+                if known == previous.version {
+                    return Some(wire.unchanged.clone());
+                }
+                let Some(base) = cache
+                    .iter()
+                    .find(|s| s.scope == scope && s.version == known)
+                else {
+                    return Some(wire.complete.clone());
+                };
+                let delta: BTreeMap<_, _> = previous
+                    .rows
+                    .iter()
+                    .map(|(name, list)| (name.clone(), list.delta(&base.rows[name])))
+                    .collect();
+                let unchanged = base.rows == previous.rows;
+                let mut out = wire.envelope.clone();
+                out.insert(
+                    "list_delta".to_owned(),
+                    json!({"base": known, "collections": delta}),
+                );
+                out.insert("list_unchanged".to_owned(), json!(unchanged));
+                out.insert("list_version".to_owned(), json!(&previous.version));
+                return Some(axum::body::Bytes::from(
+                    serde_json::to_vec(&Value::Object(out)).expect("JSON serializes"),
+                ));
+            }
+        }
+        let mut data = serde_json::from_slice::<Value>(&input).ok()?;
         let mut cache = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
-        let previous = cache.iter().rev().find(|entry| entry.scope == scope);
+        let prev_idx = cache.iter().rposition(|entry| entry.scope == scope);
         let terminal = scope
             .split('?')
             .next()
@@ -203,23 +317,34 @@ impl Store {
         };
         let mut rows = BTreeMap::new();
         for (name, field) in fields {
-            let Some(list) = Rows::new(&data[name], field, previous.and_then(|s| s.rows.get(name)))
-            else {
-                return data; // Older nodes may omit optional arrays or row identities.
+            let prev_rows = prev_idx.and_then(|i| cache[i].rows.get(name));
+            let Some(list) = Rows::new(&data[name], field, prev_rows) else {
+                // Older nodes may omit optional arrays or row identities.
+                return Some(axum::body::Bytes::from(
+                    serde_json::to_vec(&data).expect("JSON serializes"),
+                ));
             };
             rows.insert(name.to_owned(), list);
         }
-        let same = previous.is_some_and(|s| s.rows == rows);
+        let same = prev_idx.is_some_and(|i| cache[i].rows == rows);
         let version = if same {
-            previous.unwrap().version.clone()
+            cache[prev_idx.unwrap()].version.clone()
         } else {
             let mut bytes = [0_u8; 16];
             if getrandom::fill(&mut bytes).is_err() {
-                return data;
+                return Some(axum::body::Bytes::from(
+                    serde_json::to_vec(&data).expect("JSON serializes"),
+                ));
             }
             bytes.iter().map(|b| format!("{b:02x}")).collect()
         };
-        if let Some(base) = cache
+        let new_wire = CachedWire::build(input, &data, &rows, &version);
+        let out = if same
+            && known == version
+            && let Some(wire) = &new_wire
+        {
+            wire.unchanged.clone()
+        } else if let Some(base) = cache
             .iter()
             .find(|s| s.scope == scope && s.version == known)
         {
@@ -233,19 +358,33 @@ impl Store {
             }
             data["list_delta"] = json!({"base":known,"collections":delta});
             data["list_unchanged"] = json!(unchanged);
-        }
-        data["list_version"] = json!(version);
-        if !same {
+            data["list_version"] = json!(&version);
+            axum::body::Bytes::from(serde_json::to_vec(&data).expect("JSON serializes"))
+        } else if let Some(wire) = &new_wire {
+            wire.complete.clone()
+        } else {
+            data["list_version"] = json!(&version);
+            axum::body::Bytes::from(serde_json::to_vec(&data).expect("JSON serializes"))
+        };
+        if same {
+            cache[prev_idx.unwrap()].wire = new_wire;
+        } else {
+            for entry in cache.iter_mut() {
+                if entry.scope == scope {
+                    entry.wire = None;
+                }
+            }
             cache.push_back(Snapshot {
                 scope: scope.to_owned(),
                 version,
                 rows,
+                wire: new_wire,
             });
             while cache.len() > REVISIONS {
                 cache.pop_front();
             }
         }
-        data
+        Some(out)
     }
 }
 
@@ -421,6 +560,14 @@ pub async fn middleware(State(store): State<Arc<Store>>, request: Request, next:
                 .unwrap();
         }
     };
+    if let Some(fast) = store.fast_reply(&scope, &known, &bytes) {
+        parts.headers.remove(header::CONTENT_LENGTH);
+        parts
+            .headers
+            .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+        parts.headers.append(header::VARY, HEADER.parse().unwrap());
+        return Response::from_parts(parts, Body::from(fast));
+    }
     // Delta transport decodes and re-encodes whole lists, even when only one
     // field changed. Keep that CPU work off the HTTP/SSE/WS reactor. A cancelled
     // request retains its permit until the blocking closure actually finishes.
@@ -433,9 +580,7 @@ pub async fn middleware(State(store): State<Arc<Store>>, request: Request, next:
     let input = bytes.clone();
     let transformed = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let data = serde_json::from_slice::<Value>(&input).ok()?;
-        let data = store.reply(&scope, &known, data);
-        Some(serde_json::to_vec(&data).expect("JSON serializes"))
+        store.reply_bytes(&scope, &known, input)
     })
     .await;
     let bytes = match transformed {

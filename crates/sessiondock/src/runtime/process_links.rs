@@ -2,11 +2,7 @@
 //! for the lifetime of an observed process incarnation, not a socket or PID.
 pub(crate) mod sync;
 
-use crate::{
-    error::ApiError,
-    runtime::procscan::{SessionRow, parse_created},
-    state::AppState,
-};
+use crate::{error::ApiError, runtime::procscan::parse_created, state::AppState};
 use process_links::{
     Binding, Incoming, Link, Outgoing, Process, Published, Report, Session, linux,
 };
@@ -67,11 +63,15 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             collector: None,
         });
     };
-    let document = state
+    let polls = state.polls.clone();
+    let (document, rows) = state
         .reader
-        .run_wait(&state.shutdown, |store| store.list_recent())
+        .run_wait(&state.shutdown, move |store| {
+            let document = store.recent_document()?;
+            let rows = polls.topology(&document);
+            Ok((document, rows))
+        })
         .await?;
-    let rows = SessionRow::from_list(&document);
     let scanned = scanner.snapshot(false).await.map_err(|_| {
         ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -462,20 +462,32 @@ fn agent_socket(state: &AppState) -> Option<std::path::PathBuf> {
     }
     path.exists().then_some(path)
 }
-async fn agent_catalog(
-    state: &AppState,
-) -> Result<(process_links::agent::Catalog, Vec<SessionRow>), ApiError> {
-    use process_links::agent::{Catalog, Owner};
+struct EncodedCatalog {
+    node_id: String,
+    boot_id: String,
+    full_bytes: std::sync::Arc<[u8]>,
+    bindings_bytes: std::sync::Arc<[u8]>,
+    doc_cache: std::sync::Arc<crate::polls::CatalogDocCache>,
+}
+
+async fn agent_catalog(state: &AppState) -> Result<EncodedCatalog, ApiError> {
+    use process_links::agent::Owner;
     let node_id = state
         .local_node_id
         .as_deref()
         .map(str::to_owned)
         .unwrap_or_default();
-    let document = state
+    let polls = state.polls.clone();
+    let catalog_node = node_id.clone();
+    let (document, rows, doc_cache) = state
         .reader
-        .run_wait(&state.shutdown, |store| store.list_recent())
+        .run_wait(&state.shutdown, move |store| {
+            let document = store.recent_document()?;
+            let rows = polls.topology(&document);
+            let doc_cache = polls.catalog_doc(&catalog_node, &document, &rows);
+            Ok((document, rows, doc_cache))
+        })
         .await?;
-    let rows = SessionRow::from_list(&document);
     let scanner = state.proc_scan.as_ref().ok_or_else(|| {
         ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -490,41 +502,20 @@ async fn agent_catalog(
             "进程采样失败",
         )
     })?;
-    let owned = scanned.scan.attribution_processes(&rows);
-    let titles: HashMap<_, _> = document["sessions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|v| Some((v["uid"].as_str()?, v["title"].as_str()?)))
-        .collect();
-    let sessions: HashMap<_, _> = rows
-        .iter()
-        .map(|r| {
-            (
-                r.uid.clone(),
-                Session {
-                    node_id: node_id.clone(),
-                    source: r.source.clone(),
-                    sid: r.sid.clone(),
-                    title: titles.get(r.uid.as_str()).map(|s| (*s).to_owned()),
-                    created: parse_created(&r.created),
-                },
-            )
-        })
-        .collect();
+    let owned = state.polls.attribution(&scanned.scan, &rows);
     let mut owners = Vec::new();
     for (uid, process) in state.native_sdks.resource_process_owners(&rows).await {
-        if let Some(session) = sessions.get(&uid) {
+        if let Some(session) = doc_cache.by_uid.get(&uid) {
             owners.push(Owner {
                 process,
                 session: session.clone(),
             });
         }
     }
-    for (uid, pids) in owned {
-        if let Some(session) = sessions.get(&uid) {
+    for (uid, pids) in owned.as_ref() {
+        if let Some(session) = doc_cache.by_uid.get(uid) {
             for pid in pids {
-                if let Ok(pid) = u32::try_from(pid)
+                if let Ok(pid) = u32::try_from(*pid)
                     && let Some((process, _)) = linux::identity(scanner.root(), pid)
                 {
                     owners.push(Owner {
@@ -540,20 +531,28 @@ async fn agent_catalog(
         .trim()
         .to_owned();
     owners.sort_by(|a, b| a.process.cmp(&b.process));
-    let mut sessions: Vec<_> = sessions.into_values().collect();
-    sessions.sort_by(|a, b| (&a.source, &a.sid).cmp(&(&b.source, &b.sid)));
-    let catalog = Catalog {
+    let (full_bytes, bindings_bytes) = state
+        .polls
+        .catalog_wire(&node_id, &boot_id, &document, &owners, &doc_cache.sessions)
+        .map_err(|_| {
+            ApiError::new(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "collector_catalog_encode_failed",
+                "采集目录编码失败",
+            )
+        })?;
+    Ok(EncodedCatalog {
         node_id,
         boot_id,
-        owners,
-        sessions,
-    };
-    Ok((catalog, rows))
+        full_bytes,
+        bindings_bytes,
+        doc_cache,
+    })
 }
 async fn remember_agent_parents(
     state: &AppState,
     report: &Report,
-    rows: Option<&[SessionRow]>,
+    doc_cache: Option<std::sync::Arc<crate::polls::CatalogDocCache>>,
 ) -> Result<(), ApiError> {
     let Some(metadata) = &state.metadata else {
         return Ok(());
@@ -565,21 +564,6 @@ async fn remember_agent_parents(
     {
         return Ok(());
     }
-    let loaded;
-    let rows = if let Some(rows) = rows {
-        rows
-    } else {
-        let document = state
-            .reader
-            .run_wait(&state.shutdown, |store| store.list_recent())
-            .await?;
-        loaded = SessionRow::from_list(&document);
-        &loaded
-    };
-    let uids: BTreeMap<_, _> = rows
-        .iter()
-        .map(|r| ((r.source.clone(), r.sid.clone()), r.uid.clone()))
-        .collect();
     // Every owning process that names a spawner must name the same one. Like
     // local spawn discovery, a session created before its earliest launched
     // process started was resumed by that launch, not created.
@@ -613,27 +597,55 @@ async fn remember_agent_parents(
             (a, b) => a.or(b),
         };
     }
-    let parents: Vec<_> = launches
-        .into_values()
+    let candidates: Vec<_> =
+        launches
+            .into_values()
+            .filter(|launch| {
+                !launch.conflict
+                    && launch.child.node_id == report.node_id
+                    && !(launch.parent.node_id == launch.child.node_id
+                        && launch.parent.source == launch.child.source
+                        && launch.parent.sid == launch.child.sid)
+                    && launch.parent.created.zip(launch.child.created).is_some_and(
+                        |(parent_created, child_created)| parent_created <= child_created,
+                    )
+                    && !launch.started.is_some_and(|started| {
+                        launch
+                            .child
+                            .created
+                            .is_some_and(|created| created + 1.0 < started)
+                    })
+            })
+            .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let doc_cache = if let Some(doc_cache) = doc_cache {
+        doc_cache
+    } else {
+        let node_id = state
+            .local_node_id
+            .as_deref()
+            .map(str::to_owned)
+            .unwrap_or_default();
+        let polls = state.polls.clone();
+        state
+            .reader
+            .run_wait(&state.shutdown, move |store| {
+                let document = store.recent_document()?;
+                let rows = polls.topology(&document);
+                Ok(polls.catalog_doc(&node_id, &document, &rows))
+            })
+            .await?
+    };
+    let parents: Vec<_> = candidates
+        .into_iter()
         .filter_map(|launch| {
-            let Launch {
-                child,
-                parent,
-                started,
-                conflict,
-            } = launch;
-            if conflict
-                || child.node_id != report.node_id
-                || (parent.node_id == child.node_id
-                    && parent.source == child.source
-                    && parent.sid == child.sid)
-                || parent.created? > child.created?
-                || started.is_some_and(|started| child.created.is_some_and(|c| c + 1.0 < started))
-            {
-                return None;
-            }
+            let Launch { child, parent, .. } = launch;
             Some((
-                uids.get(&(child.source.clone(), child.sid.clone()))?
+                doc_cache
+                    .identities
+                    .get(&(child.source.clone(), child.sid.clone()))?
                     .to_string(),
                 crate::metadata::NestParent {
                     source: parent.source.clone(),
@@ -643,17 +655,25 @@ async fn remember_agent_parents(
             ))
         })
         .collect();
+    if parents.is_empty() {
+        return Ok(());
+    }
+    if let Ok(false) = metadata.snapshot().needs_initial_nest_parents(&parents) {
+        return Ok(());
+    }
     let metadata = metadata.clone();
-    tokio::task::spawn_blocking(move || metadata.initialize_nest_parents(&parents, &uids))
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "collector_metadata_failed",
-                "关联保存失败",
-            )
-        })?
-        .map_err(ApiError::from)?;
+    tokio::task::spawn_blocking(move || {
+        metadata.initialize_nest_parents(&parents, &doc_cache.identities)
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "collector_metadata_failed",
+            "关联保存失败",
+        )
+    })?
+    .map_err(ApiError::from)?;
     Ok(())
 }
 pub async fn report(state: &AppState) -> Result<Report, ApiError> {
@@ -662,22 +682,27 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
 
 async fn catalog_report(state: &AppState, connections: bool) -> Result<Report, ApiError> {
     if let Some(path) = agent_socket(state) {
-        let (catalog, rows) = agent_catalog(state).await?;
-        let node_id = catalog.node_id.clone();
-        let boot_id = catalog.boot_id.clone();
+        let encoded = agent_catalog(state).await?;
+        let node_id = encoded.node_id;
+        let boot_id = encoded.boot_id;
+        let doc_cache = encoded.doc_cache;
+        let wire = if connections {
+            encoded.full_bytes
+        } else {
+            encoded.bindings_bytes
+        };
         if let Ok(Ok(report)) = tokio::task::spawn_blocking(move || {
-            let request = process_links::agent::Request::Catalog(catalog);
             if connections {
-                process_links::agent::request_typed::<Report>(&path, &request)
+                process_links::agent::request_encoded_typed::<Report>(&path, &wire)
             } else {
-                process_links::agent::bindings(&path, &request)
+                process_links::agent::bindings_encoded(&path, &wire)
             }
         })
         .await
             && report.node_id == node_id
             && report.boot_id == boot_id
         {
-            remember_agent_parents(state, &report, Some(&rows)).await?;
+            remember_agent_parents(state, &report, Some(doc_cache)).await?;
             return Ok(report);
         }
     }
