@@ -5,6 +5,7 @@ from pathlib import Path
 from playwright.sync_api import expect,sync_playwright
 from history_fixtures import BINARY,Corpus,claude_row,isolated_server
 from browser_evidence_fixtures import run_with_evidence
+from bubble_scroll_fixtures import check_bubble_scroll
 
 
 def corpus(root):
@@ -20,7 +21,7 @@ def corpus(root):
   add('assistant',[{'type':'tool_use','id':f'call{i}','name':'Bash','input':{'command':'printf private-fixture'}}])
   add('user',[{'type':'tool_result','tool_use_id':f'call{i}','content':'\n'.join(f'OUTPUT {j} '+'long '*40 for j in range(80))}])
   if i==34:
-   add('assistant',[{'type':'tool_use','id':'edit','name':'Edit','input':{'file_path':str(root/'work/file.txt'),'old_string':'old '*100,'new_string':'new '*100}}])
+   add('assistant',[{'type':'tool_use','id':'edit','name':'Edit','input':{'file_path':str(root/'work/file.txt'),'old_string':'\n'.join('old '*100 for _ in range(80)),'new_string':'\n'.join('new '*100 for _ in range(80))}}])
    add('user',[{'type':'tool_result','tool_use_id':'edit','content':'success'}])
   add('assistant',f'CONCLUSION {i:02d} needle\n\n[receipt](receipt.txt)')
  c.put(sid,'claude',rows,[]);return c,sid
@@ -70,10 +71,20 @@ def main():
      done('sd.conversation.tool-arguments-close','Open original tool arguments then explicit close hides them',width)
      more=process.locator('.tool-out-actions .more').first;more.click();expect(more).to_have_attribute('aria-expanded','true');expect(process).to_contain_text('OUTPUT 79')
      done('sd.conversation.tool-more','Expand clipped output exposes independent fixture last line',width)
+     diff_card=process.locator('.file-change-card').first
+     diff_body=diff_card.locator('.file-change-body')
+     check_bubble_scroll(page,diff_card,diff_body,page.locator('.dtitle h2').first)
+     diff_card.get_by_role('button',name='展开全部差异',exact=True).click()
+     assert diff_body.evaluate('e=>e.scrollHeight<=e.clientHeight+1')
+     diff_card.get_by_role('button',name='收起差异',exact=True).click()
+     diff_body.click(position={'x':35,'y':35})
+     expect(diff_card).to_have_class(re.compile('text-scroll-active'))
+     page.screenshot(path=str(a.output/f'diff-scroll-{width}.png'))
      wrap=process.locator('button[data-diff-wrap]').first;expect(wrap).to_have_attribute('aria-pressed','true');wrap.click();expect(wrap).to_have_attribute('aria-pressed','false');wrap.click();expect(wrap).to_have_attribute('aria-pressed','true')
      wrap.click()
      diff=process.locator('.file-change-body').first
      card=process.locator('.file-change-card').first
+     page.locator('.dtitle h2').first.click()
      diff.hover();page.mouse.wheel(180,0);page.wait_for_timeout(100)
      assert diff.evaluate('e=>e.scrollLeft')==0
      diff.locator('code').first.click(position={'x':30,'y':8})

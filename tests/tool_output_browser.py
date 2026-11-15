@@ -31,6 +31,10 @@ def check(browser, base, label, shots):
             tool.get_by_role('button', name='展开原始参数', exact=True).click()
         expect(args).to_be_visible()
         assert args.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1')
+        assert tool.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'none'
+        border = tool.evaluate('(e) => getComputedStyle(e).borderColor')
+        tool.locator('.tool-head').hover()
+        assert tool.evaluate('(e) => getComputedStyle(e).borderColor') == border
         output = tool.locator('.tool-out')
         output.scroll_into_view_if_needed()
         expect(output).to_contain_text('LAST RESULT')
@@ -70,6 +74,7 @@ def check(browser, base, label, shots):
         output.scroll_into_view_if_needed()
         output.click(position={'x': 40, 'y': 40})
         expect(tool).to_have_class(__import__('re').compile('text-scroll-active'))
+        assert tool.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'solid'
         assert output.evaluate('(e) => !e.isContentEditable && e.contains(getSelection().anchorNode)')
         before = output.inner_text()
         page.keyboard.type('do-not-edit')

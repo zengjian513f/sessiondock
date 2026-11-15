@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SDKs share editor, streaming Markdown, status menus and history expansion."""
 import argparse
+import re
 from pathlib import Path
 import tempfile
 
@@ -8,6 +9,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from sdk_start_stop_fixtures import provider
 from sdk_selection_fixtures import snapshots
+from bubble_scroll_fixtures import check_bubble_scroll
 
 
 def streaming_code(page, source, events, raw, publish, screenshots, width, theme):
@@ -137,8 +139,8 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     if source == 'codex':
         context.route('**/api/codex-sdk/goal/*', lambda r: r.fulfill(json={'ok': True, 'raw': {'goal': None}}))
     history = [
-        {'role': 'user', 'text': '请审阅共享界面', 'turn_id': 'past'},
-        {'role': 'thinking', 'text': '需要保留用户展开的分析过程。\n' * 10, 'turn_id': 'past'},
+        {'role': 'user', 'text': '请审阅共享界面\n' + ('用户长正文测试 ' * 10 + '\n') * 80 + 'USER-END-AFTER-4000', 'turn_id': 'past'},
+        {'role': 'thinking', 'text': ('需要保留用户展开的分析过程。' * 6 + '\n') * 80 + 'THOUGHT-END-AFTER-4000', 'turn_id': 'past'},
         {'role': 'assistant', 'text': '历史结论', 'turn_id': 'past'},
         {'role': 'user', 'text': '接着检查发送与状态', 'turn_id': 'second'},
         {'role': 'assistant', 'text': '第二轮结论', 'turn_id': 'second'},
@@ -179,6 +181,22 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
         raise
     process.locator('.fold-toggle').first.click()
     expect(process.locator('.turn-process-body')).to_be_visible()
+
+    for role, end in [('user', 'USER-END-AFTER-4000'), ('thinking', 'THOUGHT-END-AFTER-4000')]:
+        bubble = page.locator(f'.sdk-history .msg[data-role="{role}"]').first
+        body = bubble.locator(':scope > .message-bubble > .mb')
+        expect(body).to_contain_text(end)
+        check_bubble_scroll(page, bubble, body, editor)
+        bubble.get_by_text('展开全文', exact=False).click()
+        assert body.evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')
+        bubble.get_by_role('button', name='收起', exact=True).click()
+        page.wait_for_function('e => e.scrollHeight - e.clientHeight - e.scrollTop < 2',
+                               arg=body.element_handle())
+        if screenshots:
+            body.click(position={'x': 35, 'y': 35})
+            expect(bubble).to_have_class(re.compile('text-scroll-active'))
+            page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-{role}-scroll.png'))
+            editor.click()
 
     # A real history read after a synthetic native completion must retain the
     # user's expanded process; do not call the renderer or alter its DOM.

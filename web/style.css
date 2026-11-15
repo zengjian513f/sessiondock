@@ -1596,10 +1596,6 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-entry:is([data-role="tool"], .tool-result-card) > :is(.tool-head, pre) {
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
 }
-.tool-entry:is([data-role="tool"], .tool-result-card):has(> .tool-head:hover),
-.tool-entry:is([data-role="tool"], .tool-result-card):focus-within {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-}
 .tool-head:hover { background: color-mix(in srgb, var(--bubble-tool) 96%, var(--terminal-fg)); }
 .tool-head > code {
   flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
@@ -1669,7 +1665,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .file-change-toolbar button:hover { background: var(--hover); color: var(--text); }
 .file-change-toolbar button.on { border-color: var(--border); background: var(--sel); color: var(--text); }
 .file-change-body { width: 100%; overflow-x: auto; background: var(--panel); }
-.file-change-body.clip { max-height: 340px; overflow-y: hidden; }
+.file-change-body.clip { max-height: 340px; overflow-y: auto; }
 .file-change-card > .file-diff-more { margin: 0; border-width: 1px 0 0; border-radius: 0; }
 .diff-unified { min-width: max-content; padding: 8px 0 18px; }
 .diff-line {
@@ -1749,7 +1745,10 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
    tail positioning still works with hidden overflow; text stays selectable. */
 .tool-entry:not(.text-scroll-active) > pre,
 .file-change-card:not(.text-scroll-active) .file-change-body,
-.msg:not(.text-scroll-active) .mb :is(pre, .tw, .katex-display),
+.msg:not(.text-scroll-active) > .mb,
+.msg:not(.text-scroll-active) > .message-bubble > .mb,
+.msg:not(.text-scroll-active) > .mb :is(pre, .tw, .katex-display),
+.msg:not(.text-scroll-active) > .message-bubble > .mb :is(pre, .tw, .katex-display),
 .event-detail-body:not(.text-scroll-active),
 .sdk-queued:not(.text-scroll-active) .mb {
   overflow: hidden;
@@ -1799,12 +1798,8 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .media-more:disabled { cursor: wait; opacity: .7; }
 .media-more:disabled:not([data-media-cursor]) { cursor: default; }
 .media-page-error { color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.mb.clip { max-height: 340px; overflow: hidden; position: relative; }
-.mb.clip.has-overflow::after {
-  content: ""; position: absolute; inset: auto 0 0 0; height: 46px;
-  background: linear-gradient(transparent, var(--bubble));
-  pointer-events: none;
-}
+.mb.clip { max-height: 340px; overflow-y: auto; position: relative; }
+
 .msg.grp.folded > .more { display: none; }
 .more[hidden] { display: none; }
 .more {
@@ -2852,3 +2847,10 @@ header .btn[data-session-docked] { display: none; }
 .sd-session-card [data-source="droid"],
 .source-icon[data-source="droid"] { color: var(--droid, #c66b32); }
 .b-droid { --source-color: var(--droid); }
+
+/* The same outline means text-scroll ownership on every bubble, not hover or
+   a disclosure button's focus. Keep button keyboard-focus indicators intact. */
+:is(.msg, .tool-entry, .file-change-card, .event-detail-body, .sdk-queued).text-scroll-active {
+  outline: 1px solid color-mix(in srgb, var(--accent) 65%, var(--border));
+  outline-offset: -1px;
+}

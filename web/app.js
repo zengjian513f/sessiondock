@@ -8770,15 +8770,20 @@ document.addEventListener('focusin', event => {
   if (event.target.matches('input, textarea, [contenteditable="true"]')) setTextScrollBubble(null);
 });
 
-function scrollToolPreviewsToTail() {
-  for (const pre of document.querySelectorAll('pre[data-tail-pending]')) {
+function queuePreviewTail(body) {
+  body.dataset.tailPending = 'true';
+  requestAnimationFrame(scrollPreviewsToTail);
+}
+
+function scrollPreviewsToTail() {
+  for (const pre of document.querySelectorAll('[data-tail-pending]')) {
     if (!pre.clientHeight) continue;
     pre.scrollTop = pre.scrollHeight;
     delete pre.dataset.tailPending;
   }
 }
 // A preview can first become visible when its enclosing tool/turn is opened.
-document.addEventListener('click', () => requestAnimationFrame(scrollToolPreviewsToTail));
+document.addEventListener('click', () => requestAnimationFrame(scrollPreviewsToTail));
 
 function addClippedPre(entry, cls, text, codePath = '') {
   const pre = el('pre', cls);
@@ -8790,14 +8795,13 @@ function addClippedPre(entry, cls, text, codePath = '') {
   if (outputStats(text).lines > OUT_LINES || text.length > OUT_CHARS) {
     const expandLabel = '展开全文';
     pre.classList.add('collapsed-output');
-    pre.dataset.tailPending = 'true';
-    requestAnimationFrame(scrollToolPreviewsToTail);
+    queuePreviewTail(pre);
     const more = el('button', 'more', expandLabel);
     let expanded = false;
     more.onclick = () => {
       expanded = !expanded;
       pre.classList.toggle('collapsed-output', !expanded);
-      if (!expanded) requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+      if (!expanded) queuePreviewTail(pre);
       more.textContent = expanded ? '收起' : expandLabel;
       more.setAttribute('aria-expanded', String(expanded));
     };
@@ -9105,6 +9109,7 @@ function fileChangeNode(m) {
         more.textContent = clipped ? '展开全部差异' : '收起差异';
         more.setAttribute('aria-expanded', String(!clipped));
         diffBody._refreshClip();
+        if (clipped) queuePreviewTail(diffBody);
       });
     };
     card.appendChild(more);
@@ -9119,6 +9124,7 @@ function fileChangeNode(m) {
     };
     setInlineFileDiffWrap(card, true);
     paintInlineFileDiff(card, change, 'unified');
+    queuePreviewTail(diffBody);
     body.appendChild(card);
   }
   n.appendChild(body);
@@ -9978,15 +9984,19 @@ function messageBodyNode(m) {
   };
   const clipped = () => {
     expanded = false;
-    body.classList.add('clip'); paint(false);
+    body.classList.add('clip'); paint(true);
+    queuePreviewTail(body);
     setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
   };
   if (!collapsible) full();
   else if (long) hit ? full() : clipped();
-  else { body.classList.toggle('clip', !hit); expanded = hit; paint(hit); }
+  else { body.classList.toggle('clip', !hit); expanded = hit; paint(true);
+    if (!hit) queuePreviewTail(body); }
   body._refreshClip = () => {
     if (!body.isConnected || expanded) return;
+    const wasClipped = needsMore;
     needsMore = long || body.scrollHeight > body.clientHeight + 1;
+    if (needsMore && !wasClipped) queuePreviewTail(body);
     body.classList.toggle('has-overflow', needsMore);
     setAction(needsMore ? `展开全文 (${m.text.length.toLocaleString()} 字符)` : '',
       needsMore ? full : null, needsMore ? false : null);
@@ -10003,7 +10013,13 @@ function messageBodyNode(m) {
     long = collapsible && m.text.length > CLIP;
     needsMore = collapsible && (needsMore || long);
     if (expanded) full();
-    else { paint(false); body._refreshClip(); }
+    else {
+      const follow = body.scrollHeight - body.clientHeight - body.scrollTop < 2;
+      const top = body.scrollTop;
+      paint(true); body._refreshClip();
+      if (follow) queuePreviewTail(body);
+      else body.scrollTop = top;
+    }
   };
   if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
     const generation = regexGeneration;

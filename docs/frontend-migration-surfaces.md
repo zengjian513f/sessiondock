@@ -368,7 +368,12 @@ DELTA（BUG-20261115-043012-a301cc）：工具参数、输出、Markdown 代码�
 其它时候鼠标滚轮及触摸拖动交由外层会话滚动，程序定位末尾仍有效。
 点击其它气泡或聚焦输入框关闭内部滚动。正文始终只读，不通过 `contenteditable`
 制造光标，不主动开启浏览器的光标浏览模式；原有选字、复制和输入焦点行为保留。
-验收见 [工具输出](../tests/tool_output_browser.py)。
+用户正文、思考、工具输出和文件差异的收起预览统一保留全文，首次显示与再次收起时定位末尾，
+不再以截掉 4,000 字后的内容充当预览；展开后完整铺开。内部滚动开放时统一显示蓝色轮廓，
+悬停工具标题或聚焦展开按钮不再单独让工具卡变蓝。
+验收见 [工具输出](../tests/tool_output_browser.py)、
+[SDK 共用界面](../tests/sdk_shared_ui_browser.py) 与
+[普通会话](../tests/remaining_ui_conversation_browser.py)。
 
 输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
