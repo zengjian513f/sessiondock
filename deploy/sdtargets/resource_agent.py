@@ -101,7 +101,7 @@ class ResourceAgentHandler(TargetHandler):
         ])
         if self.t.prefix != '/opt/resource-agent': raise RuntimeError('collector prefix must match unit /opt/resource-agent')
         self.sh.run(script,check=True)
-    def restart(self): self.sh.run('sudo -n systemctl restart '+UNIT,timeout=30,check=True)
+    def restart(self): self.sh.run('sudo -n systemctl restart '+UNIT,timeout=90,check=True)
     def verify(self):
         deadline = time.monotonic()+self.o.health_timeout
         data = {}
@@ -131,7 +131,7 @@ class ResourceAgentHandler(TargetHandler):
                     self.log(f'staging cleanup failed: {e}')
     def _rollback(self, backup_dir):
         if not backup_dir.startswith(self.t.prefix+'/backup-deploy-'): raise RuntimeError('invalid backup path')
-        self.sh.run('sudo -n systemctl stop '+UNIT, timeout=20)
+        self.sh.run('sudo -n systemctl stop '+UNIT, timeout=60)
         self.sh.run('sudo -n rm -f '+q(self.t.prefix+'/deployed-commit')+'; if sudo -n test -f '+q(backup_dir+'/deployed-commit')+'; then sudo -n cp '+q(backup_dir+'/deployed-commit')+' '+q(self.t.prefix+'/deployed-commit')+'; fi',check=True)
         self.sh.run('sudo -n rm -f '+q(self.t.prefix+'/bin/resource-agent.version')+'; if sudo -n test -f '+q(backup_dir+'/resource-agent.version')+'; then sudo -n cp '+q(backup_dir+'/resource-agent.version')+' '+q(self.t.prefix+'/bin/resource-agent.version')+'; fi',check=True)
         _, has = self.sh.run('sudo -n test -f '+q(backup_dir+'/resource-agent')+' && echo yes')
