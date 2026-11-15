@@ -1829,3 +1829,8 @@ Orion、Cetus 正式 SSH 尝试超时，补发项记录于 TODO。三个资源�
 内部位置不动、展开无纵向溢出，以及工具原有 CDP 触摸/只读检查。执行者已检查
 宽窄屏、明暗主题的用户/思考/工具/差异整页截图，并对比工具改前同视口截图。
 文档链接、AGENTS 检查与 `git diff --check` 通过。
+
+前端提交 `aec95fe2` 已推送，正式 `--web-only` 发布覆盖全部七个目标：Lyra、Cygnus、
+Pavo、Hub、Vela 已部署、重启并健康，既有宿主保留；Orion、Cetus 的 SSH 尝试超时，
+待补发已记入 TODO。资源代理按范围排除，后端/ptyhost 未替换。发布报告为
+`target/deploy/20261115-071945-aec95fe2/report-20261115-072004.json`。
