@@ -34,6 +34,13 @@ Claude 2.1.306 rewind_conversation；没有用模型提示词模拟操作，也�
 本次通过。全包 fmt 的报错位于本次修改外；本次 Rust 文件无格式差异。
 文档链接、AGENTS 检查和 diff 空白检查通过。
 
+运行提交 `217e8359` 已推送；Linux release 与 macOS 原生构建通过，版本
+`20261115T165812622765Z`。正式发布尝试全部七目标：Lyra、Cygnus、Pavo、Hub、
+Vela 已部署、重启且健康，原有会话宿主保留；Orion、Cetus 的 SSH 尝试超时，
+待补发见 [TODO](../TODO.md)。三个资源代理按组件范围排除；未替换 ptyhost。
+部署门 `--test none` 仅复用上述实际验证，不代表额外测试通过。报告：
+`target/deploy/20261115-165812-217e8359/report-20261115-170258.json`。
+
 ## BUG-20261115-160646-a893db：Droid 内部提醒在连接前闪现
 
 只读核对报告附件、浏览器状态、来源原生 JSONL 与 SDK 持久快照：原生提醒为
