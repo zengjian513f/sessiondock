@@ -1745,6 +1745,16 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   border-left: 3px solid var(--border); color: var(--muted); white-space: pre-wrap;
 }
 
+/* Inactive bubbles pass wheel/touch scrolling to the conversation. Programmatic
+   tail positioning still works with hidden overflow; text stays selectable. */
+.tool-entry:not(.text-scroll-active) > pre,
+.file-change-card:not(.text-scroll-active) .file-change-body,
+.msg:not(.text-scroll-active) .mb :is(pre, .tw, .katex-display),
+.event-detail-body:not(.text-scroll-active),
+.sdk-queued:not(.text-scroll-active) .mb {
+  overflow: hidden;
+}
+
 /* markdown 表格 */
 .mb .tw { overflow-x: auto; margin: 9px 0; }
 .mb table { border-collapse: collapse; font-size: 12.5px; line-height: 1.45; }

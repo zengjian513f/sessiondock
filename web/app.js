@@ -8742,6 +8742,34 @@ function toolWrapButton(pre) {
   return button;
 }
 
+// Only a real text caret/selection opts a bubble into nested scrolling.
+// Keep history read-only: never use contenteditable to manufacture a caret.
+let textScrollBubble = null;
+const textScrollOwner = node => (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)
+  ?.closest('.event-detail-body, .tool-entry, .file-change-card, .msg, .sdk-queued');
+function setTextScrollBubble(bubble) {
+  if (bubble === textScrollBubble) return;
+  textScrollBubble?.classList.remove('text-scroll-active');
+  textScrollBubble = bubble;
+  textScrollBubble?.classList.add('text-scroll-active');
+}
+document.addEventListener('selectionchange', () => {
+  const selection = getSelection();
+  const focused = document.activeElement;
+  if (!selection?.rangeCount || focused?.matches('input, textarea, [contenteditable="true"]')) {
+    setTextScrollBubble(null);
+    return;
+  }
+  const bubble = textScrollOwner(selection.anchorNode);
+  setTextScrollBubble(bubble && bubble === textScrollOwner(selection.focusNode) ? bubble : null);
+});
+document.addEventListener('pointerdown', event => {
+  if (textScrollOwner(event.target) !== textScrollBubble) setTextScrollBubble(null);
+}, true);
+document.addEventListener('focusin', event => {
+  if (event.target.matches('input, textarea, [contenteditable="true"]')) setTextScrollBubble(null);
+});
+
 function scrollToolPreviewsToTail() {
   for (const pre of document.querySelectorAll('pre[data-tail-pending]')) {
     if (!pre.clientHeight) continue;

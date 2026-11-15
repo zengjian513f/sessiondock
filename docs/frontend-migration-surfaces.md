@@ -364,7 +364,11 @@ DELTA（BUG-20261022-070639-43d4b2）：普通会话和六种 SDK 共用工具�
 [`tests/rich_tools_browser.py`](../tests/rich_tools_browser.py) 覆盖实时更新与历史操作。
 DELTA（BUG-20261115-043012-a301cc）：工具参数、输出、Markdown 代码块和文件差异默认自动换行；
 参数与输出共用“保持原行／自动换行”按钮，diff 保留已有切换按钮。原文不变，
-流式更新保留用户选择。验收见 [工具输出](../tests/tool_output_browser.py)。
+流式更新保留用户选择。气泡内部滚动只在该气泡包含当前文本光标或完整选区时开放；
+其它时候鼠标滚轮及触摸拖动交由外层会话滚动，程序定位末尾仍有效。
+点击其它气泡或聚焦输入框关闭内部滚动。正文始终只读，不通过 `contenteditable`
+制造光标，不主动开启浏览器的光标浏览模式；原有选字、复制和输入焦点行为保留。
+验收见 [工具输出](../tests/tool_output_browser.py)。
 
 输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 

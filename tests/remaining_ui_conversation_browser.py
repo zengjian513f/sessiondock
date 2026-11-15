@@ -71,6 +71,16 @@ def main():
      more=process.locator('.tool-out-actions .more').first;more.click();expect(more).to_have_attribute('aria-expanded','true');expect(process).to_contain_text('OUTPUT 79')
      done('sd.conversation.tool-more','Expand clipped output exposes independent fixture last line',width)
      wrap=process.locator('button[data-diff-wrap]').first;expect(wrap).to_have_attribute('aria-pressed','true');wrap.click();expect(wrap).to_have_attribute('aria-pressed','false');wrap.click();expect(wrap).to_have_attribute('aria-pressed','true')
+     wrap.click()
+     diff=process.locator('.file-change-body').first
+     card=process.locator('.file-change-card').first
+     diff.hover();page.mouse.wheel(180,0);page.wait_for_timeout(100)
+     assert diff.evaluate('e=>e.scrollLeft')==0
+     diff.locator('code').first.click(position={'x':30,'y':8})
+     expect(card).to_have_class(re.compile('text-scroll-active'))
+     diff.hover();page.mouse.wheel(180,0)
+     page.wait_for_function('document.querySelector(".file-change-body").scrollLeft>0')
+     wrap.click()
      done('sd.conversation.file-diff-wrap','Diff wrap control toggles aria state and restores original layout',width)
      link=msgs.locator('a[data-file-ref]').last
      # Finish scrolling the long output before opening its context menu.

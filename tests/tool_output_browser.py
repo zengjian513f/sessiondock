@@ -15,7 +15,7 @@ from node_auth_fixtures import TOKEN, free_port, node_env
 
 def check(browser, base, label, shots):
     for width, theme in [(1280, 'light'), (390, 'dark')]:
-        context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
+        context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme, has_touch=True)
         page = context.new_page()
         page.goto(base, wait_until='networkidle')
         page.locator('#side .item[data-uid^="droid:"]').first.click()
@@ -41,9 +41,56 @@ def check(browser, base, label, shots):
         }""")
         assert output.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1')
         page.screenshot(path=str(shots / f'{label}-{width}-{theme}-collapsed.png'), full_page=True)
+        outer = page.locator('.sdk-msgs')
+        tail = output.evaluate('(e) => e.scrollTop')
+        outer_before = outer.evaluate('(e) => e.scrollTop')
+        output.hover()
+        page.mouse.wheel(0, -160)
+        page.wait_for_function('before => document.querySelector(".sdk-msgs").scrollTop < before', arg=outer_before)
+        assert output.evaluate('(e) => e.scrollTop') == tail
+        output.scroll_into_view_if_needed()
+
+        def swipe_down():
+            box = output.bounding_box()
+            cdp = context.new_cdp_session(page)
+            x, y = box['x'] + box['width'] * .6, box['y'] + 25
+            cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y}]})
+            for step in range(1, 7):
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove',
+                    'touchPoints': [{'x': x, 'y': y + step * 12}]})
+                page.wait_for_timeout(20)
+            cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+            page.wait_for_timeout(300)
+            cdp.detach()
+
+        outer_before = outer.evaluate('(e) => e.scrollTop')
+        swipe_down()
+        assert output.evaluate('(e) => e.scrollTop') == tail
+        assert outer.evaluate('(e) => e.scrollTop') < outer_before
+        output.scroll_into_view_if_needed()
+        output.click(position={'x': 40, 'y': 40})
+        expect(tool).to_have_class(__import__('re').compile('text-scroll-active'))
+        assert output.evaluate('(e) => !e.isContentEditable && e.contains(getSelection().anchorNode)')
+        before = output.inner_text()
+        page.keyboard.type('do-not-edit')
+        page.keyboard.press('Backspace')
+        assert output.inner_text() == before
+        swipe_down()
+        assert output.evaluate('(e) => e.scrollTop') < tail
         output.hover()
         page.mouse.wheel(0, -100000)
         page.wait_for_function("document.querySelector('.tool-out').scrollTop === 0")
+        # A real text selection remains copyable and retains nested-scroll ownership.
+        output.dblclick(position={'x': 40, 'y': 20})
+        assert page.evaluate('getSelection().toString().length > 0')
+        page.screenshot(path=str(shots / f'{label}-{width}-{theme}-selected.png'), full_page=True)
+        page.locator('#sdk-input').click()
+        expect(tool).not_to_have_class(__import__('re').compile('text-scroll-active'))
+        output.scroll_into_view_if_needed()
+        output.hover()
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(150)
+        assert output.evaluate('(e) => e.scrollTop') == 0
         expect(output).to_contain_text('FIRST LINE')
         tool.get_by_role('button', name='展开全文', exact=True).click()
         assert output.evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')
