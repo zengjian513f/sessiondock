@@ -27,6 +27,7 @@ pub(crate) use views::{
     validate_message_query,
 };
 mod providers;
+pub(crate) use providers::droid::internal_reminder as droid_internal_reminder;
 mod records;
 pub(crate) use records::scanner as native_json;
 pub(crate) use records::string_reader::JsonStringReader;

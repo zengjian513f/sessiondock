@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Droid bookkeeping must not flash as messages before SDK replay connects."""
+"""Droid internal records must not flash as messages before SDK replay connects."""
 import argparse
 import json
 import tempfile
@@ -15,6 +15,14 @@ from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN, free_port, node_env
 
 
+def reminder(suffix):
+    return {'type': 'message', 'id': '__internal__system-reminder__' + suffix,
+            'timestamp': '2026-11-09T01:00:01Z',
+            'message': {'role': 'user', 'visibility': 'llm_only',
+                        'content': [{'type': 'text', 'text':
+                                     '<system-reminder>InternalReminderOnlyNeedle</system-reminder>'}]}}
+
+
 def seed(f):
     rows = list(map(json.loads, f.path.read_text().splitlines()))
     rows[-1]['message']['openaiPhase'] = 'final_answer'
@@ -25,6 +33,15 @@ def seed(f):
                                          'content': 'BookkeepingOnlyNeedle'}]}, 'messageIndex': 1})
     rows.append({'type': 'agent_turn_outcome', 'turnId': 'turn-1',
                  'reason': 'completed', 'resultKind': 'text'})
+    rows.append(reminder('seed'))
+    for mid, visibility, text in [
+        ('context', 'llm_only', 'OrdinaryContextPreserved'),
+        ('literal', 'visible', 'Quoted <system-reminder>LiteralReminderPreserved</system-reminder>'),
+        ('__internal__system-reminder__literal', 'visible', 'VisibleIdentityPreserved'),
+    ]:
+        rows.append({'type': 'message', 'id': mid, 'timestamp': '2026-11-09T01:00:01Z',
+                     'message': {'role': 'user', 'visibility': visibility,
+                                 'content': [{'type': 'text', 'text': text}]}})
     f.path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
     (f.root / 'replay-history').touch()
 
@@ -40,10 +57,14 @@ def check(browser, base, f, label, shots):
     card.click()
     pane = page.locator('.native-sdk-pane')
     expect(pane).to_contain_text('earlier Droid answer')
+    page.locator('#a-turns').click()
 
     def assert_history():
         expect(pane).not_to_contain_text('agent_turn_outcome')
         expect(pane).not_to_contain_text('todo_state')
+        expect(pane).not_to_contain_text('InternalReminderOnlyNeedle')
+        for text in ('OrdinaryContextPreserved', 'LiteralReminderPreserved', 'VisibleIdentityPreserved'):
+            expect(pane).to_contain_text(text)
         expect(pane).to_contain_text('UnknownRecordPreserved')
         expect(pane.get_by_text('earlier Droid answer', exact=True)).to_have_count(1)
         expect(pane.get_by_text('earlier Droid answer', exact=True)).to_be_visible()
@@ -51,19 +72,23 @@ def check(browser, base, f, label, shots):
     assert_history()
     endpoint = '/api/messages/' + quote(uid, safe='')
     history = page.request.get(base + endpoint).json()
-    assert [m['role'] for m in history['messages']] == ['system', 'user', 'assistant'], history
-    # A metadata-only append advances the physical cursor without new content.
+    assert [m['role'] for m in history['messages']] == ['system', 'user', 'assistant', 'system', 'user', 'user'], history
+    # Internal-only appends advance the physical cursor without new content.
     with f.path.open('a') as stream:
         stream.write(json.dumps({'type': 'agent_turn_outcome', 'turnId': 'turn-2',
                                  'reason': 'cancelled', 'resultKind': 'text'}) + '\n')
+        stream.write(json.dumps(reminder('append')) + '\n')
     query = urlencode({'start': history['end'], 'head': history['version']['head'],
                        'anchor': history['anchor'], 'window': 1})
     delta = page.request.get(base + endpoint + '?' + query).json()
     assert not delta['reset'] and not delta['messages'] and delta['end'] > history['end'], delta
     hits = page.request.get(base + '/api/search?q=BookkeepingOnlyNeedle').json()
     assert not hits['results'], hits
+    hits = page.request.get(base + '/api/search?q=InternalReminderOnlyNeedle').json()
+    assert not hits['results'], hits
     open_sdk(page, f, expect, uid=uid)
     page.wait_for_function('NativeSdkView.items.some(i => i.role === "assistant")')
+    assert not page.evaluate('NativeSdkView.raw.items.some(i => (i.text || "").includes("InternalReminderOnlyNeedle"))')
     assert_history()
 
     # Hold the transport on both cold reload and warm cached re-open. History
@@ -95,7 +120,7 @@ def check(browser, base, f, label, shots):
         page.unroute('**/api/native-sdk/events?*')
     assert not errors, errors
     page.close()
-    print(f'PASS {label}: history/replay, cached re-open, metadata append/search, wide/light and narrow/dark', flush=True)
+    print(f'PASS {label}: history/replay, cached re-open, internal reminder append/search, literal/context preservation, wide/light and narrow/dark', flush=True)
 
 
 def main():

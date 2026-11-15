@@ -3,6 +3,16 @@ use super::{Parser, normalized, string};
 use serde_json::{Value, json};
 use std::path::Path;
 
+pub(crate) fn internal_reminder(id: &Value, message: &Value) -> bool {
+    // Native model-only reminders are absent from the user-facing SDK stream.
+    // Identify the record, not tag-like text that a user can legitimately paste.
+    message["visibility"] == "llm_only"
+        && message["role"] == "user"
+        && id
+            .as_str()
+            .is_some_and(|id| id.starts_with("__internal__system-reminder__"))
+}
+
 pub(crate) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) -> Value {
     let head = records
         .iter()
@@ -46,6 +56,9 @@ impl Parser<'_> {
         let ts = normalized(&record["timestamp"]);
         if record["type"] == "message" {
             let message = &record["message"];
+            if internal_reminder(&record["id"], message) {
+                return Ok(());
+            }
             let role = if message["visibility"] == "llm_only" {
                 "system"
             } else {

@@ -77,7 +77,7 @@ create_message 的 requestId 或 messageId 匹配才确认已进入原生记录�
 | `session_start` | SID、标题、cwd；不作为消息 |
 | `todo_state` / `agent_turn_outcome` | 原生待办快照／回合结束元数据，不作为对话消息；SDK 连接前后的历史保持一致 |
 | `message` / `create_message` | role、content、时间、modelId、原生 id；历史和实时按 id 对齐 |
-| `visibility:llm_only` | 非空上下文显示为 system，不冒充用户提交；空上下文不显示 |
+| `visibility:llm_only` | 原生 user 消息且 ID 以 `__internal__system-reminder__` 开头时属于内部提醒，不作为对话；其余非空上下文显示为 system，不冒充用户提交；空上下文不显示 |
 | `text` / `thinking` | 正文／思考；`redacted_thinking` 不展示不透明数据 |
 | `tool_use` / `tool_call` | name、input、工具原生 id |
 | `tool_result` | 按 toolUseId 配对，isError 保留；没有已知调用时独立保留原始结果 |
@@ -109,6 +109,9 @@ Mission、MCP 状态映射到现有活动卡片；空 MCP 列表不产生空卡�
 
 DELTA：已知的 `todo_state` 与 `agent_turn_outcome` 不走未知记录的 system 原文回退，
 历史、分页与搜索均不将其作为消息。真正未知的记录仍保留原文。
+DELTA：原生 `llm_only` user 消息中带 `__internal__system-reminder__` ID 前缀的内部提醒，
+历史、分页、搜索与 SDK 投影统一排除。普通上下文及用户行内引用的同名标签保留；
+不凭正文标签或 ID 单独过滤，不修改原生文件与物理读取游标。
 [历史连接回归](../tests/droid_history_browser.py) 验证节点／Hub 的连接前后、缓存重开、
 增量读取以及宽窄屏和明暗主题。
 

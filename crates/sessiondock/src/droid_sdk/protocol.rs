@@ -51,6 +51,9 @@ pub(super) fn upsert(live: &mut Live, mut row: Value) {
 }
 fn message(live: &mut Live, n: &Value) {
     let m = &n["message"];
+    if crate::sessions::droid_internal_reminder(&m["id"], m) {
+        return;
+    }
     let Some(id) = m["id"].as_str() else {
         return;
     };
