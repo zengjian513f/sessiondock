@@ -105,6 +105,7 @@ pub fn observation(root: &Path, process: &Process) -> Observation {
     use std::io::{Read, Write};
     let started = crate::server::now();
     if let Some(socket) = std::env::var_os("RESOURCE_AGENT_PSS_SOCKET") {
+        let started_instant = std::time::Instant::now();
         let read = || -> std::io::Result<Observation> {
             let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
             stream.set_read_timeout(Some(Duration::from_millis(200)))?;
@@ -146,10 +147,14 @@ pub fn observation(root: &Path, process: &Process) -> Observation {
             }
             serde_json::from_slice(&line).map_err(std::io::Error::other)
         };
-        return read().unwrap_or(Observation {
+        return read().unwrap_or_else(|_| Observation {
             value: None,
             sampled_at: started,
-            cpu_ms: 0.0,
+            cpu_ms: if crate::server::STOP.load(std::sync::atomic::Ordering::Relaxed) {
+                0.0
+            } else {
+                started_instant.elapsed().as_secs_f64() * 200.0
+            },
         });
     }
     let cpu_started = thread_cpu_time();

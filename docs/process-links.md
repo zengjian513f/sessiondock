@@ -391,7 +391,12 @@ never rejuvenate an old observation.
 The report timestamp is the start of the complete sampling cycle, including
 process discovery; metric timestamps retain the oldest contributing sample through aggregation.
 GPU queries also run independently, about every 10 seconds; values older than
-30 seconds are unavailable. PSS cache entries expire after 60 seconds.
+30 seconds are unavailable. Ordinary PSS reads (`<= 15 ms` CPU) refresh about every
+30 seconds and expire after 60 seconds; expensive multi-GiB `smaps_rollup` walks
+stretch per-process `refresh_interval_seconds` up to 60 minutes with a `2 ×` expiry
+window and `24 ×` inter-read CPU cooldown while preserving exact `sampled_at`
+timestamps, and unattributed `>= 512 MiB` processes skip background PSS walks until
+attributed (see [Optional Linux resource collector](resource-agent.md)).
 
 GPU aggregation also checks sampled compute processes without a binding for
 their exact process incarnation. When any exist, GPU count and memory metrics
