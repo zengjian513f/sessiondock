@@ -1471,45 +1471,82 @@ pub fn run() -> io::Result<()> {
         }
     };
     // PSS walks page tables and is substantially more expensive than stat/io.
-    // Spread a 30-second refresh over processes instead of blocking the fast sampler.
+    // Spread a 30-second refresh over due processes instead of blocking the fast sampler,
+    // and stretch per-process cadence proportionally to actual kernel walk cost so
+    // multi-GiB processes neither burn steady kernel CPU nor contend on mmap_lock.
     let pss_worker = if config.proc_root == Path::new("/proc") {
         let pss_state = state.clone();
         let cache = slow_cache.clone();
         let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
+            const BASE_INTERVAL_SECS: f64 = 30.0;
+            const MAX_INTERVAL_SECS: f64 = 900.0;
+            const LARGE_RSS_BYTES: u64 = 512 * 1024 * 1024;
             let remote = std::env::var_os("RESOURCE_AGENT_PSS_SOCKET").is_some();
             let budgeted = remote || memory::enter_cpu_budget(budget.as_deref());
+            let mut schedule: BTreeMap<Process, (Instant, u64)> = BTreeMap::new();
             while !STOP.load(Ordering::Relaxed) {
                 let started = Instant::now();
-                let processes: Vec<_> = pss_state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .snapshot
-                    .entries
-                    .values()
-                    .map(|entry| entry.process.clone())
-                    .collect();
+                let (processes, rss_by_proc): (Vec<_>, BTreeMap<_, _>) = {
+                    let guard = pss_state.lock().unwrap_or_else(|e| e.into_inner());
+                    let procs = guard
+                        .snapshot
+                        .entries
+                        .values()
+                        .map(|entry| entry.process.clone())
+                        .collect();
+                    let rss = guard
+                        .resources
+                        .raw()
+                        .samples
+                        .iter()
+                        .map(|sample| (sample.process.clone(), sample.rss_bytes))
+                        .collect();
+                    (procs, rss)
+                };
                 let current: BTreeSet<_> = processes.iter().cloned().collect();
                 cache
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .pss
                     .retain(|process, _| current.contains(process));
+                schedule.retain(|process, _| current.contains(process));
+                let now = Instant::now();
+                let due: Vec<_> = processes
+                    .into_iter()
+                    .filter_map(|process| {
+                        let rss = rss_by_proc.get(&process).copied().unwrap_or(0);
+                        let should_sample = match schedule.get(&process) {
+                            None => true,
+                            Some((next_due, last_rss)) => {
+                                now >= *next_due
+                                    || (*last_rss >= LARGE_RSS_BYTES
+                                        && rss > 0
+                                        && rss < *last_rss / 2)
+                            }
+                        };
+                        should_sample.then_some((process, rss))
+                    })
+                    .collect();
                 // Budget ~15 seconds per scan for pacing, leaving time for other collectors.
-                let spacing = Duration::from_secs_f64(15.0 / processes.len().max(1) as f64);
-                for process in processes {
+                let spacing = Duration::from_secs_f64((15.0 / due.len().max(1) as f64).min(0.25));
+                for (process, rss) in due {
                     if STOP.load(Ordering::Relaxed) {
                         return;
                     }
                     let cpu_started = memory::thread_cpu_time();
                     let observation = memory::observation(Path::new("/proc"), &process);
+                    let local_cpu = memory::thread_cpu_time().saturating_sub(cpu_started);
+                    let read_cpu_ms = observation.cpu_ms.max(local_cpu.as_secs_f64() * 1000.0);
+                    let next_secs = read_cpu_ms.clamp(BASE_INTERVAL_SECS, MAX_INTERVAL_SECS);
+                    schedule.insert(
+                        process.clone(),
+                        (Instant::now() + Duration::from_secs_f64(next_secs), rss),
+                    );
                     let pause_for = if budgeted {
                         spacing
                     } else {
-                        memory::sampling_pause(
-                            memory::thread_cpu_time().saturating_sub(cpu_started),
-                            spacing,
-                        )
+                        memory::sampling_pause(local_cpu, spacing)
                     };
                     cache
                         .lock()

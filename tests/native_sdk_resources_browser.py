@@ -12,6 +12,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from process_links_browser import wait_for
 from sdk_resources_fixtures import peer, serve, active_hosts
+from sdk_ui_fixtures import start_sdk
 from sdkhost_fixtures import stop_private_sdkhosts
 from spawned_by_fixtures import START, proc_pid
 
@@ -75,7 +76,8 @@ def main():
                                     print(f'PASS {source} external CLI and worker',flush=True)
                                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                                     page.locator('#a-sdk').click()
-                                    page.locator('#sdk-input').click()
+                                    start_sdk(page)
+                                    page.wait_for_function('SdkView.connected && !SdkView.readOnly')
                                     page.locator('#sdk-input').fill('Resource ownership check')
                                     with page.expect_response(lambda r:'/api/native-sdk/turn' in r.url and r.request.method=='POST') as sent:
                                         page.locator('#sdk-send').click()

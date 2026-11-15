@@ -164,10 +164,19 @@ releases/rollback include both unit files.
 
 The private PSS socket permits only its owner; requests identify a PID and start
 time, and the worker checks the monitored UID. Observation time is captured before
-the read, so quota wait never makes an old observation appear fresh. The main
+the read, so quota wait never makes an old observation appear fresh. Each helper
+reply also reports the thread CPU time spent walking `smaps_rollup`: processes whose
+read costs at most 30 ms keep the 30-second refresh cadence, while multi-GiB address
+spaces stretch their next scheduled refresh to `1,000 × read_cpu_time` (capped at
+15 minutes; owned synthetic benchmarks measured ~375 ms kernel CPU at 8 GiB and
+~1.50 s at 32 GiB, with `mmap_lock` read contention raising concurrent target
+`mmap`/`munmap` `p99` latency under sustained reads). Processes previously at or
+above 512 MiB RSS refresh early when RSS drops below half of that baseline so freed
+memory is reflected promptly without raising cgroup quotas or weights. The main
 collector cancels its wait on shutdown; missing/failed helper reads are unavailable,
 never RSS. Standalone runs without `RESOURCE_AGENT_PSS_SOCKET` retain direct
-reads and CPU-time pacing. Unit budget setup failures are logged.
+reads, adaptive per-process scheduling and CPU-time pacing. Unit budget setup
+failures are logged.
 
 Thread-local write counters retain open proc I/O descriptors for live threads.
 [Linux pins these descriptors to their original task](https://www.kernel.org/doc/html/v6.11/filesystems/proc.html),

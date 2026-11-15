@@ -97,6 +97,8 @@ pub fn enter_cpu_budget(path: Option<&Path>) -> bool {
 pub struct Observation {
     pub value: Option<u64>,
     pub sampled_at: f64,
+    #[serde(default)]
+    pub cpu_ms: f64,
 }
 
 pub fn observation(root: &Path, process: &Process) -> Observation {
@@ -147,11 +149,16 @@ pub fn observation(root: &Path, process: &Process) -> Observation {
         return read().unwrap_or(Observation {
             value: None,
             sampled_at: started,
+            cpu_ms: 0.0,
         });
     }
+    let cpu_started = thread_cpu_time();
+    let value = pss_bytes(root, process);
+    let cpu_ms = thread_cpu_time().saturating_sub(cpu_started).as_secs_f64() * 1000.0;
     Observation {
-        value: pss_bytes(root, process),
+        value,
         sampled_at: started,
+        cpu_ms,
     }
 }
 
@@ -209,11 +216,20 @@ pub fn worker_main() -> std::io::Result<()> {
             continue;
         };
         let sampled_at = crate::server::now();
+        let cpu_started = thread_cpu_time();
         let value = fs::metadata(root.join(process.pid.to_string()))
             .ok()
             .filter(|meta| meta.uid() == uid)
             .and_then(|_| pss_bytes(&root, &process));
-        let _ = serde_json::to_writer(&mut stream, &Observation { value, sampled_at });
+        let cpu_ms = thread_cpu_time().saturating_sub(cpu_started).as_secs_f64() * 1000.0;
+        let _ = serde_json::to_writer(
+            &mut stream,
+            &Observation {
+                value,
+                sampled_at,
+                cpu_ms,
+            },
+        );
         let _ = stream.write_all(b"\n");
     }
     Ok(())
