@@ -540,6 +540,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
                     time.sleep(0.05)
             else:
                 raise AssertionError("isolated Rust health check timed out")
+            opener.sessiondock_pid = process.pid
             yield base, opener
         finally:
             if process.poll() is None:

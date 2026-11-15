@@ -2,6 +2,8 @@
 """Recycle-bin controls use actual pointer/keyboard inputs and private disk receipts."""
 import argparse
 import json
+import shutil
+import copy
 from pathlib import Path
 import tempfile
 
@@ -35,7 +37,8 @@ def main():
             sid=f'trash-ui-{i}'
             data.put(sid,'codex',[codex_row('session_meta',{'id':sid,'cwd':'/synthetic/trash'}),codex_message('user',f'Trash fixture {i}')],[])
         trash=root/'trash';trash.mkdir();native={sid:p.read_bytes() for sid,p in data.paths.items()}
-        with isolated_server(data,args.binary,trash_dir=trash) as (base,_):
+        proc=root/'proc';proc.mkdir();(proc/'stat').write_text('btime 1700000000\n')
+        with isolated_server(data,args.binary,trash_dir=trash,extra_env={'SESSIONDOCK_PROC_ROOT':str(proc)}) as (base,opener):
             browser=pw.chromium.launch(headless=True)
             try:
                 page=browser.new_page(viewport={'width':1280,'height':800})
@@ -99,6 +102,43 @@ def main():
                 page.reload(wait_until='networkidle');open_trash(page)
                 expect(page.locator('#trash-list')).to_contain_text('没有已删除的会话')
                 assert all(not p.exists() for p in data.paths.values())
+                # External legacy entries: their immutable rollout headers are
+                # projected once, even when every visible refresh publishes lists.
+                for i in range(120):
+                    entry=trash/f'legacy-{i:03d}';(entry/'files').mkdir(parents=True)
+                    saved=copy.deepcopy(manifest)
+                    saved.update(entry_id=entry.name,sid=f'legacy-{i}',uid=f'codex:legacy-{i}',
+                                 sessions=[],title=f'Legacy retained {i}',deferred=False)
+                    saved['origin']=str(root/'codex'/f'legacy-{i}.jsonl')
+                    saved['files'][0]['origin']=saved['origin']
+                    header={'type':'session_meta','payload':{'id':saved['sid'],'forked_from_id':'retained-parent'}}
+                    (entry/'files'/saved['files'][0]['name']).write_text(
+                        json.dumps({'ignored':'x'*65536})+'\n'+json.dumps(header)+'\n')
+                    (entry/'manifest.json').write_text(json.dumps(saved))
+                page.locator('#trash-reload').click()
+                expect(page.locator('.trash-item')).to_have_count(120)
+                entries=page.request.get(base+'/api/trash').json()['items']
+                assert all(e['sessions'][0]['forked_from_id']=='retained-parent' for e in entries)
+                def rchar():
+                    return int(dict(line.split(':',1) for line in Path(f'/proc/{opener.sessiondock_pid}/io').read_text().splitlines())['rchar'])
+                before_read=rchar()
+                for _ in range(15):
+                    with page.expect_response(lambda r:'/api/trash' in r.url and r.request.method=='GET'):
+                        page.locator('#trash-reload').click()
+                    expect(page.locator('.trash-item')).to_have_count(120)
+                read_delta=rchar()-before_read
+                assert read_delta < 2*1024*1024, f'unchanged trash reread: {read_delta} bytes'
+                print(f'120 legacy entries, 15 refreshes: rchar={read_delta} bytes (limit 2097152)',flush=True)
+                shutil.rmtree(trash/'legacy-000')
+                (trash/'legacy-001/manifest.json').write_text('{corrupt')
+                page.locator('#trash-reload').click()
+                expect(page.locator('.trash-item')).to_have_count(119)
+                corrupt=page.locator('.trash-item[data-id="legacy-001"]')
+                expect(corrupt).to_contain_text('清单')
+                expect(corrupt.locator('[data-act=restore]')).to_be_disabled()
+                page.locator('#trash-purge-all').click();confirm(page,True)
+                expect(page.locator('#trash-list')).to_contain_text('没有已删除的会话')
+                assert not list(trash.iterdir())
                 (args.output/'result.json').write_text(json.dumps({'passed':['actual confirmation clicks/cancel','delete receipt entry','restore conflict/retry/disk bytes','refresh','wide/narrow close/backdrop/Escape/Tab Enter','purge and clear all/cancel/private ledger','refresh preserves empty bin']},indent=2))
                 print('PASS trash actual mouse/keyboard inputs, conflict retry, cancellation and private native/ledger persistence',flush=True)
             finally:browser.close()

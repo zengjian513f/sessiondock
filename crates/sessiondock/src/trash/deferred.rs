@@ -31,6 +31,10 @@ fn native_member(row: &Value, rows: &[Value]) -> bool {
 impl TrashService {
     pub fn pending_deletions(&self) -> Result<BTreeSet<(String, String)>, TrashError> {
         let _guard = self.guard();
+        self.pending_deletions_inner()
+    }
+
+    pub(super) fn pending_deletions_inner(&self) -> Result<BTreeSet<(String, String)>, TrashError> {
         Ok(self
             .scan()?
             .0
@@ -178,11 +182,15 @@ impl TrashService {
     ) -> Result<Listing, TrashError> {
         let _guard = self.guard();
         let mut listing = self.list_inner(limit, cursor)?;
+        let entries = self.scan()?.0;
         for item in &mut listing.items {
             if item["deferred"] != true {
                 continue;
             }
-            let m = Manifest::read(&self.entry_dir(text(item, "id"))?)?;
+            let Some((_, m)) = entries.iter().find(|(id, _)| id == text(item, "id")) else {
+                continue;
+            };
+            let m = m.as_ref().map_err(Clone::clone)?;
             let roots = uids(&members(&m));
             item["cascade_sessions"] = json!(
                 self.cascade_scope(&m, rows)?

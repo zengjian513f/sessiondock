@@ -1,6 +1,7 @@
 //! Session recycle bin. Native files move into recoverable entries; fork
 //! parents retain history for their descendants; running sessions are protected.
 
+mod cache;
 mod deferred;
 pub mod manifest;
 mod plan;
@@ -186,6 +187,7 @@ pub struct TrashService {
     directory: PathBuf,
     roots: SessionRoots,
     lock: Mutex<()>,
+    manifests: Mutex<cache::Manifests>,
     pub tree_progress: crate::transfer::progress::Registry,
     tree_jobs: Mutex<std::collections::BTreeMap<String, Value>>,
 }
@@ -210,6 +212,7 @@ impl TrashService {
                 droid: freeze(roots.droid),
             },
             lock: Mutex::new(()),
+            manifests: Default::default(),
             tree_progress: Default::default(),
             tree_jobs: Default::default(),
         })
@@ -264,6 +267,8 @@ impl TrashService {
                 };
             }
         };
+        // One pending set for the batch; successful deferred moves extend it.
+        let mut pending = self.pending_deletions_inner().unwrap_or_default();
         let mut outcome = DeleteOutcome::default();
         let mut seen = BTreeSet::new();
         for uid in uids {
@@ -329,14 +334,7 @@ impl TrashService {
             let deferred = Self::descendants(&universe, &plan.sessions)
                 .iter()
                 .any(|child| child["source"] != row["source"] || child["sid"] != row["sid"]);
-            let already = self
-                .scan()
-                .ok()
-                .into_iter()
-                .flat_map(|(entries, _)| entries)
-                .any(|(_, m)| {
-                    m.is_ok_and(|m| m.deferred && m.source == plan.source && m.sid == plan.sid)
-                });
+            let already = pending.contains(&(plan.source.clone(), plan.sid.clone()));
             if already {
                 outcome.skipped.push(refused(
                     "already_trashed",
@@ -346,7 +344,12 @@ impl TrashService {
                 continue;
             }
             match self.move_into_entry_mode(&plan, note.clone(), forced, None, deferred) {
-                Ok(deleted) => outcome.deleted.push(deleted),
+                Ok(deleted) => {
+                    if deferred {
+                        pending.insert((plan.source.clone(), plan.sid.clone()));
+                    }
+                    outcome.deleted.push(deleted);
+                }
                 Err(error) => outcome
                     .failed
                     .push(refused(error.code, error.message, Some(note))),
@@ -542,6 +545,8 @@ impl TrashService {
     /// Read every manifest, newest first.
     fn scan(&self) -> Result<(Vec<ScannedEntry>, bool), TrashError> {
         let mut entries = Vec::new();
+        let mut cache = self.manifests.lock().unwrap_or_else(|e| e.into_inner());
+        let mut present = BTreeSet::new();
         let truncated = false;
         let directory = fs::read_dir(&self.directory)
             .map_err(|_| TrashError::new(503, "trash_unreadable", "回收站目录暂时不可枚举"))?;
@@ -560,8 +565,10 @@ impl TrashService {
             if !kind.is_dir() || kind.is_symlink() {
                 continue;
             }
-            entries.push((name.to_owned(), Manifest::read(&entry.path())));
+            present.insert(name.to_owned());
+            entries.push((name.to_owned(), cache.read(name, &entry.path())));
         }
+        cache.retain(&present);
         entries.sort_by(|(left_id, left), (right_id, right)| {
             let key = |manifest: &Result<Manifest, TrashError>| {
                 manifest.as_ref().map(|m| m.deleted_at_unix).unwrap_or(0)
