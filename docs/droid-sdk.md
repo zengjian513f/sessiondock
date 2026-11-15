@@ -75,6 +75,7 @@ create_message 的 requestId 或 messageId 匹配才确认已进入原生记录�
 | 原生记录／通知 | 投影 |
 | --- | --- |
 | `session_start` | SID、标题、cwd；不作为消息 |
+| `todo_state` / `agent_turn_outcome` | 原生待办快照／回合结束元数据，不作为对话消息；SDK 连接前后的历史保持一致 |
 | `message` / `create_message` | role、content、时间、modelId、原生 id；历史和实时按 id 对齐 |
 | `visibility:llm_only` | 非空上下文显示为 system，不冒充用户提交；空上下文不显示 |
 | `text` / `thinking` | 正文／思考；`redacted_thinking` 不展示不透明数据 |
@@ -105,6 +106,11 @@ Mission、MCP 状态映射到现有活动卡片；空 MCP 列表不产生空卡�
 跨机移动保留 SID，携带原生 JSONL、settings、会话快照 manifest 及其内容，
 按现行移动合同合并目标共享快照索引、保留源共享内容；详见 [会话移动](session-move.md)。
 新建原生克隆仍按项目统一合同关闭；SDK fork 属于不同操作，不重写原生身份或元数据。
+
+DELTA：已知的 `todo_state` 与 `agent_turn_outcome` 不走未知记录的 system 原文回退，
+历史、分页与搜索均不将其作为消息。真正未知的记录仍保留原文。
+[历史连接回归](../tests/droid_history_browser.py) 验证节点／Hub 的连接前后、缓存重开、
+增量读取以及宽窄屏和明暗主题。
 
 ## 验证边界
 

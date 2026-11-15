@@ -33,7 +33,13 @@ pub(crate) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) ->
 }
 impl Parser<'_> {
     pub(super) fn droid(&mut self, record: &Value, end: u64) -> Result<(), String> {
-        if record["type"] == "session_start" {
+        // Native bookkeeping is not conversation content. In particular the
+        // outcome follows the final answer; rendering it as unknown text makes
+        // a spurious trailing bubble disappear when SDK replay takes over.
+        if matches!(
+            record["type"].as_str(),
+            Some("session_start" | "todo_state" | "agent_turn_outcome")
+        ) {
             return Ok(());
         }
         let first = self.events.len();

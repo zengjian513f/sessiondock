@@ -85,6 +85,11 @@ def fake_cli():
                 path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n');settings.update({k:p[k] for k in ('modelId','reasoningEffort') if k in p})
             else:assert path.is_file()
             reply(v,{'sessionId':sid,'session':{'messages':[]},'settings':settings,'availableModels':models})
+            if (log.parent/'replay-history').exists():
+                for row in map(json.loads,path.read_text().splitlines()):
+                    if row.get('type')=='message':
+                        note({'type':'create_message','message':{**row['message'],'id':row['id'],'createdAt':1794186000000}})
+                note({'type':'agent_turn_completed','reason':'completed'})
         elif method=='droid.rename_session':
             while (log.parent/'rename-hold').exists():time.sleep(.02)
             if p['title']=='reject rename':
