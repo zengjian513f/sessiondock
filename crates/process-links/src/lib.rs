@@ -216,25 +216,34 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
     // restored/ambiguous records poison every later reuse for the whole boot.
     // Keep explicit overlapping spans ambiguous, and never merge node clocks.
     for candidates in outgoing.values_mut() {
-        for index in 0..candidates.len() {
-            if candidates[index].end.is_some() {
-                continue;
+        let mut starts: BTreeMap<(&str, &str), Vec<f64>> = BTreeMap::new();
+        for candidate in candidates
+            .iter()
+            .filter(|c| c.observed_connect && c.start.is_finite())
+        {
+            starts
+                .entry((&candidate.source.node_id, &candidate.source.boot_id))
+                .or_default()
+                .push(candidate.start);
+        }
+        for times in starts.values_mut() {
+            times.sort_by(f64::total_cmp);
+            times.dedup();
+        }
+        for candidate in candidates
+            .iter_mut()
+            .filter(|c| c.end.is_none() && c.start.is_finite())
+        {
+            if let Some(times) =
+                starts.get(&(&*candidate.source.node_id, &*candidate.source.boot_id))
+            {
+                candidate.superseded_at = times
+                    .get(times.partition_point(|at| *at <= candidate.start))
+                    .copied();
             }
-            let old = &candidates[index];
-            let next = candidates
-                .iter()
-                .filter(|new| {
-                    new.observed_connect
-                        && new.source.node_id == old.source.node_id
-                        && new.source.boot_id == old.source.boot_id
-                        && new.start.is_finite()
-                        && new.start > old.start
-                })
-                .map(|new| new.start)
-                .min_by(f64::total_cmp);
-            candidates[index].superseded_at = next;
         }
     }
+
     reports
         .iter()
         .filter(|r| r.version == 1 && r.supported)

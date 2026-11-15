@@ -41,6 +41,8 @@ pub struct Entry {
     pub connection: Option<Connection>,
     pub identities: Vec<(String, String)>,
     pub sockets: Vec<Connection>,
+    #[serde(default)]
+    pub socket_scan_complete: bool,
     pub multiplexed: bool,
     pub shared_parent: bool,
 }
@@ -116,9 +118,15 @@ fn endpoint(raw: &str) -> Option<(String, u16)> {
 }
 
 fn socket_table(root: &Path) -> BTreeMap<u64, Connection> {
+    observed_socket_table(root).0
+}
+
+fn observed_socket_table(root: &Path) -> (BTreeMap<u64, Connection>, bool) {
     let mut table = BTreeMap::new();
+    let mut complete = true;
     for name in ["tcp", "tcp6"] {
         let Ok(raw) = fs::read_to_string(root.join("net").join(name)) else {
+            complete = false;
             continue;
         };
         for line in raw.lines().skip(1) {
@@ -142,7 +150,7 @@ fn socket_table(root: &Path) -> BTreeMap<u64, Connection> {
             );
         }
     }
-    table
+    (table, complete)
 }
 
 fn unix_listeners(root: &Path) -> BTreeSet<u64> {
@@ -172,7 +180,8 @@ pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
     #[cfg(not(unix))]
     let _ = uid;
     let mut entries = BTreeMap::new();
-    let sockets = socket_table(root);
+    let (sockets, sockets_complete) = observed_socket_table(root);
+    let namespace = fs::read_link(root.join("self/ns/net")).ok();
     let listeners = unix_listeners(root);
     let boot_id = fs::read_to_string(root.join("sys/kernel/random/boot_id"))
         .unwrap_or_default()
@@ -246,6 +255,7 @@ pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
             connection,
             identities,
             sockets: Vec::new(),
+            socket_scan_complete: false,
             multiplexed: args.iter().any(|a| {
                 *a == "-M" || a.contains("ControlMaster=yes") || a.contains("ControlMaster=auto")
             }),
@@ -258,8 +268,16 @@ pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
             && let Ok(fds) = fs::read_dir(path.join("fd"))
         {
             let mut inodes = BTreeSet::new();
-            for fd in fds.flatten() {
+            entry.socket_scan_complete = sockets_complete
+                && namespace.is_some()
+                && fs::read_link(path.join("ns/net")).ok() == namespace;
+            for fd in fds {
+                let Ok(fd) = fd else {
+                    entry.socket_scan_complete = false;
+                    continue;
+                };
                 let Ok(target) = fs::read_link(fd.path()) else {
+                    entry.socket_scan_complete = false;
                     continue;
                 };
                 let target = target.to_string_lossy();

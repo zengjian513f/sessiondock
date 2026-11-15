@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Switch small histories while a private collector returns boot-long SSH evidence."""
+"""Switch histories during bounded collector recovery or legacy bulk reports."""
 # run_validation: serial
 import argparse
 from contextlib import contextmanager
@@ -85,10 +85,27 @@ def main():
         (root / 'ids/node-id').write_text(NODE)
         if args.agent_binary:
             proc_pid(proc, 100, 'codex', ['codex', 'resume'], 1, fds={3: str(corpus.paths['small-0'])})
+            from spawned_by_fixtures import START
+            START[101] = 10100
+            proc_pid(proc,101,'ssh',['ssh'],1)
+            (proc/'101/fd').mkdir(exist_ok=True)
+            for relative in ('101/ns','self/ns','net'):
+                (proc/relative).mkdir(parents=True,exist_ok=True)
+            (proc/'101/ns/net').symlink_to('net:[123]')
+            (proc/'self/ns/net').symlink_to('net:[123]')
+            (proc/'net/tcp').write_text('header\n')
+            (proc/'net/tcp6').write_text('header\n')
+            for pid in (102,103):
+                START[pid]=pid*100
+                proc_pid(proc,pid,'ssh',['ssh'],1)
+                (proc/str(pid)/'fd').mkdir(exist_ok=True)
+                (proc/str(pid)/'ns').mkdir(exist_ok=True)
+                (proc/str(pid)/'ns/net').symlink_to('net:[456]' if pid==102 else 'net:[123]')
+            (proc/'103/fd/9').write_text('unreadable descriptor')
         env = node_env(root, free_port(), '127.0.0.0/8')
         env.update(SESSIONDOCK_PROC_ROOT=str(proc), SESSIONDOCK_RESOURCE_AGENT_SOCKET=str(root / 'collector.sock'),
                    SESSIONDOCK_LOG_REQUESTS='all')
-        fixture = real_collector(root, args.agent_binary, NODE, COUNT) if args.agent_binary else collector(root, args.legacy_collector)
+        fixture = real_collector(root, args.agent_binary, NODE, 350_000) if args.agent_binary else collector(root, args.legacy_collector)
         with fixture as ((size, projected_size), calls), isolated_server(corpus, args.binary, extra_env=env) as (base, _):
             print(f'Collector full response: {size} bytes; projected: {projected_size} bytes; opening page', flush=True)
             process = next(p for p in psutil.Process().children() if p.cmdline() == [str(args.binary.resolve())])
@@ -96,15 +113,20 @@ def main():
                 browser = pw.chromium.launch(headless=True)
                 try:
                     page = browser.new_page()
+                    page.add_init_script('performance.setResourceTimingBufferSize(2000)')
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.goto(base, wait_until='domcontentloaded')
                     expect(page.locator('#side .item')).to_have_count(4)
                     page.reload(wait_until='domcontentloaded')
                     expect(page.locator('#side .item')).to_have_count(4)
+                    page.wait_for_load_state('networkidle')
+                    page.evaluate('() => document.fonts.ready.then(() => true)')
                     times = []
                     live_times = []
                     for i in range(4):
+                        if args.agent_binary and i == 1:
+                            calls[0]()
                         # Three ordinary liveness consumers overlap a user opening
                         # a cold history. Force bypasses the unchanged-list cache.
                         if args.agent_binary:
@@ -117,24 +139,27 @@ def main():
                             () => fetch('api/live?force=1').then(r => {if(!r.ok) throw Error(r.status); return r.json()}))); }''')
                         started = time.monotonic()
                         page.locator(f'#side .item[data-uid="{corpus.uid(f"small-{i}")}"]').click()
+                        clicked = round((time.monotonic()-started)*1000)
                         expect(page.locator('#msgs')).to_contain_text(f'History {i} answer')
                         times.append(round((time.monotonic() - started) * 1000))
                         page.evaluate('() => window.liveReads')
                         live_times.append(round((time.monotonic() - live_started) * 1000))
-                        print(f'Cold history {i}: {times[-1]} ms; live {live_times[-1]} ms', flush=True)
+                        print(f'Cold history {i}: {times[-1]} ms; live {live_times[-1]} ms; click {clicked} ms', flush=True)
                         if args.agent_binary:
                             page.evaluate('() => window.collectorBusy')
-                    # The coordinator path must still receive all old evidence;
-                    # optimizing liveness cannot prune or hide connection records.
+                    # The real collector expires old dead evidence; legacy collectors
+                    # still expose their full report through the compatibility path.
                     full = page.evaluate('''async () => {const r=await fetch('api/process-links');
                         if(!r.ok) throw Error(r.status); const v=await r.json();
                         return {count:v.connections.length, first:v.connections[0].opened_at,
                             last:v.connections.at(-1).session.sid, bindings:v.bindings.length};}''')
-                    assert full == dict(count=COUNT, first=1, last='small-0', bindings=1), full
+                    assert full == dict(count=8 if args.agent_binary else COUNT, first=1, last='small-0', bindings=1), full
                     hwm = next(int(line.split()[1]) for line in Path(f'/proc/{process.pid}/status').read_text().splitlines()
                                if line.startswith('VmHWM:')) / 1024
                     print(json.dumps(dict(collector_bytes=size, projected_bytes=projected_size, cold_open_ms=times, live_reads_ms=live_times, peak_rss_mib=round(hwm),
                                           requests=len(calls), complete_connections=full['count'])), flush=True)
+                    if args.agent_binary:
+                        print('Private request timings', page.evaluate('() => performance.getEntriesByType("resource").filter(e=>e.name.includes("/api/") && e.duration>500).map(e=>({path:new URL(e.name).pathname,ms:Math.round(e.duration)}))'),flush=True)
                     if not args.agent_binary:
                         assert any(c['op'] == 'catalog' for c in calls), calls
                         reads = [c for c in calls if c['op'] == 'report']
@@ -150,7 +175,7 @@ def main():
                         assert max(times) < 2000, times
                 finally:
                     browser.close()
-    print('PASS history opens under boot-long collector reports; full connection evidence retained', flush=True)
+    print('PASS history opens under collector load; retention and legacy full-report compatibility', flush=True)
 
 
 if __name__ == '__main__':

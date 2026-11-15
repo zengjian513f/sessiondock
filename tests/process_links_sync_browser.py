@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chromium + real Hub/node: boot-long evidence crosses the wire only once."""
+"""Chromium + real Hub/node: retained evidence, deletion deltas and cursor recovery."""
 import argparse
 from contextlib import ExitStack
 from copy import deepcopy
@@ -84,7 +84,11 @@ def main():
                 page.goto(f'http://127.0.0.1:{hub.port}', wait_until='domcontentloaded')
                 page.locator('#side .item').first.click()
                 expect(page.locator('#msgs')).to_contain_text('Connection history answer')
-                wait(page, lambda: len(counts.reports) >= 3)
+                try:
+                    wait(page, lambda: len(counts.reports) >= 3)
+                except AssertionError:
+                    print('Initial transport observations',counts.reports,flush=True)
+                    raise
                 first, *steady = counts.reports
                 assert first['sync'] and first['base'] is None and first['connections'] == COUNT, first
                 assert first['reset_reason'] == 'initial', first
@@ -247,6 +251,35 @@ def main():
                 restarted = wait(page, lambda: next(iter(counts.reports[before:]), None))
                 assert restarted['base'] is None and restarted['connections'] == COUNT, restarted
                 wait(page, lambda: counts.reports[-1]['base'])
+                # Expiration removes more than the bounded tombstone budget.
+                # Old cursors reset; a rebuilt set is exactly the current node set.
+                page.goto(base,wait_until='domcontentloaded')
+                page.locator('#side .item').first.click()
+                expect(page.locator('#msgs')).to_contain_text('Connection history answer')
+                # The browser and authenticated Hub listeners have independent journals.
+                previous_cursor = page.evaluate("async () => (await (await fetch('api/process-links?connection_sync=1')).json()).revision")
+                collector.replace(dict(changed,connections=changed['connections'][:1000]))
+                def compacted():
+                    result = page.evaluate("""async cursor => {
+                        const response=await fetch('api/process-links?connection_sync=1&since='+cursor);
+                        const v=await response.json();
+                        if (!response.ok) throw Error(JSON.stringify({url:location.href,status:response.status,error:v.error}));
+                        if (!v.report || !Array.isArray(v.remove)) return {fallback:true,status:response.status,keys:Object.keys(v)};
+                        const plain=await (await fetch('api/process-links')).json();
+                        if (!Array.isArray(plain.connections)) return {fallback:true,status:200,keys:Object.keys(plain)};
+                        return {base:v.base,reason:v.reset_reason,remove:v.remove.length,
+                            count:v.report.connections.length,exact:JSON.stringify(v.report.connections)===JSON.stringify(plain.connections)};
+                    }""",previous_cursor)
+                    if result.get('fallback'):
+                        print('Collector compatibility fallback while changing evidence',result,flush=True)
+                        return None
+                    return result
+                compact = wait(page,compacted)
+                assert compact == dict(base=None,reason='unknown_cursor',remove=0,count=1000,exact=True),compact
+                wait(page,lambda:counts.reports[-1]['connections']==1000)
+                collector.replace(changed)
+                wait(page,lambda:counts.reports[-1]['base'] and counts.reports[-1]['connections']==0)
+                print('Bounded removal journal resets expired cursors and Hub recovers the exact retained set',flush=True)
                 before = len(counts.reports)
                 stop_node()
                 base = start_node()

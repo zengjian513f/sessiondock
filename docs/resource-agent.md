@@ -127,17 +127,28 @@ peer credentials. It adds no TCP listener or network token. Its capability
 bounding set permits tracing, process inspection and socket ownership; it does
 not grant privileges to SessionDock or its frontend.
 
-Boot-scoped connection evidence survives collector restarts and is not truncated.
-The supplied unit therefore has no fixed memory ceiling: a ceiling smaller than
-the retained state can cause an OOM restart loop. Attribution is persisted in a private SQLite database beside the configured
-state path (`state.sqlite3` for `state.json`). Existing JSON is imported atomically
-on first use and retained as the pre-migration backup; subsequent starts read
-SQLite. Every 30 seconds only changed records are committed, with a final flush
-on graceful shutdown. An abrupt crash can lose the last uncommitted interval.
-Historical connection evidence and prior boot scopes remain stored; live process
-bindings still use the current boot. Rolling back to an older JSON-only binary
-reads the pre-migration backup, so it cannot recover later SQLite-only changes. CPU pacing and the
-unit's CPU quota still apply; this setting does not change monitored workloads.
+Connection evidence survives collector restarts within the
+[retention contract](process-links.md#independent-linux-service). The default is
+24 hours after closure for absent processes, plus the matching tolerance; live
+process records and necessary supersession witnesses remain. Missing-close
+records use the persisted last live connection observation (connect time for legacy
+records without one), without fabricating a close event.
+Configure positive finite seconds with `--connection-retention-seconds` or
+`RESOURCE_AGENT_CONNECTION_RETENTION_SECONDS`; CLI takes precedence.
+
+Attribution is persisted in private SQLite beside the configured state path
+(`state.sqlite3` for `state.json`). Existing JSON is imported on first use and
+retained as the pre-migration backup; subsequent starts read SQLite. Every
+30 seconds changed records and removals are committed, with a final flush on
+graceful shutdown. An abrupt crash can lose the last uncommitted interval.
+Startup streams current records without constructing a whole JSON tree, and
+serves requests while the persistence worker reconciles expired rows in batches
+of 2,048. Previous boot scopes are deleted: they cannot explain a current process
+incarnation. Cumulative usage history is a separate ledger and is unchanged.
+Rolling back to a JSON-only binary needs an explicit SQLite export; the backup
+cannot recover later changes. The existing CPU quota, task and memory settings
+are unchanged. Request thread creation errors close that connection and log a
+warning instead of panicking the collector.
 
 The supplied unit starts with I/O probes off and memory-bandwidth monitoring on.
 Memory bandwidth uses monitor-only resctrl groups where supported; it never

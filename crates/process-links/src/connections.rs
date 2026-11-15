@@ -25,14 +25,23 @@ pub struct Origin {
 /// Arrays on disk preserve full process keys (JSON object keys cannot).
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Saved {
+    #[serde(default)]
+    pub last_seen: Vec<(RecordKey, f64)>,
     pub records: Vec<ConnectionRecord>,
     pub parents: Vec<(Process, Process)>,
     pub origins: Vec<(Process, Origin)>,
     pub shared: Vec<Process>,
 }
 
-#[derive(Default)]
+pub const DEFAULT_RETENTION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
+type RecordKey = (Process, Connection, u64);
+
 pub struct Tracker {
+    pub retention_seconds: f64,
+    by_process: BTreeMap<Process, BTreeSet<RecordKey>>,
+    by_connection: BTreeMap<Connection, BTreeSet<RecordKey>>,
+    last_seen: BTreeMap<RecordKey, f64>,
+    recent: BTreeMap<Process, f64>,
     records: BTreeMap<(Process, Connection, u64), ConnectionRecord>,
     senders: BTreeSet<Process>,
     parents: BTreeMap<Process, Process>,
@@ -41,9 +50,20 @@ pub struct Tracker {
     exited: BTreeMap<Process, f64>,
 }
 
+impl Default for Tracker {
+    fn default() -> Self {
+        Self::restore(Saved::default())
+    }
+}
+
 impl Tracker {
     pub fn restore(saved: Saved) -> Self {
-        Self {
+        let mut tracker = Self {
+            retention_seconds: DEFAULT_RETENTION_SECONDS,
+            by_process: BTreeMap::new(),
+            by_connection: BTreeMap::new(),
+            last_seen: saved.last_seen.into_iter().collect(),
+            recent: BTreeMap::new(),
             senders: saved.records.iter().map(|r| r.process.clone()).collect(),
             records: saved
                 .records
@@ -68,11 +88,18 @@ impl Tracker {
             origins: saved.origins.into_iter().collect(),
             shared: saved.shared.into_iter().collect(),
             exited: BTreeMap::new(),
-        }
+        };
+        tracker.reindex();
+        tracker
     }
 
     pub fn saved(&self) -> Saved {
         Saved {
+            last_seen: self
+                .last_seen
+                .iter()
+                .map(|(p, at)| (p.clone(), *at))
+                .collect(),
             records: self.records.values().cloned().collect(),
             parents: self
                 .parents
@@ -88,19 +115,19 @@ impl Tracker {
         }
     }
 
-    pub fn fork(&mut self, parent: &Process, child: &Process) {
+    pub fn fork(&mut self, parent: &Process, child: &Process, at: f64) {
+        self.recent.insert(child.clone(), at);
         self.parents.insert(child.clone(), parent.clone());
         if !self.senders.contains(parent) {
             return;
         }
         // A socket inherited across fork is not an exclusive SSH client socket
         // (ControlPersist may fork before its Unix listener appears).
-        for record in self
-            .records
-            .values_mut()
-            .filter(|r| r.process == *parent && r.closed_at.is_none())
-        {
-            record.shared = true;
+        for key in self.by_process.get(parent).into_iter().flatten() {
+            let record = self.records.get_mut(key).unwrap();
+            if record.closed_at.is_none() {
+                record.shared = true;
+            }
         }
     }
 
@@ -112,13 +139,14 @@ impl Tracker {
         {
             return;
         }
+        self.recent.insert(process.clone(), at);
         self.origins.insert(process, Origin { connection, at });
     }
 
     pub fn opened(&mut self, process: Process, connection: Connection, at: f64, ssh: bool) {
         // Other protocols only matter as evidence that an old SSH tuple was
         // reused; do not retain an unrelated machine-wide TCP history.
-        if !ssh && !self.records.values().any(|r| r.connection == connection) {
+        if !ssh && !self.by_connection.contains_key(&connection) {
             return;
         }
         // A shell can fork a helper, then exec SSH in the same incarnation.
@@ -127,6 +155,17 @@ impl Tracker {
         // transport observations remain sticky across connection creation.
         let shared = self.shared.contains(&process);
         self.senders.insert(process.clone());
+        self.recent.insert(process.clone(), at);
+        let key = (process.clone(), connection.clone(), at.to_bits());
+        self.last_seen.insert(key.clone(), at);
+        self.by_process
+            .entry(process.clone())
+            .or_default()
+            .insert(key.clone());
+        self.by_connection
+            .entry(connection.clone())
+            .or_default()
+            .insert(key);
         self.records
             .entry((process.clone(), connection.clone(), at.to_bits()))
             .or_insert(ConnectionRecord {
@@ -142,13 +181,21 @@ impl Tracker {
     }
 
     pub fn closed(&mut self, process: &Process, connection: &Connection, at: f64) {
-        if let Some((_, record)) = self.records.iter_mut().rev().find(|(_, record)| {
-            record.process == *process
-                && record.connection == *connection
-                && record.opened_at <= at
-                && record.closed_at.is_none()
-        }) {
-            record.closed_at = Some(record.closed_at.map_or(at, |old| old.min(at)));
+        if let Some(key) = self
+            .by_process
+            .get(process)
+            .into_iter()
+            .flatten()
+            .rev()
+            .find(|key| {
+                let record = &self.records[*key];
+                record.connection == *connection
+                    && record.opened_at <= at
+                    && record.closed_at.is_none()
+            })
+            .cloned()
+        {
+            self.records.get_mut(&key).unwrap().closed_at = Some(at);
         }
     }
 
@@ -157,14 +204,16 @@ impl Tracker {
         if !self.senders.contains(process) {
             return;
         }
-        for record in self.records.values_mut().filter(|r| r.process == *process) {
+        for key in self.by_process.get(process).into_iter().flatten() {
+            let record = self.records.get_mut(key).unwrap();
             record.closed_at.get_or_insert(at);
         }
     }
 
     pub fn shared(&mut self, process: &Process) {
         self.shared.insert(process.clone());
-        for record in self.records.values_mut().filter(|r| r.process == *process) {
+        for key in self.by_process.get(process).into_iter().flatten() {
+            let record = self.records.get_mut(key).unwrap();
             record.shared = true;
         }
     }
@@ -222,7 +271,9 @@ impl Tracker {
         snapshot: &Snapshot,
         bindings: &BTreeMap<Process, Binding>,
         catalog: &Catalog,
+        at: f64,
     ) {
+        self.prune(snapshot, at);
         for entry in snapshot.entries.values() {
             if !entry.shared_parent
                 && let Some(parent) = snapshot.entries.get(&entry.parent)
@@ -256,7 +307,6 @@ impl Tracker {
             }
         }
         self.attribute(bindings, catalog);
-        self.prune(snapshot);
     }
 
     pub fn attribute(&mut self, bindings: &BTreeMap<Process, Binding>, catalog: &Catalog) {
@@ -266,28 +316,7 @@ impl Tracker {
             .map(|o| (&o.process, &o.session))
             .collect();
         for record in self.records.values_mut() {
-            let mut current = &record.process;
-            let mut seen = BTreeSet::new();
-            while seen.insert(current) {
-                if let Some(owner) = owners.get(current) {
-                    record.session.get_or_insert_with(|| (*owner).clone());
-                    if let Some(binding) = bindings.get(current) {
-                        enrich(record, binding);
-                    }
-                    break;
-                }
-                if let Some(binding) = bindings.get(current) {
-                    record
-                        .session
-                        .get_or_insert_with(|| binding.session.clone());
-                    enrich(record, binding);
-                    break;
-                }
-                let Some(parent) = self.parents.get(current) else {
-                    break;
-                };
-                current = parent;
-            }
+            attribute_record(record, &self.parents, bindings, &owners);
         }
     }
 
@@ -297,27 +326,101 @@ impl Tracker {
         bindings: &BTreeMap<Process, Binding>,
         catalog: &Catalog,
     ) {
-        if self.senders.contains(process) {
-            self.attribute(bindings, catalog);
+        if let Some(keys) = self.by_process.get(process) {
+            let owners = catalog
+                .owners
+                .iter()
+                .map(|o| (&o.process, &o.session))
+                .collect();
+            for key in keys {
+                attribute_record(
+                    self.records.get_mut(key).unwrap(),
+                    &self.parents,
+                    bindings,
+                    &owners,
+                );
+            }
         }
     }
 
-    fn prune(&mut self, snapshot: &Snapshot) {
-        // Keep ancestors needed by live descendants or unacknowledged spans.
-        // Connection evidence lasts for the boot, including Hub outages.
+    fn reindex(&mut self) {
+        self.by_process.clear();
+        self.by_connection.clear();
+        for key in self.records.keys() {
+            self.by_process
+                .entry(key.0.clone())
+                .or_default()
+                .insert(key.clone());
+            self.by_connection
+                .entry(key.1.clone())
+                .or_default()
+                .insert(key.clone());
+        }
+        self.senders = self.by_process.keys().cloned().collect();
+    }
+
+    fn prune(&mut self, snapshot: &Snapshot, at: f64) {
+        let live = |r: &ConnectionRecord| {
+            snapshot.entries.get(&r.process.pid).is_some_and(|entry| {
+                entry.process == r.process
+                    && (!entry.socket_scan_complete || entry.sockets.contains(&r.connection))
+            })
+        };
+        let cutoff = at - self.retention_seconds - 2.0;
+        for (key, record) in &self.records {
+            if live(record) {
+                self.last_seen.insert(key.clone(), at);
+            }
+        }
+        let expired: BTreeSet<_> = self
+            .records
+            .iter()
+            .filter(|(key, r)| {
+                !live(r)
+                    && r.closed_at.unwrap_or_else(|| {
+                        self.last_seen
+                            .get(*key)
+                            .copied()
+                            .unwrap_or(r.opened_at)
+                            .max(r.opened_at)
+                    }) < cutoff
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        // Keep the first subsequent connect bounding each retained unfinished
+        // span. Dropping that witness must not revive a superseded tuple.
+        let mut witnesses = BTreeSet::new();
+        for (key, record) in &self.records {
+            if record.closed_at.is_none()
+                && !expired.contains(key)
+                && let Some(next) = self.by_connection[&record.connection]
+                    .iter()
+                    .filter(|k| self.records[*k].opened_at > record.opened_at)
+                    .min_by(|a, b| {
+                        self.records[*a]
+                            .opened_at
+                            .total_cmp(&self.records[*b].opened_at)
+                    })
+            {
+                witnesses.insert(next.clone());
+            }
+        }
+        if !expired.is_empty() {
+            self.records
+                .retain(|key, _| !expired.contains(key) || witnesses.contains(key));
+            self.reindex();
+        }
+        self.last_seen
+            .retain(|key, _| self.records.contains_key(key));
+        self.recent.retain(|_, seen| *seen + 2.0 >= at);
+        // Only retained evidence, live descendants and not-yet-sampled events
+        // retain ancestry. Removed evidence cannot pin dead graphs forever.
         let mut needed: BTreeSet<Process> = snapshot
             .entries
             .values()
             .map(|e| e.process.clone())
             .chain(self.records.values().map(|r| r.process.clone()))
-            // The snapshot may have started before a queued fork/exec event.
-            .chain(
-                self.parents
-                    .keys()
-                    .chain(self.origins.keys())
-                    .filter(|p| !self.exited.contains_key(*p))
-                    .cloned(),
-            )
+            .chain(self.recent.keys().cloned())
             .collect();
         let mut pending: Vec<_> = needed.iter().cloned().collect();
         while let Some(process) = pending.pop() {
@@ -354,5 +457,35 @@ fn enrich(record: &mut ConnectionRecord, binding: &Binding) {
         {
             record.launch_chain.push(launch.clone());
         }
+    }
+}
+
+fn attribute_record(
+    record: &mut ConnectionRecord,
+    parents: &BTreeMap<Process, Process>,
+    bindings: &BTreeMap<Process, Binding>,
+    owners: &BTreeMap<&Process, &Session>,
+) {
+    let mut current = &record.process;
+    let mut seen = BTreeSet::new();
+    while seen.insert(current) {
+        if let Some(owner) = owners.get(current) {
+            record.session.get_or_insert_with(|| (*owner).clone());
+            if let Some(binding) = bindings.get(current) {
+                enrich(record, binding);
+            }
+            break;
+        }
+        if let Some(binding) = bindings.get(current) {
+            record
+                .session
+                .get_or_insert_with(|| binding.session.clone());
+            enrich(record, binding);
+            break;
+        }
+        let Some(parent) = parents.get(current) else {
+            break;
+        };
+        current = parent;
     }
 }

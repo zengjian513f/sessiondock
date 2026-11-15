@@ -45,6 +45,7 @@ struct Config {
     events: bool,
     io_events: bool,
     memory_bandwidth: bool,
+    connection_retention_seconds: f64,
 }
 impl Config {
     fn load() -> io::Result<Self> {
@@ -53,7 +54,7 @@ impl Config {
         while let Some(key) = args.next() {
             if key == "--help" {
                 println!(
-                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)] [--memory-bandwidth off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish, probe (60-second lease). Never signals workloads or changes allocation; memory bandwidth uses monitor-only thread groups."
+                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)] [--memory-bandwidth off|on (default off)] [--connection-retention-seconds SECONDS (default 86400)]\nLocal JSON-line API: health, report, resources, catalog, publish, probe (60-second lease). Never signals workloads or changes allocation; memory bandwidth uses monitor-only thread groups."
                 );
                 std::process::exit(0);
             }
@@ -66,6 +67,7 @@ impl Config {
                 "--events",
                 "--io-events",
                 "--memory-bandwidth",
+                "--connection-retention-seconds",
             ]
             .contains(&key.as_str())
             {
@@ -114,7 +116,20 @@ impl Config {
         if !["on", "off"].contains(&bandwidth_mode) {
             return Err(io::Error::other("memory-bandwidth must be on or off"));
         }
+        let retention: f64 = options
+            .get("--connection-retention-seconds")
+            .cloned()
+            .or_else(|| std::env::var("RESOURCE_AGENT_CONNECTION_RETENTION_SECONDS").ok())
+            .map(|v| v.parse().map_err(io::Error::other))
+            .transpose()?
+            .unwrap_or(process_links::connections::DEFAULT_RETENTION_SECONDS);
+        if !retention.is_finite() || retention <= 0.0 {
+            return Err(io::Error::other(
+                "connection retention must be finite and positive",
+            ));
+        }
         Ok(Self {
+            connection_retention_seconds: retention,
             memory_bandwidth: bandwidth_mode == "on",
             io_events: io_mode == "on",
             node_id,
@@ -1302,10 +1317,17 @@ pub fn run() -> io::Result<()> {
     if snapshot.boot_id.is_empty() {
         return Err(io::Error::other("cannot read Linux boot identity"));
     }
-    let (store, saved) =
-        crate::persistence::Store::open(&config.state, &config.node_id, &snapshot.boot_id)?;
+    let (store, saved) = crate::persistence::Store::open(
+        &config.state,
+        &config.node_id,
+        &snapshot.boot_id,
+        &snapshot,
+        now(),
+        config.connection_retention_seconds,
+    )?;
     let store = Arc::new(Mutex::new(store));
     let mut engine = Engine::new(config.node_id.clone(), snapshot.boot_id.clone(), saved);
+    engine.connections.retention_seconds = config.connection_retention_seconds;
     let status = CollectorStatus {
         service: "resource-agent".into(),
         events: if config.events {
@@ -1518,6 +1540,27 @@ pub fn run() -> io::Result<()> {
     let worker_state = state.clone();
     let worker_config = config.clone();
     let worker_store = store.clone();
+    let initial_saved = state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .engine
+        .saved();
+    let initial_store = store.clone();
+    let restore_worker = std::thread::Builder::new()
+        .name("attribution-cleanup".into())
+        .spawn(move || {
+            if let Err(error) = initial_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .save(initial_saved)
+            {
+                crate::runtime_log::emit(
+                    "error",
+                    "resource.attribution_save_failed",
+                    json!({"error":error.to_string()}),
+                );
+            }
+        })?;
     let worker = std::thread::spawn(move || {
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
@@ -1665,18 +1708,27 @@ pub fn run() -> io::Result<()> {
                 let published = published_report.clone();
                 let published_usage = published_usage.clone();
                 let uid = config.uid;
-                std::thread::spawn(move || {
-                    let started = Instant::now();
-                    let result = serve(stream, state, published, published_usage, uid);
-                    if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
-                        crate::runtime_log::emit(
-                            "warn",
-                            "resource.request",
-                            json!({"duration_ms":started.elapsed().as_millis(),
+                if let Err(error) = std::thread::Builder::new()
+                    .name("resource-request".into())
+                    .spawn(move || {
+                        let started = Instant::now();
+                        let result = serve(stream, state, published, published_usage, uid);
+                        if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
+                            crate::runtime_log::emit(
+                                "warn",
+                                "resource.request",
+                                json!({"duration_ms":started.elapsed().as_millis(),
                             "error_kind":result.err().map(|e|e.kind().to_string())}),
-                        );
-                    }
-                });
+                            );
+                        }
+                    })
+                {
+                    crate::runtime_log::emit(
+                        "warn",
+                        "resource.request_spawn_failed",
+                        json!({"error":error.to_string()}),
+                    );
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20))
@@ -1706,6 +1758,7 @@ pub fn run() -> io::Result<()> {
     }
     let _ = io_worker.join();
     let _ = worker.join();
+    let _ = restore_worker.join();
     if let Some(worker) = pss_worker {
         let _ = worker.join();
     }

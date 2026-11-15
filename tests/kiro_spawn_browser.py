@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
@@ -117,7 +118,9 @@ def main():
                 agent = subprocess.Popen([str(binary.with_name('resource-agent')),
                     '--uid',str(os.getuid()),'--node-id-file',str(node.root/'node-id'),
                     '--socket',str(node.root/'agent.sock'),'--state',str(node.root/'agent.json'),
-                    '--proc-root',str(proc),'--events','auto' if node.name == 'a' else 'off'],
+                    '--proc-root',str(proc),'--events','auto' if node.name == 'a' else 'off',
+                    # Keep the fixed historical fixture inside its configured window.
+                    '--connection-retention-seconds',str(max(86400,time.time()-boot+86400))],
                     env=tracer(node.root) if node.name == 'a' else None, stdout=log,stderr=log)
                 stack.callback(lambda p=agent: (p.terminate(),p.wait(timeout=10)))
                 if node.name == 'a':
@@ -153,13 +156,15 @@ def main():
                     page.locator(f'#side .item[data-uid="{row["uid"]}"]').click()
                     expect(page.locator(f'#side .item[data-uid="{row["uid"]}"]')).to_have_attribute(
                         'data-depth', '1' if pid in ((700,710) if restarted else (700,710,720)) else '0')
-                    expect(page.locator('#msgs')).to_contain_text('Review evidence for '+title)
+                    expect(page.get_by_text('Review evidence for '+title,exact=True)).to_be_visible()
                 owner = page.evaluate('S.sessions.find(r=>r.sid==="owner").uid')
                 page.locator(f'#side .item[data-uid="{owner}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('Review the execution design with Kiro')
                 local = browser.new_page(); running.callback(local.close)
                 local.goto(bases[1],wait_until='domcontentloaded')
                 local.wait_for_function('T.listLoaded')
+                local.locator('#nest-toggle').click()
+                local.wait_for_function("async () => {await loadSessions(true);return S.sessions.some(r=>r.sid==='sess-independent-acp')}")
                 if not restarted:
                     local.wait_for_function('''async () => {
                       const r=await (await fetch('/api/process-links')).json();

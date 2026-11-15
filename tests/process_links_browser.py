@@ -305,10 +305,8 @@ def main():
                 def migrated():
                     if not database.exists():return False
                     with sqlite3.connect(database) as db:
-                        return db.execute("SELECT count(*) FROM evidence WHERE section='parents'").fetchone()[0]>=2000
+                        return db.execute("SELECT count(*) FROM snapshots").fetchone()[0] == 1 and db.execute("SELECT count(*) FROM evidence WHERE section='parents' AND json_extract(key,'$.pid')>=800000").fetchone()[0] == 0
                 wait_for(migrated)
-                with sqlite3.connect(database) as db:
-                    db.executescript("CREATE TABLE fixture_updates(n INTEGER); CREATE TRIGGER unchanged_history_update AFTER UPDATE ON evidence WHEN new.section='parents' AND json_extract(new.key,'$.pid')>=800000 BEGIN INSERT INTO fixture_updates VALUES(1); END;")
                 if index == 1:
                     wait_for(lambda: ledger.stat().st_mode & 0o777 == 0o600)
                     usage_db=ledger.with_suffix('.sqlite3')
@@ -328,15 +326,13 @@ def main():
                         agent.terminate();agent.wait(timeout=20)
                         dbpath=corpora[index].root/'agent-state.sqlite3'
                         with sqlite3.connect(dbpath) as db:
-                            assert db.execute("select count(*) from evidence where section='parents'").fetchone()[0]>=2000
-                        with sqlite3.connect(dbpath) as db:
-                            assert db.execute('SELECT count(*) FROM fixture_updates').fetchone()[0]==0, 'unchanged historical rows must not be rewritten'
+                            assert db.execute("SELECT count(*) FROM evidence WHERE section='parents' AND json_extract(key,'$.pid')>=800000").fetchone()[0]==0
                         assert dbpath.stat().st_mode & 0o777 == 0o600
                         assert (corpora[index].root/'agent-state.json').stat().st_mtime_ns==mtime
                         replacement=subprocess.Popen(command,umask=0o022)
                         agents.callback(lambda p=replacement:(p.terminate(),p.wait(timeout=20)))
                         wait_for(lambda:(corpora[index].root/'agent.sock').exists())
-                    print('PASS legacy JSON migration, private SQLite, retained evidence and collector restart',flush=True)
+                    print('PASS legacy JSON migration, private SQLite, dead ancestry cleanup and collector restart',flush=True)
                 with ExitStack() as stack:
                     local = []
                     for corpus, node, proc in zip(corpora, nodes, procs):
@@ -624,7 +620,6 @@ def main():
                 nextstate=root/'next-state.json';nextdb=nextstate.with_suffix('.sqlite3')
                 with sqlite3.connect(corpora[0].root/'agent-state.sqlite3') as source, sqlite3.connect(nextdb) as dest:
                     source.backup(dest)
-                    retained=dest.execute('select count(*) from evidence').fetchone()[0]
                 nextstate.write_text('not a current state: migration backup must be ignored')
                 command=list(agent_processes[0][1]);command[command.index('--state')+1]=str(nextstate)
                 command[command.index('--socket')+1]=str(root/'next-agent.sock');command[command.index('--proc-root')+1]=str(nextproc)
@@ -640,9 +635,9 @@ def main():
                 finally:
                     nextagent.terminate();nextagent.wait(timeout=20)
                 with sqlite3.connect(nextdb) as db:
-                    assert db.execute('select count(*) from snapshots').fetchone()[0]>=2
-                    assert db.execute('select count(*) from evidence').fetchone()[0]>=retained
-                print('PASS new boot preserves prior SQLite evidence and does not reimport JSON backup',flush=True)
+                    assert db.execute('select count(*) from snapshots').fetchone()[0]==1
+                    assert db.execute("SELECT count(*) FROM evidence WHERE json_extract(scope,'$[1]')<>'next-boot'").fetchone()[0]==0
+                print('PASS new boot deletes obsolete attribution scope without reimporting JSON backup',flush=True)
 
         finally:
             browser.close()

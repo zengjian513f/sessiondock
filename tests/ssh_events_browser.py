@@ -79,7 +79,8 @@ class Fixture:
         process = subprocess.Popen([str(self.binary.with_name('resource-agent')), '--uid',str(self.uids[index]),
             '--node-id-file',str(corpus.root/'ids/node-id'), '--socket',str(corpus.root/'agent.sock'),
             '--state',str(corpus.root/'agent-state.json'), '--proc-root',str(self.procs[index]),
-            '--events','auto' if self.kernel else 'off'], stdout=log, stderr=log)
+            '--events','auto' if self.kernel else 'off',
+            '--connection-retention-seconds',str(getattr(self,'retention',86400))], stdout=log, stderr=log)
         self.stack.callback(stop, process)
         wait_for(lambda: (corpus.root/'agent.sock').exists() or process.poll() is not None)
         assert process.poll() is None, (self.root/f'agent-{index}.log').read_text()
@@ -220,6 +221,23 @@ def synthetic(fixture,pw):
     fixture.hub.start()
     page.reload(wait_until='networkidle')
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
+    # A destination's established links outlive expired source evidence, even
+    # across collector and Hub restarts. Short retention is private to this fixture.
+    fixture.hub.stop()
+    START[199] = 19900
+    proc_pid(fixture.procs[0],199,'ssh',['ssh'],1)
+    fixture.retention = 1
+    fixture.restart_agents()
+    wait_for(lambda: len(fixture.report(0)['connections']) <= 2)
+    remaining = fixture.report(0)['connections']
+    # The unfinished stale span needs its first newer connect as a boundary.
+    assert any(r['process']['pid']==200 for r in remaining),remaining
+    fixture.hub.start()
+    page.reload(wait_until='networkidle')
+    wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
+    assert next(b for b in fixture.bindings() if b['process']['pid']==501)['session']['sid']=='other'
+    wait_for(lambda:item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    print('PASS source retention deletes evidence while destination links and browser ownership survive restart',flush=True)
     # PID reuse cannot inherit the old process's origin or durable binding.
     stat=fixture.procs[1]/'500/stat'
     stat.write_text(stat.read_text().replace(' 50000 ',' 50001 '))

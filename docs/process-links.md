@@ -92,7 +92,7 @@ being idle infrastructure affects activity indicators, not resource ownership.
 - `outgoing`: SSH client process, start time, full TCP tuple, owning session and inherited launch chain;
 - `incoming`: process identity/start time, inherited SSH connection tuple and
   optional `connection_at` (original successful remote exec, retained by descendants);
-- `connections`: boot-scoped TCP connect/close evidence, source process, time
+- `connections`: retained boot-scoped TCP connect/close evidence, source process, time
   interval, owning session/launch chain and SSH/shared flags. Closed records are
   separate from live `outgoing`, so older coordinators safely ignore them;
 - `collector.ssh_connections`: whether kernel connection evidence is available.
@@ -274,7 +274,27 @@ Older collectors ignore the optional field; their full replies are still validat
 and skipped without allocating unused records. Old clients continue to receive
 full reports, and catalog/publish mutations and identity checks are unchanged. Full
 `/api/process-links` responses still include every retained connection.
-Boot-long evidence is retained unchanged.
+DELTA: connection evidence has a configurable retention window (24 hours by
+default). A closed record can expire only after its process incarnation is absent
+and its close is older than the window plus the two-second matching tolerance.
+A complete SSH socket scan in the same network namespace can also confirm
+that a live process no longer holds a connection. Failed/incomplete reads never
+prove absence. Other live process records remain. Unfinished records with missing exit/close events
+expire after the last confirmed live connection observation ages beyond the window;
+legacy records without that observation use their connect time. Live observations
+survive restart, and this does not invent a close timestamp. The first
+subsequent connect bounding a retained unfinished span is also kept, so
+`superseded_at` cannot disappear while that span remains. Dead ancestry is kept
+only for retained evidence, live descendants, or events awaiting a snapshot.
+
+Established destination links remain attached to live process incarnations and
+survive source retention and collector/Hub restart. Unresolved associations can
+recover during the retention window; evidence older than it is not guaranteed.
+Matching, unknown/shared ambiguity and the two-second clock tolerance are unchanged.
+Use `--connection-retention-seconds` or
+`RESOURCE_AGENT_CONNECTION_RETENTION_SECONDS` (positive finite seconds) on the
+collector; the command-line option wins. This changes evidence retention, not
+cumulative resource usage history.
 
 DELTA: the Hub opts into connection-history transport with
 `GET /api/process-links?connection_sync=1&since=<revision>`. New nodes return
@@ -286,12 +306,16 @@ the record's `opened_at`). Every other report field is a fresh complete observat
 The Hub reconstructs the complete connection set before correlation; late
 closures, shared-socket observations and session/launch-chain changes are updates,
 not append-only history. Record ordering has no attribution meaning.
+The matcher sorts observed connect times per tuple/node/boot and uses the first
+strictly later time for unfinished spans. Reused tuples do not require a
+quadratic pairwise scan; equal-time ambiguity is unchanged.
 
 Each node listener keeps the current connection records with their last-change
 sequence and retained deletion sequences. The 32-character hexadecimal cursor
-identifies the listener's journal and a sequence; any issued cursor remains
-usable for that journal's lifetime, regardless of missed responses or intervening
-readers. Only current records changed since that sequence and still-relevant
+identifies the listener's journal and a sequence. Missed replies and intervening
+readers do not evict a cursor. At more than 32,768 retained deletion markers,
+the node clears those markers and advances its oldest usable sequence; older
+cursors receive the existing full snapshot with `unknown_cursor`. Only current records changed since that sequence and still-relevant
 deletions cross the wire. Reappearing identities replace their deletion markers.
 The journal stores no series of full historical snapshots. Node/boot changes,
 unknown cursors and service restarts return a full snapshot. Ordinary callers and old Hubs continue to receive the
@@ -315,7 +339,7 @@ authenticated targets, idle timeouts and typed decoding are unchanged.
 [`process_links_sync_browser.py`](../tests/process_links_sync_browser.py) opens
 history through Chromium with a real node and Hub and a large private collector.
 It measures full/delta bytes with 140,000 records (initial snapshot over 64 MiB)
-and covers updates, removals, reordering, long-lived cursors, deletion/reappearance,
+and covers updates, removals, reordering, retained and expired cursors, deletion/reappearance,
 three consecutive lost Hub replies, collector outages, failed polls, old nodes,
 invalid baselines, Hub/node restarts and boot changes.
 The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py);
@@ -324,7 +348,7 @@ The large-report Chromium regression is [`history_collector_browser.py`](../test
 `--with-agent` verifies projected report/catalog/publish replies alongside browser
 attribution, liveness and resource interactions.
 Report reads clone the last completed immutable sample through a separate
-publication lock. Recomputing attribution or copying boot-long history for
+publication lock. Recomputing attribution or copying retained evidence for
 persistence cannot block these reads; `sampled_at` still identifies the actual
 sample, with no extra TTL or invented fresh observation. Publication swaps only
 an Arc, and old reports are released outside that short-held lock. Catalog and
@@ -332,8 +356,10 @@ publish requests still complete their mutation before returning its report.
 Resource reads capture immutable snapshots under the attribution lock, then
 serialize and aggregate outside it. The real-collector variant of
 `history_collector_browser.py --agent-binary target/release/resource-agent`
-loads retained connection ancestry and overlaps coordinator refreshes with
-browser navigation/live reads, while checking complete history is preserved. Boot-long SSH evidence is streamed
+loads 350,000 expired SQLite records plus live/recent evidence and overlaps
+coordinator refreshes with browser navigation/live reads. It checks bounded
+startup, durable deletion of expired records and previous boot scopes, and
+restart without resurrection. Legacy full reports remain supported. SSH evidence is streamed
 without first expanding it into a JSON value tree; concurrent readers must not
 block new samples. Event batches yield to due sampling and persistence every
 100 ms while leaving remaining events queued.

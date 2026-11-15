@@ -78,7 +78,7 @@ impl Engine {
         }
     }
     pub fn fork(&mut self, parent: &Process, child: Process, at: f64) {
-        self.connections.fork(parent, &child);
+        self.connections.fork(parent, &child, at);
         if let Some(mut binding) = self.bindings.get(parent).cloned() {
             binding.process = child.clone();
             binding.first_observed_at = at;
@@ -166,7 +166,7 @@ impl Engine {
         let mut incoming = Vec::new();
         let mut bindings = BTreeMap::new();
         self.connections
-            .update(snapshot, &self.bindings, &self.catalog);
+            .update(snapshot, &self.bindings, &self.catalog, at);
         self.incoming.clear();
         for entry in snapshot.entries.values() {
             if entry.shared_parent {

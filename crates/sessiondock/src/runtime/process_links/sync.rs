@@ -58,6 +58,7 @@ struct Journal {
     boot_id: String,
     records: BTreeMap<Key, Record>,
     removed: BTreeMap<Key, u64>,
+    oldest_cursor: u64,
 }
 
 #[derive(Default)]
@@ -65,8 +66,8 @@ pub struct Store(Mutex<Journal>);
 
 impl Store {
     /// Only collector reports participate. Keep each record's last change and
-    /// deletion sequence until this listener/boot ends, so lost replies and
-    /// other readers cannot evict an acknowledged cursor.
+    /// deletion sequence within the bounded journal. Older readers reset using
+    /// the existing full-snapshot protocol.
     pub fn update(&self, mut report: Report, since: Option<&str>) -> Result<Update, Box<Report>> {
         if report.collector.is_none() {
             return Err(Box::new(report));
@@ -89,12 +90,14 @@ impl Store {
         }
         // The wire cursor remains 32 hexadecimal characters for existing Hubs.
         // It names this journal and a sequence, not an evictable full snapshot.
-        let baseline = since.and_then(|cursor| {
+        let mut baseline = since.and_then(|cursor| {
             cursor
                 .strip_prefix(&journal.epoch)
                 .filter(|sequence| sequence.len() == 16)
                 .and_then(|sequence| u64::from_str_radix(sequence, 16).ok())
-                .filter(|sequence| *sequence <= journal.sequence)
+                .filter(|sequence| {
+                    *sequence <= journal.sequence && *sequence >= journal.oldest_cursor
+                })
         });
         let next = journal.sequence + 1;
         let mut records = BTreeMap::new();
@@ -131,6 +134,14 @@ impl Store {
             journal.sequence = next;
             journal.records = records;
         }
+        // At roughly 10k expired connections/day this retains several days of
+        // removals, while current records remain unrestricted. Expiration only
+        // changes transport efficiency, never rejects valid input.
+        if journal.removed.len() > 32_768 {
+            journal.oldest_cursor = journal.sequence;
+            journal.removed.clear();
+        }
+        baseline = baseline.filter(|sequence| *sequence >= journal.oldest_cursor);
         let mut remove = Vec::new();
         if let Some(baseline) = baseline {
             report
