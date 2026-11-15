@@ -143,7 +143,7 @@ stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏
 仍要求原生 `session_id` 与选定 SID 一致，不接受另一会话的内容或审批。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
-effort、settings、permission_mode、fast_mode、usage、context_usage、compact、rename、fork、fork_before、
+effort、settings、permission_mode、fast_mode、usage、context_usage、compact、rename、fork、fork_before、revert、
 mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
 无法加入一个独立 TUI 正在使用的 runtime。Linux、macOS、Windows 在首次连接和每次发送前
 检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸 Claude 进程，排除本桥接的
@@ -171,7 +171,11 @@ CLI initialize 不创建 fork JSONL；首次真实 user 输入才原生落盘，
 未落盘的分支在私有创建回执中保存 `sdk_fork`，重启后从可信回执恢复计划；
 只有其原生 JSONL 已存在才改为直接 resume 新 SID。
 桥接不自行复制、裁剪或改写源/目标 transcript。
-`rewindFiles` 是工作区文件回滚，不能代替 conversation-only revert，后者仍未实现。
+DELTA（2.1.306）：`revert` 调用原生 `rewind_conversation`，传用户 UUID 及页面已看到的末条用户 UUID，
+只在空闲时执行；要求原生 `rewound:true`，原生拒绝及不确定结果可见，不自动重发。
+它保留 SID 和工作区文件，清空旧实时快照并持久保存回执；原生 `last-prompt` 的显式叶子决定历史，
+`leafUuid:null` 和旧版全零 UUID 都表示空对话。后续分支只选当前原生祖先链，不带回已回退后缀。
+`rewindFiles` 是独立的工作区文件回滚，本操作不调用它。
 
 新建路径使用 Claude Code 2.1.302 包内 `sanitizePath` 的确切算法：
 按 JS UTF-16 把非 ASCII 字母数字替为 `-`，超过 200 个编码单元时取前

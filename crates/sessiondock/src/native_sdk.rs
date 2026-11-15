@@ -633,12 +633,12 @@ impl NativeSdks {
                     && row["request_id"] == input["request_id"]
                     && row["request_id"].is_string()
             }) {
-                if source == "droid"
+                if matches!(source, "droid" | "agy" | "codebuddy")
                     && row
                         .get("action_input")
                         .is_some_and(|previous| *previous != input)
                 {
-                    return Err("Droid 操作请求 ID 已用于不同的输入".into());
+                    return Err("操作请求 ID 已用于不同的输入".into());
                 }
                 if row["cwd"] != target["cwd"] {
                     return Err("此创建请求已用于不同的目录".into());
@@ -776,7 +776,7 @@ impl NativeSdks {
                 row["creation_choices"] = json!({"model":input["model"],"effort":input["effort"],"mode":input["mode"],"autopilot":input["autopilot"],"permission_mode":input["permission_mode"]});
             }
             row["sdk_operation"] = json!(method);
-            if source == "droid" {
+            if matches!(source, "droid" | "agy" | "codebuddy") {
                 row["action_input"] = input.clone();
             }
             if matches!(method, "fork" | "compact") {

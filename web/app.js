@@ -2917,6 +2917,9 @@ function mergeSessionMetaEvent(entry, session) {
 
 /** 列表元数据变更后同步缓存和当前详情标题，不重绘消息正文。 */
 function refreshSessionMeta() {
+  const sdk = SdkView.active;
+  if (sdk.pane && sdk.uid === S.sel && !sdk.agent && sdk.pendingAtOpen && !sdk.pending(sdk.uid))
+    sdk.scheduleHistory();
   const headerKey = m => JSON.stringify([
     m.title, m.parent_title, m.sid, m.agent_type, m.model, !!m.starred,
     m.nest_parent || null, m.group || null,

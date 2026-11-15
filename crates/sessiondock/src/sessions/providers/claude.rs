@@ -225,6 +225,11 @@ pub(super) fn graph_id<'a>(record: &'a Value, agent: &str) -> Option<&'a str> {
 
 fn signal<'a>(record: &'a Value, agent: &str) -> Option<&'a str> {
     if record["type"] == "last-prompt" {
+        // Current native rewind persists an explicit null leaf for an empty
+        // conversation; older versions used the all-zero UUID.
+        if record["explicit"] == true && record.get("leafUuid") == Some(&Value::Null) {
+            return Some(EMPTY_LEAF);
+        }
         record["leafUuid"]
             .as_str()
             .filter(|id| !id.is_empty())

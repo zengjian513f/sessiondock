@@ -7,7 +7,14 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 /// Native bookkeeping kinds that carry no conversation content.
-const BOOKKEEPING: [&str; 4] = ["file-history-snapshot", "custom-title", "ai-title", "topic"];
+const BOOKKEEPING: [&str; 6] = [
+    "file-history-snapshot",
+    "custom-title",
+    "ai-title",
+    "topic",
+    "session-meta",
+    "resend-fork-notice",
+];
 
 pub(super) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) -> Value {
     let stem = path
@@ -55,6 +62,14 @@ pub(super) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) ->
             }
             _ => {}
         }
+    }
+    if let Some(identity) = records
+        .iter()
+        .rev()
+        .filter(|(row, _)| row["type"] == "session-meta")
+        .find_map(|(row, _)| row["sessionId"].as_str())
+    {
+        sid = identity.to_owned();
     }
     let title = [custom, ai, first_user]
         .into_iter()
@@ -184,4 +199,44 @@ impl Parser<'_> {
             }
         }
     }
+}
+
+/// A native rewind appends a branch notice; later turns descend from its parent.
+/// Files without that native signal retain their existing flat-log interpretation.
+pub(crate) fn active_ids(records: &[(Value, u64)]) -> Option<std::collections::HashSet<String>> {
+    if !records
+        .iter()
+        .any(|(row, _)| row["type"] == "resend-fork-notice")
+    {
+        return None;
+    }
+    let mut nodes = std::collections::HashMap::new();
+    let mut tip = None;
+    for (row, _) in records {
+        let kind = row["type"].as_str().unwrap_or_default();
+        if kind == "resend-fork-notice" {
+            tip = row["parentId"].as_str();
+            continue;
+        }
+        if BOOKKEEPING.contains(&kind) {
+            continue;
+        }
+        if let Some(id) = row["id"].as_str() {
+            nodes.insert(
+                id,
+                row["parentId"]
+                    .as_str()
+                    .or_else(|| row["logicalParentId"].as_str()),
+            );
+            tip = Some(id);
+        }
+    }
+    let mut active = std::collections::HashSet::new();
+    while let Some(id) = tip {
+        if !active.insert(id.to_owned()) {
+            break;
+        }
+        tip = nodes.get(id).copied().flatten();
+    }
+    Some(active)
 }

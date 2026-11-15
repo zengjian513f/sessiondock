@@ -1,6 +1,7 @@
 //! CodeBuddy's native, persistent stream-json SDK transport. See docs/codebuddy-sdk.md.
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
+mod actions;
 mod hosted;
 mod protocol;
 mod transport;
@@ -48,6 +49,7 @@ struct Session {
     cwd: PathBuf,
     path: PathBuf,
     observed_model: Option<String>,
+    fork_source: Option<String>,
     runtime: RwLock<()>,
     operations: AsyncMutex<()>,
     live: Mutex<Live>,
@@ -179,10 +181,10 @@ fn capabilities() -> Value {
         "models":true,"create":true,"resume":cfg!(any(target_os="linux",target_os="macos",windows)),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":false,
         "usage":false,"context_usage":false,"compact":false,"rename":false,
-        "fork":false,"fork_before":false,
+        "fork":true,"fork_before":true,"revert":true,
         "mcp_elicitation":false,"user_dialog":false,
         "limitations":["CodeBuddy stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
-            "CodeBuddy's stream-json protocol has no rename, compact, fork or usage control; /rename is sent to the model, not executed by the CLI."]})
+            "CodeBuddy's stream-json protocol has no rename, compact or usage control; /rename is sent to the model, not executed by the CLI."]})
 }
 
 /// CodeBuddy's `--effort` levels; its model list carries no per-model levels.
@@ -234,6 +236,7 @@ impl Session {
             cwd,
             path,
             observed_model: None,
+            fork_source: None,
             runtime: RwLock::new(()),
             operations: AsyncMutex::new(()),
             stop: CancellationToken::new(),
@@ -659,6 +662,7 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
+            "fork" | "revert" => self.history_action(&session, method, &input).await,
             "discard" => {
                 let active = {
                     let live = lock(&session.live);

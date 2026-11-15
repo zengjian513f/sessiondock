@@ -171,7 +171,7 @@ impl Bridge {
                 live.ready = false;
                 live.state_observed = false;
                 live.native_running = false;
-                live.replaying = session.path.is_file();
+                live.replaying = session.path.is_file() || session.fork_source.is_some();
                 // Reopening the channel must not erase the previous turn's
                 // failure. The next explicit turn clears its own error state.
                 live.background_tasks.clear();
@@ -191,6 +191,13 @@ impl Bridge {
             // project directory, so the exact cwd is part of the identity.
             if session.path.is_file() {
                 command.arg("--resume").arg(&session.sid);
+            } else if let Some(source) = &session.fork_source {
+                command
+                    .arg("--resume")
+                    .arg(source)
+                    .arg("--fork-session")
+                    .arg("--session-id")
+                    .arg(&session.sid);
             } else {
                 command.arg("--session-id").arg(&session.sid);
             }

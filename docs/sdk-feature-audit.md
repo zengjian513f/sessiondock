@@ -214,7 +214,7 @@ Grok 的专门计划退出批准已接；Codex 目前是模式切换与通用请
 | F06 | 沙箱策略选择 | 已；Codex 原生 policy | 待；CLI 有 sandbox，ACP 中途等价变更尚待核实 | 部；已有原生 `--sandbox`，网页/逐轮选项未接；无 Codex 三档等价承诺 | 待；当前 v2 无 Codex 三档对等证据 | 漏；官方 SDK sandbox 设置可用，在线变更/重启边界需适配 |
 | F07 | 服务档位 Normal/Fast 等，使用原生 ID 并立即更新 | 已 | 待；未证明同义档位接口 | 待；boost 不等于 Codex serviceTier | 待；模型 variant 不等于通用 serviceTier | 部；fastMode 设置和原生状态，账号资格/冷却仍由原生控制 |
 | F08 | 明确的 slash 映射：model/effort/status/stop/new/help | 已 | 已；网页命令分流 | 已；usage 独立 print 查询 | 已；另有原生命令目录 | 已；网页命令分流 |
-| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 部；fork/compact/revert 原生动作已接，其他按能力开放 | 部；用量/设置已接；高级原生命令待核实 | 部；fork/revert/compact/shell/command 已接，review 待核实 | 部；compact/settings/fork 已接；revert/review 未接 |
+| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 部；fork/compact/revert 原生动作已接，其他按能力开放 | 部；用量/设置/fork/revert 已接；其余高级原生命令待核实 | 部；fork/revert/compact/shell/command 已接，review 待核实 | 部；compact/settings/fork/revert 已接；review 未接 |
 | F10 | `!command`、`/shell` 直接执行并显示原生输出；输入使用工具色 | 已 | 已；原生 TextContent._meta.bash_command | 待；未找到同义 headless 原生入口 | 已；原生 session.shell，输出工具卡 | 待；需确认 headless 的本地命令语义，不能用“让模型执行”替代 |
 | F11 | 未知 slash/命令保留草稿并解释，不意外当推理提示词 | 已 | 已；共用网页命令分流并保留未识别输入 | 已；同左，不进入 NDJSON | 已；同左，原生命令另有显式入口 | 已；同左 |
 | F12 | 新建前无需现有 UID 即可查询 SDK 原生模型目录 | 已；models 支持 node | 已；initialize modelState | 已；原生 models | 已；原生 model 目录 | 已；initialize models |
@@ -259,18 +259,21 @@ Agy 的 `step_update.usage` 是步骤统计，`result.usage` 是累计统计；�
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 已；原生 fork，持久网页回执和新 UID | 待；TUI 有 /fork，headless 返回新身份/落盘语义未确认 | 已；原生 fork，持久网页回执和新 UID | 已；精确路径 resume/fork-session，首次输入原生落盘 |
-| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 已；历史 prompt index；无身份不显示 | 待；未确认 headless 按消息分叉接口 | 已；历史/live message ID | 已；历史/live UUID、原生 parentUuid 边界 |
-| H03 | 原生回合分页选择，回退指定消息及之后对话，确认后执行 | 已 | 已；原生 rewind_points 选择与 conversation_only | 待；未确认同义原生机器接口 | 部；可见消息选择和 stage/commit；完整分页选择待补 | 待；resumeSessionAt 是截断恢复，不是已证明的同 SID 原地 revert |
-| H04 | 回退只改对话，不回滚工作区文件；其他页面同步失效历史 | 已 | 部；明确 conversation_only；跨页面历史失效需专项验收 | 待 | 部；明确 files:false，stage/撤销/commit；跨页需专项验收 | 待；rewindFiles 是文件回滚，不能用它代替对话回退 |
+| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 已；原生 fork，持久网页回执和新 UID | 已；本实例 Connect 原生 fork，返回新 SID/UID | 已；原生 fork，持久网页回执和新 UID | 已；精确路径 resume/fork-session，首次输入原生落盘 |
+| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 已；历史 prompt index；无身份不显示 | 已；原生 step 边界；首条之前零回合创建 | 已；历史/live message ID | 已；历史/live UUID、原生 parentUuid 边界 |
+| H03 | 原生回合分页选择，回退指定消息及之后对话，确认后执行 | 已 | 已；原生 rewind_points 选择与 conversation_only | 部；可见历史消息选择，原生 conversationOnly 回退 | 部；可见消息选择和 stage/commit；完整分页选择待补 | 部；可见历史消息选择，原生 rewind_conversation 同 SID 回退 |
+| H04 | 回退只改对话，不回滚工作区文件；其他页面同步失效历史 | 已 | 部；明确 conversation_only；跨页面历史失效需专项验收 | 已；conversationOnly，数据库有效步驱动历史失效，跨页浏览器验收 | 部；明确 files:false，stage/撤销/commit；跨页需专项验收 | 已；rewind_conversation 保留文件，原生显式叶子决定历史 |
 | H05 | 压缩上下文：原生执行、进度、错误和历史/计数更新 | 已 | 已；原生 compact，计数失效/刷新 | 待；未确认 print 模式命令能力及回执 | 已；原生 compact 消息/状态 | 已；原生 /compact、status、boundary、错误 |
 | H06 | 原生代码审查：未提交/base branch/commit/custom，inline 显示 | 已；review/start | 待；源码 x.ai/review/* 是记录评论，不是启动 reviewer | 待；未确认同义审查接口 | 待；自定义 command/agent 可以审查，但不是已证明的同义原生 API | 待；CLI ultrareview/技能不是本会话 inline review/start 的同义物 |
-| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 已；有身份的消息分支/对话回退 | 待；未确认原生接口 | 已；历史/live 分支及对话回退 | 部；历史/live 分支；无同 SID 原地回退接口 |
-| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 已；按能力显示菜单/对话框/错误 | 部；设置与用量；高级动作待核实 | 已；菜单/对话框/显式永久回退确认 | 部；设置/压缩/分支入口；原地回退未接 |
+| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 已；有身份的消息分支/对话回退 | 已；有原生步骤身份的历史/live 消息 | 已；历史/live 分支及对话回退 | 已；历史/live 分支及同 SID 回退 |
+| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 已；按能力显示菜单/对话框/错误 | 已；设置、用量及分支/回退共用对话框 | 已；菜单/对话框/显式永久回退确认 | 已；设置/压缩/分支/原地回退入口 |
 
 代码依据：[Codex actions](../web/codex-sdk-actions.js)、
 [原生动作](../crates/sessiondock/src/codex_sdk/actions.rs)、
 [HTTP 动作](../crates/sessiondock/src/api/codex_sdk_actions.rs)。
+CodeBuddy 2.182.0 的原生 CLI fork 与 `rewind(scope:Conversation)` 已接入相同消息入口，
+按原生检查点返回可用性；Kiro 保留其原生整轮分支/隐藏源会话语义，Droid 保留原生分支及可选择文件恢复的语义。
+
 Grok 回退默认 `RewindMode::All`，OpenCode revert 可涉及文件；实现时必须保持
 该表的 conversation-only 口径。审查尤其不能只因接口名含 review 就认定可启动审查。
 
@@ -325,9 +328,8 @@ ACP 通用 [session modes](https://agentclientprotocol.com/protocol/v1/session-m
 | 持久队列、撤销/重试、输入消费状态、统一 toolbar | 既有 FIFO 与共用服务可扩展 | 仍不等同原生中途 steer |
 | 安全的网页 slash 映射 | 把网页命令与 stream user 消息分开，查询走独立 print | 不把 `/usage` 塞进 stream 破坏 NDJSON |
 
-仍需研究：上下文百分比（statusLine 是否在 headless 运行）、原生 fork 的机器
-调用及新 SID 回执、压缩、同 SID 对话回退、credits 结构化字段、直接 shell、
-中途 steer。官方 TUI 有某命令，只能证明有该功能，不能证明它适合当前 stream。
+原生上下文估算、中途 steer、整会话/按步骤 fork 及同 SID 对话回退已通过本实例 Connect 接入，见 [Agy SDK](agy-sdk.md)。
+仍需研究：压缩、credits 结构化字段、直接 shell。官方 TUI 有某命令，只能证明有该功能，不能证明它适合当前 stream。
 [会话文档](https://www.antigravity.google/docs/cli/conversations/)描述 `/fork`，
 [statusLine](https://www.antigravity.google/docs/cli/statusline/)描述上下文回调，
 [SDK overview](https://www.antigravity.google/docs/sdk/overview/)描述另外一套 Python
@@ -385,9 +387,8 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 的 sdk.d.ts 和 [CLI 包](https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/2.1.302)。
 具体控制字段以该官方固定版本包的类型为准。
 
-`rewindFiles` 回滚文件，不是 Codex 的 conversation-only revert；`resumeSessionAt`
-是截断恢复入口，还不能据此承诺活跃同 SID 的原地回退。CLI 的独立 ultrareview
-也不自动等同本会话 inline reviewer。这两项保留“待”，不算已证实可完整对齐。
+`rewindFiles` 回滚文件；同 SID 对话回退使用已验证的 `rewind_conversation`，不调用文件回滚。CLI 的独立 ultrareview
+也不自动等同本会话 inline reviewer；审查保留“待”，不算已证实可完整对齐。
 
 Claude Code / Agent SDK 也可接 OpenRouter 的 Anthropic 兼容入口：
 `ANTHROPIC_BASE_URL=https://openrouter.ai/api`，用 OpenRouter key 设置

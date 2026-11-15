@@ -358,6 +358,13 @@ impl Mirror {
         sid: &str,
         session: &Value,
     ) -> io::Result<()> {
+        let database = home.join("conversations").join(format!("{sid}.db"));
+        let database_version = json!([
+            stamp(&database).ok(),
+            stamp(&database.with_extension("db-wal")).ok()
+        ]);
+        let mut cache_session = session.clone();
+        cache_session["native_database_version"] = database_version.clone();
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -419,7 +426,7 @@ impl Mirror {
         }
         let cached = exported.get(sid);
         if cached.is_some_and(|(last_session, last_stamp, last_path)| {
-            last_session == session && *last_stamp == current && *last_path == native
+            last_session == &cache_session && *last_stamp == current && *last_path == native
         }) && messages.is_file()
             && summary.is_file()
         {
@@ -458,12 +465,14 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
-        let transcript_changed = cached.is_none_or(|(_, last_stamp, last_path)| {
-            *last_stamp != current || *last_path != native
+        let transcript_changed = cached.is_none_or(|(last_session, last_stamp, last_path)| {
+            last_session["native_database_version"] != database_version
+                || *last_stamp != current
+                || *last_path != native
         });
         if (current.is_some() && transcript_changed) || !messages.is_file() {
             let bytes = if current.is_some() {
-                fs::read(&native)?
+                active_transcript(&database, &fs::read(&native)?)
             } else {
                 Vec::new()
             };
@@ -505,14 +514,55 @@ impl Mirror {
         write_atomic(
             &version_path,
             &serde_json::to_vec(&json!({
-                "format":FORMAT,"catalog_session":session,"native_version":current,"native_path":native,
+                "format":FORMAT,"catalog_session":cache_session,"native_version":current,"native_path":native,
                 "mirror_version":stamp(&messages).ok()
             }))
             .map_err(io::Error::other)?,
         )?;
-        exported.insert(sid.to_owned(), (session.clone(), current, native));
+        exported.insert(sid.to_owned(), (cache_session, current, native));
         Ok(())
     }
+}
+
+/// Native rewind truncates `steps` but leaves the diagnostic transcript append-only.
+/// Keep the latest complete projection for each still-present step. Imported text-only
+/// sessions keep their existing read behavior when no native steps table is available.
+pub(crate) fn active_transcript(database: &Path, bytes: &[u8]) -> Vec<u8> {
+    let maximum =
+        Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| {
+            db.query_row("SELECT MAX(idx) FROM steps", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+        });
+    let Ok(maximum) = maximum else {
+        return bytes.to_vec();
+    };
+    let Some(maximum) = maximum else {
+        return Vec::new();
+    };
+    let mut steps = BTreeMap::new();
+    let mut other = Vec::new();
+    for line in bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b"\n"))
+    {
+        let index = serde_json::from_slice::<Value>(line)
+            .ok()
+            .and_then(|row| row["step_index"].as_i64());
+        match index {
+            Some(index) if index <= maximum => {
+                steps.insert(index, line);
+            }
+            Some(_) => (),
+            None => other.push(line),
+        }
+    }
+    steps
+        .into_values()
+        .chain(other)
+        .flatten()
+        .copied()
+        .collect()
 }
 
 fn db_error(error: rusqlite::Error) -> io::Error {

@@ -181,7 +181,7 @@ fn capabilities() -> Value {
         "models":true,"create":true,"resume":cfg!(any(target_os="linux",target_os="macos",windows)),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":true,
         "usage":true,"context_usage":true,"compact":true,"rename":true,
-        "fork":true,"fork_before":true,
+        "fork":true,"fork_before":true,"revert":true,
         "mcp_elicitation":true,"user_dialog":true,
         "limitations":["Claude stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
             "Claude subagent transcripts cannot be resumed as independent SDK sessions."]})
@@ -668,6 +668,7 @@ impl Bridge {
                 session.control(json!({"subtype":"rename_session","title":title,"source":"host","session_id":session.sid})).await
             }
             "fork" => self.fork_session(&session, &input).await,
+            "revert" => self.revert_session(&session, &input).await,
             "discard" => {
                 let active = {
                     let live = lock(&session.live);

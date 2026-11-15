@@ -1,5 +1,6 @@
 //! Native Agy headless NDJSON bridge. No PTY, mirror writes or approval emulation.
 //! See docs/agy-sdk.md for the verified protocol and coexistence boundary.
+mod actions;
 mod context;
 mod control;
 mod control_log;
@@ -23,6 +24,7 @@ pub struct Bridge {
     shutdown: CancellationToken,
     sessions: Mutex<Sessions>,
     creates: tokio::sync::Mutex<HashMap<String, Result<Value, String>>>,
+    history_actions: tokio::sync::Mutex<HashMap<String, Value>>,
 }
 
 #[derive(Default)]
@@ -81,6 +83,8 @@ struct Turn {
     runtime_id: String,
     #[serde(default)]
     stdout_offset: u64,
+    #[serde(default)]
+    idle_checkpoint: bool,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -135,6 +139,7 @@ enum Command {
     Steer(Steer, oneshot::Sender<Result<Value, String>>),
     Interrupt(oneshot::Sender<Result<Value, String>>),
     Rename(String, oneshot::Sender<Result<Value, String>>),
+    History(String, Value, oneshot::Sender<Result<Value, String>>),
 }
 
 pub fn new(
@@ -167,12 +172,14 @@ pub fn new(
         shutdown,
         sessions: Mutex::new(Sessions::default()),
         creates: tokio::sync::Mutex::new(HashMap::new()),
+        history_actions: tokio::sync::Mutex::new(HashMap::new()),
     })))
 }
 
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
         "rename":true,"interrupt":true,"steer":true,"respond":false,"approvals":false,"questions":false,
+        "fork":true,"fork_before":true,"revert":true,
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
@@ -302,6 +309,7 @@ impl Bridge {
         match method {
             "models" => self.process.models(self.shutdown.clone()).await,
             "create" => self.create(target, input).await,
+            "fork" | "revert" => self.history_action(method, target, input).await,
             "usage" => { let live=self.open(&target).await?;context::refresh(&self.process, &live).await;let data=live.data.lock().unwrap();Ok(json!({"usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors})) },
             "settings" => {
                 let live=self.open(&target).await?;let mut data=live.data.lock().unwrap();
@@ -346,7 +354,7 @@ impl Bridge {
                     model: choice(&input,"model").or_else(|| data.model.clone()),
                     effort: choice(&input,"effort").or_else(|| data.effort.clone()),
                     mode: choice(&input,"mode").or_else(|| data.mode.clone()), recovering: false,
-                    persistent:true, runtime_id:request.clone(), stdout_offset:0 };
+                    persistent:true, runtime_id:request.clone(), stdout_offset:0, idle_checkpoint:false };
                 let mut turn = turn;
                 if let Some(runtime) = &data.runtime
                     && runtime.model == turn.model && runtime.effort == turn.effort && runtime.mode == turn.mode
@@ -513,7 +521,9 @@ impl Bridge {
                 data.model = binding.turn.model.clone();
                 data.effort = binding.turn.effort.clone();
                 data.mode = binding.turn.mode.clone();
-                data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":binding.turn.text,"request_id":request,"status":"running"}));
+                if !binding.turn.idle_checkpoint {
+                    data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":binding.turn.text,"request_id":request,"status":"running"}));
+                }
                 data.receipts.insert(request.clone(), json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()}));
                 data.steers = binding.steers.clone();
                 for steer in binding.steers {
@@ -870,6 +880,18 @@ async fn actor(
             break;
         };
         match command {
+            Command::History(method, input, reply) => {
+                let result = actions::execute(
+                    &process,
+                    &live,
+                    &mut runtime,
+                    &method,
+                    &input,
+                    shutdown.clone(),
+                )
+                .await;
+                let _ = reply.send(result);
+            }
             Command::Rename(title, reply) => {
                 let result = async {
                     if let Some(native) = runtime.native.as_mut() {
@@ -1111,6 +1133,9 @@ async fn execute(
         live.observe_model(slot.as_ref().unwrap().model.clone());
     }
     let native = slot.as_mut().unwrap();
+    if turn.recovering && turn.idle_checkpoint {
+        return Ok(());
+    }
     let mut process_finished = false;
     let outcome=async {
     tokio::select! {
@@ -1172,6 +1197,9 @@ async fn execute(
                         }
                     };
                     let _=reply.send(outcome);
+                }
+                Some(Command::History(_,_,reply))=>{
+                    let _=reply.send(Err("agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into()));
                 }
                 Some(Command::Rename(title,reply))=>{
                     let result=native.rename(&title).await.map(|()|json!({"renamed":true,"session_id":live.sid,"title":title}));

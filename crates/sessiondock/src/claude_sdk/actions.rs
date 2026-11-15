@@ -1,7 +1,70 @@
-//! Fork identities and boundaries only. The native CLI writes every transcript.
+//! Native conversation forks and rewinds. The CLI writes every transcript.
 use super::*;
 
 impl Bridge {
+    pub(super) async fn revert_session(
+        self: &Arc<Self>,
+        session: &Arc<Session>,
+        input: &Value,
+    ) -> Result<Value, String> {
+        self.ensure(session).await?;
+        let request = input["request_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or("claude_sdk: revert request_id is required")?;
+        let key = format!("revert:{request}");
+        let target = input["message_id"]
+            .as_str()
+            .ok_or("claude_sdk: native user UUID required")?;
+        {
+            let live = lock(&session.live);
+            if let Some(previous) = live.actions.get(&key) {
+                if previous["input"] != *input {
+                    return Err("claude_sdk: request_id already used with different input".into());
+                }
+                if let Some(receipt) = previous.get("receipt") {
+                    return Ok(receipt.clone());
+                }
+                return Err(previous["error"].as_str().unwrap_or("claude_sdk: rewind already attempted; inspect the native outcome before a new request").into());
+            }
+            if !live.turns.is_empty() || live.native_running {
+                return Err("claude_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into());
+            }
+        }
+        self.check_conflict(session).await?;
+        {
+            let mut live = lock(&session.live);
+            live.actions.insert(key.clone(), json!({"input":input}));
+            live.save_checkpoint().map_err(|e| e.to_string())?;
+        }
+        let mut control = json!({"subtype":"rewind_conversation","target_message_uuid":target});
+        if let Some(last) = input.get("last_seen_user_message_uuid") {
+            control["last_seen_user_message_uuid"] = last.clone();
+        }
+        let result = session.control(control).await.and_then(|raw| {
+            if raw["rewound"] != true {
+                return Err(format!("claude_sdk: native rewind refused: {raw}"));
+            }
+            Ok(json!({"reverted":true,"session_id":session.sid,"raw":raw}))
+        });
+        let mut live = lock(&session.live);
+        match &result {
+            Ok(receipt) => {
+                live.items.clear();
+                live.streaming_blocks.clear();
+                live.streaming_message.clear();
+                live.error = None;
+                live.error_kind = None;
+                live.last_turn = Value::Null;
+                live.actions.get_mut(&key).unwrap()["receipt"] = receipt.clone();
+                session.publish(&mut live);
+            }
+            Err(error) => live.actions.get_mut(&key).unwrap()["error"] = json!(error),
+        }
+        live.save_checkpoint().map_err(|e| e.to_string())?;
+        result
+    }
+
     fn source_path(&self, uid: &str, sid: &str) -> Result<PathBuf, String> {
         for entry in std::fs::read_dir(&self.root)
             .map_err(|e| format!("claude_sdk: native root unavailable ({})", e.kind()))?
@@ -89,9 +152,13 @@ impl Bridge {
         let metadata = if source.path.is_file() {
             let text = std::fs::read_to_string(&source.path)
                 .map_err(|e| format!("claude_sdk: fork source unavailable ({})", e.kind()))?;
-            let records: Vec<Value> = text
-                .lines()
-                .filter_map(|line| parse_json(line).ok())
+            let records = crate::sessions::claude_active_records(
+                text.lines()
+                    .filter_map(|line| parse_json(line).ok())
+                    .collect(),
+            );
+            let records: Vec<Value> = records
+                .into_iter()
                 .filter(|row| {
                     row["sessionId"] == source.sid
                         && row["isSidechain"] != true

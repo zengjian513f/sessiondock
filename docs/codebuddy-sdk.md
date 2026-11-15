@@ -27,9 +27,11 @@
 | `respond` | 回送 `control_response`；审批 `{allowed,updatedInput,tool_use_id}`，拒绝 `{allowed:false,reason,interrupt,tool_use_id}`（与 Claude 的 `behavior` 不同） |
 | `models` | `initialize.response.models`（`id/name`），强度为固定六档 |
 | `settings` | 权限模式 `set_permission_mode`、模型 `set_model`、强度 `set_config {reasoningEffort}`，均带 `session_id`；必填 `request_id`，相同请求不重放 |
+| `fork` | CLI `--resume <源SID> --fork-session --session-id <新SID>`；按消息分支随后执行新会话的原生对话回退 |
+| `revert` | `rewind {user_message_id,scope:"Conversation"}`；先只读 `dry_run` 核对原生检查点，成功须有 `canRewind/historyRewound` |
 | `discard` | 仅空闲时释放桥接运行时与未落盘回执，保留历史 |
 
-`rename`、`compact`、`fork`、`usage` 均不提供：CLI 没有对应控制请求，stream-json 中的
+`rename`、`compact`、`usage` 均不提供：CLI 没有对应控制请求，stream-json 中的
 `/rename` 会被当作普通提示词交给模型（已实测），因此桥接明确返回 `codebuddy_sdk_unsupported`，
 不把命令文本发给模型。`fast_mode`、MCP elicitation、user dialog、子代理均不支持。
 `shared_tui:false`：无法加入独立 TUI 正在使用的运行时；Linux、macOS、Windows 在首次连接和每次发送前
@@ -38,7 +40,12 @@
 DELTA：macOS/Windows 通过[公共占用采集](native-sdk.md#sdk-writer-evidence)后可恢复已有会话；
 不增加同 cwd 或未知身份的全局拒绝。
 
-## 协议事实（2.175.0 实测）
+DELTA（2.182.0）：分支和回退已接到消息按钮及网页命令；必须空闲、指定原生用户 ID 与 `request_id`。
+回退只改对话，不恢复文件；没有原生检查点时显示原生错误，不伪造回退点。初始化回执先于恢复完成，只读预检可等待 `No active session`，写操作结果不确定不重发。
+分支继承的记录仍可带源 SID，原生 `session-meta` 确认新路径身份；回退以 `resend-fork-notice.parentId` 标记保留分支，历史和搜索只投影当前祖先链。
+原生追加日志全部保留，桥接不裁剪或改写它们。持久操作回执及清空的实时投影随服务重启恢复。
+
+## 协议事实（2.175.0 基础协议、2.182.0 历史操作实测）
 
 - `initialize` 响应含 `models`、`commands`、`currentModelId` 和 **`account`（含登录令牌）**。
   桥接只读取 `models`；账号字段不进入快照、检查点、日志或浏览器。

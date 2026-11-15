@@ -438,7 +438,18 @@ const NativeSdkControls = {
         const modal=CodexSdkActions.form('原生命令','选择原生服务提供的命令。','运行');const select=document.createElement('select');select.setAttribute('aria-label','原生命令');for(const row of Array.isArray(rows)?rows:[])select.add(new Option(row.name,row.name));const input=document.createElement('textarea');input.setAttribute('aria-label','命令参数');modal.fields.append(select,input);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish({name:select.value,text:input.value});};body=await modal.answer;if(!body)return false;
       }
       if(method==='shell' && !body.command){const modal=CodexSdkActions.form('运行命令','在会话工作目录由原生接口直接运行 Shell 命令，不经过模型推理，使用该来源的实际权限策略。','运行');const input=document.createElement('textarea');input.setAttribute('aria-label','命令');modal.fields.append(input);modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish(input.value);};body.command=await modal.answer;if(!body.command)return false;}
-      if(method==='revert' && !body.message_id){const modal=CodexSdkActions.form('回退对话','选择要回退到的消息之前；不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const item of view.items.filter(item=>item.role==='user'))select.add(new Option((item.text || item.id).slice(0,100),item.id));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish(select.value);};body.message_id=await modal.answer;if(!body.message_id)return false;}
+      if(method==='revert' && !body.message_id){
+        const modal=CodexSdkActions.form('回退对话','选择要回退到的消息之前；不回滚工作区文件。','回退');
+        const select=document.createElement('select');select.setAttribute('aria-label','回退消息');
+        const messages=new Map();
+        for(const item of [...(view.historyData?.messages || []),...view.items]){
+          const id=this.messageIdentity(view,item);
+          if(id && !messages.has(id)){messages.set(id,item);select.add(new Option((item.text || item.content || id).slice(0,100),id));}
+        }
+        modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish(select.value);};
+        body.message_id=await modal.answer;if(!body.message_id)return false;
+        const item=messages.get(body.message_id);body.restore_text=item?.text || item?.content || '';
+      }
       if(droid && method==='rewind'){body=await this.droidRewind(view,body);if(!body)return false;}
       if(!droid && method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
       if(method==='revert_commit' && !await appConfirm('提交回退会永久移除被回退的对话记录；工作区文件不会回滚。',{ok:'提交回退'}))return false;
@@ -446,6 +457,10 @@ const NativeSdkControls = {
       if(method==='compact'){
         view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
         view.paintStatus();
+      }
+      if(method==='revert' && view.uid.startsWith('claude:')){
+        const messages=[...(view.historyData?.messages || []),...view.items];
+        body.last_seen_user_message_uuid=messages.map(item=>this.messageIdentity(view,item)).filter(Boolean).at(-1);
       }
       const {restore_text,hide_source,command_text,after_reply,...nativeBody}=body;
       const sourceUid=view.uid;
@@ -477,7 +492,7 @@ const NativeSdkControls = {
       if(method==='fork' || droid && ['compact','rewind'].includes(method) && response.uid && response.uid!==sourceUid){
         if(droid && command_text && view.input?.value===command_text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
         await CodexSdkActions.openFork(view,response);
-        if(['kiro','droid'].includes(response.session?.source) && SdkView.uid===response.uid){
+        if(['kiro','droid','agy','codebuddy'].includes(response.session?.source) && SdkView.uid===response.uid){
           await SdkView.startSession(response.uid);
           if(SdkView.uid===response.uid && !SdkView.openFailed)
             await SdkView.refreshHistory(SdkView.generation,true);

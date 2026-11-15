@@ -53,16 +53,17 @@ Linux、macOS 与 Windows 使用同一协议适配器；统一由独立 SDK 宿�
 | steer | 调用本实例的原生 `SendUserCascadeMessage`（`MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION`），`clientMessageId` 使用独立 `request_id`；不中断当前工具或进程，结果不确定绝不自动重发；配合持久队列支持 `queue_steer` |
 | interrupt | 调用本实例的原生 `CancelCascadeInvocation`，`killBackgroundTasks=false`、`notifyParent=false`；不发送 SIGINT/SIGKILL，不因取消超时终结进程；重复请求幂等 |
 | rename | 本实例的 `UpdateConversationAnnotations`，`annotations.title`、`mergeAnnotations=true`；等待读取原生摘要确认标题 |
-| fork / revert / rewind | 当前桥接未实现、未声明能力；SDK 历史和实时消息不显示分支／回退按钮，网页同名斜杠命令提示不支持并保留输入 |
+| fork | 本实例 Connect `ForkConversation`，整会话或原生 `step:N` 用户消息之前分支，保留源会话与文件 |
+| revert | 本实例 `RevertToCascadeStep`，显式 `conversationOnly:true`，保留 SID 与工作区文件 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
 | models | profile 环境中执行原生 `agy models`，解析 TSV；失败不填猜测模型 |
 | discard | 仅确认可丢弃网页创建回执；保留原生文件及已经接受的任务 |
 
-消息上的复制不依赖原生写入能力，所以仅有复制按钮符合当前接入范围。
-官方[会话管理](https://www.antigravity.google/docs/cli/conversations/)中的 `/fork`
-属于交互终端功能，不能据此推导当前 `stream-json` 桥接支持整会话分支、按消息分支或
-同 SID 对话回退；也不能将这项接入缺口表述为 Agy 产品或官方 Python SDK 永久不支持。
-原生操作的接入与验收工作记录于 [TODO](../TODO.md)。
+DELTA（BUG-20261115-155602-e82f81）：消息操作按原生步骤身份开放分支／回退；助手回复使用下一条用户消息作为分支边界，末条回复分支整个会话。
+接口由 Agy CLI 1.5.9 本地 Connect 服务执行，不向 stream-json 发送控制帧或斜杠提示词。
+`ForkConversation.forkAtStepIndex` 是保留的末步；`-1` 表示整会话，因此首条输入之前分支使用原生零回合创建。
+回退的 `stepIndex=-1` 则清空当前会话。写操作要求空闲、原生用户步骤及 `request_id`，持久回执防止重复创建；结果不确定不重发。
+原生数据库 `steps` 是当前对话，诊断 transcript 保留已回退的后缀并复用步骤索引；私有历史投影按有效步骤及最新记录更新，数据库/WAL 变化也使缓存失效，不改写原生文件。
 
 官方 headless 文档的 Unsupported messages 明确说明，`control_request` 和
 `control_response` 会以 ERROR 结束进程。审批按 CLI 自己配置的策略执行；需要交互

@@ -599,10 +599,11 @@ const SdkUI = {
         if (afterTurn && this.pendingAtOpen) {
           await loadSessions(true, true);
           if (!this.current(generation)) return;
-          if (!this.pending(this.uid)) {
-            this.pendingAtOpen = false;
-            await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
-          }
+          // A native fork receipt can precede catalog publication. Its history
+          // becomes readable when inventory replaces the pending receipt.
+          if (this.pending(this.uid)) return;
+          this.pendingAtOpen = false;
+          await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
         }
         // History is the same native head/tail window as the conversation view.
         // Catch up through its accepted live checkpoint; never fill the gap just

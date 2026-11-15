@@ -107,6 +107,16 @@ pub(super) fn native_identity(
                 .filter(|(r, _)| r["type"] == "session_start")
                 .filter_map(|(r, _)| r.get("id").or_else(|| r.get("sessionId"))),
         ),
+        "codebuddy" if records.iter().any(|(r, _)| r["type"] == "session-meta") => {
+            // Native fork retains the source SID on inherited message rows;
+            // the CLI's session-meta declares the new conversation identity.
+            declared_identity(
+                records
+                    .iter()
+                    .filter(|(r, _)| r["type"] == "session-meta")
+                    .filter_map(|(r, _)| r.get("sessionId")),
+            )
+        }
         "claude" | "codebuddy" => {
             declared_identity(records.iter().filter_map(|(r, _)| r.get("sessionId")))
         }

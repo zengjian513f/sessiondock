@@ -31,9 +31,14 @@ CodeBuddy Code（腾讯，npm 包 `@tencent-ai/codebuddy-code`）与 Kiro 一样
 | `function_call` | `callId`、`name`、`arguments`（JSON 字符串） | 工具调用；`AskUserQuestion` 投影为问题卡 |
 | `function_call_result` | `callId`、`status`、`output:{type:text,text}` | 工具结果，按 `callId` 配对；`status` 非 `completed` 视为错误 |
 | `file-history-snapshot` | `messageId`、`snapshot` | 记账，不显示 |
+| `session-meta` | `sessionId`、`meta` | 原生会话身份；分支继承消息中的源 SID 不覆盖它 |
+| `resend-fork-notice` | `parentId` | 对话回退保留的叶子；无父节点表示空对话 |
 | `custom-title` / `ai-title` / `topic` | `customTitle` / `aiTitle` / `topic` | 标题：`custom-title` 优先于 `ai-title`，再取首条真实用户消息 |
 
 每条投影事件携带 `native_id`＝记录 `id`，SDK 视图用它在历史和实时投影之间对齐。
+DELTA（2.182.0）：原生分支/回退保持追加日志；出现回退标记后，历史和搜索沿当前叶子的
+`parentId` 链投影，后续原生消息从保留点继续。列表和打开会话的身份校验均优先使用
+原生 `session-meta`，不把继承消息的源 SID 当作身份冲突。没有这些记录的旧文件沿用既有读取。
 未列出的记录类型进入"跳过未知 CodeBuddy 记录类型"警告，内容不丢弃也不猜测。
 本版本没有观察到独立的中断、压缩或错误记录类型，未核实的类别保持未知。
 
@@ -63,4 +68,5 @@ CodeBuddy Code（腾讯，npm 包 `@tencent-ai/codebuddy-code`）与 Kiro 一样
 ## 验收
 
 - [codebuddy_sdk_browser.py](../tests/codebuddy_sdk_browser.py)：读模型列表与历史、SDK 全流程。
+- [原生历史操作](../tests/native_history_actions_real_browser.py)：隔离的真实 CLI、节点/Hub 消息分支与回退、刷新及宿主重附着；不调用付费模型。
 - 假 CLI 证明适配链路，真实 CLI 证据见上文版本号；两者分别记录。

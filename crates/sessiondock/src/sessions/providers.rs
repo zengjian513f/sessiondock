@@ -176,6 +176,25 @@ pub(super) fn parse_agent_with_media(
 
 pub(super) use claude::{PinOutcome, PinTargetError};
 
+pub(crate) fn claude_active_records(records: Vec<Value>) -> Vec<Value> {
+    let records: Vec<_> = records
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| (row, i as u64 + 1))
+        .collect();
+    let lineage = claude::lineage(&records, ParseOptions::default());
+    records
+        .into_iter()
+        .filter_map(|(row, _)| {
+            let active = lineage
+                .active
+                .as_ref()
+                .is_none_or(|ids| row["uuid"].as_str().is_some_and(|id| ids.contains(id)));
+            active.then_some(row)
+        })
+        .collect()
+}
+
 /// Pure application of a persisted Claude display pin; see `claude::apply_pin`.
 pub(super) fn claude_pin(records: &[(Value, u64)], tip: &str, stale_end: u64) -> PinOutcome {
     claude::apply_pin(records, tip, stale_end)
@@ -231,6 +250,9 @@ fn parse_context<'a>(
     media: Option<MediaContext<'a>>,
 ) -> (Value, Vec<Event>, Option<String>) {
     let mut meta = metadata(source, path, records, summary, fallback);
+    let buddy_lineage = (source == "codebuddy")
+        .then(|| codebuddy::active_ids(records))
+        .flatten();
     let lineage = (source == "claude").then(|| claude::lineage(records, options));
     if let Some(lineage) = &lineage {
         meta["_timeline_tip"] = json!(lineage.tip);
@@ -272,6 +294,12 @@ fn parse_context<'a>(
         parser.skipped.warn(note.clone());
     }
     for (record, end) in records {
+        if let Some(active) = &buddy_lineage
+            && let Some(id) = record["id"].as_str()
+            && !active.contains(id)
+        {
+            continue;
+        }
         let branch = if let Some(lineage) = &lineage {
             let id = claude::graph_id(record, options.agent);
             let abandoned = id.is_some_and(|id| lineage.abandoned.contains(id));

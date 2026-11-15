@@ -132,7 +132,7 @@ impl Control {
         .await
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         pid: u32,
         method: &str,
@@ -217,6 +217,16 @@ impl Control {
             _ => "agy_sdk_control_transport: 原生响应未完整到达；未终结运行时，请核对操作结果。",
         })?;
         if outcome.0 != 200 {
+            if matches!(method, "ForkConversation" | "RevertToCascadeStep") {
+                let native = serde_json::from_slice::<serde_json::Value>(&outcome.1).ok();
+                if let Some(message) = native.as_ref().and_then(|v| v["message"].as_str()) {
+                    return Err(format!(
+                        "agy_sdk_control_failed: {method}（HTTP {}）: {}",
+                        outcome.0,
+                        message.replace(&self.token, "[redacted]")
+                    ));
+                }
+            }
             return Err(format!(
                 "agy_sdk_control_failed: 原生接口拒绝 {method}（HTTP {}）；任务继续运行。",
                 outcome.0

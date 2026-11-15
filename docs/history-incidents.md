@@ -3,6 +3,37 @@
 本文件专门保存特定版本的诊断经过、修复背景和验收回执。内容保留当时口径，
 不作为当前规则、部署指令或当前产物的验证结果。当前合同见各来源文档。
 
+## BUG-20261115-155602-e82f81：补齐原生分支与对话回退
+
+报告中 Agy 消息仅有复制，首个偏差是桥接没有声明或执行原生历史操作，
+不是 Agy 产品缺少能力。按后续“所有 agent 能接的都接”要求核对八个来源，
+补齐 Agy、CodeBuddy 的分支/回退与 Claude 的同 SID 对话回退；其余五个来源
+保留已有原生语义。详见各来源 SDK 合同及共用 SDK 界面合同。
+
+使用 Agy 1.5.9 本地 Connect、CodeBuddy 2.182.0 原生 fork/rewind 和
+Claude 2.1.306 rewind_conversation；没有用模型提示词模拟操作，也没有改写原生日志。
+修复同时覆盖 Agy 有效步骤/复用索引、CodeBuddy 分支身份与当前祖先链、Claude
+显式空叶子，以及回退后的实时快照与重启恢复。Agy 冷恢复先订阅原生状态完成只读
+重建，再执行回退；Hub 历史操作采用与原生启动相同的请求超时。
+
+二次分支实测另发现：原生回执先于目录发布，页面的首次正文读取得到 404，目录
+随后发现新会话却没有恢复加载。共用待落盘视图现在等目录发布后读取，新增受控
+延迟浏览器用例，确认不提前读取不存在的正文，并在目录到达后显示继承历史。
+
+实际验证：Linux debug 构建；三来源节点/Hub Chromium 原生交互六组合，覆盖
+用户/助手消息入口、整会话与二次分支、首条之前空分支、原生回退、取消与草稿、
+重复请求、刷新、跨页面同步和节点重启；Agy 还检查新输入实际上下文不含已回退后缀。
+测试使用私有 homes；Agy 接合成网关，CodeBuddy/Claude 不发模型回合且阻断外网。
+`history_browser`、`history_pages_browser`、`agy_sdk_history_join_browser`、
+`codebuddy_sdk_browser`、`native_sdk_hub_browser`、`sdk_loading_browser` 通过。
+执行者检查三来源节点/Hub 的宽窄明暗整页截图，消息动作沿用已有图标与确认框。
+
+额外广泛检查未全过：`agy_sdk_browser` 停在既有额度刷新按钮断言；
+`claude_sdk_browser` 停在旧 Token footer 文案断言；`sdk_generalization_ui_browser`
+前四来源通过，Codex 停在旧更多按钮断言。后两项用修复前发布二进制复现，未计为
+本次通过。全包 fmt 的报错位于本次修改外；本次 Rust 文件无格式差异。
+文档链接、AGENTS 检查和 diff 空白检查通过。
+
 ## BUG-20261115-160646-a893db：Droid 内部提醒在连接前闪现
 
 只读核对报告附件、浏览器状态、来源原生 JSONL 与 SDK 持久快照：原生提醒为

@@ -19,28 +19,9 @@ fn records(bytes: &[u8]) -> impl DoubleEndedIterator<Item = Value> + '_ {
 }
 
 pub(super) async fn model(process: &ProcessConfig, sid: &str) -> Option<String> {
-    const TAIL_BYTES: u64 = 65_536;
-    let path = process.transcript_path(sid);
-    let mut file = tokio::fs::File::open(&path).await.ok()?;
-    let len = file.metadata().await.ok()?.len();
-    if len > TAIL_BYTES {
-        if file.seek(SeekFrom::Start(len - TAIL_BYTES)).await.is_ok() {
-            let mut tail = Vec::with_capacity(TAIL_BYTES as usize);
-            if file.read_to_end(&mut tail).await.is_ok() {
-                let slice = match tail.iter().position(|&b| b == b'\n') {
-                    Some(pos) => &tail[pos + 1..],
-                    None => &[],
-                };
-                if let Some(found) = crate::sessions::agy::transcript_model(slice) {
-                    return Some(found);
-                }
-            }
-        }
-        file.seek(SeekFrom::Start(0)).await.ok()?;
-    }
-    let mut bytes = Vec::with_capacity(len as usize);
-    file.read_to_end(&mut bytes).await.ok()?;
-    crate::sessions::agy::transcript_model(&bytes)
+    let bytes = tokio::fs::read(process.transcript_path(sid)).await.ok()?;
+    let active = crate::sessions::agy::active_transcript(&process.native_path(sid), &bytes);
+    crate::sessions::agy::transcript_model(&active)
 }
 
 fn is_api_retry_error(text: &str) -> bool {
@@ -100,6 +81,7 @@ pub(super) async fn conflicting_result(
             "user_step":user_index,"io_kind":format!("{:?}",error.kind())});
         }
     };
+    let bytes = crate::sessions::agy::active_transcript(&process.native_path(&live.sid), &bytes);
     let mut error_seen = false;
     let mut final_response = None;
     let mut error_steps = Vec::new();
@@ -224,7 +206,7 @@ impl StepKind {
 #[derive(Default)]
 pub(super) struct Pending {
     steps: BTreeMap<u64, Value>,
-    /// `(step_index, kind)` -> `(byte_offset, byte_len)` of the first
+    /// `(step_index, kind)` -> `(byte_offset, byte_len)` of the latest
     /// completed transcript line for that step. Storing only 16-byte spans
     /// keeps memory tiny across long sessions while allowing re-resolution.
     spans: HashMap<(u64, StepKind), (u64, usize)>,
@@ -277,8 +259,8 @@ fn index_transcript_line(
     let Some(index) = record["step_index"].as_u64() else {
         return;
     };
-    out.entry((index, kind))
-        .or_insert((line_offset, line.len()));
+    // Rewind reuses indices while retaining abandoned diagnostic lines.
+    out.insert((index, kind), (line_offset, line.len()));
 }
 
 fn index_complete_lines(

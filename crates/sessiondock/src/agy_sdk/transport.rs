@@ -584,6 +584,28 @@ impl Native {
             .is_some_and(|control| control.cancelled(turn))
     }
 
+    pub async fn history_action(&mut self, method: &str, body: Value) -> Result<Value, String> {
+        let control = self
+            .control
+            .as_ref()
+            .ok_or("agy_sdk_control_unavailable: 此运行实例没有原生管理接口授权。")?;
+        if method == "RevertToCascadeStep" {
+            // init precedes restoration of a cold conversation's run state.
+            // The native read subscription hydrates that state without input.
+            control.request(self.pid, "StreamAgentStateUpdates", json!({
+                "conversationId":self.sid,"disableRehydration":false,
+                "subscriberId":"sessiondock-history",
+                "initialStepsPageBounds":{"startIndex":1,"endIndexExclusive":1},
+                "initialGeneratorMetadatasPageBounds":{"startIndex":1,"endIndexExclusive":1},
+                "initialExecutorMetadatasPageBounds":{"startIndex":1,"endIndexExclusive":1}
+            })).await?;
+        }
+        control
+            .request(self.pid, method, body)
+            .await
+            .map_err(|error| self.process.redact(&error))
+    }
+
     pub async fn rename(&mut self, title: &str) -> Result<(), String> {
         let control = self.control.as_ref().ok_or(
             "agy_sdk_rename_unavailable: 此旧运行实例没有原生管理接口授权；请待任务完成后重新启动 SDK。")?;

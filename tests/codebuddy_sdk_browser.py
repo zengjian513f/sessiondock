@@ -80,7 +80,7 @@ def browser_check(fixture, base, screenshots):
         expect(page.locator(".sdk-history")).to_contain_text("earlier synthetic CodeBuddy answer")
         quiet = wait_snapshot(page, fixture.uid, lambda raw: raw.get("capabilities") is not None)["raw"]
         assert quiet["items"] == [] and not quiet["running"], quiet
-        assert quiet["capabilities"]["rename"] is False and quiet["capabilities"]["fork"] is False
+        assert quiet["capabilities"]["rename"] is False and quiet["capabilities"]["fork"] is True and quiet["capabilities"]["revert"] is True
         assert SECRET not in json.dumps(quiet), "initialize account token leaked into the snapshot"
 
         # Choices apply immediately, without a model prompt.

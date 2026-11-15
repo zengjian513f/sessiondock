@@ -76,10 +76,21 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             }
         }
     }
-    let sid = records
+    let native_fork = records
         .all()
-        .find_map(|record| text_if_truthy(&record.value["sessionId"]))
-        .unwrap_or_else(|| stem.clone());
+        .any(|record| record.value["type"] == "session-meta");
+    let sid = if native_fork {
+        records
+            .all()
+            .filter(|record| record.value["type"] == "session-meta")
+            .find_map(|record| text_if_truthy(&record.value["sessionId"]))
+            .unwrap_or_else(|| stem.clone())
+    } else {
+        records
+            .all()
+            .find_map(|record| text_if_truthy(&record.value["sessionId"]))
+            .unwrap_or_else(|| stem.clone())
+    };
     let cwd = records
         .all()
         .find_map(|record| text_if_truthy(&record.value["cwd"]))
@@ -122,11 +133,20 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .find_map(|record| norm_ts(&record.value["timestamp"]))
         .unwrap_or_else(|| iso_seconds(data.stamp.mtime_ns));
     let updated = latest_timestamp(&records).unwrap_or_else(|| created.clone());
-    let (native_id, declared_ids) = native_identity(
-        records
-            .all()
-            .filter_map(|record| record.value.get("sessionId")),
-    );
+    let (native_id, declared_ids) = if native_fork {
+        native_identity(
+            records
+                .all()
+                .filter(|record| record.value["type"] == "session-meta")
+                .filter_map(|record| record.value.get("sessionId")),
+        )
+    } else {
+        native_identity(
+            records
+                .all()
+                .filter_map(|record| record.value.get("sessionId")),
+        )
+    };
     let mut warnings = skipped_warnings("codebuddy", &records);
     if hard_error.is_some() {
         warnings.clear();
