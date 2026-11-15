@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import sdkhost_fixtures as _sdkhost_fixtures  # noqa: F401
 
 
 def running_identity(pid):
@@ -147,8 +148,10 @@ def private_hosts(root, hosts=("host",)):
     this context within 15 seconds. SIGKILL cannot run
     teardown; callers should allow a TERM grace.
     """
+    from sdkhost_fixtures import ensure_signal_handlers
+    ensure_signal_handlers()
     handled = [signal.SIGTERM, signal.SIGHUP]
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+    if signal.getsignal(signal.SIGINT) not in (signal.SIG_IGN, signal.SIG_DFL):
         handled.append(signal.SIGINT)
     previous = {signum: signal.getsignal(signum) for signum in handled}
     watchdogs = []
@@ -157,7 +160,10 @@ def private_hosts(root, hosts=("host",)):
         # Unwinding is stuck after the hosts were stopped. TemporaryDirectory
         # cannot run either, so remove the fixture directory when it is one.
         directory = Path(root).resolve()
-        if directory.parent == Path(tempfile.gettempdir()).resolve() and directory.name.startswith("sessiondock-"):
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        while directory.parent != directory and directory.parent != temp_root:
+            directory = directory.parent
+        if directory.parent == temp_root and directory.name.startswith(("sessiondock-", "sd-", "tmp")):
             shutil.rmtree(directory, ignore_errors=True)
         os._exit(code)
 
@@ -171,6 +177,9 @@ def private_hosts(root, hosts=("host",)):
             cleanup_hosts(Path(root), hosts)
         except BaseException as error:  # Still unwind; the finally retries.
             print("private host cleanup on signal failed:", error, file=sys.stderr, flush=True)
+        prev = previous.get(signum)
+        if callable(prev) and prev is not signal.default_int_handler:
+            prev(signum, frame)
         if signum == signal.SIGINT:
             raise KeyboardInterrupt
         raise SystemExit(code)

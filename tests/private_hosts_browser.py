@@ -41,6 +41,7 @@ def main(timeout_root=None):
 
                             with server() as (base, _):
                                 page = browser.new_page()
+                                page.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                                 page.goto(base, wait_until="networkidle")
                                 receipt = create_claude(page, base, root / "work")
                                 page.locator("#a-chat").click()
@@ -58,6 +59,7 @@ def main(timeout_root=None):
                             assert all(running_identity(pid) == identity for pid, identity in processes.items())
                             with server() as (base, _):
                                 page = browser.new_page()
+                                page.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
                                 page.goto(base, wait_until="networkidle")
                                 page.locator(f'#side .item[data-uid="{uid}"]').click()
                                 page.locator("#a-term").click()
@@ -81,6 +83,87 @@ def main(timeout_root=None):
         finally:
             browser.close()
     if timeout_root is None:
+        from native_sdk_queue_fixtures import NativeQueueFixture
+        from sdk_mode_fixtures import provider
+        from sdk_ui_fixtures import start_sdk
+        with sync_playwright() as pw:
+            options = {"headless": True}
+            if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
+                options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
+            browser = pw.chromium.launch(**options)
+            try:
+                for ending in ("success", "assertion", "sigterm", "sigint"):
+                    sdk_processes = {}
+                    temp_path = None
+                    try:
+                        with tempfile.TemporaryDirectory(prefix="sd-sdkhost-cleanup-") as temporary:
+                            temp_path = Path(temporary)
+                            grok_root = temp_path / "grok"
+                            grok_root.mkdir()
+                            nested = NativeQueueFixture(temp_path / "nested-agy", "agy", BINARY,
+                                                        BINARY.resolve().parents[2] / "target/debug/ptyhost")
+                            with nested.server() as agy_base:
+                                page = browser.new_page()
+                                page.goto(agy_base, wait_until="domcontentloaded")
+                                page.wait_for_function("sid => S.sessions.some(r => r.sid === sid)", arg=nested.sid)
+                                uid = page.evaluate("sid => S.sessions.find(r => r.sid === sid).uid", nested.sid)
+                                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                                if not page.locator("#sdk-input").is_visible():
+                                    page.locator("#a-sdk").click()
+                                start_sdk(page)
+                                page.locator("#sdk-input").fill("sdkhost cleanup probe")
+                                with page.expect_response(lambda r: r.url.endswith("/api/native-sdk/turn")) as sent:
+                                    page.locator("#sdk-send").click()
+                                assert sent.value.ok, sent.value.text()
+                                while not nested.inputs("sdkhost cleanup probe") or not list((nested.root / "state/sdkhost").glob("*/status.json")):
+                                    page.wait_for_timeout(25)
+                                page.close()
+                            # Server stopped; detached Agy sdkhost + child must still be alive across restart.
+                            for status_file in (nested.root / "state/sdkhost").glob("*/status.json"):
+                                host_pid = int((status_file.parent / "host.pid").read_text())
+                                child_pid = json.loads(status_file.read_text())["pid"]
+                                for pid in (host_pid, child_pid):
+                                    sdk_processes[pid] = running_identity(pid)
+                                    assert sdk_processes[pid] is not None
+                            assert sdk_processes
+                            with provider("grok", grok_root, BINARY) as (grok_base, peer, _):
+                                page = browser.new_page()
+                                page.goto(grok_base, wait_until="domcontentloaded")
+                                page.wait_for_function("sid => S.sessions.some(r => r.sid === sid)", arg=peer.sid)
+                                uid = page.evaluate("sid => S.sessions.find(r => r.sid === sid).uid", peer.sid)
+                                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                                if not page.locator("#sdk-input").is_visible():
+                                    page.locator("#a-sdk").click()
+                                start_sdk(page)
+                                while not list((grok_root / "state/sdkhost").glob("*/status.json")):
+                                    page.wait_for_timeout(25)
+                                page.close()
+                                for status_file in (grok_root / "state/sdkhost").glob("*/status.json"):
+                                    host_pid = int((status_file.parent / "host.pid").read_text())
+                                    child_pid = json.loads(status_file.read_text())["pid"]
+                                    for pid in (host_pid, child_pid):
+                                        sdk_processes[pid] = running_identity(pid)
+                                        assert sdk_processes[pid] is not None
+                                if ending == "assertion":
+                                    raise AssertionError("expected sdkhost fixture failure")
+                                if ending == "sigterm":
+                                    os.kill(os.getpid(), signal.SIGTERM)
+                                if ending == "sigint":
+                                    os.kill(os.getpid(), signal.SIGINT)
+                            nested.close()
+                    except AssertionError as error:
+                        assert ending == "assertion" and str(error) == "expected sdkhost fixture failure", error
+                    except SystemExit as error:
+                        assert ending == "sigterm" and error.code == 128 + signal.SIGTERM, error
+                    except KeyboardInterrupt:
+                        assert ending == "sigint"
+                    assert temp_path is not None and not temp_path.exists()
+                    assert all(running_identity(pid) != identity for pid, identity in sdk_processes.items()), (
+                        ending, sdk_processes
+                    )
+                    print("PASS private sdkhost cleanup:", ending, flush=True)
+            finally:
+                browser.close()
         with tempfile.TemporaryDirectory(prefix="sessiondock-host-timeout-") as temporary:
             root = Path(temporary)
             suite = {"name": "cleanup-timeout", "skip": None, "timeout": 30,

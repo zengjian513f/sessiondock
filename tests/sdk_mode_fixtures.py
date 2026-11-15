@@ -18,48 +18,50 @@ from hub_fixtures import free_port
 from kiro_sdk_fixtures import KiroFixture
 from opencode_sdk_fixtures import FakeOpenCode
 from send_browser import initialize
-from sdkhost_fixtures import stop_private_sdkhosts
+from sdkhost_fixtures import register_private_sdkhosts, stop_private_sdkhosts
 
 
 @contextmanager
 def provider(source, root, binary):
+    register_private_sdkhosts(root)
     extra = node_env(root, free_port(), '127.0.0.0/8')
     extra['SESSIONDOCK_CODEX_ROOT'] = str(root/'codex')
-    if source in ('claude', 'codebuddy', 'droid'):
-        peer = {'claude': ClaudeFixture, 'codebuddy': CodebuddyFixture, 'droid': DroidFixture}[source](root)
-        with peer.server(binary, extra) as base:
-            yield base, peer, extra
-    elif source == 'codex':
-        corpus = build(root)
-        with StatusDaemon(root/'app.sock', corpus.paths['sdk'], '01a1sdk0-0000-7000-8000-000000000001') as peer:
-            with server(corpus, binary, root/'app.sock', extra) as base:
+    try:
+        if source in ('claude', 'codebuddy', 'droid'):
+            peer = {'claude': ClaudeFixture, 'codebuddy': CodebuddyFixture, 'droid': DroidFixture}[source](root)
+            with peer.server(binary, extra) as base:
                 yield base, peer, extra
-    elif source == 'grok':
-        for name in ('claude', 'codex', 'grok', 'state'):
-            (root/name).mkdir()
-        peer = GrokFixture(root)
-        initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
-        with server(SimpleNamespace(root=root), binary, 'off', {
-            **peer.env, **extra, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
-            'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
-            'SESSIONDOCK_PTYHOST_DIR': str(root/'unused-host'),
-            'SESSIONDOCK_STATE_DIR': str(root/'state'),
-        }) as base:
-            yield base, peer, extra
-    elif source == 'agy':
-        peer = AgyFixture(root, REPO/'target/debug/ptyhost')
-        with patch.dict('os.environ', peer.env):
+        elif source == 'codex':
+            corpus = build(root)
+            (root/'state').mkdir(exist_ok=True)
+            with StatusDaemon(root/'app.sock', corpus.paths['sdk'], '01a1sdk0-0000-7000-8000-000000000001') as peer:
+                with server(corpus, binary, root/'app.sock', {**extra, 'SESSIONDOCK_STATE_DIR': str(root/'state')}) as base:
+                    yield base, peer, extra
+        elif source == 'grok':
+            for name in ('claude', 'codex', 'grok', 'state'):
+                (root/name).mkdir()
+            peer = GrokFixture(root)
             initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
-            with isolated_server(Corpus(root), binary, host_dir=root/'host', lifecycle_dir=root/'ledger',
-                    state_dir=root/'state', launcher_config=peer.launcher,
-                    extra_env={**peer.extra_env, **extra}) as (base, _):
+            with server(SimpleNamespace(root=root), binary, 'off', {
+                **peer.env, **extra, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
+                'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
+                'SESSIONDOCK_PTYHOST_DIR': str(root/'unused-host'),
+                'SESSIONDOCK_STATE_DIR': str(root/'state'),
+            }) as base:
                 yield base, peer, extra
-    elif source == 'kiro':
-        for name in ('claude', 'codex', 'grok', 'state'):
-            (root/name).mkdir()
-        peer = KiroFixture(root, host_binary=binary.resolve().with_name('ptyhost'))
-        initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
-        try:
+        elif source == 'agy':
+            peer = AgyFixture(root, REPO/'target/debug/ptyhost')
+            with patch.dict('os.environ', peer.env):
+                initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
+                with isolated_server(Corpus(root), binary, host_dir=root/'host', lifecycle_dir=root/'ledger',
+                        state_dir=root/'state', launcher_config=peer.launcher,
+                        extra_env={**peer.extra_env, **extra}) as (base, _):
+                    yield base, peer, extra
+        elif source == 'kiro':
+            for name in ('claude', 'codex', 'grok', 'state'):
+                (root/name).mkdir()
+            peer = KiroFixture(root, host_binary=binary.resolve().with_name('ptyhost'))
+            initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
             with server(SimpleNamespace(root=root), binary, 'off', {
                 **peer.env, **extra, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
                 'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
@@ -67,20 +69,20 @@ def provider(source, root, binary):
                 'SESSIONDOCK_STATE_DIR': str(root/'state'),
             }) as base:
                 yield base, peer, extra
-        finally:
-            stop_private_sdkhosts(root)
-    else:
-        for name in ('claude', 'codex', 'grok', 'host', 'state', 'proc'):
-            (root/name).mkdir()
-        (root/'proc/stat').write_text('btime 1700000000\n')
-        with FakeOpenCode(root) as peer:
-            launcher = root/'launcher.json'
-            launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO/'target/debug/ptyhost'),
-                'host_dir': str(root/'host'), 'profiles': [peer.profile()]}))
-            initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
-            with isolated_server(Corpus(root), binary, host_dir=root/'host', state_dir=root/'state',
-                    lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={**extra,
-                        'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_OPENCODE_DB': str(peer.db),
-                        'SESSIONDOCK_OPENCODE_ROOT': str(root/'mirror'),
-                        'SESSIONDOCK_PROC_ROOT': str(root/'proc')}) as (base, _):
-                yield base, peer, extra
+        else:
+            for name in ('claude', 'codex', 'grok', 'host', 'state', 'proc'):
+                (root/name).mkdir()
+            (root/'proc/stat').write_text('btime 1700000000\n')
+            with FakeOpenCode(root) as peer:
+                launcher = root/'launcher.json'
+                launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO/'target/debug/ptyhost'),
+                    'host_dir': str(root/'host'), 'profiles': [peer.profile()]}))
+                initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
+                with isolated_server(Corpus(root), binary, host_dir=root/'host', state_dir=root/'state',
+                        lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={**extra,
+                            'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_OPENCODE_DB': str(peer.db),
+                            'SESSIONDOCK_OPENCODE_ROOT': str(root/'mirror'),
+                            'SESSIONDOCK_PROC_ROOT': str(root/'proc')}) as (base, _):
+                    yield base, peer, extra
+    finally:
+        stop_private_sdkhosts(root)

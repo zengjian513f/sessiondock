@@ -20,7 +20,9 @@ from send_browser import initialize
 
 class NativeQueueFixture:
     def __init__(self, root, source, binary, host_binary):
+        from sdkhost_fixtures import register_private_sdkhosts
         self.root, self.source, self.binary = Path(root), source, binary
+        register_private_sdkhosts(self.root)
         self.root.mkdir()
         for name in ('claude', 'codex', 'grok', 'host', 'ledger', 'state'):
             (self.root / name).mkdir(exist_ok=True)
@@ -124,25 +126,8 @@ class NativeQueueFixture:
 
     def close(self):
         """Only final fixture teardown ends detached hosts; server() never does."""
-        failures = []
-        for path in self.host_sockets():
-            try:
-                host_pid = int((path.parent / 'host.pid').read_text())
-                status = self.host_rpc(path, 'Status')
-                if status['exit'] is None or not (status.get('stdout_eof', False) and status.get('stderr_eof', False)):
-                    try:
-                        self.host_rpc(path, {'Signal': {'signal': signal.SIGKILL}})
-                    except (json.JSONDecodeError, ConnectionResetError):
-                        # Child exit can terminate the host before its ACK.
-                        pass
-                self.wait_exited(status['pid'])
-                self.wait_exited(host_pid)
-            except (FileNotFoundError, ConnectionRefusedError):
-                # Explicit stop may already have removed this private host.
-                continue
-            except Exception as error:
-                failures.append(str(error))
-        assert not failures, failures
+        from sdkhost_fixtures import stop_private_sdkhosts
+        stop_private_sdkhosts(self.root)
 
     @staticmethod
     def alive(pid):

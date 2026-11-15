@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 from urllib.request import ProxyHandler, build_opener
 from http_fixtures import MAX_RESPONSE_BYTES, NoRedirects
 from frontend_paths import frontend_dir
+import sdkhost_fixtures as _sdkhost_fixtures  # noqa: F401
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -521,12 +522,18 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
     for key, value in (extra_env or {}).items():
         assert key.startswith("SESSIONDOCK_"), key
         environment[key] = value
+    if "SESSIONDOCK_STATE_DIR" not in environment and "TMPDIR" not in environment:
+        private_tmp = corpus.root / ".tmp"
+        private_tmp.mkdir(mode=0o700, exist_ok=True)
+        environment["TMPDIR"] = str(private_tmp)
+    from sdkhost_fixtures import register_private_sdkhosts
     opener = build_opener(ProxyHandler({}), NoRedirects())
     # Logs belong to this invocation; don't retain an unbounded PIPE or block
     # the child when diagnostics exceed a pipe's capacity.
     # `log_path` keeps the server's stdout/stderr (the structured log) for the caller.
     with (open(log_path, "w+b") if log_path else tempfile.TemporaryFile(mode="w+b")) as log:
         process = subprocess.Popen([str(executable)], cwd=REPO, env=environment, stdout=log, stderr=stderr_sink if stderr_sink is not None else log)
+        register_private_sdkhosts(corpus.root, process)
         try:
             for _ in range(150):
                 if process.poll() is not None:

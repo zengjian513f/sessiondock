@@ -147,6 +147,8 @@ class FakeOpenCode:
                 self.end_headers()
                 self.wfile.write(encoded)
 
+        from sdkhost_fixtures import register_private_sdkhosts
+        register_private_sdkhosts(self.root)
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.server.daemon_threads = True
         self.url = f'http://127.0.0.1:{self.server.server_port}'

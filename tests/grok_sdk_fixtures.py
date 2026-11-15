@@ -20,7 +20,9 @@ import uuid
 
 class GrokFixture:
     def __init__(self, root):
+        from sdkhost_fixtures import register_private_sdkhosts
         self.root = Path(root)
+        register_private_sdkhosts(self.root)
         self.home = self.root / "grok-home"
         self.sessions = self.home / "sessions"
         self.sessions.mkdir(parents=True)

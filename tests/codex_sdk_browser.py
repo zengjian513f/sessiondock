@@ -72,10 +72,16 @@ def server(corpus, binary, app_socket, extra_env=None):
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
     environment.update(extra_env or {})
+    if "SESSIONDOCK_STATE_DIR" not in environment and "TMPDIR" not in environment:
+        private_tmp = corpus.root / ".tmp"
+        private_tmp.mkdir(mode=0o700, exist_ok=True)
+        environment["TMPDIR"] = str(private_tmp)
+    from sdkhost_fixtures import register_private_sdkhosts
     base = f"http://127.0.0.1:{port}"
     opener = build_opener(ProxyHandler({}), NoRedirects())
     with tempfile.TemporaryFile(mode="w+b") as log:
         process = subprocess.Popen([str(binary.resolve(strict=True))], cwd=REPO, env=environment, stdout=log, stderr=log)
+        register_private_sdkhosts(corpus.root, process)
         try:
             for _ in range(150):
                 assert process.poll() is None, "isolated server exited early"

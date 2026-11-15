@@ -60,7 +60,9 @@ def native_records(sid, cwd, turns):
 
 class CodebuddyFixture:
     def __init__(self, root):
+        from sdkhost_fixtures import register_private_sdkhosts
         self.root = Path(root)
+        register_private_sdkhosts(self.root)
         self.lifecycle_initialized = False
         self.home = self.root / "cli-home"
         self.config = self.home / ".codebuddy"
@@ -108,10 +110,16 @@ class CodebuddyFixture:
         env.update(extra_env or {})
         if not hosted:
             env.pop("SESSIONDOCK_STATE_DIR", None)
+        if "SESSIONDOCK_STATE_DIR" not in env and "TMPDIR" not in env:
+            private_tmp = self.root / ".tmp"
+            private_tmp.mkdir(mode=0o700, exist_ok=True)
+            env["TMPDIR"] = str(private_tmp)
+        from sdkhost_fixtures import register_private_sdkhosts
         base = f"http://127.0.0.1:{port}"
         opener = build_opener(ProxyHandler({}))
         with tempfile.TemporaryFile() as log:
             child = subprocess.Popen([str(Path(binary).resolve(strict=True))], cwd=REPO, env=env, stdout=log, stderr=log)
+            register_private_sdkhosts(self.root, child)
             try:
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:

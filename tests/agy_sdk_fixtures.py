@@ -376,7 +376,9 @@ connection.close()
 
 class AgyFixture:
     def __init__(self, root: Path, host_binary: Path):
+        from sdkhost_fixtures import register_private_sdkhosts
         self.root = root.resolve()
+        register_private_sdkhosts(self.root)
         for name in ('home', 'work', 'host', 'ledger', 'state', 'mirror', 'proc',
                      'release', 'claude', 'codex', 'grok', 'opencode', 'bin'):
             (root / name).mkdir(mode=0o700, exist_ok=True)

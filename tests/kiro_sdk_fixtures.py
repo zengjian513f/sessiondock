@@ -20,7 +20,9 @@ import uuid
 
 class KiroFixture:
     def __init__(self, root: Path, host_binary: Path | None = None):
+        from sdkhost_fixtures import register_private_sdkhosts
         self.root = Path(root)
+        register_private_sdkhosts(self.root)
         self.home = self.root / "kiro-home"
         self.sessions = self.root / "fake-native-store"
         self.sessions.mkdir(parents=True)
