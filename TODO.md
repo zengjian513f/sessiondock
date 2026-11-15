@@ -78,10 +78,6 @@
 
 ## Droid integration
 
-- [ ] Orion、Cetus 补发 BUG-20261115-160646-a893db 的 Droid 内部提醒投影修复
-  `0e045cf1`（已包含于服务发布 `ac3ea3d6`）：正式 SSH 尝试超时；其余五目标
-  已部署、重启并健康。验收见 [事故记录](docs/history-incidents.md#bug-20261115-160646-a893dbdroid-内部提醒在连接前闪现)。
-
 - [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
   最新版本（含文件回退、子代理控制、活动通知、CLI 设置及普通会话移动）：正式 SSH 尝试超时。
   Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康；Lyra 已启用 Droid。
