@@ -2,15 +2,24 @@
 use process_links::Process;
 use std::{
     collections::BTreeMap,
-    fs,
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom},
+    os::fd::AsRawFd,
     path::Path,
     time::{Duration, Instant},
 };
 
+struct Thread {
+    start: u64,
+    writes: u64,
+    // A proc inode pins the task identity. Reads fail after exit, even when its
+    // numeric TID is reused. Ordinary fixture files do not have this property.
+    io: Option<File>,
+}
 #[derive(Default)]
 struct Counter {
     total: u64,
-    threads: BTreeMap<(u32, u64), u64>,
+    threads: BTreeMap<u32, Thread>,
 }
 #[derive(Default)]
 pub struct ThreadWrites {
@@ -27,7 +36,6 @@ impl ThreadWrites {
             .sampled
             .is_some_and(|old| at.duration_since(old) > Duration::from_secs(10))
         {
-            // Keep monotonic totals, but never bridge an unobserved interval.
             for counter in self.counters.values_mut() {
                 counter.threads.clear();
             }
@@ -43,14 +51,12 @@ impl ThreadWrites {
     }
     pub fn sample(&mut self, root: &Path, process: &Process) -> Option<u64> {
         let counter = self.counters.entry(process.clone()).or_default();
-        let prior = std::mem::take(&mut counter.threads);
+        let mut prior = std::mem::take(&mut counter.threads);
         let dir = root.join(process.pid.to_string());
         let entries = fs::read_dir(dir.join("task")).ok()?;
         let mut current = BTreeMap::new();
-        for entry in entries {
-            let Ok(entry) = entry else {
-                continue;
-            };
+        let mut delta = 0u64;
+        for entry in entries.flatten() {
             let Some(tid) = entry
                 .file_name()
                 .to_str()
@@ -58,45 +64,64 @@ impl ThreadWrites {
             else {
                 continue;
             };
-            let Some(start) = start_time(&entry.path().join("stat")) else {
-                continue;
-            };
-            let Some(writes) = fs::read_to_string(entry.path().join("io"))
-                .ok()
-                .and_then(|text| {
-                    text.lines().find_map(|line| {
-                        line.strip_prefix("write_bytes:")?
-                            .trim()
-                            .parse::<u64>()
-                            .ok()
-                    })
-                })
-            else {
-                continue;
-            };
-            // A recycled TID between stat and io must not join two lifetimes.
-            if start_time(&entry.path().join("stat")) != Some(start) {
-                continue;
+            let old = prior.remove(&tid);
+            let mut observed = None;
+            if let Some(mut old) = old {
+                if let Some(file) = old.io.as_mut()
+                    && let Some(writes) = read_writes(file)
+                {
+                    delta = delta.saturating_add(writes.saturating_sub(old.writes));
+                    old.writes = writes;
+                    observed = Some(old);
+                } else if let Some(new) = open_thread(&entry.path()) {
+                    if new.start == old.start {
+                        delta = delta.saturating_add(new.writes.saturating_sub(old.writes));
+                    }
+                    observed = Some(new);
+                }
+            } else {
+                observed = open_thread(&entry.path());
             }
-            current.insert((tid, start), writes);
+            if let Some(thread) = observed {
+                current.insert(tid, thread);
+            }
         }
         if start_time(&dir.join("stat")) != Some(process.start) || current.is_empty() {
             return None;
         }
-        for (thread, writes) in &current {
-            if let Some(old) = prior.get(thread) {
-                if let Some(delta) = writes.checked_sub(*old) {
-                    counter.total = counter.total.saturating_add(delta);
-                }
-            }
-        }
-        // Missing/unreadable tasks lose their baseline, even if other tasks were read.
+        counter.total = counter.total.saturating_add(delta);
+        // Missing/unreadable tasks lose both baseline and descriptor.
         counter.threads = current;
         Some(counter.total)
     }
 }
+fn read_writes(file: &mut File) -> Option<u64> {
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut raw = String::with_capacity(512);
+    file.read_to_string(&mut raw).ok()?;
+    raw.lines()
+        .find_map(|line| line.strip_prefix("write_bytes:")?.trim().parse().ok())
+}
+fn open_thread(path: &Path) -> Option<Thread> {
+    let start = start_time(&path.join("stat"))?;
+    let mut file = File::open(path.join("io")).ok()?;
+    let writes = read_writes(&mut file)?;
+    // Verify the descriptor was opened during the observed incarnation.
+    if start_time(&path.join("stat")) != Some(start) {
+        return None;
+    }
+    let mut kind: libc::statfs = unsafe { std::mem::zeroed() };
+    let proc_inode = unsafe { libc::fstatfs(file.as_raw_fd(), &mut kind) } == 0
+        && kind.f_type == libc::PROC_SUPER_MAGIC;
+    Some(Thread {
+        start,
+        writes,
+        io: proc_inode.then_some(file),
+    })
+}
 fn start_time(path: &Path) -> Option<u64> {
-    let raw = fs::read_to_string(path).ok()?;
+    let mut raw = String::with_capacity(1024);
+    File::open(path).ok()?.read_to_string(&mut raw).ok()?;
     raw[raw.rfind(')')? + 1..]
         .split_whitespace()
         .nth(19)?

@@ -51,3 +51,40 @@ fn parse_pss(raw: &str) -> Option<u64> {
     (fields.next()? == "kB").then_some(())?;
     kb.checked_mul(1024)
 }
+
+/// The service explicitly delegates only its own cgroup subtree. Enforce the
+/// slow collectors' budget during kernel reads, rather than only afterwards.
+pub fn slow_cpu_budget() -> std::io::Result<Option<std::path::PathBuf>> {
+    if std::env::var_os("RESOURCE_AGENT_SLOW_CPU_BUDGET").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+    {
+        return Ok(None);
+    }
+    let membership = fs::read_to_string("/proc/self/cgroup")?;
+    let relative = membership
+        .lines()
+        .find_map(|line| line.strip_prefix("0::/"))
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| std::io::Error::other("no private unified cgroup"))?;
+    let root = Path::new("/sys/fs/cgroup").join(relative);
+    let slow = root.join("slow-collectors");
+    fs::create_dir_all(&slow)?;
+    fs::write(slow.join("cgroup.type"), "threaded")?;
+    fs::write(root.join("cgroup.subtree_control"), "+cpu")?;
+    fs::write(slow.join("cpu.max"), "20000 100000")?;
+    Ok(Some(slow))
+}
+
+pub fn enter_cpu_budget(path: Option<&Path>) -> bool {
+    let Some(path) = path else { return false };
+    let tid = unsafe { libc::syscall(libc::SYS_gettid) };
+    if let Err(error) = fs::write(path.join("cgroup.threads"), tid.to_string()) {
+        crate::runtime_log::emit(
+            "warn",
+            "resource.slow_cpu_budget_failed",
+            serde_json::json!({"error":error.to_string()}),
+        );
+        return false;
+    }
+    true
+}

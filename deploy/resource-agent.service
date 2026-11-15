@@ -21,6 +21,9 @@ ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
 ProtectControlGroups=yes
+Delegate=cpu
+Environment=RESOURCE_AGENT_SLOW_CPU_BUDGET=1
+ReadWritePaths=/sys/fs/cgroup/system.slice/%n
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 RestrictRealtime=yes
@@ -29,11 +32,10 @@ LockPersonality=yes
 CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN
 ReadWritePaths=/run/resource-agent /var/lib/resource-agent -/sys/fs/resctrl
 TasksMax=128
-# Boot-scoped attribution evidence grows with workload history. A fixed memory
-# ceiling can prevent restoring valid state and cause an endless OOM restart.
+# Connection evidence is retained by age; do not use OOM restarts as eviction.
 MemoryMax=infinity
-# Allow short page-table walks without throttling the snapshot API with them.
-# The PSS worker independently paces its CPU use to at most 20% of one core.
+# Slow collectors share a 20%-core child budget, including kernel page walks.
+# The service-wide quota and task limits stay unchanged.
 CPUQuota=100%
 CPUWeight=10
 Nice=10

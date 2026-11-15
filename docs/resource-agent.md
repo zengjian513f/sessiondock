@@ -152,6 +152,22 @@ backpressure waits for capacity without rejecting valid requests. New connection
 do not create threads. Health reads a completed snapshot independently of
 attribution work, and unchanged bindings reuse prepared resource samples.
 
+The supplied unit delegates its own CPU subtree, with write access restricted to
+that subtree despite `ProtectControlGroups=yes`. `RESOURCE_AGENT_SLOW_CPU_BUDGET=1`
+places slow PSS/MBM/GPU collectors in a shared `slow-collectors` threaded subgroup
+with `cpu.max=20000 100000`. The parent quota remains 100%; the child deliberately
+throttles slow work without consuming the fast sampler's entire budget. Standalone
+runs omit this service setting and retain CPU-time pacing; setup failures are
+logged and never change monitored workload cgroups.
+
+Thread-local write counters retain open proc I/O descriptors for live threads.
+[Linux pins these descriptors to their original task](https://www.kernel.org/doc/html/v6.11/filesystems/proc.html),
+so TID reuse cannot redirect an existing descriptor. New descriptors are checked
+against start time before and after opening; failed reads, exited tasks, changed
+boots and observation gaps release them. Ordinary synthetic files continue using
+explicit identity checks. No write counter, reaped-child exclusion or missing-data
+semantics changes.
+
 The supplied unit starts with I/O probes off and memory-bandwidth monitoring on.
 Memory bandwidth uses monitor-only resctrl groups where supported; it never
 changes allocation, affinity or cgroups. Use a local systemd override to turn it

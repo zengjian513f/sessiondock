@@ -1456,12 +1456,25 @@ pub fn run() -> io::Result<()> {
         libc::signal(libc::SIGTERM, stop as *const () as usize);
         libc::signal(libc::SIGINT, stop as *const () as usize);
     }
+    let slow_budget = match memory::slow_cpu_budget() {
+        Ok(path) => path,
+        Err(error) => {
+            crate::runtime_log::emit(
+                "warn",
+                "resource.slow_cpu_budget_failed",
+                json!({"error":error.to_string()}),
+            );
+            None
+        }
+    };
     // PSS walks page tables and is substantially more expensive than stat/io.
     // Spread a 30-second refresh over processes instead of blocking the fast sampler.
     let pss_worker = if config.proc_root == Path::new("/proc") {
         let pss_state = state.clone();
         let cache = slow_cache.clone();
+        let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
+            let budgeted = memory::enter_cpu_budget(budget.as_deref());
             while !STOP.load(Ordering::Relaxed) {
                 let started = Instant::now();
                 let processes: Vec<_> = pss_state
@@ -1486,10 +1499,14 @@ pub fn run() -> io::Result<()> {
                     }
                     let cpu_started = memory::thread_cpu_time();
                     let value = memory::pss_bytes(Path::new("/proc"), &process);
-                    let pause_for = memory::sampling_pause(
-                        memory::thread_cpu_time().saturating_sub(cpu_started),
-                        spacing,
-                    );
+                    let pause_for = if budgeted {
+                        spacing
+                    } else {
+                        memory::sampling_pause(
+                            memory::thread_cpu_time().saturating_sub(cpu_started),
+                            spacing,
+                        )
+                    };
                     cache
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -1515,7 +1532,9 @@ pub fn run() -> io::Result<()> {
         let bandwidth_state = state.clone();
         let cache = slow_cache.clone();
         let node = config.node_id.clone();
+        let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
+            memory::enter_cpu_budget(budget.as_deref());
             let mut collector = None;
             while !STOP.load(Ordering::Relaxed) {
                 let started = Instant::now();
@@ -1558,7 +1577,9 @@ pub fn run() -> io::Result<()> {
     let gpu_worker = if config.proc_root == Path::new("/proc") {
         let gpu_state = state.clone();
         let cache = slow_cache.clone();
+        let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
+            memory::enter_cpu_budget(budget.as_deref());
             while !STOP.load(Ordering::Relaxed) {
                 let started = Instant::now();
                 let processes: Vec<_> = gpu_state

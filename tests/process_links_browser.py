@@ -22,7 +22,7 @@ from history_fixtures import BINARY, Corpus, codex_row, isolated_server, get_jso
 from hub_fixtures import Hub, scoped
 from node_auth_fixtures import node_env, TOKEN, free_port
 from spawned_by_fixtures import START, proc_pid
-from process_links_fixtures import counted_node
+from process_links_fixtures import counted_node, private_task_writer
 
 WORKING = re.compile(r'\bturn-working\b')
 START.update({900: 90_000, 910: 91_000, 920: 92_000, 930: 93_000, 940: 94_000})
@@ -125,6 +125,19 @@ def thread_write_counter_browser(page, corpus, proc):
     (task/'100/io').unlink();(task/'101/io').unlink();observed(None)
     io(100,100*mib);io(101,3000*mib);observed(6*mib)
     io(100,101*mib);observed(7*mib)
+    with private_task_writer(corpus.root) as child:
+        real_task = task / str(child.pid)
+        real_task.symlink_to(f'/proc/{child.pid}/task/{child.pid}')
+        observed(7*mib)
+        child.stdin.write('write\n'); child.stdin.flush()
+        assert child.stdout.readline().strip() == 'written'
+        observed(8*mib)
+        child.stdin.write('write\n'); child.stdin.flush()
+        assert child.stdout.readline().strip() == 'written'
+        observed(9*mib)
+        child.terminate(); child.wait(timeout=5)
+        real_task.unlink()
+        observed(9*mib)
     print('PASS browser task writes: child reaping, exited/reused threads, partial/unreadable counters and baselines',flush=True)
 
 

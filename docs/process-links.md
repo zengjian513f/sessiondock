@@ -379,10 +379,12 @@ percentage of the entire machine. GPU count is the distinct set of resident
 compute devices per execution machine, not exclusive allocation or GPU compute
 utilization. Graphics-only work and MPS worker attribution are not covered by
 the NVIDIA compute query. PSS failure never substitutes RSS. PSS uses a separate low-frequency cache
-(target about 30 seconds) and paces each read by its thread CPU time to budget
-at most 20% of one core. Expensive scans can take longer. The service permits a
-one-core burst with low scheduling weight, so a PSS page-table walk does not
-exhaust a 25%-core quota shared with the cached-snapshot API and fast collectors;
+(target about 30 seconds). The supplied service places PSS, memory-bandwidth and
+GPU workers in its own threaded CPU subgroup, sharing at most 20% of one core
+including kernel page-table walks. Its service-wide one-core quota is unchanged;
+only the collector's threads and their helper children enter this subgroup, never
+monitored workloads. Standalone runs without delegation retain post-read CPU
+pacing. Expensive scans can take longer;
 metric timestamps retain the oldest contributing sample through aggregation.
 GPU queries also run independently, about every 10 seconds; values older than
 30 seconds are unavailable. PSS cache entries expire after 60 seconds.

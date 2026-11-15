@@ -166,3 +166,25 @@ def history_collector(root, report):
         finally:
             server.shutdown()
             worker.join(timeout=5)
+
+
+@contextmanager
+def private_task_writer(root):
+    """A real proc inode and private disk writes; no CLI or production session."""
+    import subprocess
+    import sys
+    code = '''import os,sys
+f=open(sys.argv[1],'wb',buffering=0)
+print('ready',flush=True)
+for line in sys.stdin:
+    f.write(b'x' * 1048576);os.fsync(f.fileno());print('written',flush=True)
+'''
+    child = subprocess.Popen([sys.executable, '-u', '-c', code, str(root/'task-write-data')],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == 'ready'
+        yield child
+    finally:
+        if child.poll() is None:
+            child.terminate()
+        child.wait(timeout=5)
