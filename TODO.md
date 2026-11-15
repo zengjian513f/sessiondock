@@ -31,6 +31,11 @@
   删除目录行后等待侧栏移除会话超时；此前历史、图片、增量和分页步骤通过。
   附件专项由 `agy_media_browser.py` 的节点／Hub 普通历史与 SDK 八组合覆盖。
 
+- [ ] 核对 `codex_sdk_stop_browser.py --case unreadable` 的冷入口自动打开预期：
+  BUG-20261115-043012-a301cc 验收中，当前调试二进制与旧 release 二进制均在
+  首次选择后等待 `/api/codex-sdk/open` 超时，尚未到达停止断言。
+  本次 `--case normal` 的节点/Hub、宽窄屏停止、保留蓝灯与卸载灭灯回归通过。
+
 ## Frontend delivery
 
 - [ ] 核对 Codex 底栏 125% 缩放时的窄栏溢出：`codex_sdk_layout_browser.py`

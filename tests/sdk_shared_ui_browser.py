@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Five SDKs share editor, streaming Markdown, status menus and history expansion."""
+"""SDKs share editor, streaming Markdown, status menus and history expansion."""
 import argparse
 from pathlib import Path
 import tempfile
@@ -360,12 +360,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--screenshots', type=Path)
+    parser.add_argument('--source', action='append', choices=('codex', 'agy', 'grok', 'claude', 'opencode', 'kiro', 'codebuddy'))
     args = parser.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-shared-ui-') as tmp, sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         try:
-            for source in ('codex', 'agy', 'grok', 'claude', 'opencode'):
+            for source in (args.source or ('codex', 'agy', 'grok', 'claude', 'opencode', 'kiro', 'codebuddy')):
                 root = Path(tmp)/source; root.mkdir()
                 with provider(source, root, args.binary) as (base, _, _), snapshots() as events:
                     for width, theme in ((1440, 'light'), (390, 'dark')):
