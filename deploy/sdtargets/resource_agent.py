@@ -57,7 +57,7 @@ class ResourceAgentHandler(TargetHandler):
         if not self.a.source_archive:
             raise RuntimeError('collector requires the committed source archive')
         with tarfile.open(self.a.source_archive) as archive, tempfile.TemporaryDirectory(prefix='sd-collector-units-') as tmp:
-            for name in ('resource-agent.service', 'sys-fs-resctrl.mount'):
+            for name in ('resource-agent.service', 'resource-agent-pss.service', 'sys-fs-resctrl.mount'):
                 data = archive.extractfile('deploy/' + name)
                 if data is None:
                     raise RuntimeError('missing snapshot unit: ' + name)
@@ -79,7 +79,7 @@ class ResourceAgentHandler(TargetHandler):
         self.backup_dir = self.t.prefix+'/backup-deploy-'+self.a.short+'-'+stamp
         script = '\n'.join([
             'set -e', 'sudo -n mkdir -p '+q(self.backup_dir),
-            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.version')+' '+q(self.t.prefix+'/deployed-commit')+' /etc/systemd/system/resource-agent.service /etc/systemd/system/sys-fs-resctrl.mount /etc/resource-agent.env; do',
+            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.version')+' '+q(self.t.prefix+'/deployed-commit')+' /etc/systemd/system/resource-agent.service /etc/systemd/system/resource-agent-pss.service /etc/systemd/system/sys-fs-resctrl.mount /etc/resource-agent.env; do',
             'if [ -f "$f" ]; then sudo -n cp -p "$f" '+q(self.backup_dir)+'/; fi', 'done',
             'systemctl is-enabled '+UNIT+' > '+q(self.temp+'/enabled')+' 2>/dev/null || true',
             'sudo -n cp '+q(self.temp+'/enabled')+' '+q(self.backup_dir+'/enabled'),
@@ -93,6 +93,7 @@ class ResourceAgentHandler(TargetHandler):
             'sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),
             'sudo -n install -m 0644 '+q(self.temp+'/resource-agent.version')+' '+q(self.t.prefix+'/bin/resource-agent.version'),
             'sudo -n install -m 0644 '+q(self.temp+'/resource-agent.service')+' /etc/systemd/system/resource-agent.service',
+            'sudo -n install -m 0644 '+q(self.temp+'/resource-agent-pss.service')+' /etc/systemd/system/resource-agent-pss.service',
             'sudo -n install -m 0644 '+q(self.temp+'/sys-fs-resctrl.mount')+' /etc/systemd/system/sys-fs-resctrl.mount',
             'sudo -n install -m 0600 '+q(self.temp+'/resource-agent.env')+' /etc/resource-agent.env',
             'sudo -n systemctl daemon-reload',
@@ -113,8 +114,9 @@ class ResourceAgentHandler(TargetHandler):
         _, version = self.sh.run('cat '+q(self.t.prefix+'/bin/resource-agent.version'))
         have = version.strip()
         _, active = self.sh.run('systemctl is-active '+UNIT)
-        ok = (data.get('service')=='resource-agent' and data.get('collector',{}).get('events')=='bpf' and have==self.a.version and active.strip()=='active')
-        detail = 'collector health/events/version verified' if ok else 'collector health, BPF events, service state or version verification failed'
+        _, pss = self.sh.run('systemctl is-active resource-agent-pss.service')
+        ok = (pss.strip()=='active' and data.get('service')=='resource-agent' and data.get('collector',{}).get('events')=='bpf' and have==self.a.version and active.strip()=='active')
+        detail = 'collector health/events/version and isolated PSS service verified' if ok else 'collector health, BPF events, PSS helper state or version verification failed'
         return VerifyResult(ok,detail,build='resource-agent',active=active.strip()=='active',binary_versions={'resource-agent':have})
     def rollback(self, backup_dir):
         try:
@@ -135,7 +137,7 @@ class ResourceAgentHandler(TargetHandler):
         _, has = self.sh.run('sudo -n test -f '+q(backup_dir+'/resource-agent')+' && echo yes')
         if has.strip() == 'yes':
             self.sh.run('sudo -n cp '+q(backup_dir+'/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.new')+' && sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),check=True)
-            for name, target in [('sys-fs-resctrl.mount','/etc/systemd/system/sys-fs-resctrl.mount'),('resource-agent.service','/etc/systemd/system/resource-agent.service'),('resource-agent.env','/etc/resource-agent.env')]:
+            for name, target in [('sys-fs-resctrl.mount','/etc/systemd/system/sys-fs-resctrl.mount'),('resource-agent-pss.service','/etc/systemd/system/resource-agent-pss.service'),('resource-agent.service','/etc/systemd/system/resource-agent.service'),('resource-agent.env','/etc/resource-agent.env')]:
                 self.sh.run('if sudo -n test -f '+q(backup_dir+'/'+name)+'; then sudo -n cp '+q(backup_dir+'/'+name)+' '+q(target)+'; else sudo -n rm -f '+q(target)+'; fi',check=True)
             self.sh.run('sudo -n systemctl daemon-reload',check=True)
             _, enabled = self.sh.run('sudo -n cat '+q(backup_dir+'/enabled'))
@@ -145,7 +147,7 @@ class ResourceAgentHandler(TargetHandler):
             mount_backup = q(backup_dir+'/sys-fs-resctrl.mount')
             self.sh.run('if sudo -n test -f '+mount_backup+'; then sudo -n cp '+mount_backup+' /etc/systemd/system/sys-fs-resctrl.mount; else sudo -n rm -f /etc/systemd/system/sys-fs-resctrl.mount; fi',check=True)
             self.sh.run('sudo -n systemctl disable '+UNIT,check=True)
-            self.sh.run('sudo -n rm -f /etc/systemd/system/resource-agent.service /etc/resource-agent.env '+q(self.t.prefix+'/bin/resource-agent'),check=True)
+            self.sh.run('sudo -n rm -f /etc/systemd/system/resource-agent.service /etc/systemd/system/resource-agent-pss.service /etc/resource-agent.env '+q(self.t.prefix+'/bin/resource-agent'),check=True)
             self.sh.run('sudo -n systemctl daemon-reload',check=True)
     def backup_versions(self, backup_dir):
         """Collector backups are flat: `<backup>/resource-agent.version`."""

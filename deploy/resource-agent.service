@@ -1,7 +1,7 @@
 [Unit]
 Description=Shared read-only session resource collector
-After=local-fs.target sys-fs-resctrl.mount
-Wants=sys-fs-resctrl.mount
+After=local-fs.target sys-fs-resctrl.mount resource-agent-pss.service
+Wants=sys-fs-resctrl.mount resource-agent-pss.service
 
 [Service]
 Type=simple
@@ -23,6 +23,7 @@ PrivateTmp=yes
 ProtectControlGroups=yes
 Delegate=cpu
 Environment=RESOURCE_AGENT_SLOW_CPU_BUDGET=1
+Environment=RESOURCE_AGENT_PSS_SOCKET=/run/resource-agent-pss/worker.sock
 ReadWritePaths=/sys/fs/cgroup/system.slice/%n
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -31,12 +32,12 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN
 ReadWritePaths=/run/resource-agent /var/lib/resource-agent -/sys/fs/resctrl
-TasksMax=128
+TasksMax=124
 # Connection evidence is retained by age; do not use OOM restarts as eviction.
 MemoryMax=infinity
-# Slow collectors share a 20%-core child budget, including kernel page walks.
-# The service-wide quota and task limits stay unchanged.
-CPUQuota=100%
+# Main service 80% + PSS service 20% = the previous one-core budget.
+# Fast sampler 50%, MBM/GPU 20%, leaving main-service headroom for requests.
+CPUQuota=80%
 CPUWeight=10
 Nice=10
 

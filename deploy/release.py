@@ -92,7 +92,7 @@ def build(commit: str, epoch: str, work: Path, component: str = "sessiondock") -
         ).encode()
         guide = (src / "docs/resource-agent.md").read_text(encoding="utf-8")
         files["docs/resource-agent.md"] = guide.split("## Validate the integration", 1)[0].encode()
-        for name in ("resource-agent.service", "sys-fs-resctrl.mount"):
+        for name in ("resource-agent.service", "resource-agent-pss.service", "sys-fs-resctrl.mount"):
             files[f"deploy/{name}"] = (src / "deploy" / name).read_bytes()
     else:
         for path in sorted((src / "web").rglob("*")):
@@ -128,7 +128,7 @@ def build(commit: str, epoch: str, work: Path, component: str = "sessiondock") -
         files["docs/integrations.md"] = public_document(src, "docs/integrations.md")
         guide = (src / "docs/resource-agent.md").read_text(encoding="utf-8")
         files["docs/resource-agent.md"] = guide.split("## Validate the integration", 1)[0].encode()
-        for name in ("resource-agent.service", "sys-fs-resctrl.mount"):
+        for name in ("resource-agent.service", "resource-agent-pss.service", "sys-fs-resctrl.mount"):
             files[f"deploy/{name}"] = (src / "deploy" / name).read_bytes()
     for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "NOTICE.md"):
         if (src / name).is_file():

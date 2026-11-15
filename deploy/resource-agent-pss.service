@@ -1,0 +1,32 @@
+[Unit]
+Description=Isolated read-only proportional memory sampler
+PartOf=resource-agent.service
+Before=resource-agent.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/resource-agent.env
+ExecStart=/opt/resource-agent/bin/resource-agent --pss-worker --uid ${MONITOR_UID} --socket /run/resource-agent-pss/worker.sock
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillMode=control-group
+RuntimeDirectory=resource-agent-pss
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+ReadWritePaths=/run/resource-agent-pss
+TasksMax=4
+CPUQuota=20%
+CPUWeight=10
+Nice=10

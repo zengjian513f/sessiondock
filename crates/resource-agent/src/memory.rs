@@ -72,6 +72,10 @@ pub fn slow_cpu_budget() -> std::io::Result<Option<std::path::PathBuf>> {
     fs::write(slow.join("cgroup.type"), "threaded")?;
     fs::write(root.join("cgroup.subtree_control"), "+cpu")?;
     fs::write(slow.join("cpu.max"), "20000 100000")?;
+    let sampler = root.join("fast-sampler");
+    fs::create_dir_all(&sampler)?;
+    fs::write(sampler.join("cgroup.type"), "threaded")?;
+    fs::write(sampler.join("cpu.max"), "50000 100000")?;
     Ok(Some(slow))
 }
 
@@ -87,4 +91,130 @@ pub fn enter_cpu_budget(path: Option<&Path>) -> bool {
         return false;
     }
     true
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Observation {
+    pub value: Option<u64>,
+    pub sampled_at: f64,
+}
+
+pub fn observation(root: &Path, process: &Process) -> Observation {
+    use std::io::{Read, Write};
+    let started = crate::server::now();
+    if let Some(socket) = std::env::var_os("RESOURCE_AGENT_PSS_SOCKET") {
+        let read = || -> std::io::Result<Observation> {
+            let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
+            stream.set_read_timeout(Some(Duration::from_millis(200)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+            serde_json::to_writer(&mut stream, process)?;
+            stream.write_all(b"\n")?;
+            let until = std::time::Instant::now() + Duration::from_secs(90);
+            let mut line = Vec::new();
+            let mut buffer = [0u8; 1024];
+            loop {
+                if crate::server::STOP.load(std::sync::atomic::Ordering::Relaxed)
+                    || std::time::Instant::now() >= until
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "PSS read interrupted or expired",
+                    ));
+                }
+                match stream.read(&mut buffer) {
+                    Ok(0) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "PSS worker disconnected",
+                        ));
+                    }
+                    Ok(n) => {
+                        line.extend_from_slice(&buffer[..n]);
+                        if line.ends_with(b"\n") {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            serde_json::from_slice(&line).map_err(std::io::Error::other)
+        };
+        return read().unwrap_or(Observation {
+            value: None,
+            sampled_at: started,
+        });
+    }
+    Observation {
+        value: pss_bytes(root, process),
+        sampled_at: started,
+    }
+}
+
+/// Runs in its own service CPU domain. A large uninterruptible kernel page-table
+/// walk must not charge the request/sampling service's quota.
+pub fn worker_main() -> std::io::Result<()> {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        os::unix::net::UnixListener,
+        path::PathBuf,
+    };
+    let mut options = std::collections::BTreeMap::new();
+    let mut args = std::env::args().skip(2);
+    while let Some(key) = args.next() {
+        if !["--uid", "--socket", "--proc-root"].contains(&key.as_str()) {
+            return Err(std::io::Error::other("unknown PSS worker option"));
+        }
+        options.insert(
+            key,
+            args.next()
+                .ok_or_else(|| std::io::Error::other("missing PSS worker value"))?,
+        );
+    }
+    let uid: u32 = options
+        .get("--uid")
+        .ok_or_else(|| std::io::Error::other("--uid required"))?
+        .parse()
+        .map_err(std::io::Error::other)?;
+    let socket = PathBuf::from(
+        options
+            .get("--socket")
+            .ok_or_else(|| std::io::Error::other("--socket required"))?,
+    );
+    let root = PathBuf::from(
+        options
+            .get("--proc-root")
+            .map(String::as_str)
+            .unwrap_or("/proc"),
+    );
+    if socket.exists() {
+        fs::remove_file(&socket)?;
+    }
+    let listener = UnixListener::bind(&socket)?;
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        let mut line = String::new();
+        if BufReader::new(&stream).read_line(&mut line).is_err() {
+            continue;
+        }
+        let Ok(process) = serde_json::from_str::<Process>(&line) else {
+            continue;
+        };
+        let sampled_at = crate::server::now();
+        let value = fs::metadata(root.join(process.pid.to_string()))
+            .ok()
+            .filter(|meta| meta.uid() == uid)
+            .and_then(|_| pss_bytes(&root, &process));
+        let _ = serde_json::to_writer(&mut stream, &Observation { value, sampled_at });
+        let _ = stream.write_all(b"\n");
+    }
+    Ok(())
 }

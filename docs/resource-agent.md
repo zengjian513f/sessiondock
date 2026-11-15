@@ -101,12 +101,13 @@ Keep the containing directory private as above.
 
 ## Install an optional system service
 
-The supplied [systemd unit](../deploy/resource-agent.service) installs separately
-from SessionDock. After building the collector, an administrator can install it:
+The supplied [main unit](../deploy/resource-agent.service) and
+[PSS helper](../deploy/resource-agent-pss.service) install separately from SessionDock. After building the collector, an administrator can install it:
 
 ```sh
 sudo install -D -m 755 target/release/resource-agent /opt/resource-agent/bin/resource-agent
 sudo install -m 644 deploy/resource-agent.service /etc/systemd/system/resource-agent.service
+sudo install -m 644 deploy/resource-agent-pss.service /etc/systemd/system/resource-agent-pss.service
 ```
 
 Create `/etc/resource-agent.env` containing the numeric UID to monitor and the
@@ -146,19 +147,27 @@ serves requests while the persistence worker reconciles expired rows in batches
 of 2,048. Previous boot scopes are deleted: they cannot explain a current process
 incarnation. Cumulative usage history is a separate ledger and is unchanged.
 Rolling back to a JSON-only binary needs an explicit SQLite export; the backup
-cannot recover later changes. The existing CPU quota, task and memory settings
-are unchanged. Four persistent request workers share a bounded pending queue;
+cannot recover later changes. Total configured CPU and task budgets do not increase; the memory setting
+is unchanged. Four persistent request workers share a bounded pending queue;
 backpressure waits for capacity without rejecting valid requests. New connections
 do not create threads. Health reads a completed snapshot independently of
 attribution work, and unchanged bindings reuse prepared resource samples.
 
-The supplied unit delegates its own CPU subtree, with write access restricted to
-that subtree despite `ProtectControlGroups=yes`. `RESOURCE_AGENT_SLOW_CPU_BUDGET=1`
-places slow PSS/MBM/GPU collectors in a shared `slow-collectors` threaded subgroup
-with `cpu.max=20000 100000`. The parent quota remains 100%; the child deliberately
-throttles slow work without consuming the fast sampler's entire budget. Standalone
-runs omit this service setting and retain CPU-time pacing; setup failures are
-logged and never change monitored workload cgroups.
+The supplied main unit delegates only its own CPU subtree. Its fast sampler has
+50% of one core and MBM/GPU workers share 20%, leaving request headroom within the
+main unit's 80% quota. PSS runs in `resource-agent-pss.service` with a separate 20%
+quota: large kernel page-table reads can overrun a scheduling period, so a child
+quota alone cannot protect the parent. The configured total remains one core;
+TasksMax is split 124 + 4, preserving the previous total of 128. Workloads never
+move cgroups. `PartOf` couples helper restart/stop to the main collector, and
+releases/rollback include both unit files.
+
+The private PSS socket permits only its owner; requests identify a PID and start
+time, and the worker checks the monitored UID. Observation time is captured before
+the read, so quota wait never makes an old observation appear fresh. The main
+collector cancels its wait on shutdown; missing/failed helper reads are unavailable,
+never RSS. Standalone runs without `RESOURCE_AGENT_PSS_SOCKET` retain direct
+reads and CPU-time pacing. Unit budget setup failures are logged.
 
 Thread-local write counters retain open proc I/O descriptors for live threads.
 [Linux pins these descriptors to their original task](https://www.kernel.org/doc/html/v6.11/filesystems/proc.html),

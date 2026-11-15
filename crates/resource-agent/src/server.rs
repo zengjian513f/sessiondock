@@ -26,7 +26,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-static STOP: AtomicBool = AtomicBool::new(false);
+pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
@@ -949,7 +949,10 @@ impl ResourceSampler {
             let pss = if root == Path::new("/proc") {
                 slow_cache.pss.get(&sample.process).copied()
             } else {
-                Some((memory::pss_bytes(root, &sample.process), sampled_at))
+                {
+                    let observation = memory::observation(root, &sample.process);
+                    Some((observation.value, observation.sampled_at))
+                }
             };
             let mut pss_metric = match pss {
                 Some((value, at)) if sampled_at - at <= 60.0 => {
@@ -1474,7 +1477,8 @@ pub fn run() -> io::Result<()> {
         let cache = slow_cache.clone();
         let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
-            let budgeted = memory::enter_cpu_budget(budget.as_deref());
+            let remote = std::env::var_os("RESOURCE_AGENT_PSS_SOCKET").is_some();
+            let budgeted = remote || memory::enter_cpu_budget(budget.as_deref());
             while !STOP.load(Ordering::Relaxed) {
                 let started = Instant::now();
                 let processes: Vec<_> = pss_state
@@ -1498,7 +1502,7 @@ pub fn run() -> io::Result<()> {
                         return;
                     }
                     let cpu_started = memory::thread_cpu_time();
-                    let value = memory::pss_bytes(Path::new("/proc"), &process);
+                    let observation = memory::observation(Path::new("/proc"), &process);
                     let pause_for = if budgeted {
                         spacing
                     } else {
@@ -1511,7 +1515,7 @@ pub fn run() -> io::Result<()> {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .pss
-                        .insert(process, (value, now()));
+                        .insert(process, (observation.value, observation.sampled_at));
                     let pause = Instant::now();
                     while pause.elapsed() < pause_for && !STOP.load(Ordering::Relaxed) {
                         std::thread::sleep(
@@ -1630,7 +1634,12 @@ pub fn run() -> io::Result<()> {
                 );
             }
         })?;
+    let sampler_budget = slow_budget
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(|path| path.join("fast-sampler"));
     let worker = std::thread::spawn(move || {
+        memory::enter_cpu_budget(sampler_budget.as_deref());
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
         let mut usage_saved_at = Instant::now();

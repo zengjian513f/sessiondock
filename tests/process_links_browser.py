@@ -307,10 +307,17 @@ def main():
                 old_mtime=old_state.stat().st_mtime_ns
                 (corpus.root / 'gpu.csv').write_text('601, GPU-local, 32\n930, GPU-local, 64\n300, GPU-independent, 16\n'
                                                    if index == 0 else '800, GPU-remote, 32\n')
+                pss_socket = corpus.root / 'pss.sock'
+                pss = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
+                    '--pss-worker', '--uid', str(os.getuid()), '--socket', str(pss_socket),
+                    '--proc-root', str(proc)])
+                agents.callback(lambda p=pss: (p.terminate(), p.wait(timeout=10)))
+                wait_for(pss_socket.exists)
                 agent = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
                     '--uid', str(os.getuid()), '--node-id-file', str(corpus.root / 'ids/node-id'),
                     '--socket', str(corpus.root / 'agent.sock'), '--state', str(corpus.root / 'agent-state.json'),
-                    '--proc-root', str(proc), '--events', 'off'], umask=0o022)
+                    '--proc-root', str(proc), '--events', 'off'], umask=0o022,
+                    env={**os.environ,'RESOURCE_AGENT_PSS_SOCKET':str(pss_socket)})
                 agent_processes.append((agent,agent.args,old_mtime))
                 agents.callback(lambda p=agent: (p.terminate(), p.wait(timeout=10)))
                 wait_for(lambda: (corpus.root / 'agent.sock').exists())
@@ -342,7 +349,8 @@ def main():
                             assert db.execute("SELECT count(*) FROM evidence WHERE section='parents' AND json_extract(key,'$.pid')>=800000").fetchone()[0]==0
                         assert dbpath.stat().st_mode & 0o777 == 0o600
                         assert (corpora[index].root/'agent-state.json').stat().st_mtime_ns==mtime
-                        replacement=subprocess.Popen(command,umask=0o022)
+                        replacement=subprocess.Popen(command,umask=0o022,
+                            env={**os.environ,"RESOURCE_AGENT_PSS_SOCKET":str(corpora[index].root/"pss.sock")})
                         agents.callback(lambda p=replacement:(p.terminate(),p.wait(timeout=20)))
                         wait_for(lambda:(corpora[index].root/'agent.sock').exists())
                     print('PASS legacy JSON migration, private SQLite, dead ancestry cleanup and collector restart',flush=True)

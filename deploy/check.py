@@ -15,6 +15,7 @@ def main():
         ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
     for filename, section, keys in (
         ('resource-agent.service', 'Service', ('ExecStart',)),
+        ('resource-agent-pss.service', 'Service', ('ExecStart',)),
         ('sys-fs-resctrl.mount', 'Mount', ('What', 'Where', 'Type')),
     ):
         path = ROOT / 'deploy' / filename

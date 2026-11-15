@@ -15,13 +15,16 @@ mod runtime_log;
 #[cfg(target_os = "linux")]
 mod server;
 #[cfg(target_os = "linux")]
-mod usage;
-#[cfg(target_os = "linux")]
 mod thread_writes;
+#[cfg(target_os = "linux")]
+mod usage;
 #[cfg(target_os = "linux")]
 fn main() -> std::io::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--io-probe-helper") {
         return io_events::helper_main();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--pss-worker") {
+        return memory::worker_main();
     }
     let result = server::run();
     runtime_log::emit(
