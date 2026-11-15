@@ -36,9 +36,11 @@ def append(path, *records):
 
 
 def codex(ident, when, model='gpt-6.1-sol'):
+    usage={'input_tokens':1000000,'cached_input_tokens':600000,'output_tokens':1000000,
+           'reasoning_output_tokens':900000,'cache_write_input_tokens':0}
     return [{'type':'turn_context','timestamp':iso(when),'payload':{'model':model}},
-            {'type':'token_usage_record','timestamp':iso(when),'payload':{'response_id':ident,
-             'usage':{'input_tokens':1000000,'cached_input_tokens':600000,'output_tokens':1000000,'reasoning_output_tokens':900000,'cache_write_input_tokens':0}}}]
+            {'type':'token_usage_record','timestamp':iso(when),'payload':{'response_id':ident,'usage':usage}},
+            {'type':'event_msg','timestamp':iso(when),'payload':{'type':'token_count','info':{'last_token_usage':usage}}}]
 
 
 def quotas(root, now, used=25):
@@ -70,9 +72,8 @@ def batch(path, sid, when, model, totals):
         early=sid=='local' and model=='gpt-6-astra' and i==0
         append(path,{'type':'token_usage_record','timestamp':iso(when-41 if early else when+i/count),'payload':{
             'thread_id':sid,'response_id':f'{sid}-{model}-{i}','usage':usage}})
-        if early:
-            append(path,{'type':'event_msg','timestamp':iso(when),'payload':{'type':'token_count',
-                'info':{'last_token_usage':usage}}})
+        append(path,{'type':'event_msg','timestamp':iso(when+i/count),'payload':{'type':'token_count',
+            'info':{'last_token_usage':usage}}})
 
 
 
@@ -99,6 +100,7 @@ def main():
         dump(state/'accounting-transfers/in/operation.json',{'id':'in','moving':True,'phase':'complete','created_ms':int((now-20)*1000),
             'plan':{'group':{'members':[{'source':'codex','sid':'imported'}]}}})
         # Native compaction metering is outside the reference token_count basis.
+        append(cp,*codex('unreported',now-45)[:-1])
         append(cp,*codex('compaction',now-40),{'type':'compacted','timestamp':iso(now-39),'payload':{'compaction_response_id':'compaction'}})
         append(root/'claude/project/session.jsonl',{'type':'assistant','sessionId':'claude-usage','timestamp':iso(now-60),
             'message':{'id':'claude-r1','model':'claude-sonnet-5-5','usage':{'input_tokens':1000000,'output_tokens':100000,'cache_read_input_tokens':1000000,
@@ -193,12 +195,13 @@ def main():
             quotas(state,now,used=15)
             append(cp,*codex('long',now-30));refresh();expect(current).to_contain_text('$492.69')
             # Half an appended line is retried. Unknown pricing hides the estimate.
-            record=codex('unknown',now-25,'unpriced-model')[-1]
+            record=codex('unknown',now-25,'unpriced-model')[1]
             prefix=codex('unknown',now-25,'unpriced-model')[0];append(cp,prefix)
             raw=json.dumps(record)
             with cp.open('a') as f:f.write(raw[:40])
             refresh();expect(current).to_contain_text('$492.69')
             with cp.open('a') as f:f.write(raw[40:]+'\n')
+            append(cp,codex('unknown',now-25,'unpriced-model')[2])
             refresh();expect(current.locator('small')).to_have_count(0)
             assert '缺少型号、价格或完整计量' in current.get_attribute('title')
             # Correct a price without re-reading native logs.
@@ -210,6 +213,10 @@ def main():
             quotas(state,now,used=100);refresh();expect(current).to_contain_text('$509.41')
             expect(current.locator('small')).to_have_text('整轮 ≈ $509.41')
             assert '后续 Credits' in current.get_attribute('title')
+            # A different session with only modern request metering remains usable.
+            append(root/'codex/native-only.jsonl',{'type':'session_meta','timestamp':iso(now-10),'payload':{'id':'native-only'}},
+                   *codex('native-only',now-10)[:-1])
+            refresh();expect(page.locator('[data-source="codex"] tbody .quota-api').nth(1)).to_contain_text('$542.85')
             quotas(state,now,used=0);refresh();expect(current.locator('small')).to_have_count(0)
             quotas(state,now-1800,used=30);refresh();expect(current.locator('small')).to_have_count(0)
             # Missing retired history is explicit and must not yield a full estimate.

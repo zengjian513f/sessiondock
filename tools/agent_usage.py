@@ -179,6 +179,7 @@ def parse_record(source, row, state, path, offset):
     if not isinstance(row, dict):
         return items
     if source == 'codex' and row.get('type') == 'token_usage_record' and items:
+        items[0]['meter'] = 'request'
         state['pending_request'] = items[0]
     if source == 'codex' and row.get('type') == 'event_msg':
         payload = row.get('payload') or {}
@@ -188,12 +189,15 @@ def parse_record(source, row, state, path, offset):
             # response. Use its observation time for a matched request so a
             # first-percentage checkpoint has exactly the same numerator.
             pending = state.get('pending_request')
-            last = (payload.get('info') or {}).get('last_token_usage') or {}
+            info = payload.get('info') or {}
+            last = info.get('last_token_usage') or {}
+            if last or info.get('total_token_usage'):
+                items.append({'kind':'counter_mode', 'id':state.get('sid',path.stem)})
             if pending:
                 t = pending['tokens']
                 if (last.get('input_tokens'),last.get('cached_input_tokens',0),last.get('output_tokens')) == (t['input']+t['cache_read'],t['cache_read'],t['output']):
                     pending = state.pop('pending_request')
-                    items.append({**pending, 'at':stamp(row.get('timestamp'))})
+                    items.append({**pending, 'at':stamp(row.get('timestamp')), 'reported':True})
             for name in ('primary', 'secondary'):
                 bucket = limits.get(name) or {}
                 if not number(bucket.get('used_percent')):
@@ -281,13 +285,15 @@ class Ledger:
               primary key(source,id));
             create index if not exists quota_time on quota_events(source,at);
             create table if not exists excluded_events(source text,id text,primary key(source,id));
+            create table if not exists counter_sessions(source text,id text,primary key(source,id));
         ''')
         self.bytes = 0
         self.changed = 0
 
     def put(self, source, item):
-        if item.get('kind') == 'excluded':
-            self.db.execute('insert or ignore into excluded_events values (?,?)', (source,item['id']))
+        if item.get('kind') in ('excluded','counter_mode'):
+            table = 'excluded_events' if item['kind'] == 'excluded' else 'counter_sessions'
+            self.db.execute(f'insert or ignore into {table} values (?,?)', (source,item['id']))
             return
         table = 'quota_events' if item.get('kind') == 'quota' else 'events'
         self.db.execute(f'insert or replace into {table} values (?,?,?,?)',
@@ -523,6 +529,7 @@ def load_prices(config):
 def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
     ownership = ownership or Ownership(config)
     rows = []
+    counter_sessions = {sid for sid, in ledger.db.execute('select id from counter_sessions where source=?', ('codex',))}
     for source in config.get('roots', {}):
         if source not in SOURCES:
             continue
@@ -565,6 +572,8 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                                           (source, start, min(until + .000001, end)))
                 for raw, in items:
                     item = json.loads(raw); model = item['model']
+                    if source == 'codex' and item.get('meter') == 'request' and not item.get('reported') and item.get('sid') in counter_sessions:
+                        continue
                     if not ownership.contains(source, item):
                         continue
                     match = None if multiple else True if fallback else group_matches(source, bucket, model)
