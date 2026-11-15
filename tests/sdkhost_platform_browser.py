@@ -133,10 +133,13 @@ def main():
                     assert 'worker:alive' in bytes(act('read', key='tree', offset=0, stream='stdout')['bytes']).decode()
                     act('stop', key='tree')
                     finished('tree')
-                    act('launch', key='running')
-                    host_pid_file = Path(root) / 'running' / 'host.pid'
-                    if Path('/proc/self/stat').exists() and host_pid_file.is_file():
-                        host_pid = int(host_pid_file.read_text().strip())
+                    running = act('launch', key='running')
+                    if Path('/proc/self/stat').exists():
+                        child_stat = Path(f"/proc/{running['pid']}/stat").read_text()
+                        host_pid = int(child_stat[child_stat.rfind(')') + 2:].split()[1])
+                        assert host_pid > 1, host_pid
+                        host_cmdline = Path(f'/proc/{host_pid}/cmdline').read_text().split('\0')
+                        assert str(Path(root) / 'running') in host_cmdline, host_cmdline
                         def host_threads(pid):
                             for line in Path(f'/proc/{pid}/status').read_text().splitlines():
                                 if line.startswith('Threads:'):
