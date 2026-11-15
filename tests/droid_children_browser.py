@@ -35,22 +35,22 @@ def check(page, base, fixture, output, hub=False):
     expect(child).to_contain_text('Droid delegated child')
     expect(page.locator(f'#session-view-menu button[data-agent="{fixture.fork}"]')).to_have_count(0)
     child.click()
-    expect(page.locator('#detail')).to_contain_text('Child history answer')
-    expect(page.locator('#detail')).not_to_contain_text('Parent history answer')
+    expect(page.locator('#right')).to_contain_text('Child history answer')
+    expect(page.locator('#right')).not_to_contain_text('Parent history answer')
     expect(page.locator('#a-sdk')).to_be_visible()
     expect(page.locator('#sdk-input')).to_be_visible()
     assert page.evaluate('NativeSdkView.readOnly')
     page.screenshot(path=str(output / 'child-wide-light.png'), full_page=True)
     page.locator('#a-view-switch').click()
     page.locator('#session-view-menu button[data-agent=""]').click()
-    expect(page.locator('#detail')).to_contain_text('Parent history answer')
+    expect(page.locator('#right')).to_contain_text('Parent history answer')
     fork = page.locator('#side .item').filter(has=page.locator('.t', has_text='Droid independent fork')).first
     expect(fork).to_be_visible(); fork.click()
-    expect(page.locator('#detail')).to_contain_text('Fork history answer')
+    expect(page.locator('#right')).to_contain_text('Fork history answer')
     expect(page.locator('#side')).not_to_contain_text('Droid orphan child')
     ambiguous = page.locator('#side .item').filter(has=page.locator('.t', has_text='Droid ambiguous child')).first
     expect(ambiguous).to_be_visible(); ambiguous.click()
-    expect(page.locator('#detail')).to_contain_text('父线程 ID 在已配置索引中存在歧义')
+    expect(page.locator('#right')).to_contain_text('父线程 ID 在已配置索引中存在歧义')
     # Inspect the same browser-visible list response to distinguish fork and child.
     rows = page.request.get(base + '/api/sessions').json()['sessions']
     parent_row = next(row for row in rows if row['uid'] == uid)
@@ -66,7 +66,7 @@ def check(page, base, fixture, output, hub=False):
     # A viewport transition can restore the list; select the same child explicitly.
     if page.locator('#side').is_visible():
         parent.click();page.locator('#a-view-switch').click();child.click()
-    expect(page.locator('#detail')).to_contain_text('Child history answer')
+    expect(page.locator('#right')).to_contain_text('Child history answer')
     page.screenshot(path=str(output / 'child-mobile-dark.png'), full_page=True)
     assert not errors, errors
     assert not fixture.frames('spawn'), 'read-only child navigation must not start Droid'
@@ -156,24 +156,28 @@ def check(page, base, fixture, output, hub=False):
     selected_child(fixture.child)
     (fixture.root/'fork-fail').touch()
     with page.expect_response(lambda r:r.url.endswith('/api/native-sdk/fork')) as failed:
-        reveal(page,'[data-sdk-action="fork"]').click();confirm(page,'分支')
+        page.locator('#sdk-input').fill('/fork')
+        page.locator('#sdk-send').click()
+        confirm(page,'分支')
     assert not failed.value.ok
+    expect(page.locator('#sdk-input')).to_have_value('/fork')
     selected_child(fixture.child)
     (fixture.root/'fork-fail').unlink()
     with page.expect_response(lambda r:r.url.endswith('/api/native-sdk/fork')) as forked:
-        reveal(page,'[data-sdk-action="fork"]').click();confirm(page,'分支')
+        page.locator('#sdk-send').click()
+        confirm(page,'分支')
     assert forked.value.ok,forked.value.text()
     branch=receipt(forked.value.json());assert branch['uid']==uid and branch['agent']!=fixture.child,branch
     selected_child(branch['agent'])
+    expect(page.locator('#sdk-input')).to_have_value('')
     repeat=page.request.post(base+'/api/native-sdk/fork',data=forked.value.request.post_data_json)
     assert repeat.ok and receipt(repeat.json())['agent']==branch['agent'],repeat.text()
     send(page,'derived child continuation')
     expect(page.locator('.sdk-live')).to_contain_text('Droid final derived child continuation')
+    expect(page.locator('.sdk-live .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)).to_be_visible()
     assert 'derived child continuation' not in fixture.paths[fixture.child].read_text()
     # Native file rewind also keeps calling metadata and navigates a new child.
-    reveal(page,'[data-sdk-action="rewind"]').click()
-    page.locator('#sdk-action-dialog select').select_option('seed-user-0')
-    page.locator('#sdk-action-dialog button[type=submit]').click()
+    page.locator('.sdk-history .msg[data-role="user"], .sdk-live .msg[data-role="user"]').first.get_by_role('button', name='回退对话与文件', exact=True).click()
     expect(page.locator('#sdk-action-dialog')).to_contain_text('无法恢复：expired.txt')
     with page.expect_response(lambda r:r.url.endswith('/api/native-sdk/rewind')) as rewound:
         page.locator('#sdk-action-dialog button[type=submit]').click()

@@ -140,7 +140,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     row.click()
     start_sdk(page)
     pane = page.locator("#session-content-view.sdk-pane")
-    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="compact"]')).to_be_enabled()
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
     expect(pane.locator('.sdk-history')).not_to_contain_text('已压缩')
     assert page.evaluate('CodexSdkView.historyData.messages.some(m => m.event_kind === "compact")'), 'native compaction record must remain available'
@@ -149,24 +149,25 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     def choose_action(action):
         button = pane.locator(f'[data-sdk-action="{action}"]')
         if not button.is_visible(): pane.locator('#sdk-more').click()
-        expect(button).to_have_attribute('title', {'compact':'压缩上下文','fork':'分支会话','revert':'回退对话','review':'代码审查'}[action])
+        expected_prefix = {'compact': '压缩上下文：', 'review': '代码审查：'}[action]
+        assert (button.get_attribute('title') or '').startswith(expected_prefix), button.get_attribute('title')
         expect(button.locator('svg use')).to_have_count(1)
         if button.evaluate("n => n.parentElement.classList.contains('sdk-pickers')"):
             expect(button.locator('.sdk-action-label')).to_be_hidden()
             assert button.evaluate('n => n.getBoundingClientRect().width')==24
         button.click()
 
-    box.fill('工具栏分支取消后保留草稿')
-    choose_action('fork')
+    box.fill('气泡分支取消后保留草稿')
+    pane.locator('.sdk-history .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True).click()
     confirmation = page.locator('dialog.app-popup[open]')
     expect(confirmation).to_contain_text('原会话保持不变')
     assert not fake.methods('thread/fork')
     confirmation.get_by_role('button', name='取消', exact=True).click()
-    expect(box).to_have_value('工具栏分支取消后保留草稿')
+    expect(box).to_have_value('气泡分支取消后保留草稿')
     assert page.evaluate('S.sel') == source_uid and not fake.methods('thread/fork')
-    box.fill('')
-    # The menu selects actual native turn IDs, including additional pages.
-    choose_action("revert")
+    box.fill('/revert')
+    # /revert without argument selects actual native turn IDs, including additional pages.
+    send.click()
     dialog = page.locator("#sdk-action-dialog")
     expect(dialog).to_contain_text("不回滚工作区文件")
     expect(dialog.locator("#sdk-revert-turn")).to_have_value(TURN2)
@@ -176,6 +177,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         page.screenshot(path=str(screenshots / f"actions-{label}-revert.png"))
     dialog.get_by_role("button", name="回退", exact=True).click()
     expect(dialog).to_have_count(0)
+    expect(box).to_have_value('')
     expect(pane.locator(".sdk-history")).to_contain_text("retained answer")
     expect(pane.locator(".sdk-history")).not_to_contain_text("remove this answer")
 
@@ -184,7 +186,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     confirmation = page.locator("dialog.app-popup[open]")
     expect(confirmation).to_contain_text("不回滚工作区文件")
     confirmation.get_by_role("button", name="取消", exact=True).click()
-    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="compact"]')).to_be_enabled()
     expect(box).to_have_value("/revert " + TURN2)
     assert len(fake.methods("thread/revert")) == 1
 
@@ -247,7 +249,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         page.screenshot(path=str(screenshots / f"actions-{label}-review.png"))
     dialog.get_by_role("button", name="开始审查", exact=True).click()
     expect(pane.locator(".sdk-live")).to_contain_text("Synthetic review result: no findings")
-    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="review"]')).to_be_enabled()
     assert fake.methods("review/start")[-1]["params"]["target"] == {"type": "custom", "instructions": "检查异常处理和中文路径"}
     for command, target in [("/review uncommitted", {"type": "uncommittedChanges"}),
                             ("/review branch main", {"type": "baseBranch", "branch": "main"}),

@@ -50,7 +50,7 @@ def exercise_hub_fork(browser, native, node_port, binary, root, screenshot):
         page.locator(f'#side .item[data-uid="{parent}"]').click()
         start_sdk(page)
         expect(page.locator('#sdk-input')).to_be_visible()
-        fork = reveal(page, '[data-sdk-action="fork"]')
+        fork = page.locator('.sdk-history .msg[data-role="assistant"], .sdk-live .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)
         with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as forked:
             fork.click()
             page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
@@ -331,25 +331,32 @@ def main():
                     send('revert this message')
                     before_revert = snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: revert this message')")
                     boundary = next(m['native_id'] for m in before_revert['raw']['items'] if m.get('role') == 'user' and m.get('content') == 'revert this message')
-                    action('revert')
-                    page.locator('select[aria-label="回退消息"]').select_option(boundary)
-                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    expect(page.locator('[data-sdk-action="unrevert"]')).to_be_hidden()
+                    expect(page.locator('[data-sdk-action="revert_commit"]')).to_be_hidden()
+                    revert_bubble = page.locator('.sdk-live .msg[data-role="user"]').filter(has_text='revert this message').last
+                    revert_bubble.get_by_role('button', name='回退到此处之前', exact=True).click()
+                    page.locator('dialog.app-popup[open]').get_by_role('button', name='回退', exact=True).click()
                     snapshot('r => !!r.revert?.messageID')
+                    expect(page.locator('#sdk-input')).to_have_value('revert this message')
+                    page.locator('#sdk-input').fill('')
                     staged = [r for r in native.received if r[1].endswith('/revert/stage')][-1]
                     assert staged[2] == {'messageID': boundary, 'files': False}
                     action('unrevert')
                     snapshot('r => r.revert === null')
+                    expect(page.locator('[data-sdk-action="unrevert"]')).to_be_hidden()
+                    if page.locator('#sdk-more-menu').is_visible():
+                        page.keyboard.press('Escape')
 
                     # Native full-history and per-message forks receive their
                     # own identity and must not steal the source SID.
-                    action('fork')
+                    page.locator('.sdk-history .msg[data-role="assistant"], .sdk-live .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True).click()
                     page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
                     assert native.forks == 1
                     return_to_seed()
                     send('fork before this message')
                     snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: fork before this message')")
-                    bubble = page.locator('.sdk-live .msg').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-menu')).last
+                    bubble = page.locator('.sdk-live .msg[data-role="user"]').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-menu')).last
                     bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
                     page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
@@ -361,13 +368,16 @@ def main():
                     send('commit this conversation boundary')
                     before_commit = snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: commit this conversation boundary')")
                     boundary = next(m['native_id'] for m in before_commit['raw']['items'] if m.get('role') == 'user' and m.get('content') == 'commit this conversation boundary')
-                    action('revert')
-                    page.locator('select[aria-label="回退消息"]').select_option(boundary)
-                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    commit_bubble = page.locator('.sdk-live .msg[data-role="user"]').filter(has_text='commit this conversation boundary').last
+                    commit_bubble.get_by_role('button', name='回退到此处之前', exact=True).click()
+                    page.locator('dialog.app-popup[open]').get_by_role('button', name='回退', exact=True).click()
                     snapshot('r => !!r.revert?.messageID')
+                    expect(page.locator('#sdk-input')).to_have_value('commit this conversation boundary')
+                    page.locator('#sdk-input').fill('')
                     action('revert_commit')
                     page.get_by_role('dialog').get_by_role('button', name='提交回退', exact=True).click()
                     snapshot('r => r.revert === null')
+                    expect(page.locator('[data-sdk-action="revert_commit"]')).to_be_hidden()
                     assert all(record['id'] != boundary for record in native.messages[SID])
                     assert any(r[0] == 'POST' and r[1].endswith('/revert/commit') for r in native.received)
 
@@ -388,7 +398,7 @@ def main():
                     assert len(native_shells) == 1, native_shells
                     native.lose_ack = 'fork'
                     with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as lost:
-                        action('fork')
+                        page.locator('.sdk-history .msg[data-role="assistant"], .sdk-live .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True).click()
                         page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
                     assert not lost.value.ok
                     forks_before_retry = native.forks

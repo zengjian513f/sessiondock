@@ -83,7 +83,7 @@ const SdkUI = {
           <div class="sdk-options"><div class="sdk-pickers">
             <label class="new-effort sdk-model sdk-model-fit" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
             <label class="new-effort sdk-effort" title="推理强度" hidden><span class="visually-hidden">推理强度</span><select id="sdk-effort" aria-label="推理强度"></select></label>
-            <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
+            <button class="btn" id="sdk-more" type="button" title="更多设置与操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
             <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作"></div>
           </div></div>
         </div>
@@ -280,23 +280,83 @@ const SdkUI = {
   },
 
   decorateUserBubble(view, node, items) {
-    if (!items.length || node.querySelector('.sdk-bubble-menu')) return;
+    if (!items.length || node.querySelector(':scope > .message-header .sdk-bubble-menu')) return;
     node.classList.add('sdk-user-actions');
     const menu = el('div', 'sdk-bubble-menu');
     menu.setAttribute('role', 'group');
     menu.setAttribute('aria-label', '消息操作');
-    for (const [label, handler] of items) {
+    for (const [label, handler, tooltip] of items) {
       const button = el('button', 'message-action');
       button.innerHTML = uiIcon(label.includes('回退') ? 'undo' : 'fork');
       button.type = 'button';
-      button.title = label; button.setAttribute('aria-label', label);
+      button.title = tooltip || label;
+      button.setAttribute('aria-label', label);
       button.onclick = async () => {
         button.disabled = true;
         try { await handler(); } finally { button.disabled = false; }
       };
       menu.append(button);
     }
-    node.querySelector('.message-actions')?.append(menu);
+    node.querySelector(':scope > .message-header .message-actions')?.append(menu);
+  },
+
+  nextUserBubble(view, node) {
+    if (!view?.history || !view?.live || !node?.isConnected) return {nextUser: null, hasGap: false};
+    const topNodes = [...view.history.children, ...view.live.children];
+    const start = topNodes.indexOf(node);
+    if (start < 0) return {nextUser: null, hasGap: false};
+    for (let i = start + 1; i < topNodes.length; i++) {
+      const candidate = topNodes[i];
+      if (candidate.classList?.contains('history-gap')) return {nextUser: null, hasGap: true};
+      if (candidate.matches?.('.msg[data-role="user"]')) return {nextUser: candidate, hasGap: false};
+    }
+    return {nextUser: null, hasGap: false};
+  },
+
+  syncAssistantBubbles(view) {
+    if (!view?.history || !view?.live) return;
+    const codex = String(view.uid || '').startsWith('codex:');
+    const supported = codex || Boolean(view.capabilities?.fork && !String(view.uid || '').startsWith('kiro:'));
+    const clear = node => {
+      node.querySelector(':scope > .message-header .sdk-bubble-menu')?.remove();
+      node.classList.remove('sdk-user-actions');
+    };
+    for (const folded of view.live.querySelectorAll('.turn-process .msg[data-role="assistant"].sdk-user-actions')) clear(folded);
+    const topNodes = [...view.history.children, ...view.live.children];
+    if (!supported) {
+      for (const node of topNodes) if (node.matches?.('.msg[data-role="assistant"].sdk-user-actions')) clear(node);
+      return;
+    }
+    const tailComplete = codex
+      ? !view.turn && !(!view.connected && ['working', 'waiting'].includes(view.historyData?.activity?.state))
+      : view.connected
+        ? !view.running && !(view.requests?.size || view.raw?.requests?.length)
+        : view.historyTailComplete !== false;
+    const canForkBefore = userNode => {
+      const msg = userNode?._sdkMessage;
+      if (codex) return Boolean(msg?.turn_id || userNode?.dataset.turnId);
+      const id = NativeSdkControls.messageIdentity(view, msg);
+      return Boolean(id) && (!String(view.uid || '').startsWith('droid:') || Boolean(view.capabilities?.fork_before));
+    };
+    let nextUser = null, blockedByGap = false, seenAssistantInTurn = false;
+    for (let i = topNodes.length - 1; i >= 0; i--) {
+      const node = topNodes[i];
+      if (node.classList?.contains('history-gap')) {
+        nextUser = null; blockedByGap = true; seenAssistantInTurn = false;
+      } else if (node.matches?.('.msg[data-role="user"]')) {
+        nextUser = node; blockedByGap = false; seenAssistantInTurn = false;
+      } else if (node.matches?.('.msg[data-role="assistant"]')) {
+        const isTurnConclusion = !seenAssistantInTurn;
+        seenAssistantInTurn = true;
+        const eligible = isTurnConclusion && !blockedByGap && (nextUser ? canForkBefore(nextUser) : tailComplete);
+        if (eligible) {
+          if (codex) CodexSdkActions.decorateAssistant(view, node);
+          else NativeSdkControls.decorateAssistant(view, node);
+        } else if (node.classList.contains('sdk-user-actions')) {
+          clear(node);
+        }
+      }
+    }
   },
 
   ungroupTools(view) {
@@ -437,10 +497,14 @@ const SdkUI = {
       let node = prior?.node;
       if (!node || kept.has(node) || node.parentNode !== view.history || !unchanged(prior.plan, item)) {
         [node] = buildPlan(view.history, [item], before);
+        if (item.m) node._sdkMessage = item.m;
         if (decorate) decorate(node, item.m);
         if (item.turn && folds.has(node.dataset.turnId))
           folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
-      } else if (node !== before) view.history.insertBefore(node, before);
+      } else {
+        if (item.m) node._sdkMessage = item.m;
+        if (node !== before) view.history.insertBefore(node, before);
+      }
       before = node.nextSibling;
       // Activity annotates interruption fields in place; media continuation
       // replaces media fields. Retain the displayed fields, not that mutable row.
@@ -452,6 +516,7 @@ const SdkUI = {
     }
     for (const node of [...view.history.childNodes]) if (!kept.has(node)) node.remove();
     view.history._sdkPlan = {entries, actions};
+    this.syncAssistantBubbles(view);
     markMatches(view.history);
     updateMatchNav();
     // History is only part of a snapshot: live tools may still be unpacked.

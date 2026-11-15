@@ -20,9 +20,7 @@ def check(f, base, screenshots):
         page=browser.new_page(viewport={'width':1280,'height':900})
         page.goto(base,wait_until='networkidle');uid=page.locator('#side .item[data-uid^="droid:"]').first.get_attribute('data-uid');open_sdk(page,f,expect,uid=uid)
         def dialog():
-            reveal(page, '[data-sdk-action=rewind]').click()
-            page.locator('#sdk-action-dialog select').select_option('seed-user-0')
-            page.locator('#sdk-action-dialog button[type=submit]').click()
+            page.locator('.sdk-history .msg[data-role="user"], .sdk-live .msg[data-role="user"]').first.get_by_role('button', name='回退对话与文件', exact=True).click()
             expect(page.locator('#sdk-action-dialog')).to_contain_text('无法恢复：expired.txt')
         dialog()
         expect(page.get_by_role('checkbox',name=f'恢复 {existing}',exact=True)).not_to_be_checked()

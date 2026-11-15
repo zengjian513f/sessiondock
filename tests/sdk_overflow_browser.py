@@ -55,7 +55,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     # All controls fit inline; empty groups and unavailable reset cards leave no ⋯.
     expect(page.locator('.sdk-reset')).to_have_attribute('hidden', '')
     expect(more).to_be_hidden()
-    expect(page.locator('.sdk-pickers [data-sdk-action]')).to_have_count(4)
+    expect(page.locator('.sdk-pickers [data-sdk-action]')).to_have_count(3)
     expect(permissions).to_be_hidden()
     assert_inline_usage(page)
     page.locator('#sdk-input').fill('Keep this draft while resizing and changing policies')

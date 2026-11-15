@@ -34,9 +34,23 @@ const NativeSdkControls = {
     menu.classList.add('sdk-native-menu');
     // ⋯ only holds controls that do not fit; usage stays in the footer and its tooltip.
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
-    for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
-      const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=label;button.setAttribute('aria-label',label);
-      button.innerHTML=uiIcon(({fork:'fork',compact:'compact',revert:'undo',unrevert:'undo',revert_commit:'continue',rewind:'undo',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',view.uid.startsWith('droid:') && method==='rewind'?'回退对话与文件':label));
+    const source = view.uid.split(':')[0], composerSteer = ['kiro','droid','agy'].includes(source);
+    const actionDefs = [
+      ['steer','引导当前任务',composerSteer
+        ? '引导当前任务：将输入框内容立即插队发给运行中回合（Ctrl+Enter；空闲时直接作为新回合发送）'
+        : '引导当前任务：向正在运行的回合插队发送补充指令'],
+      ['compact','压缩上下文',source==='droid'
+        ? '压缩上下文：压缩早期对话历史以释放上下文空间；若原生生成新会话将自动切换（/compact）'
+        : '压缩上下文：压缩早期对话历史以释放上下文空间（/compact）'],
+      ['unrevert','撤销回退','撤销回退：取消当前暂存的对话回退，恢复被隐藏的消息'],
+      ['revert_commit','提交回退','提交回退：永久移除已暂存回退的对话记录，不修改工作区文件'],
+      ['shell','运行命令','运行命令：在会话工作目录直接执行 Shell 命令，不经过模型推理（等同输入 !命令）'],
+      ['command','原生命令','原生命令：选择并执行当前原生服务注册的斜杠命令'],
+      ['permissions','权限规则','权限规则：查看或编辑当前会话的 OpenCode 原生权限规则 JSON'],
+    ];
+    for (const [method,label,tooltip] of actionDefs) {
+      const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=tooltip;button.setAttribute('aria-label',label);
+      button.innerHTML=uiIcon(({compact:'compact',unrevert:'undo',revert_commit:'continue',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',label));
       button.onclick = () => { view.closeToolbarMenus(); void this.action(view,method); }; actions.append(button);
     }
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
@@ -107,9 +121,14 @@ const NativeSdkControls = {
     }
     this.paintSettings(view);this.paintUsage(view);this.paintQueue(view);this.layout(view);
   },
+  hasStagedRevert(view) {
+    const revert = view.raw?.revert;
+    return Boolean(typeof revert === 'string' ? revert : revert?.messageID || revert?.message_id);
+  },
   supportsAction(view,method) {
     // Permission requests do not imply OpenCode's permission-rule settings API.
     if(method==='permissions')return view.uid.startsWith('opencode:') && (view.capabilities.permissions===true || view.capabilities.settings===true);
+    if(method==='unrevert' || method==='revert_commit')return view.capabilities[method]===true && this.hasStagedRevert(view);
     return view.capabilities[method]===true;
   },
   rememberUsage(view) {
@@ -140,16 +159,6 @@ const NativeSdkControls = {
       if (!Number.isFinite(used)) return;
       gauges.append(UsageUI.gauge(label,used,title));text(label,title);
     };
-    if(total!=null){const node=el('span','sdk-credits',`${total >= 10000 ? total.toLocaleString('en', {notation:'compact', maximumFractionDigits:1}) : count(total)} tok`);node.title=`累计 ${count(total)} tokens；不是当前上下文占用`;gauges.append(node);}
-    if(credits!=null){
-      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
-      const node=el('span','sdk-credits',creditLabel);
-      node.title=`已用 ${creditLabel}${this.formatReset(creditResetRaw)}`;
-      gauges.append(node);
-      text('Credit',()=>`${creditLabel}${this.formatReset(creditResetRaw)}`);
-    }
-    for(const [label,value] of [['输入 Token',input],['输出 Token',output],['思考 Token',number(t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens)],['缓存读取',number(t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens)],['缓存写入',number(t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens)],['累计 Token',total]])if(value!=null)text(label,count(value));
-    const cost=usage.usageIsIncomplete || usage.costIsPartial ? undefined : number(usage.cost_usd,usage.total_cost_usd,typeof usage.costUsdTicks==='number'?usage.costUsdTicks/1e10:null); if(cost!=null)text('成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage || {};
     const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens) ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
     UsageUI.rememberQuota(view.uid,view.usageData?.quota);
@@ -169,6 +178,12 @@ const NativeSdkControls = {
       const used=number(limit?.utilization,limit?.used_percentage,limit?.usedPercent);
       if(used!=null)text(UsageUI.window(window),()=>`已用 ${UsageUI.percent(used)}%${this.formatReset(limit.resets_at)}`);
     }
+    for(const [label,value] of [['累计 Token',total],['输入 Token',input],['输出 Token',output],['思考 Token',number(t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens)],['缓存读取',number(t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens)],['缓存写入',number(t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens)]])if(value!=null)text(label,count(value));
+    if(credits!=null){
+      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
+      text('Credit',()=>`${creditLabel}${this.formatReset(creditResetRaw)}`);
+    }
+    const cost=usage.usageIsIncomplete || usage.costIsPartial ? undefined : number(usage.cost_usd,usage.total_cost_usd,typeof usage.costUsdTicks==='number'?usage.costUsdTicks/1e10:null); if(cost!=null)text('成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
     if(usage.basis)text('统计范围',usage.basis);
     if(view.raw?.step_usage)text('最近步骤用量',JSON.stringify(view.raw.step_usage));
     for(const [key,error] of Object.entries(view.raw?.usage_errors || {}))text(`用量 ${key}`,error);
@@ -229,22 +244,40 @@ const NativeSdkControls = {
     for(const definition of definitions){definition[3]=sdkSettingValue(view,definition[0],definition[3] || '');definition[4]=view.settingChoices.has(definition[0]);}
     const signature=JSON.stringify(definitions);if(holder.dataset.state===signature){sdkSyncSettings(view);return;}holder.dataset.state=signature;
     view.pane.querySelector('.sdk-status-row').dataset.footerLayout='';
-    for(const control of view.nativeSettings || [])control.remove();view.nativeSettings=[];holder.replaceChildren();
+    const existing=new Map((view.nativeSettings || []).map(label=>[label.querySelector('select')?.id,label]));
+    const nextSettings=[];
     for(const [key,title,options,current,pending] of definitions) {
-      const label=el('label','new-effort sdk-native-setting'),select=document.createElement('select');label.title=title;select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
+      const selectId=`native-sdk-${key}`;
+      let label=existing.get(selectId),select=label?.querySelector('select');
+      if(label)existing.delete(selectId);
+      else{
+        label=el('label','new-effort sdk-native-setting');label.title=title;
+        select=document.createElement('select');select.id=selectId;select.setAttribute('aria-label',title);
+        label.append(el('span','visually-hidden',title),select);holder.append(label);
+        select.onchange=async()=>{
+          const generation=view.generation,value=select.value;
+          try{
+            await this.settings(view,{[key]:key==='fast_mode'?value==='true':value});
+          }catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}
+        };
+      }
       const names=source==='droid' && key==='mode'?{auto:'执行模式',spec:'计划模式'}:source==='droid' && key==='autonomy_level'?{off:'自主权限关闭',low:'低自主权限',medium:'中自主权限',high:'高自主权限'}:key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',autopilot:'Autopilot',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
-      for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
-      if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
+      const nextOpts=[];
+      for(const option of options){const id=typeof option==='string'?option:option.id || option.name;nextOpts.push([id,names[id] || (typeof option==='string'?option:option.name || option.label || id)]);}
+      if(current && !nextOpts.some(([id])=>id===current))nextOpts.push([current,names[current] || current]);
+      const optSig=JSON.stringify(nextOpts);
+      if(select.dataset.options!==optSig){
+        select.replaceChildren();
+        for(const [id,text] of nextOpts)select.add(new Option(text,id));
+        select.dataset.options=optSig;
+      }
       ConversationUI.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
       select.disabled=pending;
-      label.hidden=!options.length && !current;label.append(el('span','visually-hidden',title),select);holder.append(label);view.nativeSettings.push(label);
-      select.onchange=async()=>{
-        const generation=view.generation,value=select.value;
-        try{
-          await this.settings(view,{[key]:key==='fast_mode'?value==='true':value});
-        }catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}
-      };
+      label.hidden=!options.length && !current;
+      nextSettings.push(label);
     }
+    for(const stale of existing.values())stale.remove();
+    view.nativeSettings=nextSettings;
     sdkSyncSettings(view);
   },
   async settings(view, values) {
@@ -390,9 +423,11 @@ const NativeSdkControls = {
         const text=kiro ? body.hide_source
           ? '回退并从所选轮次继续？新会话保留该轮及回复，原会话会隐藏。原会话内容和工作区文件保持不变。'
           : '从所选轮次创建分支？新会话保留该轮及回复，原会话保持不变。'
-          : body.before!=null || body.prompt_index!=null
-            ? droid ? '从这条消息之前创建分支？仅分支对话，原会话和工作区文件保持不变。' : '从这条消息之前创建分支？原会话保持不变。'
-            : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
+          : body.after_reply
+            ? '保留到此回复创建分支？将在新会话中继续，此回复之后的对话不会进入新分支，原会话保持不变。'
+            : body.before!=null || body.prompt_index!=null
+              ? droid ? '从这条消息之前创建分支？仅分支对话，原会话和工作区文件保持不变。' : '从这条消息之前创建分支？原会话保持不变。'
+              : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
         if(!await appConfirm(text,{ok:kiro && body.hide_source?'回退':'分支'}))return false;
       }
       if((method==='revert' && body.message_id) || (!droid && method==='rewind' && body.prompt_index!=null)){
@@ -405,7 +440,7 @@ const NativeSdkControls = {
         modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish({text:input.value});};body=await modal.answer;if(!body)return false;
       }
       if(method==='permissions'){
-        const modal=CodexSdkActions.form('权限规则','编辑 OpenCode 原生 permissions；保存后由原生服务校验。','保存');const input=document.createElement('textarea');input.setAttribute('aria-label','权限规则 JSON');input.value=JSON.stringify(view.raw?.permissions || [],null,2);modal.fields.append(input);
+        const modal=CodexSdkActions.form('权限规则','编辑 OpenCode 原生 permissions JSON 数组（例如 [{"permission":"bash","pattern":"*","action":"ask"}]）；保存后由原生服务校验。','保存');const input=document.createElement('textarea');input.setAttribute('aria-label','权限规则 JSON');input.value=JSON.stringify(view.raw?.permissions || [],null,2);modal.fields.append(input);
         modal.form.onsubmit=event=>{event.preventDefault();try{modal.finish(JSON.parse(input.value));}catch{modal.error.textContent='请输入有效 JSON';}};
         const permissions=await modal.answer;if(permissions==null)return false;body={permissions};method='settings';
       }
@@ -413,7 +448,7 @@ const NativeSdkControls = {
         const response=await view.request('api/native-sdk/commands',{uid:view.uid});const rows=response.commands || response.raw?.commands || response.raw?.data || response.raw || [];
         const modal=CodexSdkActions.form('原生命令','选择原生服务提供的命令。','运行');const select=document.createElement('select');select.setAttribute('aria-label','原生命令');for(const row of Array.isArray(rows)?rows:[])select.add(new Option(row.name,row.name));const input=document.createElement('textarea');input.setAttribute('aria-label','命令参数');modal.fields.append(select,input);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish({name:select.value,text:input.value});};body=await modal.answer;if(!body)return false;
       }
-      if(method==='shell' && !body.command){const modal=CodexSdkActions.form('运行命令','由原生接口直接运行命令，使用该来源的实际权限策略。','运行');const input=document.createElement('textarea');input.setAttribute('aria-label','命令');modal.fields.append(input);modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish(input.value);};body.command=await modal.answer;if(!body.command)return false;}
+      if(method==='shell' && !body.command){const modal=CodexSdkActions.form('运行命令','在会话工作目录由原生接口直接运行 Shell 命令，不经过模型推理，使用该来源的实际权限策略。','运行');const input=document.createElement('textarea');input.setAttribute('aria-label','命令');modal.fields.append(input);modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish(input.value);};body.command=await modal.answer;if(!body.command)return false;}
       if(method==='revert' && !body.message_id){const modal=CodexSdkActions.form('回退对话','选择要回退到的消息之前；不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const item of view.items.filter(item=>item.role==='user'))select.add(new Option((item.text || item.id).slice(0,100),item.id));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value)modal.finish(select.value);};body.message_id=await modal.answer;if(!body.message_id)return false;}
       if(droid && method==='rewind'){body=await this.droidRewind(view,body);if(!body)return false;}
       if(!droid && method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
@@ -423,7 +458,7 @@ const NativeSdkControls = {
         view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
         view.paintStatus();
       }
-      const {restore_text,hide_source,command_text,...nativeBody}=body;
+      const {restore_text,hide_source,command_text,after_reply,...nativeBody}=body;
       const sourceUid=view.uid;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...nativeBody,request_id:crypto.randomUUID()});
       if(!view.current(generation)){
@@ -573,25 +608,60 @@ const NativeSdkControls = {
     return null;
   },
   decorate(view,node,item) {
-    if(item?.role!=='user' || node.querySelector('.sdk-bubble-menu'))return;
-    const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:');
+    if(item?.role!=='user' || node.querySelector(':scope > .message-header .sdk-bubble-menu'))return;
+    const identity=this.messageIdentity(view,item),grok=view.uid.startsWith('grok:'),droid=view.uid.startsWith('droid:');
     if(!identity)return;
     if(view.uid.startsWith('kiro:')){
       if(item.message_id && view.capabilities.fork && view.capabilities.fork_at_message)
         SdkUI.decorateUserBubble(view,node,[
-          ['回退',()=>this.action(view,'fork',{messageId:item.message_id,hide_source:true})],
-          ['分支',()=>this.action(view,'fork',{messageId:item.message_id})],
+          ['回退',()=>this.action(view,'fork',{messageId:item.message_id,hide_source:true}),
+            '回退到此轮：保留本轮及助手回复创建新会话，并隐藏原会话（原会话与工作区文件不变）'],
+          ['分支',()=>this.action(view,'fork',{messageId:item.message_id}),
+            '从本轮创建分支：保留本轮及助手回复在新会话继续，原会话保持可见'],
         ]);
       return;
     }
     const items=[];
-    for(const [method,label] of [['fork','从此处之前分支'],[grok || view.uid.startsWith('droid:')?'rewind':'revert',view.uid.startsWith('droid:')?'回退对话与文件':'回退到此处之前']]){
-      if(!view.capabilities[method] || method==='fork' && view.uid.startsWith('droid:') && !view.capabilities.fork_before)continue;
+    for(const [method,label,tooltip] of [
+      ['fork','从此处之前分支','从此处之前创建分支：在此消息之前分出新会话并带回此条输入，原会话与工作区文件保持不变'],
+      [grok || droid?'rewind':'revert',droid?'回退对话与文件':'回退到此处之前',droid
+        ? '回退对话与文件：从此消息之前创建新分支，可勾选要恢复或删除的工作区文件，原会话保留'
+        : '回退到此消息前：移除此条及之后的对话并将消息放回输入框，不修改工作区文件'],
+    ]){
+      if(!view.capabilities[method] || method==='fork' && droid && !view.capabilities.fork_before)continue;
       items.push([label,async()=>{
-        await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork' || view.uid.startsWith('droid:')?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
-      }]);
+        await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork' || droid?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
+      },tooltip]);
     }
     SdkUI.decorateUserBubble(view,node,items);
+  },
+  decorateAssistant(view,node) {
+    SdkUI.decorateUserBubble(view,node,[
+      ['从此处创建分支',()=>this.assistantFork(view,node),
+        '保留到此回复创建分支：携带截至此回复的对话在新会话继续，原会话保持不变'],
+    ]);
+  },
+  async assistantFork(view,node) {
+    const {nextUser,hasGap}=SdkUI.nextUserBubble(view,node);
+    if(hasGap){
+      view.setNotice('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。','blocked');
+      return false;
+    }
+    if(!nextUser){
+      if(view.running){
+        view.setNotice('当前回合尚未结束；请等待回复完成后再创建分支。','blocked');
+        return false;
+      }
+      return this.action(view,'fork',{});
+    }
+    const identity=this.messageIdentity(view,nextUser._sdkMessage);
+    if(!identity){
+      view.setNotice('后续消息尚未分配原生分支位置；可在最后一轮回复上创建分支。','blocked');
+      return false;
+    }
+    return this.action(view,'fork',view.uid.startsWith('grok:')
+      ? {prompt_index:Number(identity.slice(7)),after_reply:true}
+      : {before:identity,after_reply:true});
   },
   elicitation(view,request) {
     const card=el('div','msg sdk-request');card.dataset.sdkRequest=request.key;const body=el('div','mb');body.append(el('p','sdk-request-title',request.title || 'MCP 请求'),el('p','',request.message || request.description || ''));

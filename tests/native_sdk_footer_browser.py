@@ -159,9 +159,10 @@ def exercise(browser, base, source, screenshots, events):
         assert width_long <= 160.5, width_long
         model.select_option('short')
         expect(page.locator('#sdk-effort option:checked')).to_have_text('低')
-        page.locator('#sdk-effort').select_option('high')
+        reveal(page, '#sdk-effort').select_option('high')
         expect(page.locator('#sdk-effort option:checked')).to_have_text('高')
         assert abs(model.bounding_box()['width'] - width_long) <= 1
+        close_more(page)
         page.locator('#sdk-input').fill('底栏测试草稿 retained while changing models')
         page.set_viewport_size({'width':1912,'height':900})
         key,label=({'claude':('permission_mode','默认权限'),'grok':('mode','自动模式'),
@@ -172,7 +173,7 @@ def exercise(browser, base, source, screenshots, events):
           .every(e => e.parentElement.classList.contains('sdk-pickers'))''')
         for control in page.locator('.native-sdk-pane .sdk-native-setting:not([hidden])').all():
             assert control.evaluate('e=>e.parentElement.classList.contains("sdk-pickers")')
-        expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+        expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(2 if source=='opencode' else 1)
         # Every control fits, so there is no ⋯ menu.
         expect(page.locator('#sdk-more')).to_be_hidden()
         for width in (1440, 390, 320):
@@ -181,7 +182,7 @@ def exercise(browser, base, source, screenshots, events):
                 # Return to the running view; reselecting would reopen it read-only.
                 page.evaluate('showMobileDetail()')
             expect(page.locator('#sdk-input')).to_be_visible()
-            expect(pane.locator('.sdk-gauges')).to_contain_text('123.5M tok')
+            expect(pane.locator('.sdk-gauges')).not_to_contain_text('tok')
             expect(pane.locator('.sdk-gauges')).to_contain_text('上下文')
             progress=pane.locator('.sdk-status-row [role="progressbar"][aria-label="上下文 已用"]')
             expect(progress).to_have_attribute('aria-valuenow','25.4')
@@ -202,6 +203,8 @@ def exercise(browser, base, source, screenshots, events):
             assert max(labels) <= 72.5, labels
             expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
             expect(gauges).to_have_attribute('title', re.compile('累计 Token：123,456,789'))
+            full_tip = gauges.get_attribute('title') or ''
+            assert full_tip.index('上下文') < full_tip.index('Enterprise shared') < full_tip.index('累计 Token：123,456,789'), full_tip
             assert_usage_outside_menu(page)
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)
@@ -211,14 +214,14 @@ def exercise(browser, base, source, screenshots, events):
                 menu = page.locator('#sdk-more-menu')
                 expect(menu).to_be_visible()
                 expect(menu.locator('.sdk-quota-group, .sdk-gauge, .sdk-inline-usage')).to_have_count(0)
-                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(2 if source=='opencode' else 1)
                 for picker in page.locator('#sdk-more-menu > .new-effort').all():
                     bounds=picker.locator('.sdk-picker-label').bounding_box()
                     assert bounds['x']+bounds['width'] <= picker.locator('select').bounding_box()['x']-4
                 page.screenshot(path=str(screenshots/f'{source}-menu-{width}-{theme}.png'))
                 page.keyboard.press('Escape')
             else:
-                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+                expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(2 if source=='opencode' else 1)
             expect(page.locator('#sdk-input')).to_have_value('底栏测试草稿 retained while changing models')
             page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}.png'))
         if source=='claude':

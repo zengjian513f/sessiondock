@@ -21,10 +21,12 @@ def check(page,base,f,state,out,hub=False):
     assert state['calls']==1,state
     send(page,'usage probe')
     wait_snapshot(page,f.uid,lambda r:not r['running'] and bool(r.get('usage')))
-    expect(gauges).to_contain_text('1.25 Credits')
+    expect(gauges).not_to_contain_text('Credits')
+    expect(gauges).not_to_contain_text('tok')
     description=gauges.get_attribute('aria-description')
-    for text in ['1,200','50','20','300','40','12,000','150,000','原生估计','重置剩余']:
+    for text in ['1.25','1,200','50','20','300','40','12,000','150,000','原生估计','重置剩余']:
         assert text in description,(text,description)
+    assert description.index('上下文') < description.index('Standard') < description.index('累计 Token'),description
     # A per-turn completion must not replace the cumulative notification.
     assert '1,590' in description,description
     page.screenshot(path=str(out/'sdk-wide-light.png'),full_page=True)

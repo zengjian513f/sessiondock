@@ -119,7 +119,7 @@ const CodexSdkView = {
     if (gauges && (gauges.parentElement !== row || gauges.nextElementSibling !== credits)) row.insertBefore(gauges, usage);
     if (credits && (credits.parentElement !== row || credits.nextElementSibling !== usage)) row.insertBefore(credits, usage);
     if (!usage.hidden) usage.hidden = true;
-    const buttons = ['fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
+    const buttons = ['steer', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     const permissions = this.pane.querySelector('#sdk-permissions'), reset = this.pane.querySelector('.sdk-reset');
     if (permissions && permissions.parentElement !== more) more.append(permissions);
     if (reset && (reset.parentElement !== more || reset.previousElementSibling !== permissions)) more.append(reset);
@@ -444,7 +444,7 @@ const CodexSdkView = {
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
       modelSelect.append(new Option(modelName, modelName));
     ConversationUI.selectValue(modelSelect, modelName, '选择模型');
-    modelSelect.title = modelName;
+    modelSelect.title = modelName || '模型';
     modelSelect.closest('label').hidden = false;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
@@ -461,6 +461,7 @@ const CodexSdkView = {
       else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
     ConversationUI.selectValue(select, chosen, '选择强度');
+    select.title = `推理强度：${select.selectedOptions[0]?.textContent || '未返回'}`;
     select.closest('label').hidden = false;
     CodexSdkControls.paintTier(this);
     sdkSyncSettings(this);
@@ -543,6 +544,7 @@ const CodexSdkView = {
       next = node.nextSibling;
     }
     SdkUI.groupTools(this);
+    SdkUI.syncAssistantBubbles(this);
     if (this.summary) this.paintStatus();
   },
 
@@ -579,6 +581,7 @@ const CodexSdkView = {
     if (this.historyData) this.paintHistory();
     else for (const item of this.items.values()) this.paintItem(item);
     SdkUI.groupTools(this);
+    SdkUI.syncAssistantBubbles(this);
     for (const [id, node] of this.nodes) ConversationUI.restoreToolState(node, toolStates.get(id));
     this.paintPickers();
     CodexSdkActions.paint(this);
@@ -715,6 +718,7 @@ const CodexSdkView = {
             updateMatchNav();
           }
         }
+        SdkUI.syncAssistantBubbles(this);
         CodexSdkQuestions.paint(this);
         CodexSdkActions.paint(this);
         CodexSdkControls.paint(this);
@@ -770,6 +774,7 @@ const CodexSdkView = {
         }
     }
     SdkUI.groupTools(this);
+    SdkUI.syncAssistantBubbles(this);
     CodexSdkQuestions.paint(this);
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
@@ -823,16 +828,19 @@ const CodexSdkView = {
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
     message = SdkUI.messageTime(this, {...message, id: item.id, turn_id: this.turn?.id,
       ts: item.ts || item.timestamp, received_at: item.received_at});
+    const decoratedMessage = {...message, turn_id: this.turn?.id};
     if (old?._updateMessage && old.dataset.role === message.role) {
       old._updateMessage(message);
+      old._sdkMessage = decoratedMessage;
       return;
     }
     message.status = item.status;
     const toolState = TOOL_ROLES.has(message.role) ? ConversationUI.toolState(old) : null;
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
+    node._sdkMessage = decoratedMessage;
     node._sdkToolMessage = message;
-    CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
+    CodexSdkActions.decorate(this, node, decoratedMessage);
     if (item.status === 'inProgress' && TOOL_ROLES.has(message.role)) {
       const status = node.querySelector('.tool-status') || el('div', 'tool-status');
       status.textContent = '运行中…';

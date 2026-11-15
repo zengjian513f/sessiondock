@@ -290,9 +290,8 @@ def browser_check(fixture, base, screenshots):
         # provider writes the branch on its first actual browser input.
         source_text = fixture.path.read_text()
         source_rows = [json.loads(line) for line in source_text.splitlines()]
-        fork = reveal(page, '[data-sdk-action=fork]')
         with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
-            fork.click()
+            send(page, '/fork')
             page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
         full = receipt(forked.value.json())
         full_request = forked.value.request.post_data_json
@@ -476,7 +475,7 @@ def fork_restart_check(fixture, binary):
             page = context.new_page()
             page.goto(base, wait_until='networkidle')
             open_sdk(page, fixture, expect)
-            fork = reveal(page, '[data-sdk-action=fork]')
+            fork = page.locator('.sdk-history .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as failed:
                 fork.click()
                 page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()
@@ -486,7 +485,7 @@ def fork_restart_check(fixture, binary):
             assert 'already attempted' in json.dumps(retried), retried
             assert len(fixture.frames('spawn')) == count, 'unknown native fork was dispatched twice'
             expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('操作失败')
-            fork = reveal(page, '[data-sdk-action=fork]')
+            fork = page.locator('.sdk-history .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
                 fork.click()
                 page.locator('dialog.app-popup[open]').get_by_role('button', name='分支', exact=True).click()

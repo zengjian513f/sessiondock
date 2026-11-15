@@ -219,7 +219,7 @@ DELTA（BUG-20261115-023419-7b8c75）：桥接生成的取消／错误通知没�
 
 ## 用量与设置
 
-DELTA：底栏展示原生 `result.usage` 累计 Token；`step_update.usage` 在明细单独
+DELTA：底栏用量提示保留原生 `result.usage` 累计 Token（底栏内联仅展示上下文与账号额度）；`step_update.usage` 在明细单独
 标注，不相加，也不伪装为上下文百分比。额度使用独立 print `/usage` collector，
 不发送模型 turn；与设置页共享持久快照和查询，缓存与刷新条件见[额度合同](quotas.md)。
 打开先显示已有数据，不等待原生启动；明细及菜单条件见[SDK 界面合同](sdk-ui.md)。

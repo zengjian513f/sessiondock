@@ -61,6 +61,7 @@ const CodexSdkControls = {
     const mode = view.pane.querySelector('#sdk-mode');
     if (mode) {
       ConversationUI.selectValue(mode, sdkSettingValue(view, 'mode', settings.collaborationMode?.mode || ''), '模式');
+      mode.title = `协作模式：${mode.selectedOptions[0]?.textContent || '未返回'}`;
       mode.disabled = view.settingChoices.has('mode');
     }
     const dialog = state.panel;

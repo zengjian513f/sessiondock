@@ -10,11 +10,15 @@ const CodexSdkActions = {
     const actions = document.createElement('div');
     actions.id = 'sdk-actions'; actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', '会话操作');
-    for (const [action, text] of [['steer', '引导当前任务'], ['fork', '分支会话'], ['revert', '回退对话'], ['compact', '压缩上下文'], ['review', '代码审查']]) {
+    for (const [action, text, tooltip] of [
+      ['steer', '引导当前任务', '引导当前任务：将输入框内容立即插队发给运行中回合（Ctrl+Enter；空闲时直接作为新回合发送）'],
+      ['compact', '压缩上下文', '压缩上下文：压缩早期对话历史以释放上下文窗口空间（/compact）'],
+      ['review', '代码审查', '代码审查：选择未提交改动、分支对比、指定提交或自定义要求发起审查（/review）'],
+    ]) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'new-model-option sdk-action';
-      button.dataset.sdkAction = action; button.title = text; button.setAttribute('aria-label', text);
-      button.innerHTML = uiIcon({steer:'continue', fork:'fork', revert:'undo', compact:'compact', review:'review'}[action]);
+      button.dataset.sdkAction = action; button.title = tooltip; button.setAttribute('aria-label', text);
+      button.innerHTML = uiIcon({steer:'continue', compact:'compact', review:'review'}[action]);
       const label = document.createElement('span'); label.className = 'sdk-action-label'; label.textContent = text;
       button.append(label);
       button.onclick = () => {
@@ -156,9 +160,57 @@ const CodexSdkActions = {
   decorate(view, node, message) {
     if (message?.role !== 'user' || !message.turn_id) return;
     SdkUI.decorateUserBubble(view, node, [
-      ['回退', () => this.messageAction(view, message, 'revert')],
-      ['分支', () => this.messageAction(view, message, 'fork')],
+      ['回退', () => this.messageAction(view, message, 'revert'),
+        '回退到此消息前：移除此条及之后的对话并将消息放回输入框，工作区文件保持不变'],
+      ['分支', () => this.messageAction(view, message, 'fork'),
+        '从此处之前创建分支：在此消息之前分出新会话并带回此条输入，原会话保持不变'],
     ]);
+  },
+
+  decorateAssistant(view, node) {
+    SdkUI.decorateUserBubble(view, node, [
+      ['从此处创建分支', () => this.assistantFork(view, node),
+        '保留到此回复创建分支：携带截至此回复的对话在新会话继续，原会话保持不变'],
+    ]);
+  },
+
+  async assistantFork(view, node) {
+    if (this.pending) return;
+    const {nextUser, hasGap} = SdkUI.nextUserBubble(view, node);
+    if (hasGap) {
+      view.setNotice('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。', 'blocked');
+      return;
+    }
+    let beforeTurn = null;
+    if (nextUser) {
+      beforeTurn = nextUser._sdkMessage?.turn_id || nextUser.dataset.turnId || null;
+      if (!beforeTurn) {
+        view.setNotice('后续消息尚未分配原生轮次标识；可在最后一轮回复上创建分支。', 'blocked');
+        return;
+      }
+    } else if (view.turn) {
+      view.setNotice('当前回合尚未结束；请等待回复完成后再创建分支。', 'blocked');
+      return;
+    }
+    const generation = view.generation, uid = view.uid, operation = {};
+    const current = () => view.current(generation) && view.uid === uid;
+    this.pending = operation; this.paint(view);
+    try {
+      const prompt = beforeTurn
+        ? '保留到此回复创建分支？将携带截至此回复的对话在新会话继续，原会话保持不变。'
+        : '创建当前会话的分支？将在新会话中继续，原会话保持不变。';
+      if (!await appConfirm(prompt, {ok:'分支'})) return;
+      if (!current()) return;
+      const body = beforeTurn ? {uid, last_turn_id: beforeTurn, before_turn_id: beforeTurn} : {uid, last_turn_id: null};
+      const response = await view.request('api/codex-sdk/fork', body);
+      if (!current()) return;
+      await this.openFork(view, response);
+    } catch (error) {
+      if (current()) view.setNotice(`消息操作失败：${error.message}`, 'blocked', true);
+    } finally {
+      if (this.pending === operation) this.pending = false;
+      if (current()) this.paint(view);
+    }
   },
 
   async restoreInput(view, text) {

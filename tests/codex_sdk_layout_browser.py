@@ -165,7 +165,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         expect(menu).to_be_visible()
         expect(menu.locator('#sdk-reset-card')).to_be_visible()
         expect(page.locator('#sdk-tier')).to_be_visible()
-        expect(page.locator('[data-sdk-action]')).to_have_count(5)
+        expect(page.locator('[data-sdk-action]')).to_have_count(3)
         expect(page.locator('#sdk-actions select, #sdk-controls, #sdk-controls-dialog')).to_have_count(0)
         if menu.locator('#sdk-mode').count():
             expect(menu.locator('#sdk-mode')).to_be_visible()

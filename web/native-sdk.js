@@ -248,6 +248,8 @@ const NativeSdkView = {
       }
       this.capabilities = data.capabilities || data.raw?.capabilities || {};
       this.openFailed = false;
+      if (this.historyData) this.paintHistory();
+      NativeSdkControls.paint(this);
       void this.loadModels(generation);
       if (this.capabilities.agents) void this.request('api/native-sdk/agents',{uid:this.uid}).then(response => {if(this.current(generation)){this.nativeAgents=response.agents || response.raw?.agents || response.raw?.data || response.raw;NativeSdkControls.paintSettings(this);}}).catch(()=>{});
       void NativeSdkControls.loadUsage(this, /^(agy|kiro|droid):/.test(this.uid) ? 'auto' : true);
@@ -413,7 +415,7 @@ const NativeSdkView = {
     }
     if (variants && Object.hasOwn(variants, '')) effort.value = chosen;
     else ConversationUI.selectValue(effort,chosen,'选择强度');
-    effort.title = effort.selectedOptions[0]?.textContent || '强度';
+    effort.title = `推理强度：${effort.selectedOptions[0]?.textContent || '未返回'}`;
     effort.closest('label').hidden = !efforts.length && !chosen;
     NativeSdkControls.layout(this);
   },
@@ -525,12 +527,14 @@ const NativeSdkView = {
         const old = this.nodes.get(String(item.id));
         if (rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) continue;
         old._updateMessage(item);
+        old._sdkMessage = item;
         old._sdkRawItem = rawItem;
         old._sdkItemTs = item.ts;
         old._sdkItemShape = null;
         markMatches(old);
         updatedAny = true;
       }
+      SdkUI.syncAssistantBubbles(this);
       if (updatedAny) updateMatchNav();
     } else {
       SdkUI.ungroupTools(this);
@@ -540,11 +544,13 @@ const NativeSdkView = {
         const id = String(item.id); ids.add(id);
         const old = this.nodes.get(id);
         if (old && rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) {
+          old._sdkMessage = item;
           if (old._sdkToolMessage) old._sdkToolMessage = item;
           continue;
         }
         if (old?._updateMessage && old.dataset.role === item.role) {
           old._updateMessage(item);
+          old._sdkMessage = item;
           old._sdkRawItem = rawItem;
           old._sdkItemTs = item.ts;
           old._sdkTurnMeta = turnMetaKey(item);
@@ -558,6 +564,7 @@ const NativeSdkView = {
           const shape = JSON.stringify(item);
           const oldShape = old._sdkItemShape ??= JSON.stringify(old._sdkToolMessage);
           if (oldShape === shape) {
+            old._sdkMessage = item;
             old._sdkToolMessage = item;
             old._sdkRawItem = rawItem;
             old._sdkItemTs = item.ts;
@@ -567,6 +574,7 @@ const NativeSdkView = {
         }
         const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
         const node = msgNode(item); node.dataset.sdkItem = id;
+        node._sdkMessage = item;
         node._sdkToolMessage = item; node._sdkItemShape = null;
         node._sdkRawItem = rawItem; node._sdkItemTs = item.ts; node._sdkTurnMeta = turnMetaKey(item);
         if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
@@ -584,6 +592,7 @@ const NativeSdkView = {
       for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
       SdkUI.foldLiveTurns(this, this.items, {tailComplete});
       SdkUI.groupTools(this);
+      SdkUI.syncAssistantBubbles(this);
       this.renderedItemIds = mappedItems.map(item => String(item.id));
       this.renderedTailComplete = tailComplete;
       this.renderedCompactTurns = S.compactTurns;
@@ -687,7 +696,7 @@ const NativeSdkView = {
         : S.live.has(this.uid) || S.liveSdk.has(this.uid) || S.liveExternalSdk.has(this.uid) || childLive);
     const tailComplete = cut < fullMessages.length
       || (this.connected ? !this.running && !(this.requests?.size || this.raw?.requests?.length) : !livePending);
-    const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
+    const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_before,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
     const notices = JSON.stringify(join ? [...join.notices.values()] : []);
     if (this.historyRenderedData === this.historyData && this.historyCut === cut
         && this.historyNotices === notices

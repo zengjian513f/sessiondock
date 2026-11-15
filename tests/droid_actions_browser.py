@@ -123,11 +123,12 @@ def check(page, base, fixture, out, hub_mode):
     open_sdk(page, fixture, expect, uid=uid)
 
     # Cancellation makes no RPC; a real fork navigates to the returned identity.
-    reveal(page, '[data-sdk-action="fork"]').click()
+    tail_assistant = lambda: page.locator('.sdk-history .msg[data-role="assistant"], .sdk-live .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)
+    tail_assistant().click()
     confirm(page, '取消')
     assert not calls(fixture, 'droid.fork_session')
     with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as forked:
-        reveal(page, '[data-sdk-action="fork"]').click()
+        tail_assistant().click()
         confirm(page, '分支')
     assert forked.value.ok, forked.value.text()
     fork = receipt(forked.value.json())
@@ -199,7 +200,7 @@ def check(page, base, fixture, out, hub_mode):
     # Native failures stay visible and retries of the same HTTP mutation do not dispatch twice.
     (fixture.root / 'fork-fail').touch()
     with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as rejected:
-        reveal(page, '[data-sdk-action="fork"]').click()
+        tail_assistant().click()
         confirm(page, '分支')
     assert not rejected.value.ok
     assert page.evaluate('S.sel') == compact['uid']

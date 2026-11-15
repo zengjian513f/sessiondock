@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, close_more, refresh_usage, reveal
+from sdk_ui_fixtures import start_sdk
 
 from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
@@ -37,10 +38,9 @@ def api(page, method, body):
 
 def select(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
-    page.locator("#a-sdk").click()
-    expect(page.locator("#sdk-input")).to_be_visible()
-    page.locator('#sdk-input').click()
-    page.wait_for_function('NativeSdkView.connected')
+    if not page.locator('.sdk-pane').is_visible():
+        page.locator("#a-sdk").click()
+    start_sdk(page)
 
 
 def snapshot(page, uid):
@@ -275,28 +275,11 @@ def exercise(browser, base, fixture, screenshots):
     count = len(fixture.received("x.ai/compact_conversation"))
     api(page,"compact",compact_body)
     assert len(fixture.received("x.ai/compact_conversation")) == count == 1
-    reveal(page,'[data-sdk-action="shell"]').click()
-    page.get_by_role("textbox",name="命令",exact=True).fill("printf direct-native-shell")
-    page.get_by_role("button",name="运行",exact=True).click()
-    expect(page.locator(".sdk-live")).to_contain_text("Grok direct shell output")
-    shell = fixture.received("session/prompt")[-1]["params"]["prompt"][0]
-    assert shell["_meta"] == {"bash_command":"printf direct-native-shell"}
-    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+    close_more(page)
 
-    # Only native rewind points are selectable; file rewind is never requested.
-    reveal(page,'[data-sdk-action="rewind"]').click()
-    page.get_by_role("combobox",name="回退消息",exact=True).select_option("0")
-    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST") as rewind_response:
-        page.get_by_role("button",name="回退",exact=True).click()
-    assert rewind_response.value.status < 300
-    rewind = fixture.received("x.ai/rewind/execute")[-1]["params"]
-    assert rewind["mode"] == "conversation_only" and rewind["force"] is False
-    rewind_body = next(body for method,body in reversed(operations) if method == "rewind")
-    api(page,"rewind",rewind_body)
-    assert len(fixture.received("x.ai/rewind/execute")) == 1
-
-    # Native fork returns its new exact identity and the UI navigates there.
-    reveal(page,'[data-sdk-action="fork"]').click()
+    # Native fork from the completed assistant conclusion bubble returns its new exact identity and navigates there.
+    page.locator('.sdk-live > .msg[data-role="assistant"]').last.get_by_role("button",name="从此处创建分支",exact=True).click()
+    page.locator("dialog.app-popup[open]").get_by_role("button",name="分支",exact=True).click()
     page.wait_for_function("uid => S.sel !== uid",arg=uid)
     fork_body = next(body for method,body in reversed(operations) if method == "fork")
     forked = api(page,"fork",fork_body)
@@ -306,6 +289,28 @@ def exercise(browser, base, fixture, screenshots):
     assert fixture.path.is_dir() and (fixture.path/"summary.json").exists()
     select(page,uid)
     watch(page,uid)
+
+    reveal(page,'[data-sdk-action="shell"]').click()
+    page.get_by_role("textbox",name="命令",exact=True).fill("printf direct-native-shell")
+    page.get_by_role("button",name="运行",exact=True).click()
+    expect(page.locator(".sdk-live")).to_contain_text("Grok direct shell output")
+    shell = fixture.received("session/prompt")[-1]["params"]["prompt"][0]
+    assert shell["_meta"] == {"bash_command":"printf direct-native-shell"}
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+
+    # Only native rewind points are selectable via /rewind; file rewind is never requested.
+    page.locator("#sdk-input").fill("/rewind")
+    page.locator("#sdk-send").click()
+    page.get_by_role("combobox",name="回退消息",exact=True).select_option("0")
+    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST") as rewind_response:
+        page.get_by_role("button",name="回退",exact=True).click()
+    assert rewind_response.value.status < 300
+    expect(page.locator("#sdk-input")).to_have_value("")
+    rewind = fixture.received("x.ai/rewind/execute")[-1]["params"]
+    assert rewind["mode"] == "conversation_only" and rewind["force"] is False
+    rewind_body = next(body for method,body in reversed(operations) if method == "rewind")
+    api(page,"rewind",rewind_body)
+    assert len(fixture.received("x.ai/rewind/execute")) == 1
 
     # Acceptance precedes the host pipe write. Count before admission so this
     # proves exactly one native dispatch even when detach happens before delivery.

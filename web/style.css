@@ -2611,7 +2611,7 @@ header .btn[data-session-docked] { display: none; }
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
-.sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; min-width: 0;
+.sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 8px; min-width: 0;
   /* One fixed height before and after the controls arrive: no reflow on ready. */
   height: var(--sdk-status-row-height); --sdk-status-row-height: 24px; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }

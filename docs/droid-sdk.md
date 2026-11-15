@@ -149,7 +149,7 @@ DELTA：SDK 用量读取在已经连接的原生传输上调用 `droid.get_conte
 只读查询不启动或接管外部 TUI；失败保留先前数据并显示错误。
 会话累计用量来自恢复回执 tokenUsage、session_token_usage_changed 和结束事件的
 cumulativeTokenUsage。结束事件仅有单回合 tokenUsage 时不覆盖累计值。
-分别显示输入、输出、思考、缓存读写和 Factory Credits；累计 Token 摘要为输入、输出、缓存读写之和，
+在底栏用量提示中分别记录输入、输出、思考、缓存读写和会话累计 Factory Credits（底栏内联仅显示上下文与账户额度窗口）；累计 Token 摘要为输入、输出、缓存读写之和，
 思考为输出子项不重复累加，缓存计数在提示中也单列，不把它当上下文长度或账户剩余额度。未提供字段不补零。
 账户的 Standard/Core 六个窗口及重置倒计时见 [额度合同](quotas.md#droid-接入)。
 [Droid 用量回归](../tests/droid_usage_browser.py) 覆盖加密认证、上下文、累计计数、
