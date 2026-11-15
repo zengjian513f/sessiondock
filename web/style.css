@@ -2847,10 +2847,3 @@ header .btn[data-session-docked] { display: none; }
 .sd-session-card [data-source="droid"],
 .source-icon[data-source="droid"] { color: var(--droid, #c66b32); }
 .b-droid { --source-color: var(--droid); }
-
-/* The same outline means text-scroll ownership on every bubble, not hover or
-   a disclosure button's focus. Keep button keyboard-focus indicators intact. */
-:is(.msg, .tool-entry, .file-change-card, .event-detail-body, .sdk-queued).text-scroll-active {
-  outline: 1px solid color-mix(in srgb, var(--accent) 65%, var(--border));
-  outline-offset: -1px;
-}

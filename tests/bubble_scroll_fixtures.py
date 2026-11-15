@@ -1,4 +1,4 @@
-"""Real pointer checks for shared read-only bubble scrolling and active outlines."""
+"""Real pointer checks for shared read-only bubble scrolling without bubble outlines."""
 # run_validation: skip
 import re
 
@@ -14,7 +14,7 @@ def check_bubble_scroll(page, owner, body, outside):
     tail = body.evaluate('(e) => e.scrollTop')
     body.click(position={'x': 35, 'y': 35})
     expect(owner).to_have_class(re.compile('text-scroll-active'))
-    assert owner.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'solid'
+    assert owner.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'none'
     body.hover()
     page.mouse.wheel(0, -140)
     page.wait_for_function('([element, tail]) => element.scrollTop < tail', arg=[body.element_handle(), tail])

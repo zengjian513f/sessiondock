@@ -74,7 +74,7 @@ def check(browser, base, label, shots):
         output.scroll_into_view_if_needed()
         output.click(position={'x': 40, 'y': 40})
         expect(tool).to_have_class(__import__('re').compile('text-scroll-active'))
-        assert tool.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'solid'
+        assert tool.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'none'
         assert output.evaluate('(e) => !e.isContentEditable && e.contains(getSelection().anchorNode)')
         before = output.inner_text()
         page.keyboard.type('do-not-edit')
