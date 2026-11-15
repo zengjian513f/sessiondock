@@ -9,6 +9,10 @@
   原会话保留，以及同 SID 回退是否支持仅修改对话，再接能力与节点／Hub 浏览器验收；
   不改写原生数据库或文本镜像替代操作。见 [Agy SDK 能力](docs/agy-sdk.md#能力和限制)。
 
+- [ ] Orion、Cetus 补发 Agent 用量标签与滚动保持前端 `af633a8c`
+  （发布快照 `1d1a4565`，版本 `20261115T164954030190Z`）：正式 SSH 尝试超时；
+  Lyra、Cygnus、Pavo、Hub、Vela 已仅更新前端、重启并健康。
+
 - [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
   （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
   Hub、Vela 已部署、重启并健康，原生会话宿主保持运行。
