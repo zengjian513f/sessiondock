@@ -349,6 +349,8 @@ mod host {
             });
         }
         #[cfg(unix)]
+        let mut sigchld = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child())?;
+        #[cfg(unix)]
         let mut child = command.spawn()?;
         #[cfg(windows)]
         let (job, mut child) = crate::windows::Job::spawn(&mut command)?;
@@ -423,18 +425,24 @@ mod host {
             });
         }
         let waiting = state.clone();
+        let wait_notify = notify.clone();
         tokio::spawn(async move {
             // Keep the exited child unreaped until inherited output pipes close.
             // Its zombie reserves the process-group identity, so explicit stop can
             // still terminate descendants without risking a reused PGID.
             #[cfg(unix)]
+            let child_pid = child.id().unwrap();
+            #[cfg(unix)]
             loop {
+                let notified = wait_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 let (rc, pid, status, code) = {
                     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
                     let rc = unsafe {
                         libc::waitid(
                             libc::P_PID,
-                            child.id().unwrap(),
+                            child_pid,
                             &mut info,
                             libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
                         )
@@ -445,34 +453,46 @@ mod host {
                     let (pid, status) = (info.si_pid, info.si_status);
                     (rc, pid, status, info.si_code)
                 };
-                if rc == 0 && pid != 0 {
-                    let exited = code == libc::CLD_EXITED;
+                let exited = {
                     let mut s = waiting.lock().await;
-                    if s.status.exit.is_none() {
+                    if rc == 0 && pid != 0 && s.status.exit.is_none() {
+                        let normal = code == libc::CLD_EXITED;
                         s.status.exit = Some(Exit {
-                            code: exited.then_some(status),
-                            signal: (!exited).then_some(status),
+                            code: normal.then_some(status),
+                            signal: (!normal).then_some(status),
                         });
                         if let Err(error) = persist(&s) {
                             eprintln!("sdkhost exit persistence: {error}");
                         }
                     }
-                    if s.status.stdout_eof && s.status.stderr_eof {
+                    if s.status.exit.is_some() && s.status.stdout_eof && s.status.stderr_eof {
                         break;
                     }
-                }
+                    s.status.exit.is_some()
+                };
                 tokio::select! {
                     Some((signal, reply)) = signal_requests.recv() => {
-                        let _ = reply.send(signal_session(child.id().unwrap() as i32, signal));
+                        let _ = reply.send(signal_session(child_pid as i32, signal));
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                    _ = sigchld.recv(), if !exited => {}
+                    _ = &mut notified, if exited => {}
                 }
             }
             #[cfg(windows)]
             loop {
+                let notified = wait_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                let exited = {
+                    let s = waiting.lock().await;
+                    if s.status.exit.is_some() && s.status.stdout_eof && s.status.stderr_eof {
+                        break;
+                    }
+                    s.status.exit.is_some()
+                };
                 // Child::wait may reap the leader: the Job handle reserves the tree's identity.
                 tokio::select! {
-                    exit = child.wait(), if waiting.lock().await.status.exit.is_none() => {
+                    exit = child.wait(), if !exited => {
                         if let Ok(exit) = exit {
                             let mut s = waiting.lock().await;
                             s.status.exit = Some(Exit { code: exit.code(), signal: None });
@@ -480,11 +500,7 @@ mod host {
                         }
                     }
                     Some((signal, reply)) = signal_requests.recv() => { let _ = reply.send(job.signal(signal)); }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
-                }
-                let s = waiting.lock().await;
-                if s.status.exit.is_some() && s.status.stdout_eof && s.status.stderr_eof {
-                    break;
+                    _ = &mut notified, if exited => {}
                 }
             }
             drop(signal_requests);
@@ -499,12 +515,15 @@ mod host {
                 }
             }
             loop {
+                let notified = wait_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 let s = waiting.lock().await;
                 if s.status.stdout_eof && s.status.stderr_eof {
                     break;
                 }
                 drop(s);
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                notified.await;
             }
             std::process::exit(0);
         });
@@ -552,19 +571,29 @@ mod host {
     }
 }
 #[cfg(any(unix, windows))]
-#[tokio::main]
-async fn main() {
+fn main() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(4)
+        .thread_keep_alive(std::time::Duration::from_millis(250))
+        .build()
+        .unwrap_or_else(|e| {
+            eprintln!("sdkhost: {e}");
+            std::process::exit(1);
+        });
     let args: Vec<_> = std::env::args_os().collect();
-    let result = if args.get(1).is_some_and(|a| a == "--websocket") {
-        match args.get(2) {
-            Some(address) => channel::run(address).await,
-            None => Err(std::io::Error::other("missing WebSocket address")),
+    let result = runtime.block_on(async move {
+        if args.get(1).is_some_and(|a| a == "--websocket") {
+            match args.get(2) {
+                Some(address) => channel::run(address).await,
+                None => Err(std::io::Error::other("missing WebSocket address")),
+            }
+        } else if args.get(1).is_some_and(|a| a == "--commands") {
+            commands::run(&args[2..]).await
+        } else {
+            host::run().await
         }
-    } else if args.get(1).is_some_and(|a| a == "--commands") {
-        commands::run(&args[2..]).await
-    } else {
-        host::run().await
-    };
+    });
     if let Err(e) = result {
         eprintln!("sdkhost: {e}");
         std::process::exit(1);

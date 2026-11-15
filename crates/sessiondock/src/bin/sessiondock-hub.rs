@@ -77,8 +77,23 @@ fn print_effective_config(config: &HubConfig) {
     println!("hostname=SessionDock");
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
+    let workers = match std::env::var_os("SESSIONDOCK_ASYNC_WORKERS") {
+        Some(value) => value
+            .to_str()
+            .and_then(|text| text.trim().parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or_else(sessiondock::config::Pools::default_async_workers),
+        None => sessiondock::config::Pools::default_async_workers(),
+    };
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!("{USAGE}");

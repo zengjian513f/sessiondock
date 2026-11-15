@@ -280,6 +280,7 @@ def cancelled_draft(browser, fixture, screenshots):
             page.locator('#sdk-input').fill('fresh edits after admission')
             page.locator('#sdk-stop').click()
             gone(page, fresh['request_id'])
+            settled(page, fixture, fresh['request_id'])
             expect(page.locator('#sdk-input')).to_have_value('fresh edits after admission')
             assert len(fixture.inputs('lost ACK attachment 中文')) == 1
             print('Grok: cancelled receipt preserves draft, explicit SEND uses fresh ID, same published attachment passed', flush=True)
@@ -371,7 +372,8 @@ def restart_output(browser, fixture):
     with fixture.server() as base:
         context, page, _ = open_page(browser, base, fixture)
         try:
-            expect(page.locator('.sdk-live')).to_contain_text('Agy running offline-replay finished offline-replay')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('Agy running offline-replay finished offline-replay')
+            page.wait_for_function("JSON.stringify(NativeSdkView.raw?.items || []).includes('Agy running offline-replay finished offline-replay')")
             page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
             gone(page, first['request_id'])
             assert fixture.entry(first['request_id'])['state'] == 'completed'
@@ -426,7 +428,7 @@ def legacy_unknown(browser, fixture, screenshots, original_state='unknown'):
             assert fixture.entry(request)['error'] is None
             assert not fixture.inputs(text)
             follower = send(page, 'continue after checking legacy history')
-            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after checking legacy history')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply: continue after checking legacy history')
             gone(page, follower['request_id'])
             assert not fixture.inputs(text)
             assert len(fixture.inputs('continue after checking')) == 1
@@ -443,8 +445,11 @@ def restart_conflicting_result(browser, fixture, screenshots=None, *, text='__RE
         try:
             submitted = send(page, text)
             gone(page, submitted['request_id'])
-            expect(page.locator('.sdk-live')).to_contain_text(
-                '最终结果：所有指定检查通过' if conflict else 'agy_sdk_native_ERROR:')
+            if conflict:
+                expect(page.locator('.native-sdk-pane')).to_contain_text('最终结果：所有指定检查通过')
+            else:
+                page.wait_for_function("NativeSdkView.raw?.error?.startsWith('agy_sdk_native_ERROR:')")
+                page.wait_for_function("JSON.stringify(NativeSdkView.raw?.items || []).includes('agy_sdk_native_ERROR:')")
             pid = fixture.native_pid()
             if not conflict:
                 assert page.evaluate('NativeSdkView.raw.error_kind') == 'turn'
@@ -460,7 +465,7 @@ def restart_conflicting_result(browser, fixture, screenshots=None, *, text='__RE
             assert fixture.inputs(text) == [text]
             assert page.evaluate('NativeSdkView.raw.error_kind') == ('uncertain' if conflict else 'turn')
             queued = send(page, 'continue after result reconciliation')
-            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: continue after result reconciliation')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply: continue after result reconciliation')
             gone(page, queued['request_id'])
             assert fixture.native_pid() == pid and fixture.inputs(text) == [text]
             assert len(fixture.inputs('continue after result reconciliation')) == 1
@@ -479,10 +484,10 @@ def closed_runtime_result(browser, fixture, screenshots, *, conflict=True, dismi
             request = submitted['request_id']
             if conflict:
                 gone(page, request)
-                expect(page.locator('.sdk-live')).to_contain_text('最终结果：所有指定检查通过')
+                expect(page.locator('.native-sdk-pane')).to_contain_text('最终结果：所有指定检查通过')
             else:
                 gone(page, request)
-                expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + text)
+                expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply: ' + text)
             pid = fixture.native_pid()
         finally:
             context.close()
@@ -511,7 +516,7 @@ def closed_runtime_result(browser, fixture, screenshots, *, conflict=True, dismi
                 if restart == 1:
                     pictures(page, uid, screenshots, f'agy-closed-{conflict}-{dismissed}')
                     fresh = send(page, 'new input after closed runtime')
-                    expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: new input after closed runtime')
+                    expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply: new input after closed runtime')
                     gone(page, fresh['request_id'])
                     assert fixture.native_pid() != pid
                     assert fixture.inputs(text) == [text]
@@ -616,7 +621,7 @@ def restart_idle_registry(browser, fixture):
         try:
             submitted = send(page, text)
             final = 'Claude synthetic final ' + text if fixture.source == 'claude' else 'Synthetic Agy reply: ' + text if fixture.source == 'agy' else 'Grok final answer'
-            expect(page.locator('.sdk-live')).to_contain_text(final)
+            expect(page.locator('.native-sdk-pane')).to_contain_text(final)
             page.wait_for_function('NativeSdkView.raw && !NativeSdkView.raw.running')
             gone(page, submitted['request_id'])
             settled(page, fixture, submitted['request_id'])
@@ -658,11 +663,11 @@ def restart_idle_registry(browser, fixture):
             assert fixture.initialization_count() == initializations
             assert fixture.inputs() == inputs
             if fixture.source == 'agy':
-                notices=page.locator('.sdk-live').inner_text().count('Native runtime restarted')
+                notices=page.locator('.native-sdk-pane').inner_text().count('Native runtime restarted')
                 second=send(page,'continue in the same native runtime')
                 gone(page,second['request_id'])
                 assert fixture.native_pid()==pid and fixture.inputs().count(text)==1
-                assert page.locator('.sdk-live').inner_text().count('Native runtime restarted')==notices
+                assert page.locator('.native-sdk-pane').inner_text().count('Native runtime restarted')==notices
             print(f'{fixture.source}: idle host rediscovered by list before SDK open, same PID and no repeated initialization/input', flush=True)
         finally:
             context.close()
@@ -676,7 +681,7 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
             old = send(page, '__RECOVERED_STREAM__')
             gone(page, old['request_id'])
             current = send(page, '__HISTORICAL_ERROR__')
-            expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('历史错误未污染本轮')
             gone(page, current['request_id'])
             settled(page, fixture, current['request_id'])
             assert fixture.entry(current['request_id'])['state'] == 'completed'
@@ -699,7 +704,8 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
     with fixture.server() as base:
         context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
-            expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('历史错误未污染本轮')
+            page.wait_for_function("JSON.stringify(NativeSdkView.raw?.items || []).includes('历史错误未污染本轮')")
             page.wait_for_function('NativeSdkView.raw?.running === false')
             assert not page.evaluate('NativeSdkView.raw.error')
             assert fixture.native_pid() == pid and fixture.alive(pid)
@@ -716,7 +722,7 @@ def restart_historical_result(browser, fixture, screenshots=None, *, persisted_s
             assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
             pictures(page, uid, screenshots, f'agy-reconciled-{persisted_state}', all_sizes=True)
             following = send(page, 'after historical result restart')
-            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after historical result restart')
+            expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply: after historical result restart')
             gone(page, following['request_id'])
             assert fixture.native_pid() == pid
             print(f'Agy: {persisted_state} historical-error receipt reconciled on restart, same runtime and no resend', flush=True)

@@ -33,12 +33,16 @@ for (const action of ['paths','launch','attach','status','write','receipt','read
 
 
 def main():
+    custom_driver = 'SDKHOST_PLATFORM_DRIVER' in os.environ
     driver = json.loads(os.environ.get('SDKHOST_PLATFORM_DRIVER', json.dumps([str(ROOT / 'target/debug/examples/platform_fixture')])))
+    driver_env = os.environ.copy()
+    if not custom_driver and 'SESSIONDOCK_SDKHOST_BIN' not in driver_env and 'SDKHOST' not in driver_env:
+        driver_env['SDKHOST'] = str(ROOT / 'target/debug/sdkhost')
     with tempfile.TemporaryDirectory(prefix='sdkhost-platform-') as tmp:
         root = os.environ.get('SDKHOST_PLATFORM_ROOT', str(Path(tmp) / ('long-state-' * 14)))
         def rpc(payload):
             payload['root'] = root
-            p = subprocess.run(driver, input=json.dumps(payload), text=True, capture_output=True, timeout=25)
+            p = subprocess.run(driver, input=json.dumps(payload), text=True, capture_output=True, timeout=25, env=driver_env)
             assert p.returncode == 0, (p.returncode, p.stdout, p.stderr)
             return json.loads(p.stdout)
         class Handler(BaseHTTPRequestHandler):
@@ -130,6 +134,30 @@ def main():
                     act('stop', key='tree')
                     finished('tree')
                     act('launch', key='running')
+                    host_pid_file = Path(root) / 'running' / 'host.pid'
+                    if Path('/proc/self/stat').exists() and host_pid_file.is_file():
+                        host_pid = int(host_pid_file.read_text().strip())
+                        def host_threads(pid):
+                            for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+                                if line.startswith('Threads:'):
+                                    return int(line.split()[1])
+                            raise AssertionError(f'missing Threads in /proc/{pid}/status')
+                        def host_sched_slices(pid):
+                            total = 0
+                            for tid in os.listdir(f'/proc/{pid}/task'):
+                                try:
+                                    total += int(Path(f'/proc/{pid}/task/{tid}/schedstat').read_text().split()[2])
+                                except OSError:
+                                    continue
+                            return total
+                        time.sleep(0.4)
+                        threads = host_threads(host_pid)
+                        assert threads <= 8, f'sdkhost threads {threads} exceeded 8'
+                        slices0 = host_sched_slices(host_pid)
+                        time.sleep(3.0)
+                        slices1 = host_sched_slices(host_pid)
+                        assert slices1 - slices0 <= 3, f'idle sdkhost scheduled {slices1 - slices0} times in 3s'
+                        assert host_threads(host_pid) <= 8
                     act('stop', key='running')
                     finished('running')
                     for key in ['echo','tree','running']: act('remove', key=key)
