@@ -7,6 +7,7 @@
 //! The hub binary has its own configuration and router:
 //! `hub_config::HubConfig` + `hub_api::hub_app`.
 
+pub(crate) mod agent_usage;
 pub(crate) mod agy_sdk;
 mod api;
 mod assets;
@@ -280,6 +281,7 @@ fn build_app(
     quotas: Arc<quotas::Quotas>,
     codex_endpoint: Option<codex_sdk::Endpoint>,
 ) -> io::Result<BuiltApp> {
+    let agent_usage = agent_usage::AgentUsage::new(&config, quotas.clone(), shutdown.clone());
     let kiro_catalog = sessions::kiro::Catalog::new(&config, shutdown.clone())?;
     if let Some(catalog) = &kiro_catalog {
         config.roots.kiro = Some(catalog.root.clone());
@@ -646,6 +648,7 @@ fn build_app(
         service.clone().housekeeping(shutdown.clone());
     }
     let state = AppState {
+        agent_usage,
         quotas,
         cleanup_counts: Arc::new(cleanup::Counts::default()),
         transfer,

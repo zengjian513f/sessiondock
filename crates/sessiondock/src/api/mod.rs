@@ -4,6 +4,7 @@
 //! `not_found`. `node_router` mounts the same `/api` tree for the node
 //! listener without the static page; its gate is `node_auth`.
 
+mod agent_usage;
 mod audit;
 mod bug_report;
 mod bug_report_sdk;
@@ -72,6 +73,9 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health::get_health))
         .route("/quotas", get(quotas::get))
         .route("/quotas/refresh", post(quotas::refresh))
+        .route("/usage", get(agent_usage::get))
+        .route("/usage/refresh", post(agent_usage::refresh))
+        .route("/usage/settings", post(agent_usage::configure))
         .route("/sessions/cleanup-counts", get(cleanup::get))
         .route("/resources", get(process_links::resources))
         .route("/resources/summary", get(process_links::list_resources))

@@ -39,9 +39,13 @@ order; `--jobs 1` runs everything serially in that order.
 [quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
 Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
 
+[agent_usage_browser.py](../tests/agent_usage_browser.py) exercises native usage collection,
+cycle API-equivalent cost divided by official used percentage, incremental/deduplicated reads,
+settings and periodic updates on node/Hub, with eight source shapes and responsive light/dark views.
+
 [droid_external_browser.py](../tests/droid_external_browser.py) verifies external Droid green status, native log identity, SDK conflict, takeover cancellation and confirmed process termination/resume on node and Hub.
 
-[droid_usage_browser.py](../tests/droid_usage_browser.py) covers native context, cumulative tokens, Factory Credits and encrypted account quota collection with Chromium.
+[droid_usage_browser.py](../tests/droid_usage_browser.py) covers native context, account quotas, removal of cumulative footer figures and encrypted account quota collection with Chromium.
 
 [droid_sdk_browser.py](../tests/droid_sdk_browser.py) covers Droid JSON-RPC, native history, settings, approvals/questions, errors, interruption, node restart and Hub access with an isolated synthetic peer.
 [droid_history_browser.py](../tests/droid_history_browser.py) covers bookkeeping-free history before/after SDK connection, cached re-open, metadata-only append and search on Node/Hub in wide/light and narrow/dark views.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Droid ctx, cumulative tokens, credits and native account quotas via Chromium."""
+"""Droid context and account quotas stay visible; cumulative usage leaves the footer."""
 import tempfile
 import json
 import re
@@ -31,11 +31,10 @@ def check(page,base,f,state,out,hub=False):
     expect(gauges).not_to_contain_text('Credits')
     expect(gauges).not_to_contain_text('tok')
     description=gauges.get_attribute('aria-description')
-    for text in ['1.25','1,200','50','20','300','40','12,000','150,000','原生估计','重置剩余']:
+    for text in ['12,000','150,000','原生估计','重置剩余']:
         assert text in description,(text,description)
-    assert description.index('上下文') < description.index('Standard') < description.index('累计 Token'),description
-    # A per-turn completion must not replace the cumulative notification.
-    assert '1,590' in description,description
+    assert description.index('上下文') < description.index('Standard'),description
+    assert '累计 Token' not in description and '1.25' not in description,description
     page.screenshot(path=str(out/'sdk-wide-light.png'),full_page=True)
     (f.root/'context-fail').touch();send(page,'/usage')
     expect(gauges).to_have_attribute('aria-description',re.compile('上下文查询失败'))
@@ -73,7 +72,7 @@ def check(page,base,f,state,out,hub=False):
     page.locator('#quota-refresh').click();expect(table).to_contain_text('28%')
     page.screenshot(path=str(out/'quotas-wide-light.png'),full_page=True)
     state['fail']=True
-    page.locator('#quota-refresh').click();expect(page.locator('[data-source=droid]').first).to_contain_text('查询失败')
+    page.locator('#quota-refresh').click();expect(page.locator('.quota-agent[data-source=droid]')).to_contain_text('查询失败')
     expect(table).to_contain_text('28%')
     page.set_viewport_size({'width':390,'height':844});page.emulate_media(color_scheme='dark');page.reload(wait_until='networkidle')
     expect(table).to_contain_text('28%')

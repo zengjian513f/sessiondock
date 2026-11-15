@@ -97,9 +97,9 @@ def exercise(browser, base, fixture, screenshots):
         for theme in ('light','dark'):
             print(f'Agy usage: {width}px {theme}',flush=True)
             page.emulate_media(color_scheme=theme)
-            # Token totals live in the footer description, never in ⋯.
+            # Cumulative accounting belongs to Agent usage settings.
             for text in ('累计 Token：12,800','输入 Token：12,000','输出 Token：800','缓存读取：9,000'):
-                expect(footer).to_have_attribute('title',re.compile(re.escape(text)))
+                expect(footer).not_to_have_attribute('title',re.compile(re.escape(text)))
             assert_usage_outside_menu(page)
             expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini'])
             expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天'])
@@ -137,7 +137,7 @@ def exercise(browser, base, fixture, screenshots):
     refresh_usage(page)
     page.wait_for_function('NativeSdkView.loadingUsage')
     expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
-    expect(footer).to_have_attribute('title',re.compile('累计 Token：12,800'))
+    expect(footer).not_to_have_attribute('title',re.compile('累计 Token'))
     page.screenshot(path=str(screenshots/'agy-usage-loading.png'),full_page=True)
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()
@@ -181,7 +181,7 @@ def exercise(browser, base, fixture, screenshots):
                             ({'estimatedTokensUsed':0,'maxContextTokens':256000},'已用 0.0%')]:
         (fixture.root/'context-usage.json').write_text(json.dumps(usage))
         expect(footer).to_have_attribute('title',re.compile(expected),timeout=15000)
-        expect(footer).to_have_attribute('title',re.compile('累计 Token：12,800'))
+        expect(footer).not_to_have_attribute('title',re.compile('累计 Token'))
     for usage in ({}, {'estimatedTokensUsed':50}, {'estimatedTokensUsed':50,'maxContextTokens':0}):
         (fixture.root/'context-usage.json').write_text(json.dumps(usage))
         page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()

@@ -208,9 +208,9 @@ def exercise(browser, base, source, screenshots, events):
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
             expect(pane.locator(('#sdk-more-menu' if source=='agy' else '.sdk-status-row > .sdk-gauges')+' .sdk-gauge[title*="Enterprise shared"]').last).to_have_attribute('title', re.compile(long_quota))
-            expect(gauges).to_have_attribute('title', re.compile('累计 Token：123,456,789'))
+            expect(gauges).not_to_have_attribute('title', re.compile('累计 Token|输入 Token|输出 Token|最近步骤用量'))
             full_tip = gauges.get_attribute('title') or ''
-            assert full_tip.index('上下文') < full_tip.index('Enterprise shared') < full_tip.index('累计 Token：123,456,789'), full_tip
+            assert full_tip.index('上下文') < full_tip.index('Enterprise shared'), full_tip
             assert_usage_outside_menu(page)
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)

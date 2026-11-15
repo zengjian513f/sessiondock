@@ -365,12 +365,8 @@ const CodexSdkView = {
         () => `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset()}${recorded}`);
     }
     const usage = this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage;
-    const detail=this.pane.querySelector('#sdk-token-detail'),totals=usage?.total || {};
-    if(detail){
-      NativeSdkControls.paintUsageDetail(detail,this,{basis:'原生累计 Token；思考计入输出'},
-        {...totals,thinking_tokens:totals.reasoningOutputTokens},totals.totalTokens,totals.inputTokens,totals.outputTokens);
-      detail.hidden=!detail.childElementCount;
-    }
+    const detail=this.pane.querySelector('#sdk-token-detail');
+    if(detail){detail.replaceChildren();detail.hidden=true;}
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens;
     if (size && used != null) {

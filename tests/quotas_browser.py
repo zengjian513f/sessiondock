@@ -90,7 +90,7 @@ def main():
             context=browser.new_context(viewport={'width':1280,'height':950},service_workers='block');page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.clock.install()
             hubbase=f'http://127.0.0.1:{hub.port}'
             page.goto(hubbase);page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click()
-            link=page.get_by_role('link',name='Agent 额度 →')
+            link=page.get_by_role('link',name='Agent 用量 →')
             assert link.evaluate("n => !!(document.querySelector('#client-matrix').compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)")
             page.screenshot(path=str(out/'settings-entry.png'))
             link.click()
@@ -152,7 +152,7 @@ def main():
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==2
             (root/'used').write_text('25')
-            page.get_by_role('button',name='刷新',exact=True).click()
+            page.get_by_role('button',name='刷新额度',exact=True).click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             for theme in ('light','dark'):
@@ -218,7 +218,7 @@ def main():
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
-            page.get_by_role('button',name='刷新',exact=True).click()
+            page.get_by_role('button',name='刷新额度',exact=True).click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('31%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.reload()

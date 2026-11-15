@@ -142,17 +142,10 @@ const NativeSdkControls = {
     if (!view.pane) return;
     const gauges=view.pane.querySelector('.sdk-gauges');if(!gauges)return;
     gauges.replaceChildren();
-    const usage=Object.keys(view.raw?.usage || {}).length ? view.raw.usage : view.usageData?.usage || {},t=usage.tokens || usage;
+    const usage=Object.keys(view.raw?.usage || {}).length ? view.raw.usage : view.usageData?.usage || {};
     const number=(...values)=>values.find(value=>typeof value==='number' && Number.isFinite(value));
     const count=value=>value.toLocaleString(undefined,{maximumFractionDigits:0});
     const creditCount=value=>value.toLocaleString(undefined,{maximumFractionDigits:2});
-    const input=number(t.input,t.input_tokens,t.inputTokens),output=number(t.output,t.output_tokens,t.outputTokens);
-    const total=number(t.total_tokens,t.totalTokens,input != null && output != null ? input+output : null);
-    const creditObj=(typeof usage.credits==='object' && usage.credits) || (typeof view.raw?.credits==='object' && view.raw.credits) || view.raw?.billing || view.usageData?.billing || usage.billing || {};
-    const credits=number(usage.credits,usage.credit,usage.credits_used,usage.total_credits,creditObj.used,creditObj.creditsUsed,creditObj.creditUsed,t.credits,view.raw?.credits,view.usageData?.credits);
-    const creditLimit=number(usage.credit_limit,usage.credits_limit,usage.max_credits,creditObj.limit,creditObj.creditsLimit,creditObj.creditLimit,creditObj.total,view.raw?.credit_limit,view.usageData?.credit_limit);
-    const creditUnit=usage.credit_unit || usage.unit || creditObj.unit || (credits === 1 && creditLimit == null ? 'Credit' : 'Credits');
-    const creditResetRaw=usage.resets_at ?? usage.reset_at ?? creditObj.resetRemaining ?? creditObj.billingCycleReset ?? creditObj.resetsAt ?? creditObj.resetAt ?? creditObj.currentPeriod?.end ?? view.raw?.resets_at ?? view.usageData?.resets_at;
     const lines=[];
     const text=(label,value)=>{lines.push(()=>`${label}：${typeof value==='function' ? value() : value}`);};
     const gauge=(label,used,title)=>{
@@ -182,14 +175,6 @@ const NativeSdkControls = {
       const used=number(limit?.utilization,limit?.used_percentage,limit?.usedPercent);
       if(used!=null)text(UsageUI.window(window),()=>`已用 ${UsageUI.percent(used)}%${this.formatReset(limit.resets_at)}`);
     }
-    for(const [label,value] of [['累计 Token',total],['输入 Token',input],['输出 Token',output],['思考 Token',number(t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens)],['缓存读取',number(t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens)],['缓存写入',number(t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens)]])if(value!=null)text(label,count(value));
-    if(credits!=null){
-      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
-      text('Credit',()=>`${creditLabel}${this.formatReset(creditResetRaw)}`);
-    }
-    const cost=usage.usageIsIncomplete || usage.costIsPartial ? undefined : number(usage.cost_usd,usage.total_cost_usd,typeof usage.costUsdTicks==='number'?usage.costUsdTicks/1e10:null); if(cost!=null)text('成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
-    if(usage.basis)text('统计范围',usage.basis);
-    if(view.raw?.step_usage)text('最近步骤用量',JSON.stringify(view.raw.step_usage));
     for(const [key,error] of Object.entries(view.raw?.usage_errors || {}))text(`用量 ${key}`,error);
     if(view.raw?.settings?.fast_mode_state)text('Fast 状态',JSON.stringify(view.raw.settings.fast_mode_state));
     if(view.raw?.settings?.fast_mode_disabled_reason)text('Fast 不可用原因',view.raw.settings.fast_mode_disabled_reason);

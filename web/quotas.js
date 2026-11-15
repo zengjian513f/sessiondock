@@ -4,6 +4,7 @@ async function initQuotas(container) {
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
+  const cycles = initCycleUsage(container);
   const names = {codex:'Codex', kiro:'Kiro', agy:'Agy', claude:'Claude Code', droid:'Droid'};
   let nodes = [], hub = false, stopped = false;
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
@@ -132,6 +133,7 @@ async function initQuotas(container) {
       if(!nodes.length) {
         const data=await request('api/nodes');hub=data.mode==='hub';
         nodes=data.nodes || [];
+        cycles.start(nodes,hub);
         render();
       }
       let failures=0;
@@ -143,6 +145,7 @@ async function initQuotas(container) {
             request(base.replace(/quotas$/, 'clients'))
           ]);
           if(clients.status==='fulfilled') node.clients=clients.value.clients || [];
+          cycles.render();
           if(quotas.status==='fulfilled') {accept(node,quotas.value);}
           else if(collect) throw quotas.reason;
           else node.error=quotas.reason.message;
@@ -161,7 +164,7 @@ async function initQuotas(container) {
   refresh.addEventListener('click',()=>load(true));
   // Only update the local clock; opening and the refresh button collect quotas.
   const timer=setInterval(tick,1000);
-  const stopClock=()=>{stopped=true;UsageUI.watchers.delete(root);clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
+  const stopClock=()=>{stopped=true;cycles.stop();UsageUI.watchers.delete(root);clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
   container.addEventListener('close',stopClock,{once:true});
   window.addEventListener('pagehide',stopClock,{once:true});
   await load();
@@ -174,7 +177,7 @@ async function initQuotas(container) {
     const dialog=document.createElement('dialog');
     dialog.id='quota-dialog';dialog.className='app-dialog';
     dialog.setAttribute('aria-labelledby','quota-title');
-    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 额度</h2><button id="quota-refresh" class="btn" type="button">刷新</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="quota-body"><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
+    dialog.innerHTML='<div class="quota-panel"><div class="modal-head"><h2 id="quota-title">Agent 用量</h2><button id="quota-refresh" class="btn" type="button">刷新额度</button><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="quota-body"><div id="usage-cycles"></div><h2 class="usage-official">官方额度</h2><p id="quota-status" role="status"></p><div id="quota-agents"></div></div></div>';
     dialog.querySelector('.modal-close').onclick=()=>dialog.close();
     dialog.addEventListener('click',e=>{if(e.target===dialog) dialog.close();});
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});

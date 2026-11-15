@@ -1,6 +1,6 @@
-# Agent 额度
+# Agent 用量与额度
 
-设置 → 机器 → AI 客户端下方的 Agent 额度打开弹窗，关闭后保留设置页。
+设置 → 机器 → AI 客户端下方的 Agent 用量打开弹窗，关闭后保留设置页。
 独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
 未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
 Codex、Kiro、Agy、Claude Code、Droid 按此顺序各一个表格，复用客户端矩阵的表格样式；
@@ -21,11 +21,88 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 SDK 与普通对话按模型选择内联额度组，其他组收进 ⋯；完整额度表仍显示全部组，
 不受模型筛选影响。具体分组与未知模型行为见 [SDK 界面合同](sdk-ui.md#用量与菜单的显示条件)。
 
+## 周期 API 等价与套餐等值
+
+DELTA：费用统计集中在设置弹窗和独立页上半部；底栏与 ⋯ 不再展示累计 Token、
+累计会话 Credits／成本及对应悬停明细。上下文、官方窗口、余额和原生额度错误保留。
+各节点、来源、额度组和窗口分别展示“本周期 API 等价”“已耗费”“预计套餐等值”。
+公式为 `本周期 API 等价消耗 / (官方已耗费百分比 / 100)`，例如 $120 / 30% = $400。
+这不是除以套餐价格，也不是按时间预测月末消费；5 小时估值不能称为整月价值。
+当前模型组合、窗口和缓存命中率改变，估值也会改变。
+
+金额只覆盖本机原生记录，不把多机快照相加；跨设备、网页或 IDE 的遗漏消费可能
+使样本估值偏低。没有请求明细、未定价、计量不完整、未知额度组、零消耗、
+过期／失败的官方快照或已结束的周期不显示套餐估值，保留已知费用并解释原因。
+相同账号在多节点的记录仍是分项，不承诺未经身份验证的全账号合计。
+Token 计价采用[随版本发布的当前标准价格](../tools/agent_usage_prices.json)，不是实际账单；
+不含工具、图片等单独收费项目。原始计量和未定价模型可以展开查看，不以零补齐。
+价格可由管理员在私有统计目录的 `prices.json` 配置；默认价目只在首次运行创建，
+之后不会覆盖本地修订。页面显示价目版本和官方来源，价格变更不需要重读正文。
+
+固定窗口以原生重置时间减去窗口时长求起点；使用官方采集时间作为费用截止水位，
+不会拿更晚的消费除以更早的百分比。月度缺少起点时由“统计设置”填写带时区的
+本周期起点，绑定当次重置时间；下一账期不沿用旧起点。无官方窗口的来源显示
+本月 UTC 已知费用，不推算百分比。金额、已耗费和估值来自同一统计快照，
+不将后续额度广播拼接到旧金额上。
+
+## 增量脚本与周期更新
+
+服务将内嵌的[统计脚本](../tools/agent_usage.py)发布到
+`<SESSIONDOCK_STATE_DIR>/agent-usage/collector.py`，Python 3.9+、无需第三方包。
+解释器默认 POSIX `python3`、Windows `python`；可用 `SESSIONDOCK_USAGE_PYTHON`
+指定可执行文件。服务内调度器在启动后延迟 30 秒开始，默认每 300 秒刷新官方额度
+并增量采集，同一节点不重叠执行；不需要额外安装 systemd／launchd／计划任务。
+“统计设置”可关闭或调整间隔；服务停止时停止自己的采集进程，不影响原生 Agent。
+
+- GET `/api/usage` 只读小快照，返回采集状态与设置，不扫描日志。
+- POST `/api/usage/refresh` 启动后台采集并立即返回；同时发生的请求合并，关闭页面不取消。
+- POST `/api/usage/settings` 保存启用状态、间隔和月度起点，重算当前报告；
+  浏览器不能通过此接口改变原生读根、Python 命令或输出目录。
+- Hub 沿用节点代理逐台读取；一个节点失败不阻塞其他节点。页面可见时每分钟读取
+  小快照，采集进行中每秒读取进度；隐藏或关闭停止读取。刷新额度和更新统计是独立按钮。
+
+独立执行同一实现（`CONFIG` 取私有目录的 `config.json`，也可在临时目录自行配置）：
+
+```sh
+python3 tools/agent_usage.py collect --config CONFIG --agent all
+python3 tools/agent_usage.py collect --config CONFIG --agent codex --format table
+python3 tools/agent_usage.py report --config CONFIG
+python3 tools/agent_usage.py reprice --config CONFIG
+python3 tools/agent_usage.py rebuild --config CONFIG --agent claude
+```
+
+配置含 `directory`、`quota_dir`、`prices` 和 `roots`（source → 原生根；OpenCode 为数据库路径）。
+运行目录持有 SQLite 计量账本、文件偏移和 JSON 快照；只存计量、模型及原生身份，
+不存会话正文或凭据，不改写原生文件。JSONL 续读完整行，半行下次重读；
+文件缩短／替换或大小不变而修改时间变化时重新读取，以事件身份去重；
+同一文件增长默认按追加续读，若同时修改过已读前缀，需执行 `rebuild` 重读。
+删除或回退对话不扣减已发生消费。
+无变化文件不读正文；OpenCode 同时检查数据库与 WAL 的变化，不只检查主库 mtime。
+首次需要建立全量计量索引，后续输出 `metrics.bytes_read/changed_files` 供核对开销。
+任务失败保留旧账本和成功时间；外部脚本与服务共享操作系统锁。
+
+| Agent | 已接入的原生来源 | 缺失与边界 |
+| --- | --- | --- |
+| Codex | `token_usage_record.payload.usage`，按 response_id 去重，turn_context 提供模型；旧 token_count 用累计差分 | 缓存输入从总输入扣除；思考不再加到输出；旧计数缺期初基线、缓存写入 TTL 不明、多额度组归属不明时不估套餐 |
+| Claude Code | assistant message.usage 与原生消息 ID，包含子代理 | 同一消息修订不重复计费，输入／缓存分开，分别计 5m／1h 写入 |
+| Agy | 完整 transcript 的 PLANNER_RESPONSE，按原生会话与 step_index 去重 | input_tokens 与 cache_read_tokens 分列；缺少实际模型的旧步骤未定价 |
+| Grok | usage.json 的 turns[].modelUsage 与 endedAt | 不叠加 session 总量；没有官方额度百分比时仅显示费用；未知 CLI 模型别名不套近似价格；回合聚合超过长上下文价阶但无法拆回请求时不定价 |
+| CodeBuddy | providerData.rawUsage，按 messageId 与 stepSeq 去重 | message／function_call 中重复 usage 只计一次；缺价或缓存写入口径不明不估套餐 |
+| OpenCode | 只读 session_message 的已完成 assistant 记录 | 不叠加 session 累计；cache.write 缺 TTL 时不估完整费用 |
+| Kiro | 官方额度中的月度 Credits | 没有可定价请求明细，显示原因，不将 Credits 当成 API 美元 |
+| Droid | 原生 settings 的会话计量基线及现有官方窗口 | 累计量缺逐请求时间／模型归属，保留为不可归期，不将旧累计倒灌到本周期 |
+
+[周期用量 Chromium 回归](../tests/agent_usage_browser.py)实际打开节点与 Hub 页面、
+点击更新、明细和设置，覆盖八来源、去重、尾行、无变化快路径、零消耗、缺价、过期
+与真实周期调度；宽窄屏及明暗主题分别检查。原生统计来源依据为只读样本字段核对，
+未启动付费模型；测试使用合成私有数据。
+
 ## 采集与快照
 
 - GET `/api/quotas` 只读 `<SESSIONDOCK_STATE_DIR>/quotas/{source}.json`。
 - POST `/api/quotas/refresh` 并行查询本节点配置的 Codex、Agy、Kiro、Droid profile；Claude 只重读快照。
-  同节点按来源合并同时发生的查询，不同来源互不阻塞；不打开会话、不发送推理请求，不做定时刷新。
+  同节点按来源合并同时发生的查询，不同来源互不阻塞；不打开会话、不发送推理请求。
+  周期用量任务按其配置间隔复用此采集器，额度页面本身不额外定时查询。
   可用 `source` 参数只查询当前来源。自动查询使用 `?cached=true`，复用一分钟内的采集或失败尝试；显式刷新跳过有效期。
 - Hub 页面通过已有 `/api/nodes/{nid}/api/...` 代理逐节点读取；一台失败不阻塞其它结果。
 - 复用 launcher profile 的 executable、固定参数与环境，清除会话身份环境变量；工作目录为临时目录。

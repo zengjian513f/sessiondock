@@ -42,3 +42,32 @@
 .quota-body { padding: 0 12px 4px; overflow-y: auto; }
 #quota-status { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 #quota-status:empty { display: none; }
+
+.usage-toolbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.usage-toolbar h2, .usage-toolbar h3 { margin: 0 auto 0 0; font-size: 13px; }
+.usage-toolbar h2, .usage-official { font-size: 14px; }
+.usage-official { margin: 16px 0 8px; }
+.usage-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0; overflow-wrap: anywhere; }
+.usage-note:empty { display: none; }
+.usage-node { margin: 12px 0; }
+.usage-cycle { border-top: 1px solid var(--border); padding: 8px 0; }
+.usage-cycle-name { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.usage-metrics { display: grid; grid-template-columns: 1fr .8fr 1fr; margin: 8px 0; gap: 12px; }
+.usage-metrics > div { min-width: 0; }
+.usage-metrics dt { color: var(--muted); font-size: 12px; }
+.usage-metrics dd { margin: 4px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.usage-details { font-size: 12px; }
+.usage-details summary { cursor: pointer; color: var(--accent); width: fit-content; padding: 3px 0; }
+.usage-model { margin: 10px 0 2px; overflow-wrap: anywhere; }
+.usage-price-link { display: inline-block; margin-right: 12px; overflow-wrap: anywhere; }
+.usage-settings { padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; }
+.usage-settings h3 { font-size: 13px; margin: 0 0 10px; }
+.usage-setting { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; font-size: 12px; }
+.usage-setting input[type=number] { width: 100px; }
+@media(min-width:721px) {
+  .usage-cycle { display: grid; grid-template-columns: minmax(140px,1fr) minmax(0,3fr); column-gap: 16px; }
+  .usage-cycle-name { align-self: center; }
+  .usage-metrics { margin: 0; text-align: right; }
+  .usage-cycle > .usage-note, .usage-cycle > .usage-details { grid-column: 1 / -1; }
+}
+@media(max-width:480px) { .usage-metrics { gap: 6px; } .usage-metrics dd { font-size: 14px; } }
