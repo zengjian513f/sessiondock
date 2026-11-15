@@ -77,6 +77,7 @@ const CodexSdkView = {
   },
 
   close() {
+    this.cancelSnapshotBuild();
     UsageUI.watchers.delete(this.pane);
     if(this.uid)UsageUI.remember(this.uid,this.agent,{usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
     this.quotaRead?.abort();this.quotaRead=null;
@@ -192,6 +193,7 @@ const CodexSdkView = {
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
+      this.cancelSnapshotBuild();
       this.setConnected(false);
       if (es.readyState === EventSource.CLOSED) {
         this.setNotice('载入中', 'connecting');
@@ -201,6 +203,7 @@ const CodexSdkView = {
   },
 
   reconnect() {
+    this.cancelSnapshotBuild();
     if (!this.pane) return;
     this.es?.close();
     this.es = null;
@@ -561,7 +564,47 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 事件
 
+  cancelSnapshotBuild() {
+    clearTimeout(this.snapshotBuild?.timer);
+    this.snapshotBuild = null;
+  },
+
   applySnapshot(raw) {
+    if (this.snapshotBuild) { this.snapshotBuild.events.push({snapshot: raw}); return; }
+    const items = raw.items || [];
+    if (items.length < 80) { this.applySnapshotNow(raw); return; }
+    const job = {generation: this.generation, index: 0, nodes: new Map(), events: [], timer: 0};
+    this.snapshotBuild = job;
+    const prepare = () => {
+      if (this.snapshotBuild !== job || !this.current(job.generation)) return;
+      measureBrowserWork('codex.prepare', () => {
+        const start = performance.now();
+        do {
+          const item = items[job.index++];
+          let message = item.questions?.length ? null : itemMessage(item);
+          if (message) {
+            message = SdkUI.messageTime(this, {...message, id: item.id, turn_id: raw.turn?.id,
+              ts: item.ts || item.timestamp, received_at: item.received_at, status: item.status});
+            job.nodes.set(item, {node: msgNode(message), ts: message.ts});
+          }
+        } while (job.index < items.length && performance.now() - start < 8);
+      });
+      if (job.index < items.length) { job.timer = setTimeout(prepare, 0); return; }
+      this.snapshotBuild = null;
+      this.preparedItems = job.nodes;
+      try { measureBrowserWork('codex.commit', () => this.applySnapshotNow(raw)); }
+      finally { this.preparedItems = null; }
+      // Unlike full native snapshots, Codex deltas must all reduce in order.
+      for (const event of job.events) {
+        if (!this.current(job.generation)) break;
+        if (event.snapshot) this.applySnapshot(event.snapshot);
+        else this.applyEvent(event.method, event.raw);
+      }
+    };
+    job.timer = setTimeout(prepare, 0);
+  },
+
+  applySnapshotNow(raw) {
     this.cancelStreamPaint();
     const stick = this.nearBottom();
     SdkUI.ungroupTools(this);
@@ -591,10 +634,18 @@ const CodexSdkView = {
     CodexSdkControls.paint(this);
     this.paintStatus();
     this.paintQueue();
+    if (this.preparedItems) {
+      paintSyntax(this.live); renderFormulae(this.live);
+      schedulePreviewTails();
+    }
     if (stick) this.scrollBottom();
   },
 
   applyEvent(method, raw) {
+    if (this.snapshotBuild) {
+      if (method === 'bridge/stopped' || method === 'bridge/reset') this.cancelSnapshotBuild();
+      else { this.snapshotBuild.events.push({method, raw}); return; }
+    }
     // Reduce every token in order, but do not lay out the whole pane for each
     // SSE packet. Raw reasoning is not displayed at all. Lifecycle/request
     // events flush preceding text before changing its turn or item identity.
@@ -839,7 +890,8 @@ const CodexSdkView = {
     }
     message.status = item.status;
     const toolState = TOOL_ROLES.has(message.role) ? ConversationUI.toolState(old) : null;
-    const node = msgNode(message);
+    const ready = this.preparedItems?.get(item);
+    const node = ready && ready.ts === message.ts ? ready.node : msgNode(message);
     node.dataset.sdkItem = item.id;
     node._sdkMessage = decoratedMessage;
     node._sdkToolMessage = message;

@@ -198,6 +198,7 @@ const NativeSdkView = {
     this.es?.close(); this.es = null;
     this.openRead?.abort(); this.openRead = null;
     this.clearPendingSnapshot();
+    this.cancelSnapshotBuild();
     clearTimeout(this.reconnectTimer); clearTimeout(this.historyTimer);
     disposeMessageObservers(this.box);
     this.uid = ''; this.agent = null;
@@ -205,6 +206,11 @@ const NativeSdkView = {
     this.historyReady = this.historyData = this.historyEntry = null;
     this.renderedItemIds = null; this.renderedTailComplete = null; this.renderedCompactTurns = null; this.historyMessageTimeRefreshed = null;
     this.historyFailed = this.openFailed = false;
+  },
+
+  cancelSnapshotBuild() {
+    clearTimeout(this.snapshotBuild?.timer);
+    this.snapshotBuild = null;
   },
 
   clearPendingSnapshot() {
@@ -294,6 +300,10 @@ const NativeSdkView = {
         this.flushPendingSnapshot();
         const stick = this.nearBottom();
         this.raw.input_queue = packet.raw?.input_queue || [];
+        if (this.snapshotBuild) {
+          this.snapshotBuild.raw.input_queue = this.raw.input_queue;
+          if (this.snapshotBuild.latest) this.snapshotBuild.latest.input_queue = this.raw.input_queue;
+        }
         NativeSdkControls.paintQueue(this);
         this.paintStatus();
         if (stick) this.scrollBottom();
@@ -341,6 +351,7 @@ const NativeSdkView = {
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
+      this.cancelSnapshotBuild();
       this.setConnected(false); this.setNotice('载入中', 'connecting');
       if (es.readyState === EventSource.CLOSED) this.reconnect();
     };
@@ -350,6 +361,7 @@ const NativeSdkView = {
   reconnect() {
     this.flushPendingSnapshot();
     this.clearPendingSnapshot();
+    this.cancelSnapshotBuild();
     this.es?.close(); this.es = null; this.seq = -1;
     clearTimeout(this.reconnectTimer);
     const generation = this.generation;
@@ -435,7 +447,67 @@ const NativeSdkView = {
     return {...values, model:selected.variants[level], effort:''};
   },
 
+  snapshotItems(raw) {
+    const rawItems = Array.isArray(raw.items) ? raw.items : [];
+    const agyJoin = nativeSdkAgyHistoryJoin({uid: this.uid, historyData: this.historyData, raw});
+    return this.uid.startsWith('kiro:')
+      ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
+      : this.uid.startsWith('agy:')
+      ? rawItems.filter(item => {
+        if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
+        if (agyJoin?.notices.has(item)) return false;
+        const step = nativeSdkAgyStep(item);
+        return !agyJoin || step === null || step > agyJoin.step;
+      })
+      : rawItems;
+  },
+
+  mapSnapshotItem(rawItem, source) {
+    if (!rawItem || typeof rawItem !== 'object') return SdkUI.messageTime(this, nativeSdkMessage(rawItem, source));
+    this.itemCache ||= new WeakMap();
+    let entry = this.itemCache.get(rawItem);
+    if (!entry || entry.source !== source) {
+      entry = {source, base: nativeSdkMessage(rawItem, source)};
+      this.itemCache.set(rawItem, entry);
+    }
+    if (!entry.mapped || entry.history !== this.historyData || entry.uid !== this.uid || entry.agent !== this.agent) {
+      entry.mapped = SdkUI.messageTime(this, entry.base);
+      entry.history = this.historyData; entry.uid = this.uid; entry.agent = this.agent;
+    }
+    return entry.mapped;
+  },
+
   applySnapshot(raw) {
+    // Full snapshots supersede each other, but finish an in-flight build before
+    // applying its successor. Restarting on every delta would starve rendering.
+    if (this.snapshotBuild) {
+      if (raw !== this.raw) this.snapshotBuild.latest = raw;
+      return;
+    }
+    const missing = this.snapshotItems(raw).filter(item => !this.nodes.has(String(item?.id)));
+    if (missing.length < 80) { this.applySnapshotNow(raw); return; }
+    const job = {generation: this.generation, raw, latest: null, nodes: new Map(), index: 0, timer: 0};
+    this.snapshotBuild = job;
+    const source = this.uid.split(':')[0];
+    const prepare = () => {
+      if (this.snapshotBuild !== job || !this.current(job.generation)) return;
+      measureBrowserWork('native.prepare', () => {
+        const start = performance.now();
+        do {
+          const rawItem = missing[job.index++];
+          const item = this.mapSnapshotItem(rawItem, source);
+          job.nodes.set(rawItem, {node: msgNode(item), ts: item.ts});
+        } while (job.index < missing.length && performance.now() - start < 8);
+      }, {source});
+      if (job.index < missing.length) { job.timer = setTimeout(prepare, 0); return; }
+      this.snapshotBuild = null;
+      measureBrowserWork('native.commit', () => this.applySnapshotNow(job.raw, job.nodes), {source});
+      if (job.latest) this.applySnapshot(job.latest);
+    };
+    job.timer = setTimeout(prepare, 0);
+  },
+
+  applySnapshotNow(raw, prepared = null) {
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
@@ -459,40 +531,9 @@ const NativeSdkView = {
     this.openFailed = false;
     this.capabilities = {...this.capabilities, ...raw.capabilities};
     if (kiroConfigChanged) void this.loadModels(this.generation);
-    const rawItems = Array.isArray(raw.items) ? raw.items : [];
     const source = String(this.uid).split(':')[0];
-    const agyJoin = nativeSdkAgyHistoryJoin(this);
-    const filteredRaw = this.uid.startsWith('kiro:')
-      ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
-      : this.uid.startsWith('agy:')
-      ? rawItems.filter(item => {
-        if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
-        if (agyJoin?.notices.has(item)) return false;
-        const step = nativeSdkAgyStep(item);
-        return !agyJoin || step === null || step > agyJoin.step;
-      })
-      : rawItems;
-    this.itemCache ||= new WeakMap();
-    const mappedItems = new Array(filteredRaw.length);
-    for (let i = 0; i < filteredRaw.length; i++) {
-      const rawItem = filteredRaw[i];
-      if (rawItem && typeof rawItem === 'object') {
-        let entry = this.itemCache.get(rawItem);
-        if (!entry || entry.source !== source) {
-          entry = {source, base: nativeSdkMessage(rawItem, source), history: null, uid: '', agent: null, mapped: null};
-          this.itemCache.set(rawItem, entry);
-        }
-        if (!entry.mapped || entry.history !== this.historyData || entry.uid !== this.uid || entry.agent !== this.agent) {
-          entry.mapped = SdkUI.messageTime(this, entry.base);
-          entry.history = this.historyData;
-          entry.uid = this.uid;
-          entry.agent = this.agent;
-        }
-        mappedItems[i] = entry.mapped;
-      } else {
-        mappedItems[i] = SdkUI.messageTime(this, nativeSdkMessage(rawItem, source));
-      }
-    }
+    const filteredRaw = this.snapshotItems(raw);
+    const mappedItems = filteredRaw.map(item => this.mapSnapshotItem(item, source));
     this.items = mappedItems;
     this.setConnected(true);
     if (source === 'agy') this.agyJoinedHistory = this.historyData;
@@ -573,7 +614,9 @@ const NativeSdkView = {
           }
         }
         const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
-        const node = msgNode(item); node.dataset.sdkItem = id;
+        const ready = prepared?.get(rawItem);
+        const node = ready && ready.ts === item.ts ? ready.node : msgNode(item);
+        node.dataset.sdkItem = id;
         node._sdkMessage = item;
         node._sdkToolMessage = item; node._sdkItemShape = null;
         node._sdkRawItem = rawItem; node._sdkItemTs = item.ts; node._sdkTurnMeta = turnMetaKey(item);
@@ -604,6 +647,10 @@ const NativeSdkView = {
     this.paintStatus();
     NativeSdkControls.paint(this);
     if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
+    if (prepared) {
+      paintSyntax(this.live); renderFormulae(this.live);
+      schedulePreviewTails();
+    }
     if (stick) this.scrollBottom();
   },
 

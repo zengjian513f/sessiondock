@@ -176,6 +176,7 @@ def exercise(browser, base, streams, shots, width, theme):
         expect(page.locator('#sdk-input')).to_have_value('')
         # Receive text/new items while switching without waiting for discovery.
         page.evaluate('''() => {
+          window.switchTasks = [];
           window.hiddenComposerReads = 0;
           const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
           Object.defineProperty(document.querySelector('#cinput'), 'scrollHeight', {
@@ -193,7 +194,11 @@ def exercise(browser, base, streams, shots, width, theme):
                 raw['items'].append({'id': 'live-answer', 'type': 'agentMessage', 'text': f'实时会话 {i}: '})
             else:
                 raw['running'] = True
-                raw['items'] = [{'id': 'live-answer', 'role': 'assistant', 'turn_id': f'live-{i}',
+                raw['items'] = [{'id': f'native-tool-{j}', 'role': 'tool', 'turn_id': f'live-{i}',
+                                 'name': 'exec_command', 'input': {'command': f'check {j}'},
+                                 'text': f'check {j}', 'status': 'completed',
+                                 'result': {'role': 'tool_result', 'text': '合成输出\n' * 50}} for j in range(600)]
+                raw['items'] += [{'id': 'live-answer', 'role': 'assistant', 'turn_id': f'live-{i}',
                                  'text': f'实时会话 {i}: '}]
             streams[i].publish()
         stopped = threading.Event()
@@ -233,6 +238,15 @@ def exercise(browser, base, streams, shots, width, theme):
             state['hold_stream'] = False
             for route in reversed(stream_reads): stream_read(route)
             stream_reads.clear()
+            native_uid = next(uid for uid in uids if uid.startswith('agy:'))
+            select(native_uid)
+            page.wait_for_function('NativeSdkView.snapshotBuild?.index > 0')
+            native_draft = page.locator('#sdk-input').input_value()
+            page.locator('#sdk-input').fill('分批载入期间编辑')
+            expect(page.locator('#sdk-input')).to_have_value('分批载入期间编辑')
+            page.locator('#sdk-input').fill(native_draft)
+            select(next(uid for uid in uids if uid != native_uid))
+            assert page.evaluate('!NativeSdkView.snapshotBuild'), 'leaving did not cancel the build'
             for lap in range(3):
                 for uid in uids:
                     select(uid)
@@ -244,11 +258,26 @@ def exercise(browser, base, streams, shots, width, theme):
                 expect(page.locator('#sdk-input')).to_have_value('正在切换时编辑的草稿' if i == 0 else '')
         finally:
             stopped.set(); worker.join()
+        select(next(uid for uid in uids if uid != native_uid))
+        select(native_uid)
+        page.wait_for_function('NativeSdkView.snapshotBuild?.index > 0')
+        native_stream = streams[uids.index(native_uid)]
+        native_raw = native_stream.packet['raw']
+        native_raw['running'] = False
+        native_raw['items'].append({'id': 'finished-during-build', 'role': 'assistant',
+                                    'phase': 'final', 'text': '分批期间完成的最终结论'})
+        native_stream.publish()
+        expect(page.locator('.sdk-live')).to_contain_text('分批期间完成的最终结论')
+        expect(page.locator('#sdk-stop')).to_be_hidden()
+        expect(page.locator('.sdk-live [data-sdk-item]')).to_have_count(len(native_raw['items']))
         for i, uid in enumerate(uids):
             select(uid)
             expect(page.locator('.sdk-live')).to_contain_text(streams[i].packet['raw']['items'][-1]['text'])
         reads = page.evaluate('hiddenComposerReads')
-        print(f'STREAM SWITCHES {width}/{theme}: hidden composer height reads={reads}', flush=True)
+        stream_tasks = page.evaluate('switchTasks')
+        print(f'STREAM SWITCHES {width}/{theme}: hidden composer height reads={reads}; '
+              f'long_tasks_ms={sorted(stream_tasks, reverse=True)[:12]}', flush=True)
+        (shots/f'{width}-{theme}-stream-tasks.json').write_text(json.dumps(stream_tasks))
         assert reads == 0, f'hidden ordinary composer forced layout during SDK updates: {reads}'
         scans = page.evaluate('Math.max(0, ...tailScans.values())')
         print(f'PREVIEW SCANS {width}/{theme}: max full-page scans per frame={scans}', flush=True)

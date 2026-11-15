@@ -47,6 +47,10 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             item['ts'] = (datetime(2026, 11, 5, tzinfo=timezone.utc)
                           + timedelta(minutes=6 * index)).isoformat()
         native = copy.deepcopy(history[18:-1])
+        if source != 'codex':
+            native[1:1] = [{'id': f'replay-detail-{i}', 'role': 'thinking',
+                            'turn_id': 'turn-1', 'text': f'长快照分析 {i}\n' * 20}
+                           for i in range(120)]
         if source == 'kiro':
             # ACP replay has item IDs rather than history's normalized turn IDs.
             for item in native:

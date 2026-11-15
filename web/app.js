@@ -8773,11 +8773,13 @@ document.addEventListener('focusin', event => {
   if (event.target.matches('input, textarea, [contenteditable="true"]')) setTextScrollBubble(null);
 });
 
-let previewTailFrame = null;
+let previewTailFrame = null, previewTailTimestamp = null;
 function schedulePreviewTails() {
   if (previewTailFrame !== null) return;
-  previewTailFrame = requestAnimationFrame(() => {
+  previewTailFrame = requestAnimationFrame(timestamp => {
     previewTailFrame = null;
+    if (timestamp === previewTailTimestamp) { schedulePreviewTails(); return; }
+    previewTailTimestamp = timestamp;
     scrollPreviewsToTail();
   });
 }
