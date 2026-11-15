@@ -108,8 +108,9 @@ def open_sdk(page, corpus, expect):
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     sdk = page.locator("#a-sdk")
     expect(sdk).to_be_visible()
+    # Automatic SDK selection can finish during the click. Check its visible
+    # history below instead of waiting for the conversation pane it just hid.
     if sdk.get_attribute("aria-pressed") != "true":
-        expect(page.locator("#msgs")).to_contain_text("earlier synthetic answer")
         sdk.click()
     expect(sdk).to_have_attribute("aria-pressed", "true")
     pane = page.locator("#session-content-view.sdk-pane")

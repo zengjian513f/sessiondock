@@ -177,19 +177,53 @@ impl Channel {
         self.wake.notify_one();
         Ok(())
     }
-    pub fn observe(&self, frame: &Value, offset: u64) -> Result<(), RpcError> {
+    /// Retire only writes acknowledged by sdkhost. Keep the handshake and the
+    /// highest RPC as small compatibility anchors: old readers derive their
+    /// next ID from the outbox, and sdkhost deduplicates these retained entries.
+    pub fn retire(&self, written: &[Entry]) -> Result<(), RpcError> {
+        let mut state = self.state.lock().unwrap();
+        let high = state
+            .outbox
+            .iter()
+            .filter(|e| e.frame.get("method").is_some())
+            .filter_map(|e| e.frame["id"].as_i64())
+            .max();
+        let ids: std::collections::BTreeSet<_> = written.iter().map(|e| e.id.as_str()).collect();
+        let mut next = state.clone();
+        next.outbox.retain(|e| {
+            !ids.contains(e.id.as_str())
+                || e.id == "rpc:1"
+                || e.id == "initialized"
+                || (e.frame.get("method").is_some() && e.frame["id"].as_i64() == high)
+        });
+        for entry in written {
+            if entry.frame.get("method").is_none() && entry.frame.get("id").is_some() {
+                next.requests.remove(&entry.frame["id"].to_string());
+            }
+        }
+        if next.outbox.len() != state.outbox.len() || next.requests.len() != state.requests.len() {
+            save_atomic(&self.path, &next).map_err(failure)?;
+            *state = next;
+        }
+        Ok(())
+    }
+    /// Commit one complete read batch before dispatching it. Raw output is
+    /// already durable in sdkhost; deltas need no individual full-state fsync.
+    pub fn observe_batch(&self, frames: &[Value], offset: u64) -> Result<(), RpcError> {
         let mut state = self.state.lock().unwrap();
         let mut next = state.clone();
         next.offset = offset;
-        if frame.get("method").is_some() && frame.get("id").is_some() {
-            next.requests.insert(frame["id"].to_string(), frame.clone());
-        }
-        if frame["method"] == "serverRequest/resolved" {
-            next.requests
-                .remove(&frame["params"]["requestId"].to_string());
-        }
-        if frame["id"] == 1 && frame.get("method").is_none() {
-            next.initialized = Some(frame.clone());
+        for frame in frames {
+            if frame.get("method").is_some() && frame.get("id").is_some() {
+                next.requests.insert(frame["id"].to_string(), frame.clone());
+            }
+            if frame["method"] == "serverRequest/resolved" {
+                next.requests
+                    .remove(&frame["params"]["requestId"].to_string());
+            }
+            if frame["id"] == 1 && frame.get("method").is_none() {
+                next.initialized = Some(frame.clone());
+            }
         }
         save_atomic(&self.path, &next).map_err(failure)?;
         *state = next;

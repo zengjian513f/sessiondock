@@ -399,36 +399,137 @@ pub(super) async fn connect(endpoint: &Endpoint) -> Result<tokio::net::UnixStrea
 fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
     tokio::spawn(async move {
         let channel = &connection.channel;
-        let mut offset = channel.offset();
-        let mut buffer = Vec::new();
-        let mut sent = 0;
-        let result: Result<(), RpcError> = async {
+        let writer = async {
+            let mut sent = std::collections::HashSet::new();
             loop {
-                if inner.shutdown.is_cancelled() || connection.closed.is_cancelled() { return Ok(()); }
+                if inner.shutdown.is_cancelled() || connection.closed.is_cancelled() {
+                    return Ok(());
+                }
                 let entries = channel.entries();
-                for entry in &entries[sent..] { channel.write(entry).await?; sent += 1; }
-                let chunk = tokio::select! {
+                // One-time recovery of an old ledger must not block the output
+                // reader or rewrite the remaining ledger after every receipt.
+                for batch in entries.chunks(256) {
+                    for entry in batch {
+                        if inner.shutdown.is_cancelled() || connection.closed.is_cancelled() {
+                            return Ok(());
+                        }
+                        if !sent.contains(&entry.id) {
+                            channel.write(entry).await?;
+                            sent.insert(entry.id.clone());
+                        }
+                    }
+                    let channel = channel.clone();
+                    let batch = batch.to_vec();
+                    tokio::task::spawn_blocking(move || channel.retire(&batch))
+                        .await
+                        .map_err(|e| RpcError::Storage(e.to_string()))??;
+                }
+                let retained: std::collections::HashSet<_> =
+                    channel.entries().into_iter().map(|e| e.id).collect();
+                sent.retain(|id| retained.contains(id));
+                tokio::select! {
                     _ = inner.shutdown.cancelled() => return Ok(()),
                     _ = connection.closed.cancelled() => return Ok(()),
                     _ = channel.wake.notified() => continue,
-                    result = channel.client.read(sdkhost_client::Stream::Stdout, offset) => result.map_err(|e| RpcError::Unavailable(e.to_string()))?,
-                };
-                offset = chunk.next_offset;
-                buffer.extend(&chunk.bytes);
-                while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-                    let line: Vec<_> = buffer.drain(..=end).collect();
-                    let record: Value = serde_json::from_slice(&line).map_err(|e| RpcError::Unavailable(e.to_string()))?;
-                    let consumed = offset - buffer.len() as u64;
-                    if let Some(text) = record.as_str() {
-                        let frame: Value = serde_json::from_str(text).map_err(|e| RpcError::Unavailable(e.to_string()))?;
-                        inner.creation_reply(&channel.key(), connection.generation(), &frame)?;
-                        channel.observe(&frame, consumed)?;
-                        dispatch(&inner, connection.generation(), text);
-                    } else { channel.observe(&Value::Null, consumed)?; }
                 }
-                if chunk.eof { return Err(RpcError::Disconnected); }
             }
-        }.await;
+        };
+        let reader = async {
+            let mut offset = channel.offset();
+            let mut buffer = Vec::new();
+            loop {
+                let mut frames = Vec::new();
+                let mut deadline = None;
+                let mut eof = false;
+                // A channel multiplexes its sessions. All their checkpoint
+                // updates merge into this one pending snapshot, never a queue
+                // of obsolete snapshots. Persist before dispatching the batch.
+                loop {
+                    let read = channel.client.read(sdkhost_client::Stream::Stdout, offset);
+                    let chunk = tokio::select! {
+                        _ = inner.shutdown.cancelled() => return Ok(()),
+                        _ = connection.closed.cancelled() => return Ok(()),
+                        _ = async {
+                            match deadline {
+                                Some(at) => tokio::time::sleep_until(at).await,
+                                None => std::future::pending().await,
+                            }
+                        } => break,
+                        result = read => result.map_err(|e| RpcError::Unavailable(e.to_string()))?,
+                    };
+                    offset = chunk.next_offset;
+                    buffer.extend(&chunk.bytes);
+                    let mut consumed = 0;
+                    while let Some(end) = buffer[consumed..].iter().position(|b| *b == b'\n') {
+                        let end = consumed + end + 1;
+                        let record: Value = serde_json::from_slice(&buffer[consumed..end])
+                            .map_err(|e| RpcError::Unavailable(e.to_string()))?;
+                        frames.push(match record.as_str() {
+                            Some(text) => serde_json::from_str(text)
+                                .map_err(|e| RpcError::Unavailable(e.to_string()))?,
+                            None => Value::Null,
+                        });
+                        consumed = end;
+                    }
+                    buffer.drain(..consumed);
+                    if !frames.is_empty() && deadline.is_none() {
+                        deadline = Some(tokio::time::Instant::now() + Duration::from_millis(25));
+                    }
+                    if chunk.eof {
+                        eof = true;
+                        break;
+                    }
+                    if deadline.is_some_and(|at| tokio::time::Instant::now() >= at) {
+                        break;
+                    }
+                }
+                if !frames.is_empty() {
+                    let consumed = offset - buffer.len() as u64;
+                    let channel = channel.clone();
+                    let recovering = inner.clone();
+                    let generation = connection.generation();
+                    let frames = tokio::task::spawn_blocking(move || {
+                        // A late create owns its original receipt and parent,
+                        // even when there is no longer an RPC waiter.
+                        for frame in &frames {
+                            recovering.creation_reply(&channel.key(), generation, frame)?;
+                        }
+                        channel.observe_batch(&frames, consumed)?;
+                        Ok::<_, RpcError>(frames)
+                    })
+                    .await
+                    .map_err(|e| RpcError::Storage(e.to_string()))??;
+                    for frame in frames {
+                        dispatch(&inner, connection.generation(), frame);
+                    }
+                }
+                if eof {
+                    return Err(RpcError::Disconnected);
+                }
+            }
+        };
+        // Do not drop an in-flight checkpoint when its sibling fails. A new
+        // connection waits for done; all writes from this generation must have
+        // finished before it can load the channel state.
+        let (written, read) = tokio::join!(
+            async {
+                let result = writer.await;
+                connection.closed.cancel();
+                result
+            },
+            async {
+                let result = reader.await;
+                connection.closed.cancel();
+                result
+            }
+        );
+        let result = written.and(read);
+        if let Err(error) = &result {
+            crate::log::warn(
+                "codex_sdk.channel_error",
+                json!({"generation":connection.generation(),"error":error.to_string()}),
+            );
+        }
         connection.close();
         inner.disconnected(
             connection.generation(),
@@ -442,8 +543,8 @@ fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
     });
 }
 
-fn dispatch(inner: &Inner, generation: u64, text: &str) {
-    let Ok(Value::Object(mut message)) = serde_json::from_str::<Value>(text) else {
+fn dispatch(inner: &Inner, generation: u64, frame: Value) {
+    let Value::Object(mut message) = frame else {
         return;
     };
     let method = message

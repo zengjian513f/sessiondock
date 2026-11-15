@@ -770,8 +770,21 @@ impl Inner {
         };
         let lock = thread.clone();
         let _resume = lock.resume_lock.lock().await;
-        if thread.loaded_on() == Some(connection.generation()) {
-            self.retention.set(thread_id, true)?;
+        let already_loaded = {
+            let threads = self.threads.lock().expect("threads");
+            if !threads
+                .get(thread_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &thread))
+            {
+                return Err(RpcError::Unavailable("原生线程在恢复期间已关闭".into()));
+            }
+            let loaded = thread.loaded_on() == Some(connection.generation());
+            if loaded {
+                self.retention.set(thread_id, true)?;
+            }
+            loaded
+        };
+        if already_loaded {
             self.recover_active_turn(connection, &thread).await?;
             return Ok(thread);
         }
@@ -805,8 +818,20 @@ impl Inner {
                         thread.seed_usage(usage);
                     }
                 }
-                self.retention.set(thread_id, true)?;
-                thread.loaded(connection.generation(), result);
+                {
+                    // A close notification can follow the resume reply in the
+                    // same output batch, while usage loading is still pending.
+                    // Never let that older continuation retain a removed thread.
+                    let threads = self.threads.lock().expect("threads");
+                    if !threads
+                        .get(thread_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &thread))
+                    {
+                        return Err(RpcError::Unavailable("原生线程在恢复期间已关闭".into()));
+                    }
+                    self.retention.set(thread_id, true)?;
+                    thread.loaded(connection.generation(), result);
+                }
                 self.recover_active_turn(connection, &thread).await?;
                 self.recover_receipts(connection, &thread).await?;
                 self.queue_event(&thread);
@@ -936,10 +961,14 @@ impl Inner {
             method,
             "thread/closed" | "thread/archived" | "thread/deleted"
         ) {
+            // Serialize native close with the final resume/retention commit.
+            let mut threads = self.threads.lock().expect("threads");
             if let Err(error) = self.retention.set(&thread_id, false) {
                 eprintln!("Codex subscription persistence: {error}");
             }
-            if let Some(thread) = self.threads.lock().expect("threads").remove(&thread_id) {
+            let removed = threads.remove(&thread_id);
+            drop(threads);
+            if let Some(thread) = removed {
                 thread.reset(method);
             }
             return;

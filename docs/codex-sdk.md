@@ -44,6 +44,24 @@ browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel
   The adapter persists initialization, RPC numbering, output position and pending
   server requests; reconnecting to that channel does not initialize it again.
   Existing external daemons retain their original owner.
+  DELTA (channel checkpoint pressure): output updates share one pending checkpoint
+  per channel (including all sessions multiplexed on it). Updates within 25 ms
+  merge into the latest state; obsolete full snapshots are never queued. Each
+  complete batch is persisted before its notifications are dispatched. Raw
+  output remains in sdkhost, including any incomplete trailing frame.
+  The sender runs independently of output consumption. Confirmed `written`
+  receipts retire historical outbox entries in batches; initialization and the
+  highest RPC remain as small compatibility anchors for restart and rollback.
+  Unconfirmed inputs and approvals retain their transport identities and are
+  never coalesced with other user actions or replayed after an unknown receipt.
+  A channel generation finishes its checkpoint writes before a replacement
+  attaches. [Checkpoint pressure coverage](../tests/codex_sdk_checkpoint_browser.py)
+  restores a large legacy ledger, streams 12,000 deltas through Chromium, checks
+  actual checkpoint write counts, and verifies same-host recovery without
+  repeated initialization, input or approval replies.
+  Native close/archive/delete takes precedence over an earlier resume reply,
+  including when both arrive in one batch; its suspended continuation cannot
+  restore the removed subscription.
   Hosted listeners survive ordinary SessionDock restarts; observations and
   subscription recovery discover them without starting historical sessions.
   A connection failure resets only that connection's threads; generations are

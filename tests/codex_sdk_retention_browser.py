@@ -20,6 +20,7 @@ from history_fixtures import BINARY, codex_row, codex_message
 class RetainedPeer(FakeAppServer):
     loaded = True
     child_loaded = False
+    close_after_resume = False
 
     async def _handle(self, writer, message):
         if message.get('method') == 'thread/loaded/list':
@@ -28,6 +29,10 @@ class RetainedPeer(FakeAppServer):
                 'data': ([self.thread_id] if self.loaded else []) + ([CHILD] if self.child_loaded else []) + ['external-thread']}})
         else:
             await super()._handle(writer, message)
+            if message.get('method') == 'thread/resume' and self.close_after_resume:
+                self.loaded = False
+                # The reply and lifecycle notification may share a read batch.
+                await self.notify('thread/closed', {})
 
     def disconnect(self):
         async def close():
@@ -183,9 +188,9 @@ def main():
                 assert len(fake.methods('thread/resume')) == n, 'recovery loaded a historical thread'
                 observer.close()
             fake.loaded = True
+            fake.close_after_resume = True
             with server(corpus, args.binary, socket, env) as base:
                 fake.wait_for(lambda: len(fake.methods('thread/resume')) > n)
-                asyncio.run_coroutine_threadsafe(fake.notify('thread/closed', {}), fake.loop).result(5)
                 fake.wait_for(lambda: THREAD not in retained())
                 n = len(fake.methods('thread/resume'))
                 fake.disconnect()
