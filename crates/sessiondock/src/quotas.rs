@@ -190,19 +190,34 @@ impl Quotas {
             {
                 return None;
             }
-            let result = tokio::time::timeout(
-                Duration::from_secs(25),
-                query(profile, self.kiro_home.as_deref()),
-            )
+            let missing_cli = source != "droid"
+                && matches!(tokio::fs::metadata(&profile.executable).await,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound);
+            let result = tokio::time::timeout(Duration::from_secs(25), async {
+                if missing_cli {
+                    Err(())
+                } else {
+                    query(profile, self.kiro_home.as_deref()).await
+                }
+            })
             .await;
             let mut value = match result {
                 Ok(Ok(value)) => value,
                 _ => {
                     let mut previous = previous;
-                    previous["error"] = json!(if result.is_err() {
+                    previous["error_code"] = json!(if missing_cli {
+                        "cli_missing"
+                    } else if result.is_err() {
+                        "timeout"
+                    } else {
+                        "query_failed"
+                    });
+                    previous["error"] = json!(if missing_cli {
+                        "配置的 CLI 文件不存在，请修正启动器路径或恢复安装"
+                    } else if result.is_err() {
                         "查询超时，保留上次快照"
                     } else {
-                        "查询失败，请检查 CLI 登录及版本"
+                        "额度查询失败，请检查账户连接及 CLI 返回结果"
                     });
                     previous["attempted_at"] = json!(now());
                     previous

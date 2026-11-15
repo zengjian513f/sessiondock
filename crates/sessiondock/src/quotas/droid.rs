@@ -88,13 +88,28 @@ pub(super) async fn query(profile: &CliProfile) -> Result<Value, ()> {
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|t| json!(t.to_rfc3339()))
                 .unwrap_or(Value::Null);
-            buckets.push(bucket(
+            let start = row["windowStart"]
+                .as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .or_else(|| {
+                    if name == "monthly" {
+                        reset
+                            .as_str()
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|end| end - chrono::Duration::days(30))
+                    } else {
+                        None
+                    }
+                });
+            let mut value = bucket(
                 &format!("{group}:{window}"),
                 label,
                 json!(name),
                 row["usedPercent"].as_f64().map(|used| 100. - used),
                 reset,
-            ));
+            );
+            value["starts_at"] = start.map(|t| json!(t.to_rfc3339())).unwrap_or(Value::Null);
+            buckets.push(value);
         }
     }
     if buckets.is_empty() {

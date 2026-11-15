@@ -45,7 +45,7 @@ def codex(ident, when, model='gpt-6.1-sol'):
 
 def quotas(root, now, used=25):
     for source in ('codex','claude','agy','droid','kiro'):
-        windows=[{'id':source+':primary','group':'Gemini Models' if source=='agy' else source,
+        windows=[{'id':source+':primary','group':'Gemini Models' if source=='agy' else 'Standard' if source=='droid' else source,
                   'window':300,'remaining_percent':100-used,'resets_at':iso(now+7200)}]
         if source=='codex':windows.append({'id':'codex:secondary','group':'codex','window':10080,'remaining_percent':50,'resets_at':iso(now+86400)})
         if source=='kiro':windows=[{'id':'monthly','group':'Pro','window':'monthly','remaining_percent':75,'used':25,'limit':100,'unit':'Credits','resets_at':iso(now+86400)}]
@@ -105,9 +105,25 @@ def main():
         append(root/'claude/project/session.jsonl',{'type':'assistant','sessionId':'claude-usage','timestamp':iso(now-60),
             'message':{'id':'claude-r1','model':'claude-sonnet-5-5','usage':{'input_tokens':1000000,'output_tokens':100000,'cache_read_input_tokens':1000000,
             'cache_creation_input_tokens':1000000,'cache_creation':{'ephemeral_5m_input_tokens':500000,'ephemeral_1h_input_tokens':500000}},'content':[{'type':'text','text':'PRIVATE-BODY-MUST-NOT-ENTER-LEDGER'}]}})
-        append(root/'agy/brain/one/.system_generated/logs/transcript_full.jsonl',{'type':'PLANNER_RESPONSE','status':'DONE','step_index':1,'created_at':iso(now-60),'model':'gemini-4-carbon-high','input_tokens':1000000,'cache_read_tokens':2000000,'output_tokens':100000})
+        agy_path=root/'agy/brain/one/.system_generated/logs/transcript_full.jsonl'
+        notice=lambda model: {'type':'USER_INPUT','status':'DONE','content':'<USER_REQUEST>\nPRIVATE-BODY\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to '+model+'. No need to comment on this change if the user does not ask.\n</USER_SETTINGS_CHANGE>'}
+        agy_call={'type':'PLANNER_RESPONSE','status':'DONE','created_at':iso(now-60),'input_tokens':1000000,'cache_read_tokens':2000000,'output_tokens':100000}
+        append(agy_path,notice('Gemini 4 Carbon (High)'),{**agy_call,'step_index':1},
+               notice('Gemini 4 Argon (Medium)'),{**agy_call,'step_index':2},
+               notice('Gemini 4 Hydrogen (Low)'),
+               {'type':'USER_INPUT','status':'DONE','content':'<USER_REQUEST>\n'+notice('Gemini 4 Argon (High)')['content']+'\n</USER_REQUEST>'},
+               {**agy_call,'step_index':3})
         dump(root/'grok/project/sid/usage.json',{'sessionId':'sid','turns':[{'turnNumber':1,'endedAt':iso(now-60),'modelUsage':{'grok-4.6':{'inputTokens':100000,'cachedReadTokens':50000,'outputTokens':10000,'costUsdTicks':1850000000}}}]})
         dump(root/'droid/project/sid.settings.json',{'model':'claude-sonnet-5-5','tokenUsage':{'inputTokens':1000000,'outputTokens':100000}})
+        logs=root/'logs';logs.mkdir();droid_log=logs/'droid-log-single.log'
+        droid_row={'inputTokens':1000000,'totalInputTokens':3000000,'outputTokens':100000,'reasoningTokens':50000,
+                   'cacheReadInputTokens':1000000,'cachedTokensWritten':1000000,'upstreamResponseId':'droid-r1',
+                   'tags':{'modelId':'claude-fable-5.2','sessionId':'droid-sid','isByok':'false','private':'PRIVATE-BODY'}}
+        log_line=lambda row,at:f'[{iso(at)}] INFO: [Agent] Streaming result | Context: '+json.dumps(row)+'\n'
+        droid_log.write_text(f'[{iso(now-18000)}] INFO: startup\n'+log_line(droid_row,now-60)+
+            log_line({**droid_row,'upstreamResponseId':'byok','tags':{**droid_row['tags'],'isByok':'true'}},now-60)+
+            log_line({**droid_row,'upstreamResponseId':'old'},now-36000))
+        (logs/'droid-log-single.log.1').write_text(log_line(droid_row,now-60))
         row={'type':'message','timestamp':iso(now-60),'providerData':{'messageId':'cb-r1','stepSeq':1,'model':'gpt-6.1-sol','rawUsage':{'prompt_tokens':1000000,'completion_tokens':1000000,'prompt_tokens_details':{'cached_tokens':600000}}}}
         append(root/'codebuddy/project/sid.jsonl',row,{**row,'type':'function_call'},
                {**row,'providerData':{**row['providerData'],'stepSeq':2}})
@@ -121,6 +137,14 @@ def main():
         command=[sys.executable,str(REPO/'tools/agent_usage.py'),'collect','--config',str(directory/'config.json')]
         subprocess.run(command,check=True,capture_output=True)
         first=json.loads((directory/'snapshot.json').read_text());assert first['metrics']['bytes_read']>0
+        # Upgrade only the two changed parsers; keep the large Codex index intact.
+        with sqlite3.connect(directory/'ledger-v2.sqlite') as index:
+            index.execute("delete from parser_versions where source in ('agy','droid')")
+            index.execute('insert into files values(?,?,?,?,?,?,?,?)',('droid',str(root/'droid/project/sid.settings.json'),0,0,0,0,0,json.dumps({'partial':True,'baseline_at':iso(now)})))
+        subprocess.run(command,check=True,capture_output=True)
+        upgraded=json.loads((directory/'snapshot.json').read_text())
+        assert upgraded['metrics']['changed_files']==3,upgraded['metrics']
+        assert not next(r for r in upgraded['rows'] if r['source']=='droid')['partial']
         subprocess.run(command,check=True,capture_output=True)
         second=json.loads((directory/'snapshot.json').read_text());assert second['metrics']['bytes_read']==0,second['metrics']
         assert 'PRIVATE-BODY' not in (directory/'ledger-v2.sqlite').read_bytes().decode(errors='ignore')
@@ -129,6 +153,8 @@ def main():
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):options['executable_path']=os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser=pw.chromium.launch(**options);browser_stack.callback(browser.close)
             port=free_port();env=node_env(root,port,'127.0.0.0/8');env['SESSIONDOCK_USAGE_PYTHON']=sys.executable
+            (root/'agy-native').mkdir()
+            env.update(SESSIONDOCK_AGY_HOME=str(root/'agy'),SESSIONDOCK_AGY_ROOT=str(root/'agy-native'),SESSIONDOCK_DROID_ROOT=str(root/'droid'))
             base,_=stack.enter_context(isolated_server(Corpus(root),args.binary.resolve(),state_dir=state,trash_dir=trash,extra_env=env))
             (state/'accounting-transfers').rename(state/'transfers')
             hr=root/'hub';hr.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hr,[SimpleNamespace(port=port,token=TOKEN,name='Usage Node')]);hub.start();stack.callback(hub.stop)
@@ -145,7 +171,10 @@ def main():
             assert '14.5%' in current.get_attribute('title')
             assert '首次显示 15%' in current.get_attribute('title')
             expect(page.locator('[data-source="claude"] tbody .quota-api')).to_contain_text('$6.35')
-            expect(page.locator('[data-source="agy"] tbody .quota-api')).to_contain_text('$3.20')
+            expect(page.locator('[data-source="agy"] tbody .quota-api')).to_have_text('$8.80整轮 ≈ $58.67')
+            droid_cell=page.locator('[data-source="droid"] tbody .quota-api')
+            expect(droid_cell).to_have_text('$22.20–$28.20整轮 ≈ $148.00–$188.00')
+            assert '5 分钟至 1 小时' in droid_cell.get_attribute('title')
             expect(page.locator('[data-source="kiro"] tbody .quota-api')).to_have_text('N/A')
             report=page.evaluate("fetch('api/usage').then(r=>r.json())")
             values={r['source']:r for r in report['rows']}
@@ -183,6 +212,17 @@ def main():
                 wait_snapshot(lambda r:r.get('captured_at')!=before)
                 page.reload();expect(current).to_be_visible()
             refresh();expect(current).to_contain_text('$475.97')
+            expect(droid_cell).to_contain_text('$22.20–$28.20')
+            with droid_log.open('a') as stream:
+                stream.write(log_line({**droid_row,'upstreamResponseId':'droid-r2','cacheWriteTtl':'1h'},now-50))
+            refresh();expect(droid_cell).to_contain_text('$50.40–$56.40')
+            # Older diagnostics cannot establish a complete monthly numerator.
+            saved=json.loads((state/'quotas/droid.json').read_text());saved['buckets'][0].update(window='monthly',starts_at=iso(now+7200-30*86400))
+            dump(state/'quotas/droid.json',saved);refresh()
+            expect(droid_cell).to_contain_text('≥ ')
+            assert '日志未覆盖周期起点' in droid_cell.get_attribute('title')
+            expect(droid_cell).not_to_contain_text('整轮')
+            quotas(state,now,used=15)
             # Same request copies and unchanged files do not add charges.
             shutil.copyfile(cp,cp.with_name('rollout-copy.jsonl'));refresh()
             expect(current).to_contain_text('$475.97');refresh()
@@ -202,7 +242,7 @@ def main():
             refresh();expect(current).to_contain_text('$492.69')
             with cp.open('a') as f:f.write(raw[40:]+'\n')
             append(cp,codex('unknown',now-25,'unpriced-model')[2])
-            refresh();expect(current.locator('small')).to_have_count(0)
+            refresh();expect(current.locator('small:not(.quota-api-note)')).to_have_count(0)
             assert '缺少型号、价格或完整计量' in current.get_attribute('title')
             # Correct a price without re-reading native logs.
             prices=json.loads((directory/'prices.json').read_text())
@@ -211,17 +251,17 @@ def main():
             # Stop at first 100%; a later Credits-funded call is excluded.
             append(cp,quota_point(now-15,now+7200,100),*codex('paid',now-10))
             quotas(state,now,used=100);refresh();expect(current).to_contain_text('$509.41')
-            expect(current.locator('small')).to_have_text('整轮 ≈ $509.41')
+            expect(current.locator('small:not(.quota-api-note)')).to_have_text('整轮 ≈ $509.41')
             assert '后续 Credits' in current.get_attribute('title')
             # A different session with only modern request metering remains usable.
             append(root/'codex/native-only.jsonl',{'type':'session_meta','timestamp':iso(now-10),'payload':{'id':'native-only'}},
                    *codex('native-only',now-10)[:-1])
             refresh();expect(page.locator('[data-source="codex"] tbody .quota-api').nth(1)).to_contain_text('$542.85')
-            quotas(state,now,used=0);refresh();expect(current.locator('small')).to_have_count(0)
-            quotas(state,now-1800,used=30);refresh();expect(current.locator('small')).to_have_count(0)
+            quotas(state,now,used=0);refresh();expect(current.locator('small:not(.quota-api-note)')).to_have_count(0)
+            quotas(state,now-1800,used=30);refresh();expect(current.locator('small:not(.quota-api-note)')).to_have_count(0)
             # Missing retired history is explicit and must not yield a full estimate.
             quotas(state,now,used=100);retired.unlink();refresh()
-            assert '迁出历史缺失' in current.get_attribute('title');expect(current.locator('small')).to_have_count(0)
+            assert '迁出历史缺失' in current.get_attribute('title');expect(current.locator('small:not(.quota-api-note)')).to_have_count(0)
             page.screenshot(path=str(args.output/'partial.png'),full_page=True)
             # The background timer updates without clicking refresh.
             result=page.evaluate("fetch('api/usage/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true,interval_seconds:1,sources:{}})}).then(r=>r.ok)")

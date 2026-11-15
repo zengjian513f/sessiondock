@@ -54,6 +54,7 @@ def main():
         for name in ('state','host','ledger','home','claude','codex','grok','proc'): (root/name).mkdir(mode=0o700)
         script=root/'fake.py';script.write_text(FAKE)
         profiles=[{'id':source+'-fixture','source':source,'executable':sys.executable,'args':[str(script),source],'env':{'QUOTA_FIXTURE':str(root),'HOME':str(root/'home')}} for source in ('codex','claude','agy')]
+        executable=root/'codex-cli';executable.symlink_to(sys.executable);profiles[0]['executable']=str(executable)
         config=root/'launcher.json';config.write_text(json.dumps({'schema':2,'host_binary':str(binary.parent/'ptyhost'),'host_dir':str(root/'host'),'profiles':profiles}));config.chmod(0o600)
         subprocess.run([str(binary),'--initialize-lifecycle',str(root/'ledger')],env={'PATH':'/usr/bin:/bin'},check=True,capture_output=True)
         settings=root/'home/settings.json';settings.write_text(json.dumps({'statusLine':{'type':'command','command':'cat','padding':2},'unrelated':True}))
@@ -180,9 +181,16 @@ def main():
             assert (root/'calls').read_text().count('query')==3, 'fresh openings must reuse the cache'
             (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('25%');expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
+            executable.unlink();page.get_by_role('button',name='刷新').click()
+            expect(machine.locator('section[data-source=codex] .quota-error')).to_have_text('CLI 文件缺失')
+            expect(machine.locator('section[data-source=codex] .quota-error')).to_have_attribute('title',re.compile('配置的 CLI 文件不存在'))
+            page.screenshot(path=str(out/'missing-cli.png'),full_page=True)
+            executable.symlink_to(sys.executable)
             # A node transport failure leaves its displayed snapshot in place.
             page.route('**/api/quotas/refresh*',lambda route:route.fulfill(status=503,body='offline') if (root/'ids/node-id').read_text().strip() in route.request.url else route.continue_())
-            page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('1 台读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
+            page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('Quota Node 长机器名：节点暂不可达');expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
+            expect(machine.locator('section[data-source=codex] .quota-error')).to_have_text('节点暂不可达')
+            page.screenshot(path=str(out/'node-unreachable.png'),full_page=True)
             machine.get_by_role('button',name='关闭',exact=True).click()
             expect(machine).to_have_count(0)
             expect(page.locator('#settings-dialog')).to_be_visible()

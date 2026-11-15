@@ -11,6 +11,8 @@ Codex 固定显示 Credits 和重置卡列，即使旧快照尚无这些字段�
 复用 composer 的 sdk-gauge/sdk-bar：40×6 圆角条与百分比同行，达到 80% 时按 composer 规则标红。
 Credits 余额右对齐，以逗号分隔千位，直接去掉小数部分；N/A 和不限量保留原文。
 各表独立列宽；同一机器的多个窗口合并机器与采集时间单元格，窄屏内部横向滚动。
+DELTA：节点连接失败显示“节点暂不可达”，页首按机器说明；配置的 CLI 消失显示
+“CLI 文件缺失”，超时与额度查询失败分开。保留上次快照和原始采集时间，错误详情在提示中。
 重置和卡片到期显示 `3d 05:33` 格式倒计时（不足一天为 `05:33`，小时/分钟补零，
 不足一分钟为 `00:00`，到期为“已到期”）；每秒只更新本地时钟，不请求接口，绝对时间放在悬停提示中。
 DELTA：SDK 与普通对话底栏的额度提示、原生限额和账期重置提示也共用上述剩余时长格式，
@@ -47,6 +49,8 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 跨设备、网页或 IDE 未被记录的消费可能使本机样本偏低；不相加多机快照、
 不承诺未经核对的全账号合计。缺明细、价格、计量、额度组、有效百分比或周期边界时，
 保留已知费用并解释原因，隐藏估值；过期／失败的官方快照也不估算。
+部分统计显示 `≥` 和“记录不完整”；缓存写入有效期未知但两档价格都可核实时，
+显示金额范围，整轮估值使用相同范围除以已用百分比。
 
 采用[当前 Standard API 价格](../tools/agent_usage_prices.json)，非实际扣款，不含工具、
 图片等另收费项目。支持型号的单次输入超过 272K 时，整次输入和缓存按两倍、
@@ -58,6 +62,8 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 月度缺少起点时通过私有 `settings.json` 或设置 API 配置带时区的起点并绑定当次
 重置时间；新账期不沿用旧起点。无官方窗口的来源仍由脚本输出本月 UTC 已知费用，
 不因此在页面增加另一张表。当前金额和整轮估值的采样时刻可不同，提示分别列出。
+Droid 优先使用原生 windowStart；缺失时按[官方 30 天窗口](https://docs.factory.com/pricing/individuals)
+从 windowEnd 回推，不能套自然月。
 
 ## 增量脚本与周期更新
 
@@ -96,17 +102,18 @@ python3 tools/agent_usage.py rebuild --config CONFIG --agent claude
 无变化文件不读正文；OpenCode 同时检查数据库与 WAL 的变化，不只检查主库 mtime。
 首次需要建立全量计量索引，后续输出 `metrics.bytes_read/changed_files` 供核对开销。
 任务失败保留旧账本和成功时间；外部脚本与服务共享操作系统锁。
+解析器版本按来源保存；Agy/Droid 升级只重读对应来源，不触发其他 Agent 的全量扫描。
 
 | Agent | 已接入的原生来源 | 缺失与边界 |
 | --- | --- | --- |
 | Codex | `token_usage_record.payload.usage`，按 response_id 去重，turn_context 提供模型；旧 token_count 用累计差分 | 缓存输入从总输入扣除；思考不再加到输出；旧计数缺期初基线、缓存写入 TTL 不明、多额度组归属不明时不估套餐 |
 | Claude Code | assistant message.usage 与原生消息 ID，包含子代理 | 同一消息修订不重复计费，输入／缓存分开，分别计 5m／1h 写入 |
-| Agy | 完整 transcript 的 PLANNER_RESPONSE，按原生会话与 step_index 去重 | input_tokens 与 cache_read_tokens 分列；缺少实际模型的旧步骤未定价 |
+| Agy | 完整 transcript 的 PLANNER_RESPONSE，按原生会话与 step_index 去重 | input_tokens 与 cache_read_tokens 分列；旧步骤按此前原生 USER_SETTINGS_CHANGE 恢复型号，不采信用户正文中的同名片段；Carbon/Argon/Hydrogen 思考档位映射相应 API 价格 |
 | Grok | usage.json 的 turns[].modelUsage 与 endedAt | 不叠加 session 总量；没有官方额度百分比时仅显示费用；未知 CLI 模型别名不套近似价格；回合聚合超过长上下文价阶但无法拆回请求时不定价 |
 | CodeBuddy | providerData.rawUsage，按 messageId 与 stepSeq 去重 | message／function_call 中重复 usage 只计一次；缺价或缓存写入口径不明不估套餐 |
 | OpenCode | 只读 session_message 的已完成 assistant 记录 | 不叠加 session 累计；cache.write 缺 TTL 时不估完整费用 |
 | Kiro | 官方额度中的月度 Credits | 没有可定价请求明细，显示原因，不将 Credits 当成 API 美元 |
-| Droid | 原生 settings 的会话计量基线及现有官方窗口 | 累计量缺逐请求时间／模型归属，保留为不可归期，不将旧累计倒灌到本周期 |
+| Droid | sessions 同级 logs/droid-log-single.log 及轮转日志的 Agent Streaming result | 按请求时间、tags.modelId 和 response/request ID 核算去重；不叠加 settings 总量、totalInputTokens 或 reasoningTokens；BYOK 排除；闭源模型归 Standard，其他模型缺明确池归属不猜；缓存写入 TTL 未知显示 5m–1h 价格范围，日志未覆盖周期起点时仅列已知下限 |
 
 [周期用量 Chromium 回归](../tests/agent_usage_browser.py)实际打开节点与 Hub 页面、
 点击原表刷新、打开设置弹窗，覆盖八来源、历史检查点、迁移归属、自动压缩、
@@ -209,6 +216,6 @@ DELTA：Droid 1.6.0 原生账户使用 GET `https://api.factory.ai/api/billing/l
 按原生 AES-256-GCM 格式解密 access token；不刷新、改写凭据或将其放入快照。
 profile 可用 `FACTORY_API_BASE` 指定接口基址；HTTP 禁止重定向，失败只返回通用提示。
 映射 Standard/Core 的 fiveHour、weekly、monthly；剩余为 100 − usedPercent，
-windowEnd 为重置时间，null 保持未知。SDK、普通对话和额度页共用一分钟缓存，
+windowEnd 为重置时间，null 保持未知；保留 windowStart，monthly 缺起点时回推 30 天。SDK、普通对话和额度页共用一分钟缓存，
 查询失败保留上次结果；不会启动 Droid 或发送推理请求。额外付费余额暂不展示。
 验收见 [Droid 用量浏览器回归](../tests/droid_usage_browser.py)。

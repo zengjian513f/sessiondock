@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -91,6 +92,48 @@ def incomplete(state, when=None):
         state['partial_at'] = max(state.get('partial_at', at), at)
 
 
+def agy_model_notice(text):
+    if not isinstance(text,str) or not text.startswith('<USER_REQUEST>\n') or '\n</USER_REQUEST>' not in text:
+        return None
+    tail = text.rsplit('\n</USER_REQUEST>',1)[1]
+    found = None
+    while tail.strip():
+        tail = tail.lstrip()
+        tag = next((t for t in ('ADDITIONAL_METADATA','USER_SETTINGS_CHANGE') if tail.startswith('<'+t+'>')), None)
+        if not tag or '</'+tag+'>' not in tail:
+            return None
+        body, tail = tail[len(tag)+2:].split('</'+tag+'>',1)
+        if tag == 'USER_SETTINGS_CHANGE':
+            match = re.fullmatch(r'The user changed setting `Model Selection` from .*? to (.*?)\. No need to comment on this change.*',body.strip(),re.S)
+            if match and match[1] != 'None':
+                found = match[1]
+    if found:
+        gemini = re.fullmatch(r'Gemini (\d+) (Carbon|Argon|Hydrogen)(?: \((Low|Medium|High|Extra)\))?',found)
+        if gemini:
+            return 'gemini-' + '-'.join(x.lower() for x in gemini.groups() if x)
+    return found
+
+
+def droid_record(raw):
+    # Native diagnostics contain text and credentials in unrelated entries.
+    # Parse only the completed request's scalar metering context.
+    marker = '] INFO: [Agent] Streaming result | Context: '
+    if marker not in raw or not raw.startswith('['):
+        return []
+    when, body = raw[1:].split(marker,1)
+    row = json.loads(body); tags = row.get('tags') or {}
+    sid, model = tags.get('sessionId'), tags.get('modelId')
+    identity = row.get('upstreamResponseId') or row.get('upstreamRequestId') or f"{sid}:{row.get('factory.process.instance_id')}:{when}"
+    written = row.get('cachedTokensWritten',0)
+    ttl = row.get('cacheWriteTtl')
+    item = event(identity,when,model,{'input':row.get('inputTokens'), 'output':row.get('outputTokens'),
+        'cache_read':row.get('cacheReadInputTokens',0), 'cache_write':written if ttl != '1h' else 0,
+        'cache_write_long':written if ttl == '1h' else 0})
+    item.update(sid=sid, byok=tags.get('isByok') in (True,'true'), cache_ttl_unknown=bool(written and ttl not in ('5m','1h')),
+                pool=row.get('usagePool'))
+    return [item]
+
+
 def parse_usage_record(source, row, state, path, offset):
     """Return only scalar metering fields; never store conversation text."""
     if not isinstance(row, dict):
@@ -164,13 +207,17 @@ def parse_usage_record(source, row, state, path, offset):
                        'cache_read': (u.get('prompt_tokens_details') or {}).get('cached_tokens', u.get('cached_tokens', 0)),
                        'cache_write': u.get('prompt_cache_write_tokens', 0)}, included=True,
                       partial=bool(u.get('prompt_cache_write_tokens')))]
+    if source == 'agy' and kind == 'USER_INPUT' and row.get('status') == 'DONE':
+        model = agy_model_notice(row.get('content'))
+        if model:
+            state['model'] = model
     if source == 'agy' and kind == 'PLANNER_RESPONSE':
         if row.get('status') != 'DONE' or 'input_tokens' not in row:
             return []
         sid = path.parents[2].name
-        return [event(f"{sid}:{row.get('step_index',offset)}", row.get('created_at'), row.get('model'),
+        return [{**event(f"{sid}:{row.get('step_index',offset)}", row.get('created_at'), row.get('model') or state.get('model'),
                       {'input': row.get('input_tokens'), 'output': row.get('output_tokens'),
-                       'cache_read': row.get('cache_read_tokens', 0)})]
+                       'cache_read': row.get('cache_read_tokens', 0)}), 'sid':sid}]
     return []
 
 
@@ -286,6 +333,7 @@ class Ledger:
             create index if not exists quota_time on quota_events(source,at);
             create table if not exists excluded_events(source text,id text,primary key(source,id));
             create table if not exists counter_sessions(source text,id text,primary key(source,id));
+            create table if not exists parser_versions(source text primary key,version int);
         ''')
         self.bytes = 0
         self.changed = 0
@@ -307,10 +355,10 @@ class Ledger:
         if not rebuild and previous and tuple(previous[:4]) == meta:
             return
         state, offset = ({'sid':sid} if sid else {}), 0
-        if kind == 'jsonl' and not rebuild and previous and tuple(previous[:2]) == meta[:2] and stat.st_size > previous[2]:
+        if kind in ('jsonl','droid_log') and not rebuild and previous and tuple(previous[:2]) == meta[:2] and stat.st_size > previous[2]:
             offset, state = previous[4], json.loads(previous[5])
         self.changed += 1
-        if kind == 'jsonl':
+        if kind in ('jsonl','droid_log'):
             with path.open('rb') as stream:
                 stream.seek(offset)
                 while True:
@@ -319,6 +367,15 @@ class Ledger:
                     if not raw or not raw.endswith(b'\n'):
                         break
                     try:
+                        if kind == 'droid_log':
+                            logged_at = stamp(raw.split(b']',1)[0][1:].decode('utf-8'))
+                            if logged_at is not None:
+                                state['first_at'] = min(state.get('first_at',logged_at),logged_at)
+                                state['last_at'] = iso(logged_at)
+                            for item in droid_record(raw.decode('utf-8')):
+                                self.put(source,item)
+                            offset = stream.tell()
+                            continue
                         row = json.loads(raw)
                         if isinstance(row,dict) and stamp(row.get('timestamp')) is not None:
                             state['last_at'] = row['timestamp']
@@ -338,11 +395,6 @@ class Ledger:
                         included=True, native_cost=u['costUsdTicks'] / 1e10 if number(u.get('costUsdTicks')) else None,
                         partial=bool(turn.get('usageIsIncomplete') or turn.get('costIsPartial'))),
                         'sid':value.get('sessionId',path.parent.name)})
-        elif source == 'droid':
-            # Settings contain cumulative session totals without per-call time/model.
-            # Preserve an observation baseline; never turn the entire total into a bill.
-            value = read_json(path); self.bytes += stat.st_size
-            state = {'baseline_at': iso(time.time()), 'total': value.get('tokenUsage'), 'partial': True}
         self.db.execute('insert or replace into files values(?,?,?,?,?,?,?,?)',
                         (source, str(path), *meta, offset, json.dumps(state)))
 
@@ -381,7 +433,9 @@ class Ledger:
 def discover(root, source):
     patterns = {'codex': '**/*.jsonl', 'claude': '**/*.jsonl', 'codebuddy': '**/*.jsonl',
                 'agy': 'brain/*/.system_generated/logs/transcript_full.jsonl',
-                'grok': '*/*/usage.json', 'droid': '**/*.settings.json'}
+                'grok': '*/*/usage.json'}
+    if source == 'droid':
+        return root.parent.joinpath('logs').glob('droid-log-single.log*')
     return root.glob(patterns[source])
 
 
@@ -391,6 +445,11 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
         if source not in SOURCES or not root or agent not in ('all', source):
             continue
         try:
+            version = 2 if source in ('agy','droid') else 1
+            stored = ledger.db.execute('select version from parser_versions where source=?',(source,)).fetchone()
+            refresh_parser = rebuild or (stored[0] if stored else 1) != version
+            if source == 'droid' and refresh_parser:
+                ledger.db.execute("delete from files where source='droid' and path like '%.settings.json'")
             path = Path(root)
             if not path.exists():
                 raise FileNotFoundError()
@@ -401,17 +460,16 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
                 ledger.opencode(path, rebuild)
             else:
                 for item in discover(path, source):
-                    ledger.file(source, item, 'json' if source in ('grok', 'droid') else 'jsonl', rebuild)
+                    ledger.file(source, item, 'droid_log' if source=='droid' else 'json' if source=='grok' else 'jsonl', refresh_parser)
                 if source == 'codex' and config.get('codex_archive'):
                     for item in Path(config['codex_archive']).glob('**/*.jsonl'):
                         ledger.file(source, item, rebuild=rebuild)
                 for item in (ownership.files.get(source, []) if ownership else []):
                     ledger.file(source, item, 'json' if source == 'grok' else 'jsonl', rebuild,
                                 sid=ownership.identities.get((source,str(item))))
+            ledger.db.execute('insert or replace into parser_versions values (?,?)',(source,version))
             ledger.db.commit()
             result[source] = {'captured_at': iso(time.time())}
-            if source == 'droid':
-                result[source]['note'] = '原生只有会话累计量，无法准确分配到额度周期'
         except (OSError, ValueError, sqlite3.Error, TypeError, AttributeError):
             ledger.db.rollback()
             result[source] = {'error': '采集失败，保留上次结果'}
@@ -442,7 +500,7 @@ def model_price(model, tokens, prices, now, aggregate=False, long_context=True):
     return None
 
 
-def group_matches(source, bucket, model):
+def group_matches(source, bucket, model, item=None):
     if not model:
         return None
     group = str(bucket.get('group', '')).lower()
@@ -457,7 +515,13 @@ def group_matches(source, bucket, model):
             return True
         return None
     if source == 'droid':
-        return None  # Standard/Core overflow routing is not present in native history.
+        pool = str((item or {}).get('pool') or '').lower()
+        if pool in ('standard','core','extra'):
+            return pool == group
+        # Closed models cannot overflow into the open-weight Core pool.
+        if model.startswith(('claude-','gpt-','gemini-')):
+            return group == 'standard'
+        return None
     return True
 
 
@@ -562,7 +626,7 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                 s.get('partial_at') is None or start is None or start <= s['partial_at'] <= until)
                 and ownership.contains(source, {'sid':s.get('sid'), 'at':s.get('partial_at')}) for s in file_states)
             estimate_until = stamp(point['at']) if point else until
-            estimate_amount = base_amount = 0
+            estimate_amount = base_amount = range_extra = estimate_extra = 0
             by_model = {}
             unknown = 0
             multiple = source == 'codex' and len({b.get('group') for b in buckets}) > 1
@@ -576,23 +640,35 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                         continue
                     if not ownership.contains(source, item):
                         continue
-                    match = None if multiple else True if fallback else group_matches(source, bucket, model)
+                    if source == 'droid' and item.get('byok'):
+                        continue
+                    match = None if multiple else True if fallback else group_matches(source, bucket, model,item)
                     if match is False:
                         continue
                     if match is None:
                         ambiguous = True
                         continue
-                    part = by_model.setdefault(model, {'model': model, 'requests': 0, 'unpriced': 0, 'api_usd': 0,
+                    part = by_model.setdefault(model, {'model': model, 'requests': 0, 'unpriced': 0, 'api_usd': 0, 'api_usd_max':0,
                                                        'tokens': dict.fromkeys(TOKEN_KEYS, 0)})
                     part['requests'] += 1
                     cost = None if item['partial'] or item['at'] is None else model_price(model, item['tokens'], prices, now, aggregate=source=='grok')
+                    upper = cost
+                    if cost is not None and item.get('cache_ttl_unknown'):
+                        tokens = dict(item['tokens'])
+                        tokens['cache_write_long'] += tokens['cache_write']; tokens['cache_write'] = 0
+                        upper = model_price(model,tokens,prices,now)
+                        if upper is None:
+                            cost = None
                     if cost is None:
                         unknown += 1; part['unpriced'] += 1
                     else:
                         part['api_usd'] += cost
+                        part['api_usd_max'] += upper
+                        range_extra += upper - cost
                         base_amount += model_price(model, item['tokens'], prices, now, aggregate=source=='grok', long_context=False) or 0
                         if item['at'] <= estimate_until:
                             estimate_amount += cost
+                            estimate_extra += upper - cost
                     for key, value in item['tokens'].items():
                         if number(value):
                             part['tokens'][key] += value
@@ -603,7 +679,10 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
             reason = state.get('error') or state.get('note')
             if not reason and (start is None or end is None): reason = '缺少周期边界，请设置本周期起点'
             missing_history = ownership.incomplete_since(source, start)
+            log_start = min((s['first_at'] for s in file_states if s.get('first_at') is not None),default=None)
+            missing_logs = source == 'droid' and start is not None and log_start is not None and start < log_start
             if not reason and missing_history: reason = '迁出历史缺失，不能完整核算本机期间用量'
+            if not reason and missing_logs: reason = '日志未覆盖周期起点，仅统计保留的请求记录'
             if not reason and ambiguous: reason = '无法确认请求所属额度组'
             if not reason and unknown: reason = f'{unknown} 条用量缺少型号、价格或完整计量'
             if not reason and partial_files: reason = '历史记录不完整或累计计数缺少基线'
@@ -622,9 +701,12 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                          'window': bucket.get('window'), 'start': iso(start) if start is not None else None,
                          'end': iso(end) if end is not None else None, 'used_percent': used,
                          'api_usd': amount, 'equivalent_usd': estimate, 'reason': reason,
+                         'api_usd_max':amount + range_extra if amount is not None and range_extra else None,
+                         'equivalent_usd_max':estimate + estimate_extra * 100 / denominator if estimate is not None and estimate_extra else None,
+                         'notes':['缓存写入未记录有效期，金额范围按 5 分钟至 1 小时单价计算'] if range_extra else [],
                          'base_api_usd':base_amount if priced else None, 'estimate_point':point,
                          'exhausted_at':exhausted_at, 'cost_until':iso(until),
-                         'partial': bool(unknown or ambiguous or partial_files or missing_history or state.get('note') or state.get('error')),
+                         'partial': bool(unknown or ambiguous or partial_files or missing_history or missing_logs or state.get('note') or state.get('error')),
                          'requests': count, 'unpriced': unknown, 'models': parts,
                          'quota_at': quota.get('captured_at'), 'captured_at': state.get('captured_at'),
                          'scope': '按迁移账本归属本机期间，包含迁出保留历史' + ('；Codex 按额度计量口径排除自动压缩和首次额度用完后的消费' if source == 'codex' else ''),

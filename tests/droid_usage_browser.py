@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Droid context and account quotas stay visible; cumulative usage leaves the footer."""
 import tempfile
+from datetime import datetime
 import json
 import re
 from pathlib import Path
@@ -68,6 +69,10 @@ def check(page,base,f,state,out,hub=False):
     table=page.get_by_role('table',name='Droid',exact=True)
     expect(table).to_contain_text('Standard');expect(table).to_contain_text('Core')
     expect(table).to_contain_text('17%');expect(table).to_contain_text('月度');expect(table).to_contain_text('N/A')
+    node_id=table.locator('tbody').first.get_attribute('data-node')
+    snapshot=page.evaluate("path=>fetch(path).then(r=>r.json())",f'api/nodes/{node_id}/api/quotas' if hub else 'api/quotas')
+    monthly=next(b for a in snapshot['agents'] if a['source']=='droid' for b in a['buckets'] if b['id']=='standard:monthly')
+    assert (datetime.fromisoformat(monthly['resets_at'])-datetime.fromisoformat(monthly['starts_at'])).total_seconds()==30*86400
     state['used']=28
     page.locator('#quota-refresh').click();expect(table).to_contain_text('28%')
     page.screenshot(path=str(out/'quotas-wide-light.png'),full_page=True)

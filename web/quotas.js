@@ -10,7 +10,7 @@ async function initQuotas(container) {
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
   async function request(path, method='GET') {
     const response=await fetch(path,{method,cache:'no-store'});
-    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    if(!response.ok) throw new Error([502,503,504].includes(response.status)?'节点暂不可达':`读取失败（HTTP ${response.status}）`);
     return response.json();
   }
   function time(value) {
@@ -110,7 +110,7 @@ async function initQuotas(container) {
             if (agent?.captured_at) captured.title=new Date(agent.captured_at).toLocaleString();
             captured.rowSpan=rows.length;
             const error=node.error || agent?.error;
-            if (error) { const warning=el('div','quota-error','查询失败');warning.title=error;captured.append(warning); }
+            if (error) { const warning=el('div','quota-error',node.error || (agent.error_code==='cli_missing'?'CLI 文件缺失':agent.error_code==='timeout'?'查询超时':'额度查询失败'));warning.title=error;captured.append(warning); }
             row.append(captured);
           }
           body.append(row);
@@ -157,7 +157,7 @@ async function initQuotas(container) {
         }
         catch(error) {failures++;node.error=error.message;render();}
       }));
-      status.textContent=nodes.length ? (failures ? `${failures} 台读取失败` : (root.children.length ? '' : 'N/A')) : 'N/A';
+      status.textContent=nodes.length ? (failures ? nodes.filter(n=>n.error).map(n=>`${n.name}：${n.error}`).join('；') : (root.children.length ? '' : 'N/A')) : 'N/A';
     } catch(error) {status.textContent=`读取失败 · ${error.message}`;}
     finally {refresh.disabled=false;}
   }
