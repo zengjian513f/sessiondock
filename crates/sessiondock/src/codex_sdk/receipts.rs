@@ -1,12 +1,6 @@
 //! Private identities for threads created before Codex writes their rollout.
 //! Completed request results survive restarts; no native history is synthesized.
-use std::{
-    collections::HashMap,
-    fs,
-    io::{self, Write},
-    path::PathBuf,
-    sync::Mutex,
-};
+use std::{collections::HashMap, fs, io, path::PathBuf, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,20 +16,32 @@ struct Receipt {
 }
 
 pub(super) struct Receipts {
-    path: Option<PathBuf>,
+    ledger: super::ledger::Ledger,
     rows: Mutex<HashMap<String, Receipt>>,
 }
 
 impl Receipts {
     pub fn open(directory: Option<PathBuf>) -> io::Result<Self> {
-        let path = directory.map(|dir| dir.join("codex-sdk-sessions.json"));
-        let rows = match path.as_ref().map(fs::read) {
-            Some(Ok(bytes)) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-            Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => HashMap::new(),
-        };
+        let ledger = super::ledger::Ledger::open(directory.as_deref(), "codex-sdk-sessions")?;
+        if let Some(path) = directory
+            .as_ref()
+            .map(|d| d.join("codex-sdk-sessions.json"))
+            .filter(|p| p.exists())
+        {
+            let old: HashMap<String, Receipt> = serde_json::from_reader(fs::File::open(&path)?)?;
+            ledger.import(
+                old.into_iter()
+                    .map(|(uid, row)| (String::new(), uid, row.pending, row)),
+            )?;
+            fs::remove_file(path)?;
+        }
+        let rows = ledger
+            .load::<Receipt>(false)?
+            .into_iter()
+            .map(|(_, row)| (row.row["uid"].as_str().unwrap_or_default().to_owned(), row))
+            .collect();
         Ok(Self {
-            path,
+            ledger,
             rows: Mutex::new(rows),
         })
     }
@@ -59,40 +65,35 @@ impl Receipts {
             .as_str()
             .ok_or(RpcError::Disconnected)?
             .to_owned();
-        self.update(|rows| {
-            rows.insert(
-                uid,
-                Receipt {
-                    request_id: request_id.map(str::to_owned),
-                    result,
-                    row,
-                    pending: true,
-                },
-            );
-        })
+        let receipt = Receipt {
+            request_id: request_id.map(str::to_owned),
+            result,
+            row,
+            pending: true,
+        };
+        let mut rows = self.rows.lock().expect("SDK receipts");
+        self.save(&uid, &receipt)?;
+        rows.insert(uid, receipt);
+        Ok(())
     }
 
     pub fn pending(&self) -> Result<Vec<Value>, RpcError> {
         let mut rows = self.rows.lock().expect("SDK receipts");
-        let mut next = rows.clone();
-        let mut changed = false;
-        for receipt in next.values_mut().filter(|receipt| receipt.pending) {
+        for (uid, receipt) in rows.iter_mut().filter(|(_, r)| r.pending) {
             if receipt.row["path"]
                 .as_str()
                 .is_some_and(|path| std::path::Path::new(path).is_file())
             {
-                receipt.pending = false;
-                changed = true;
+                let mut next = receipt.clone();
+                next.pending = false;
+                self.save(uid, &next)?;
+                *receipt = next;
             }
-        }
-        if changed {
-            self.save(&next)?;
-            *rows = next;
         }
         Ok(rows
             .values()
-            .filter(|receipt| receipt.pending)
-            .map(|receipt| receipt.row.clone())
+            .filter(|r| r.pending)
+            .map(|r| r.row.clone())
             .collect())
     }
 
@@ -130,52 +131,34 @@ impl Receipts {
     }
 
     pub fn set_name(&self, thread_id: &str, name: &str) -> Result<(), RpcError> {
-        self.update(|rows| {
-            for receipt in rows.values_mut().filter(|r| r.row["sid"] == thread_id) {
-                receipt.row["title"] = Value::String(name.to_owned());
-                receipt.result["thread"]["name"] = Value::String(name.to_owned());
-            }
-        })
-    }
-
-    pub fn discard(&self, uid: &str) -> Result<(), RpcError> {
-        self.update(|rows| {
-            if let Some(receipt) = rows.get_mut(uid) {
-                receipt.pending = false;
-            }
-        })
-    }
-
-    fn update(&self, change: impl FnOnce(&mut HashMap<String, Receipt>)) -> Result<(), RpcError> {
         let mut rows = self.rows.lock().expect("SDK receipts");
-        let mut next = rows.clone();
-        change(&mut next);
-        self.save(&next)?;
-        *rows = next;
+        for (uid, receipt) in rows
+            .iter_mut()
+            .filter(|(_, r)| r.row["sid"] == thread_id && r.row["title"] != name)
+        {
+            let mut next = receipt.clone();
+            next.row["title"] = Value::String(name.to_owned());
+            next.result["thread"]["name"] = Value::String(name.to_owned());
+            self.save(uid, &next)?;
+            *receipt = next;
+        }
         Ok(())
     }
 
-    fn save(&self, rows: &HashMap<String, Receipt>) -> Result<(), RpcError> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let temporary = path.with_extension("tmp");
-        let result = (|| -> io::Result<()> {
-            let mut options = fs::OpenOptions::new();
-            options.create(true).truncate(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            file.write_all(&serde_json::to_vec(rows)?)?;
-            file.sync_all()?;
-            fs::rename(&temporary, path)?;
-            #[cfg(unix)]
-            fs::File::open(path.parent().expect("SDK receipt directory"))?.sync_all()?;
-            Ok(())
-        })();
-        result.map_err(|error| RpcError::Storage(format!("Codex 创建回执保存失败：{error}")))
+    pub fn discard(&self, uid: &str) -> Result<(), RpcError> {
+        let mut rows = self.rows.lock().expect("SDK receipts");
+        if let Some(receipt) = rows.get_mut(uid).filter(|r| r.pending) {
+            let mut next = receipt.clone();
+            next.pending = false;
+            self.save(uid, &next)?;
+            *receipt = next;
+        }
+        Ok(())
+    }
+
+    fn save(&self, uid: &str, receipt: &Receipt) -> Result<(), RpcError> {
+        self.ledger
+            .save("", uid, receipt.pending, receipt)
+            .map_err(|e| RpcError::Storage(format!("Codex 创建回执保存失败：{e}")))
     }
 }

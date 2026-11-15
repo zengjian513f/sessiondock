@@ -15,6 +15,7 @@ from codex_sdk_browser import THREAD, build, server
 from codex_sdk_controls_browser import ControlsServer
 from codex_sdk_actions_browser import environment
 from history_fixtures import BINARY
+from codex_ledger_fixtures import queue_rows, legacy_queue
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 from sdk_ui_fixtures import start_sdk
@@ -258,7 +259,7 @@ def main():
                     page.locator('#sdk-send').click()
                     expect(page.locator('.sdk-queued')).to_have_count(1)
                     context.close()
-                assert json.loads((state/'codex-sdk-queue.json').read_text())
+                assert queue_rows(state.parent)
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     context, page = open_page(browser, base, 390, 'dark')
                     expect(page.locator('.sdk-queued')).to_contain_text('durable queued message')

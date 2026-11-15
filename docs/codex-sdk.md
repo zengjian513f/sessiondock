@@ -59,6 +59,18 @@ browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel
   restores a large legacy ledger, streams 12,000 deltas through Chromium, checks
   actual checkpoint write counts, and verifies same-host recovery without
   repeated initialization, input or approval replies.
+  DELTA (repeatable reads): loaded-thread polling, history/turn reads, model and
+  configuration reads, account limits and goal reads use a separate unsubscribed
+  WebSocket. It initializes as `sessiondock-query`, multiplexes pending reads and
+  never resumes threads, sends input or answers approvals. Its requests/results
+  do not enter the durable channel, checkpoints, raw output or transport receipts.
+  Closing or timing out that socket does not close the owning subscription; the
+  next read reconnects without replaying mutations. Provider routing still checks
+  native configuration; account refresh keeps its existing notification/open/turn
+  semantics and concurrent-read sharing, without introducing stale TTL results.
+  sdkhost write already deduplicates by transport ID, so the sender does not make
+  a separate receipt lookup before every write. Streaming text appends in place;
+  incomplete JSON frames resume scanning at the previous chunk boundary.
   Native close/archive/delete takes precedence over an earlier resume reply,
   including when both arrive in one batch; its suspended continuation cannot
   restore the removed subscription.
@@ -399,7 +411,7 @@ the normal inventory replaces the receipt. No placeholder file, forced name
 or synthetic history is written. DELTA (BUG-20261019-032629-1ba6cf): with a
 configured state directory, creation receipts and completed same-`request_id`
 results are saved before success in
-`codex-sdk-sessions.json`. A node update/restart before first SEND preserves
+`codex-sdk-sessions.sqlite`. A node update/restart before first SEND preserves
 the UID/SID and empty page; reattachment resumes that exact thread on the
 surviving daemon. Retries, including a lost HTTP response followed by a restart,
 reuse the completed attempt. Without a state directory these receipts remain
@@ -600,7 +612,7 @@ behavior; they do not require other sources to expose unsupported controls.
   with 档位 as its unloaded label. The Goal icon follows compact and opens an upward settings popover.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
-  persist in private `codex-sdk-queue.json`; without it they are memory-only.
+  persist in private `codex-sdk-queue.sqlite`; without it they are memory-only.
   Each thread serializes submit/dispatch/cancel/steer; FIFO starts require no
   active turn or outstanding request. A completed failed turn may leave the
   daemon in `systemError`; this state also permits a new turn, as in the TUI.
@@ -824,3 +836,29 @@ views never substitutes the owner thread. Explicit chat/terminal selection is ke
 per `(uid, agent)`. Browser coverage: [codex_sdk_subagent_browser.py](../tests/codex_sdk_subagent_browser.py).
 
 Quiet runtime and restart coverage: [codex_sdk_retention_browser.py](../tests/codex_sdk_retention_browser.py).
+
+### Incremental input and identity receipts
+
+DELTA (private ledger storage): queue and creation receipts use private SQLite
+WAL databases with full synchronous commits. A transition upserts only its own
+record; there is no queue of whole-map snapshots. The first open transactionally
+imports the former JSON files, then removes them. Completed input IDs and native
+item IDs stay indexed on disk for deduplication; only pending inputs and accepted
+inputs awaiting native consumption remain in the queue's memory. Creation request
+results retain their original identity across restarts. No receipt expires based
+on age or a storage quota. Rollback exports the current databases to the legacy
+JSON format before starting an older service.
+
+Accepted-input recovery first reads turn summaries, loading full bodies only for
+turns with unmatched receipts. Native page cursors for these turns are persisted
+as hints. A later resume validates the returned turn ID before using a hint and
+falls back to summary pagination when the cursor has moved or expired. A terminal
+turn can still acquire a late user item, so terminal status alone never discards
+or permanently stops checking an unmatched input. History pagination does not
+change the live output checkpoint.
+
+The performance audit's macOS full-sync concern was measured with private temporary
+files on Vela: 30 `F_FULLFSYNC` samples per size, median 3.81 ms for 640 bytes and
+5.16 ms for 3 MiB (p95 3.98/6.05 ms). These local measurements do not justify
+weakening durable input/checkpoint ordering. Read separation, incremental storage
+and checkpoint coalescing remove the avoidable work instead.

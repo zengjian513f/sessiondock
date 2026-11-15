@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    fs,
-    io::{self, Write},
+    fs, io,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -31,11 +30,18 @@ pub(super) struct Input {
     pub turn_status: Option<String>,
     #[serde(default)]
     pub receipt_dismissed: bool,
+    #[serde(default)]
+    pub recovery_cursor: Option<Value>,
+}
+
+fn hot(item: &Input) -> bool {
+    !matches!(item.state.as_str(), "sent" | "cancelled")
+        || (item.state == "sent" && !item.text.is_empty())
 }
 
 type Document = HashMap<String, Vec<Input>>;
 pub(super) struct Queue {
-    path: Option<PathBuf>,
+    ledger: super::ledger::Ledger,
     rows: Mutex<Document>,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -46,21 +52,24 @@ fn storage(error: io::Error) -> RpcError {
 
 impl Queue {
     pub fn open(directory: Option<PathBuf>) -> io::Result<Self> {
-        let path = directory.map(|dir| dir.join("codex-sdk-queue.json"));
-        if let Some(parent) = path.as_ref().and_then(|p| p.parent()) {
-            fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-            }
+        let ledger = super::ledger::Ledger::open(directory.as_deref(), "codex-sdk-queue")?;
+        if let Some(path) = directory
+            .as_ref()
+            .map(|d| d.join("codex-sdk-queue.json"))
+            .filter(|p| p.exists())
+        {
+            let old: Document = serde_json::from_reader(fs::File::open(&path)?)?;
+            ledger.import(old.into_iter().flat_map(|(thread, inputs)| {
+                inputs
+                    .into_iter()
+                    .map(move |input| (thread.clone(), input.id.clone(), hot(&input), input))
+            }))?;
+            fs::remove_file(path)?;
         }
-        let mut rows: Document = match path.as_ref().map(fs::read).transpose() {
-            Ok(Some(bytes)) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-            Ok(None) => HashMap::new(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => HashMap::new(),
-            Err(error) => return Err(error),
-        };
+        let mut rows: Document = HashMap::new();
+        for (thread, input) in ledger.load::<Input>(true)? {
+            rows.entry(thread).or_default().push(input);
+        }
         for item in rows
             .values_mut()
             .flatten()
@@ -70,7 +79,7 @@ impl Queue {
             item.error = Some("服务已重启，消息可能已发送；请核对会话后重试或撤销。".into());
         }
         Ok(Self {
-            path,
+            ledger,
             rows: Mutex::new(rows),
             locks: Mutex::new(HashMap::new()),
         })
@@ -104,6 +113,45 @@ impl Queue {
                 .map(|item| json!({"id":item.id,"text":item.text,"turn_id":item.turn_id,"turn_status":item.turn_status,"receipt_dismissed":item.receipt_dismissed}))
                 .collect::<Vec<_>>()
         )
+    }
+
+    pub(super) fn recovery_pages(&self, thread: &str) -> Vec<(String, Value)> {
+        self.rows
+            .lock()
+            .expect("queue")
+            .get(thread)
+            .into_iter()
+            .flatten()
+            .filter(|row| row.state == "sent" && !row.text.is_empty())
+            .filter_map(|row| Some((row.turn_id.clone()?, row.recovery_cursor.clone()?)))
+            .collect()
+    }
+
+    pub(super) fn remember_page(
+        &self,
+        thread: &str,
+        turn: &str,
+        cursor: &Value,
+    ) -> Result<(), RpcError> {
+        let rows: Vec<_> = self
+            .rows
+            .lock()
+            .expect("queue")
+            .get(thread)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row.state == "sent"
+                    && row.turn_id.as_deref() == Some(turn)
+                    && row.recovery_cursor.as_ref() != Some(cursor)
+            })
+            .cloned()
+            .collect();
+        for mut row in rows {
+            row.recovery_cursor = Some(cursor.clone());
+            self.update(thread, row)?;
+        }
+        Ok(())
     }
 
     pub(super) fn settle_turn(&self, thread: &str, turn: &Value) -> Result<(), RpcError> {
@@ -158,10 +206,7 @@ impl Queue {
             let Some(entries) = rows.get(thread) else {
                 return Ok(());
             };
-            if entries
-                .iter()
-                .any(|row| row.native_item_id.as_deref() == Some(id))
-            {
+            if self.ledger.consumed(thread, id).map_err(storage)? {
                 return Ok(());
             }
             entries
@@ -182,14 +227,18 @@ impl Queue {
         Ok(())
     }
 
-    fn get(&self, thread: &str, id: &str) -> Option<Input> {
-        self.rows
+    fn get(&self, thread: &str, id: &str) -> Result<Option<Input>, RpcError> {
+        if let Some(input) = self
+            .rows
             .lock()
             .expect("queue")
-            .get(thread)?
-            .iter()
-            .find(|item| item.id == id)
+            .get(thread)
+            .and_then(|rows| rows.iter().find(|item| item.id == id))
             .cloned()
+        {
+            return Ok(Some(input));
+        }
+        self.ledger.get(thread, id).map_err(storage)
     }
 
     pub(super) fn pending_state(&self, thread: &str) -> Option<String> {
@@ -220,12 +269,18 @@ impl Queue {
         let mut rows = self.rows.lock().expect("queue");
         // Native consumption can arrive before the RPC reply. Preserve that
         // evidence when the dispatch task later publishes its captured input.
-        if let Some(old) = rows
+        let previous = match rows
             .get(thread)
-            .into_iter()
-            .flatten()
-            .find(|old| old.id == item.id)
+            .and_then(|entries| entries.iter().find(|old| old.id == item.id))
+            .cloned()
         {
+            Some(old) => Some(old),
+            None => self
+                .ledger
+                .get::<Input>(thread, &item.id)
+                .map_err(storage)?,
+        };
+        if let Some(old) = previous.as_ref() {
             if old.state == "sent" && item.state == "sending" && item.native_item_id.is_some() {
                 item.state = old.state.clone();
             }
@@ -237,6 +292,9 @@ impl Queue {
                 item.turn_status = old.turn_status.clone();
             }
             item.receipt_dismissed |= old.receipt_dismissed;
+            if item.recovery_cursor.is_none() {
+                item.recovery_cursor = old.recovery_cursor.clone();
+            }
         }
         if item.state == "cancelled" || (item.state == "sent" && item.native_item_id.is_some()) {
             item.text.clear();
@@ -246,32 +304,22 @@ impl Queue {
             item.model = None;
             item.effort = None;
         }
-        let mut next = rows.clone();
-        let entries = next.entry(thread.into()).or_default();
-        if let Some(old) = entries.iter_mut().find(|old| old.id == item.id) {
-            *old = item;
-        } else {
+        self.ledger
+            .save(thread, &item.id, hot(&item), &item)
+            .map_err(storage)?;
+        let entries = rows.entry(thread.into()).or_default();
+        if let Some(index) = entries.iter().position(|old| old.id == item.id) {
+            if hot(&item) {
+                entries[index] = item;
+            } else {
+                entries.remove(index);
+            }
+        } else if hot(&item) {
             entries.push(item);
         }
-        if let Some(path) = &self.path {
-            let temporary = path.with_extension("tmp");
-            let result = (|| -> io::Result<()> {
-                let mut options = fs::OpenOptions::new();
-                options.create(true).truncate(true).write(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.mode(0o600);
-                }
-                let mut file = options.open(&temporary)?;
-                file.write_all(&serde_json::to_vec(&next)?)?;
-                file.sync_all()?;
-                fs::rename(&temporary, path)?;
-                Ok(())
-            })();
-            result.map_err(storage)?;
+        if entries.is_empty() {
+            rows.remove(thread);
         }
-        *rows = next;
         Ok(())
     }
 }
@@ -289,7 +337,7 @@ impl CodexSdk {
         let lock = self.inner.queue.lock(thread);
         let _guard = lock.lock().await;
         let live = self.inner.ensure(thread).await?;
-        if self.inner.queue.get(thread, &id).is_none() {
+        if self.inner.queue.get(thread, &id)?.is_none() {
             self.inner.queue.update(
                 thread,
                 Input {
@@ -305,6 +353,7 @@ impl CodexSdk {
                     direct_steer: false,
                     turn_status: None,
                     receipt_dismissed: false,
+                    recovery_cursor: None,
                 },
             )?;
             live.cancel_capacity_retry();
@@ -313,7 +362,7 @@ impl CodexSdk {
         let item = self
             .inner
             .queue
-            .get(thread, &id)
+            .get(thread, &id)?
             .ok_or(RpcError::UnknownRequest)?;
         Ok(json!({"id":id,"queued":item.state != "sent","state":item.state,"steered":false}))
     }
@@ -331,7 +380,7 @@ impl CodexSdk {
         let lock = self.inner.queue.lock(thread);
         let _guard = lock.lock().await;
         let live = self.inner.ensure(thread).await?;
-        if self.inner.queue.get(thread, &id).is_none() {
+        if self.inner.queue.get(thread, &id)?.is_none() {
             if live.active_turn().as_deref() != Some(expected_turn.as_str()) {
                 return Err(RpcError::NoActiveTurn);
             }
@@ -348,6 +397,7 @@ impl CodexSdk {
                 direct_steer: true,
                 turn_status: None,
                 receipt_dismissed: false,
+                recovery_cursor: None,
             };
             self.inner.queue.update(thread, item.clone())?;
             self.inner.deliver(&live, item, Some(expected_turn)).await?;
@@ -355,7 +405,7 @@ impl CodexSdk {
         let item = self
             .inner
             .queue
-            .get(thread, &id)
+            .get(thread, &id)?
             .ok_or(RpcError::UnknownRequest)?;
         Ok(
             json!({"id":id,"state":item.state,"accepted":item.state == "sent",
@@ -374,7 +424,7 @@ impl CodexSdk {
         let mut item = self
             .inner
             .queue
-            .get(thread, id)
+            .get(thread, id)?
             .ok_or(RpcError::UnknownRequest)?;
         if action == "dismiss" && item.state == "sent" && item.turn_status.is_some() {
             // Acknowledge only the notice. Keep the completed delivery and its

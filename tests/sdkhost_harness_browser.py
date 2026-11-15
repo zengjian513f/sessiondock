@@ -20,6 +20,7 @@ from frontend_paths import frontend_dir
 from history_fixtures import BINARY, Corpus, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode, SID
 from sdkhost_fixtures import stop_private_sdkhosts
+from codex_checkpoint_fixtures import owner_initializations
 from sdk_ui_fixtures import start_sdk
 from send_browser import initialize
 
@@ -55,11 +56,11 @@ def codex(browser, binary, screenshots):
                     send(page, 'approve across service restart')
                     expect(page.locator('.sdk-request')).to_contain_text('Synthetic approval reason')
                     original = hosts(root, 'codex-channel-'); assert len(original) == 1, original
-                    original_client = list(native.clients); assert len(original_client) == 1
-                    initialize_count = len(native.methods('initialize'))
+                    original_client = [w for w in native.clients if w not in native.query_clients]; assert len(original_client) == 1
+                    initialize_count = len(owner_initializations(native))
                     turn_count = len(native.methods('turn/start'))
                 # The same native WebSocket must stay subscribed while no HTTP service exists.
-                assert native.clients == original_client, 'service shutdown closed native subscription'
+                assert [w for w in native.clients if w not in native.query_clients] == original_client, 'service shutdown closed native subscription'
                 asyncio.run_coroutine_threadsafe(native.notify('item/agentMessage/delta', {
                     'turnId': native.turn, 'itemId': 'offline-item', 'delta': 'output while node offline'}), native.loop).result(5)
                 deadline = time.monotonic() + 5
@@ -73,8 +74,8 @@ def codex(browser, binary, screenshots):
                     card = page.locator('.sdk-request')
                     expect(card).to_contain_text('Synthetic approval reason')
                     assert {k:v['pid'] for k,v in hosts(root, 'codex-channel-').items()} == {k:v['pid'] for k,v in original.items()}
-                    assert native.clients == original_client
-                    assert len(native.methods('initialize')) == initialize_count, 'reinitialized existing native connection'
+                    assert [w for w in native.clients if w not in native.query_clients] == original_client
+                    assert len(owner_initializations(native)) == initialize_count, 'reinitialized existing native connection'
                     assert len(native.methods('turn/start')) == turn_count, 'replayed user input'
                     card.get_by_role('button', name='批准', exact=True).click()
                     expect(page.locator('#detail')).to_contain_text('All done after approval', timeout=30000)
@@ -131,7 +132,7 @@ with Peer(socket, Path(''' + repr(str(corpus.paths['sdk'])) + '), ' + repr(THREA
                 page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
                 expect(page.locator('#detail')).to_contain_text('All done after approval', timeout=30000)
                 frames = [json.loads(line) for line in (root/'received.jsonl').read_text().splitlines()]
-                assert sum(frame.get('method')=='initialize' for frame in frames)==1
+                assert sum(frame.get('method')=='initialize' and frame['params']['clientInfo']['name']=='sessiondock' for frame in frames)==1
                 assert sum(frame.get('method')=='turn/start' for frame in frames)==1
             print('PASS Codex auto-start: sdkhost owns listener and channel; same native PID across service restart', flush=True)
         except Exception:

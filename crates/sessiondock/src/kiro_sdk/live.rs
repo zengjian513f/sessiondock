@@ -211,7 +211,7 @@ impl LiveState {
             self.transcript_version = 2;
             return Ok(());
         }
-        let file = sdkhost_client::cold::open(stdout).map_err(|e| e.to_string())?;
+        let file = sdkhost_client::segments::Reader::new(stdout.to_path_buf());
         let prompts: Vec<_> = self
             .journal
             .iter()
@@ -225,7 +225,7 @@ impl LiveState {
         replay.session_id = self.session_id.clone();
         let mut prompt_index = 0;
         let mut started = false;
-        for line in BufReader::new(file.take(self.stdout_offset)).lines() {
+        for line in BufReader::with_capacity(512 * 1024, file.take(self.stdout_offset)).lines() {
             let line = line.map_err(|e| e.to_string())?;
             let Ok(frame) = serde_json::from_str::<Value>(&line) else {
                 continue;

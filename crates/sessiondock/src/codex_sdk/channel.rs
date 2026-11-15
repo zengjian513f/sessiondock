@@ -247,14 +247,12 @@ impl Channel {
     pub async fn write(&self, entry: &Entry) -> Result<(), RpcError> {
         let mut bytes = serde_json::to_vec(&entry.frame.to_string()).map_err(failure)?;
         bytes.push(b'\n');
-        let receipt = match self.client.receipt(&entry.id).await.map_err(failure)? {
-            Some(receipt) => receipt,
-            None => self
-                .client
-                .write(&entry.id, &bytes)
-                .await
-                .map_err(failure)?,
-        };
+        // Write itself performs the durable idempotency lookup in sdkhost.
+        let receipt = self
+            .client
+            .write(&entry.id, &bytes)
+            .await
+            .map_err(failure)?;
         if receipt.state != "written" {
             return Err(RpcError::Disconnected);
         }

@@ -16,10 +16,12 @@ mod channel;
 mod connection;
 mod controls;
 pub(crate) mod creation;
+mod ledger;
 mod live;
 pub(crate) mod managed;
 mod observation;
 mod providers;
+mod query;
 mod queue;
 mod receipts;
 mod retention;
@@ -866,6 +868,38 @@ impl Inner {
             .flatten()
             .filter_map(|row| row["turn_id"].as_str().map(str::to_owned))
             .collect();
+        // Opaque page hints survive restart. Validate the native turn ID before
+        // using a hint: newest-page cursors can move and native cursors can expire.
+        for (id, cursor) in self.queue.recovery_pages(thread.id()) {
+            if !turns.contains(&id) {
+                continue;
+            }
+            let summary = connection
+                .request(
+                    "thread/turns/list",
+                    json!({
+                        "threadId":thread.id(),"sortDirection":"desc","limit":1,
+                        "itemsView":"summary","cursor":cursor,
+                    }),
+                )
+                .await;
+            match summary {
+                Ok(page)
+                    if page["data"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|r| r["id"] == id)) =>
+                {
+                    if self
+                        .recover_receipt_at(connection, thread, &cursor, &id)
+                        .await?
+                    {
+                        turns.remove(&id);
+                    }
+                }
+                Ok(_) | Err(RpcError::Remote { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let mut cursor = Value::Null;
         while !turns.is_empty() {
             let page = connection
@@ -873,17 +907,18 @@ impl Inner {
                     "thread/turns/list",
                     json!({
                         "threadId":thread.id(), "sortDirection":"desc", "limit":1,
-                        "itemsView":"full", "cursor":cursor,
+                        "itemsView":"summary", "cursor":cursor,
                     }),
                 )
                 .await?;
             for turn in page["data"].as_array().into_iter().flatten() {
                 let id = turn["id"].as_str().unwrap_or_default();
-                if turns.remove(id) {
-                    for item in turn["items"].as_array().into_iter().flatten() {
-                        self.queue.consumed(thread.id(), id, item)?;
-                    }
-                    self.queue.settle_turn(thread.id(), turn)?;
+                if turns.contains(id)
+                    && self
+                        .recover_receipt_at(connection, thread, &cursor, id)
+                        .await?
+                {
+                    turns.remove(id);
                 }
             }
             cursor = page["nextCursor"].clone();
@@ -892,6 +927,40 @@ impl Inner {
             }
         }
         Ok(())
+    }
+
+    async fn recover_receipt_at(
+        &self,
+        connection: &Arc<Connection>,
+        thread: &LiveThread,
+        cursor: &Value,
+        id: &str,
+    ) -> Result<bool, RpcError> {
+        // Intermediate turns need no tool bodies. Only materialize the exact
+        // accepted turn, including possible late consumption after interruption.
+        let page = connection
+            .request(
+                "thread/turns/list",
+                json!({
+                    "threadId":thread.id(),"sortDirection":"desc","limit":1,
+                    "itemsView":"full","cursor":cursor,
+                }),
+            )
+            .await?;
+        if let Some(turn) = page["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|turn| turn["id"] == id)
+        {
+            self.queue.settle_turn(thread.id(), turn)?;
+            for item in turn["items"].as_array().into_iter().flatten() {
+                self.queue.consumed(thread.id(), id, item)?;
+            }
+            self.queue.remember_page(thread.id(), id, cursor)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn recover_active_turn(

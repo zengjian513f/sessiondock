@@ -43,6 +43,12 @@ fn child(mode: &str) -> io::Result<()> {
     }
     for line in io::stdin().lock().lines() {
         let line = line?;
+        if line == "bulk" {
+            io::stdout().write_all(&vec![b'x'; 9 * 1024 * 1024])?;
+            println!("bulk:中文:end");
+            io::stdout().flush()?;
+            continue;
+        }
         if line == "fork" {
             let mut cmd = std::process::Command::new(std::env::current_exe()?);
             cmd.args(["child", "worker"]);
@@ -143,6 +149,19 @@ async fn run() -> io::Result<serde_json::Value> {
         }
         "time" => {
             serde_json::to_value(c.received_at(Stream::Stdout, r["offset"].as_u64().unwrap())?)?
+        }
+        "storage" => {
+            let dir = root.join(key).join("stdout.parts");
+            let files: Vec<_> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect();
+            let stored: u64 = files
+                .iter()
+                .map(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
+                .sum();
+            serde_json::json!({"segments":files.len(),"stored_bytes":stored})
         }
         "remove" => {
             c.remove().await?;

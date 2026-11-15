@@ -19,3 +19,6 @@ mod unsupported;
 pub use unsupported::*;
 #[cfg(any(unix, windows))]
 pub mod cold;
+
+#[cfg(any(unix, windows))]
+pub mod segments;

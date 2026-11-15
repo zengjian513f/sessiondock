@@ -490,7 +490,9 @@ impl State {
 
 fn append(items: &mut IndexMap<String, Value>, id: &str, field: &str, delta: &str) {
     if let Some(item) = items.get_mut(id) {
-        let joined = format!("{}{delta}", item[field].as_str().unwrap_or_default());
-        item[field] = json!(joined);
+        match &mut item[field] {
+            Value::String(text) => text.push_str(delta),
+            value => *value = Value::String(delta.to_owned()),
+        }
     }
 }

@@ -23,7 +23,7 @@ HTML = '''<!doctype html><meta charset="utf-8"><title>SDK host platform fixture<
 <label>Input <textarea id="text"></textarea></label><label>Offset <input id="offset" value="0"></label>
 <select id="stream"><option>stdout</option><option>stderr</option></select>
 <div id="actions"></div><pre id="result"></pre><script>
-for (const action of ['paths','launch','attach','status','write','receipt','read','time','close','stop','remove']) {
+for (const action of ['paths','launch','attach','status','write','receipt','read','time','close','stop','storage','remove']) {
  const b=document.createElement('button');b.textContent=action;b.id=action;
  b.onclick=async()=>{const data={action};for(const k of ['key','id','text','offset','stream'])data[k]=document.getElementById(k).value;
  data.offset=Number(data.offset);document.getElementById('result').textContent='';
@@ -94,14 +94,30 @@ def main():
                     assert act('time', offset=end) > 0
                     assert 'err:hello 中文' in output('stderr')[0]
                     assert act('receipt', id='stable-1')['state'] == 'written'
+                    assert act('write', id='bulk-1', text='bulk\n')['state'] == 'written'
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        current = act('status')
+                        if current['stdout_len'] >= end + 9*1024*1024: break
+                        time.sleep(.05)
+                    large, large_end = output()
+                    assert 'x'*(9*1024*1024)+'bulk:中文:end' in large
+                    storage = act('storage')
+                    assert storage['segments'] >= 2 and storage['stored_bytes'] < 2*1024*1024, storage
+                    boundary = 8*1024*1024-32
+                    part = act('read', offset=boundary)
+                    assert bytes(part['bytes']) == large.encode()[boundary:part['next_offset']]
+                    page.reload()
+                    assert act('write', id='bulk-1', text='must-not-repeat\n')['state'] == 'written'
+                    assert act('status')['stdout_len'] == large_end
                     assert act('close', id='close-1')['state'] == 'written'
                     s = finished('echo'); assert s['exit']['code'] == 0 and s['stdin_closed']
                     time.sleep(.15)
                     assert act('attach')['pid'] == first['pid']
                     assert act('receipt', id='stable-1')['state'] == 'written'
-                    all_text, _ = output(); assert 'stdin:eof' in all_text
-                    suffix = act('read', offset=end)
-                    assert bytes(suffix['bytes']).decode() == all_text.encode()[end:].decode()
+                    all_text, _ = output(); assert all_text == large + 'stdin:eof\n'
+                    suffix = act('read', offset=large_end)
+                    assert bytes(suffix['bytes']).decode() == all_text.encode()[large_end:].decode()
                     act('launch', key='tree')
                     act('write', key='tree', id='fork-1', text='fork\n')
                     deadline = time.monotonic() + 10
@@ -117,7 +133,7 @@ def main():
                     act('stop', key='running')
                     finished('running')
                     for key in ['echo','tree','running']: act('remove', key=key)
-                    print('sdkhost_platform_browser: PASS (stdio, stable receipt, restart attach, offsets, EOF, leader-first descendants, stop, long state path)')
+                    print('sdkhost_platform_browser: PASS (stdio, stable receipt, restart attach, offsets, EOF, leader-first descendants, stop, long state path, active compression, boundary reads, offline byte identity)')
                 finally:
                     for key in ['echo','tree','running']:
                         try: rpc({'action':'stop','key':key})

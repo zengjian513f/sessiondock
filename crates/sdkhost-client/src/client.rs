@@ -43,18 +43,48 @@ pub struct Receipt {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadResult {
+    #[serde(deserialize_with = "read_bytes")]
     pub bytes: Vec<u8>,
     pub next_offset: u64,
     pub eof: bool,
 }
+fn read_bytes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    use base64::Engine;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Bytes {
+        Encoded(String),
+        Legacy(Vec<u8>),
+    }
+    match Bytes::deserialize(deserializer)? {
+        Bytes::Legacy(bytes) => Ok(bytes),
+        Bytes::Encoded(text) => base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .map_err(serde::de::Error::custom),
+    }
+}
 #[derive(Serialize, Deserialize)]
 pub enum Request {
     Status,
-    Write { id: String, bytes: Vec<u8> },
-    Receipt { id: String },
-    CloseStdin { id: String },
-    Signal { signal: i32 },
-    Read { stream: Stream, offset: u64 },
+    Write {
+        id: String,
+        bytes: Vec<u8>,
+    },
+    Receipt {
+        id: String,
+    },
+    CloseStdin {
+        id: String,
+    },
+    Signal {
+        signal: i32,
+    },
+    Read {
+        stream: Stream,
+        offset: u64,
+        #[serde(default)]
+        compact: bool,
+    },
     Remove,
 }
 #[derive(Serialize, Deserialize)]
@@ -287,38 +317,27 @@ impl Client {
                 }
                 serde_json::to_value(status)?
             }
-            Request::Read { stream, offset } => {
-                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            Request::Read { stream, offset, .. } => {
                 let path = self.dir.join(match stream {
                     Stream::Stdout => "stdout",
                     Stream::Stderr => "stderr",
                 });
-                let mut file = if status.exit.is_some() && status.stdout_eof && status.stderr_eof {
-                    let restore = path.clone();
-                    let file = tokio::task::spawn_blocking(move || crate::cold::open(&restore))
-                        .await
-                        .map_err(io::Error::other)??;
-                    tokio::fs::File::from_std(file)
-                } else {
-                    tokio::fs::File::open(path).await?
-                };
                 let (mut len, eof) = match stream {
                     Stream::Stdout => (status.stdout_len, status.stdout_eof),
                     Stream::Stderr => (status.stderr_len, status.stderr_eof),
                 };
-                if !eof {
-                    len = len.max(file.metadata().await.map(|m| m.len()).unwrap_or(len));
-                }
-                let buf = if offset < len {
-                    file.seek(std::io::SeekFrom::Start(offset)).await?;
-                    let cap = (len - offset).min(65536) as usize;
-                    let mut buf = vec![0u8; cap];
-                    let n = file.read(&mut buf).await?;
-                    buf.truncate(n);
-                    buf
-                } else {
-                    Vec::new()
-                };
+                let buf = tokio::task::spawn_blocking(move || {
+                    if !eof {
+                        len = len.max(crate::segments::len(&path).unwrap_or(len));
+                    }
+                    if offset < len {
+                        crate::segments::read(&path, offset, (len - offset).min(524288) as usize)
+                    } else {
+                        Ok(Vec::new())
+                    }
+                })
+                .await
+                .map_err(io::Error::other)??;
                 let n = buf.len();
                 if n == 0 {
                     if let Some(error) = &status.output_error {
@@ -335,21 +354,30 @@ impl Client {
                 })?
             }
             Request::Receipt { id } => {
-                let log = match tokio::fs::read(self.dir.join("receipts.jsonl")).await {
-                    Ok(log) => log,
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-                    Err(e) => return Err(e),
-                };
-                let mut found = None;
-                for line in log.split(|b| *b == b'\n') {
-                    if let Ok(row) = serde_json::from_slice::<serde_json::Value>(line)
-                        && row.get("id").and_then(|v| v.as_str()) == Some(id.as_str())
-                    {
-                        found = row.get("receipt").cloned();
+                let path = self.dir.join("receipts.jsonl");
+                tokio::task::spawn_blocking(move || {
+                    use std::io::BufRead;
+                    let file = match std::fs::File::open(path) {
+                        Ok(file) => file,
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                            return Ok(serde_json::Value::Null);
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    let mut found = serde_json::Value::Null;
+                    for line in std::io::BufReader::new(file).split(b'\n') {
+                        if let Ok(row) = serde_json::from_slice::<serde_json::Value>(&line?)
+                            && row["id"] == id
+                        {
+                            found = row["receipt"].clone();
+                        }
                     }
-                }
-                found.unwrap_or(serde_json::Value::Null)
+                    Ok::<_, io::Error>(found)
+                })
+                .await
+                .map_err(io::Error::other)??
             }
+
             Request::Remove if status.exit.is_some() && status.stdout_eof && status.stderr_eof => {
                 tokio::fs::remove_dir_all(&self.dir).await?;
                 serde_json::Value::Null
@@ -387,9 +415,26 @@ impl Client {
         self.rpc(Request::Signal { signal }).await
     }
     pub async fn read(&self, stream: Stream, offset: u64) -> io::Result<ReadResult> {
-        match self.rpc(Request::Read { stream, offset }).await {
+        match self
+            .rpc(Request::Read {
+                stream,
+                offset,
+                compact: true,
+            })
+            .await
+        {
             Ok(v) => Ok(v),
-            Err(e) => self.offline(Request::Read { stream, offset }, e).await,
+            Err(e) => {
+                self.offline(
+                    Request::Read {
+                        stream,
+                        offset,
+                        compact: true,
+                    },
+                    e,
+                )
+                .await
+            }
         }
     }
     pub async fn wait(&self) -> io::Result<Exit> {

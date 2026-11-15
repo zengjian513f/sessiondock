@@ -58,6 +58,7 @@ type Waiter = oneshot::Sender<Result<Value, RpcError>>;
 pub struct Connection {
     pub socket: std::path::PathBuf,
     channel: Arc<super::channel::Channel>,
+    query: Arc<super::query::Query>,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, Waiter>>,
     closed: CancellationToken,
@@ -135,7 +136,9 @@ impl Connection {
         let channel =
             super::channel::Channel::open(&inner.host_state, endpoint, &address, token.as_deref())
                 .await?;
+        let closed = CancellationToken::new();
         let connection = Arc::new(Self {
+            query: Arc::new(super::query::Query::new(address, token, closed.clone())),
             socket: endpoint.socket.clone(),
             next_id: AtomicI64::new(
                 inner
@@ -151,7 +154,7 @@ impl Connection {
             ),
             channel,
             pending: Mutex::new(HashMap::new()),
-            closed: CancellationToken::new(),
+            closed,
             done: CancellationToken::new(),
             generation,
         });
@@ -233,6 +236,12 @@ impl Connection {
     }
 
     pub async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, RpcError> {
+        if self.is_closed() {
+            return Err(RpcError::Disconnected);
+        }
+        if super::query::repeatable(method) {
+            return self.query.request(method, params).await;
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.request_id(id, method, params).await
     }
@@ -437,6 +446,7 @@ fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
         let reader = async {
             let mut offset = channel.offset();
             let mut buffer = Vec::new();
+            let mut scanned = 0;
             loop {
                 let mut frames = Vec::new();
                 let mut deadline = None;
@@ -460,8 +470,8 @@ fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
                     offset = chunk.next_offset;
                     buffer.extend(&chunk.bytes);
                     let mut consumed = 0;
-                    while let Some(end) = buffer[consumed..].iter().position(|b| *b == b'\n') {
-                        let end = consumed + end + 1;
+                    while let Some(end) = buffer[scanned..].iter().position(|b| *b == b'\n') {
+                        let end = scanned + end + 1;
                         let record: Value = serde_json::from_slice(&buffer[consumed..end])
                             .map_err(|e| RpcError::Unavailable(e.to_string()))?;
                         frames.push(match record.as_str() {
@@ -470,8 +480,10 @@ fn spawn_io(inner: Arc<Inner>, connection: Arc<Connection>) {
                             None => Value::Null,
                         });
                         consumed = end;
+                        scanned = end;
                     }
                     buffer.drain(..consumed);
+                    scanned = buffer.len();
                     if !frames.is_empty() && deadline.is_none() {
                         deadline = Some(tokio::time::Instant::now() + Duration::from_millis(25));
                     }

@@ -14,6 +14,7 @@ from codex_sdk_queue_browser import QueueServer
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_actions_browser import environment
 from history_fixtures import BINARY, codex_row
+from codex_ledger_fixtures import queue_rows, legacy_queue
 from sdk_ui_fixtures import start_sdk
 
 
@@ -22,7 +23,18 @@ class CompactionServer(QueueServer):
         if message.get('method') == 'turn/steer' and getattr(self, 'defer_steer', False):
             await self.send(writer, {'id': message['id'], 'result': {'turnId': self.turn}})
         elif message.get('method') == 'thread/turns/list' and getattr(self, 'offline_consumed', None):
-            await self.send(writer, {'id': message['id'], 'result': {'data': [self.offline_consumed], 'nextCursor': None}})
+            cursor = message['params'].get('cursor')
+            if cursor == 'expired':
+                await self.send(writer, {'id':message['id'],'error':{'code':-32602,'message':'expired cursor'}})
+                return
+            page = int((cursor or 'receipt-page-0').rsplit('-',1)[-1])
+            if page < 9:
+                assert message['params']['itemsView'] == 'summary', 'unrelated historical tool bodies were requested'
+                data = [{'id':f'unrelated-{page}','status':'completed','items':[]}]
+                after = f'receipt-page-{page+1}'
+            else:
+                data, after = [self.offline_consumed], None
+            await self.send(writer, {'id':message['id'],'result':{'data':data,'nextCursor':after}})
         elif message.get('method') == 'turn/start' and self.compact_next:
             self.compact_next = False
             self.turn = 'compacting-' + str(len(self.methods('turn/start')))
@@ -131,7 +143,7 @@ def main():
                         page.reload(wait_until='networkidle')
                         expect(accepted).to_have_count(0)
                         expect(page.locator('#sdk-input')).to_have_value('保留这份草稿')
-                        receipt = next(row for row in json.loads((root/'state/codex-sdk-queue.json').read_text())[THREAD]
+                        receipt = next(row for row in queue_rows(root)[THREAD]
                                        if row['id'] == receipt_id)
                         assert receipt['state'] == 'sent' and receipt['text'] == text
                         assert receipt['turn_status'] == 'interrupted' and receipt['receipt_dismissed']
@@ -207,7 +219,7 @@ def main():
                     page.wait_for_timeout(200)
                     starts_before_restart = len(fake.methods('turn/start'))
                     context.close()
-                entries = json.loads((root/'state/codex-sdk-queue.json').read_text())[THREAD]
+                entries = queue_rows(root)[THREAD]
                 assert entries[-1]['state'] == 'sent'
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     context, page = open_page(browser, base, 1280, 'dark')
@@ -220,10 +232,13 @@ def main():
                     print('PASS service restart preserves completed delivery without replay', flush=True)
                 # Legacy receipts have no terminal status. Recover the exact
                 # older turn, without inventing consumption or changing sent.
-                ledger = root/'state/codex-sdk-queue.json'
+                ledger = legacy_queue(root)
                 legacy = json.loads(ledger.read_text())
+                legacy[THREAD] = legacy[THREAD][-1:]
                 legacy[THREAD][-1].pop('turn_status', None)
+                legacy[THREAD][-1]['recovery_cursor'] = 'expired'
                 ledger.write_text(json.dumps(legacy))
+                fake.turn = None
                 fake.offline_consumed = {'id': entries[-1]['turn_id'], 'status': 'interrupted', 'items': []}
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     context, page = open_page(browser, base, 1280, 'dark')
@@ -233,6 +248,7 @@ def main():
                     assert not page.locator('.sdk-queued').count()
                     context.close()
                     print('PASS legacy terminal receipt recovered without replay', flush=True)
+                before_hinted = len(fake.methods('thread/turns/list'))
                 fake.offline_consumed = {'id': entries[-1]['turn_id'], 'status': 'completed', 'items': [{
                     'id': 'consumed-while-offline', 'type': 'userMessage',
                     'content': [{'type': 'text', 'text': 'restart while compacting'}]}]}
@@ -241,7 +257,9 @@ def main():
                     expect(page.locator('.sdk-accepted').filter(has_text='restart while compacting')).to_have_count(0)
                     assert len(fake.methods('turn/start')) == starts_before_restart
                     context.close()
-                    print('PASS completed native consumption during service downtime reconciles receipt', flush=True)
+                    hinted = fake.methods('thread/turns/list')[before_hinted:]
+                    assert hinted and all(m['params']['cursor'] == 'receipt-page-9' for m in hinted), hinted
+                    print('PASS native late consumption reconciles receipt through persisted exact-turn cursor; expired hint falls back to summaries', flush=True)
         finally: browser.close()
 
 

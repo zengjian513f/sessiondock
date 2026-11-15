@@ -369,6 +369,9 @@ def run(args):
                         continue
                     for name in ('stdout', 'stderr'):
                         stream = status_path.parent / name
+                        if not stream.exists():
+                            assert stream.with_suffix('.gz').is_file()
+                            continue
                         with gzip.open(stream.with_suffix('.gz'), 'wb') as compressed:
                             compressed.write(stream.read_bytes())
                         stream.unlink()

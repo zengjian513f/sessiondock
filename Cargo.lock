@@ -1630,6 +1630,7 @@ dependencies = [
  "base64",
  "futures-util",
  "libc",
+ "rusqlite",
  "sdkhost-client",
  "serde",
  "serde_json",
@@ -1642,6 +1643,7 @@ dependencies = [
 name = "sdkhost-client"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "flate2",
  "libc",
  "serde",

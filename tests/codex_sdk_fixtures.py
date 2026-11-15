@@ -37,6 +37,7 @@ class FakeAppServer:
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
         self.clients = []
+        self.query_clients = set()
         self.turn = None
         self.request_seq = 0
         self.used = {"primary": 40, "secondary": 25}
@@ -128,10 +129,13 @@ class FakeAppServer:
                     break
                 message = json.loads(text)
                 self.received.append(message)
+                if message.get('method') == 'initialize' and message.get('params',{}).get('clientInfo',{}).get('name') == 'sessiondock-query':
+                    self.query_clients.add(writer)
                 await self._handle(writer, message)
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
+            self.query_clients.discard(writer)
             if writer in self.clients:
                 self.clients.remove(writer)
             writer.close()

@@ -14,6 +14,11 @@ class CheckpointPeer(FakeAppServer):
         method = message.get('method')
         if method == 'thread/loaded/list':
             await self.send(writer, {'id': message['id'], 'result': {'data': [self.thread_id]}})
+        elif method == 'thread/turns/list' and str(message.get('params',{}).get('cursor','')).startswith('sustained-'):
+            async def later():
+                await asyncio.sleep(2)
+                await self.send(writer, {'id':message['id'],'result':{'data':[], 'nextCursor':None}})
+            asyncio.create_task(later())
         elif method == 'thread/turns/list':
             await self.send(writer, {'id': message['id'], 'result': {'data': [], 'nextCursor': None}})
         else:
@@ -31,6 +36,16 @@ class CheckpointPeer(FakeAppServer):
         # No completed-item replacement: the page must receive all deltas.
         await self.notify('item/agentMessage/delta', {
             'turnId': turn, 'itemId': item['id'], 'delta': ' checkpoint burst finished'})
+
+    async def large_frame(self):
+        await self.notify('thread/status/changed', {'status': {'type':'active'}, 'padding':'z'*(10*1024*1024)})
+        await self.notify('item/agentMessage/delta', {'turnId':self.turn,
+            'itemId':'checkpoint-stream','delta':' large-frame-finished'})
+
+    async def disconnect_queries(self):
+        for writer in list(self.query_clients):
+            writer.close()
+            await writer.wait_closed()
 
 
 class CheckpointWrites:
@@ -68,6 +83,8 @@ def legacy_outbox(frames):
     """Recreate the former durable ledger from requests actually sent by the browser."""
     entries = {}
     for frame in frames:
+        if str(frame.get('id','')).startswith('query:'):
+            continue
         if 'id' in frame:
             prefix = 'rpc' if 'method' in frame else 'reply'
             key = prefix + ':' + json.dumps(frame['id'], separators=(',', ':'))
@@ -77,3 +94,29 @@ def legacy_outbox(frames):
             continue
         entries[key] = {'id': key, 'frame': frame}
     return list(entries.values())
+
+
+def seed_legacy_reads(root, native, count=500):
+    """Represent an older service that durably queued repeatable read RPCs."""
+    import socket
+    directory, = (root/'state/sdkhost').glob('codex-channel-*')
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for i in range(count):
+            frame = {'id': 10000+i, 'method': 'thread/turns/list', 'params': {
+                'threadId': native.thread_id, 'cursor': str(i)+'c'*8192}}
+            request = {'Write': {'id': f'rpc:{frame["id"]}',
+                                'bytes': list((json.dumps(json.dumps(frame))+'\n').encode())}}
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(10)
+                client.connect(f'/proc/self/fd/{fd}/control.sock')
+                client.sendall(json.dumps(request).encode()+b'\n')
+                reply = json.loads(client.makefile('rb').readline())
+                assert reply['value']['state'] == 'written', reply
+        native.wait_for(lambda: any(m.get('id') == 10000+count-1 for m in native.received))
+    finally:
+        os.close(fd)
+
+
+def owner_initializations(native):
+    return [m for m in native.methods('initialize') if m['params']['clientInfo']['name'] == 'sessiondock']

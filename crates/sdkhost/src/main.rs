@@ -3,6 +3,8 @@
 mod channel;
 #[cfg(any(unix, windows))]
 mod commands;
+#[cfg(any(unix, windows))]
+mod receipts;
 #[cfg(windows)]
 mod windows;
 #[cfg(any(unix, windows))]
@@ -11,16 +13,16 @@ mod host {
     use sdkhost_client::{
         Exit, LaunchSpec, ReadResult, Receipt, Request, Response, Status, Stream, os, private_dir,
     };
-    use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
+    use std::{io, path::PathBuf, sync::Arc};
     use tokio::{
-        io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
+        io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
         sync::{Mutex, Notify},
     };
     struct State {
         dir: PathBuf,
         status: Status,
         input: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
-        receipts: HashMap<String, Receipt>,
+        receipts: crate::receipts::Receipts,
         signals:
             tokio::sync::mpsc::UnboundedSender<(i32, tokio::sync::oneshot::Sender<io::Result<()>>)>,
     }
@@ -118,21 +120,9 @@ mod host {
         sdkhost_client::platform::replace(&temp, &state.dir.join("status.json"))
     }
     fn receipt(state: &mut State, id: &str, status: &str) -> io::Result<Receipt> {
-        let result = Receipt {
-            state: status.into(),
-        };
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(state.dir.join("receipts.jsonl"))?;
-        use std::io::Write;
-        serde_json::to_writer(&mut f, &serde_json::json!({"id":id,"receipt":result}))?;
-        f.write_all(b"\n")?;
-        f.sync_data()?;
-        state.receipts.insert(id.into(), result.clone());
-        Ok(result)
+        state.receipts.save(id, status)
     }
+
     async fn drain<R: tokio::io::AsyncRead + Unpin>(
         mut reader: R,
         path: PathBuf,
@@ -140,16 +130,12 @@ mod host {
         notify: Arc<Notify>,
         stdout: bool,
     ) -> io::Result<()> {
-        let f = std::fs::OpenOptions::new()
-            .append(true)
-            .mode(0o600)
-            .open(&path)?;
+        let mut output = sdkhost_client::segments::Writer::new(path.clone())?;
         let mut timing = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .mode(0o600)
             .open(path.with_extension("time"))?;
-        let mut file = tokio::fs::File::from_std(f);
         let mut bytes = [0; 65536];
         let mut end = 0u64;
         loop {
@@ -161,8 +147,13 @@ mod host {
             if n == 0 {
                 break;
             }
-            file.write_all(&bytes[..n]).await?;
-            file.flush().await?;
+            let chunk = bytes[..n].to_vec();
+            output = tokio::task::spawn_blocking(move || {
+                output.write(&chunk)?;
+                Ok::<_, io::Error>(output)
+            })
+            .await
+            .map_err(io::Error::other)??;
             // Opaque byte ranges, not parsed SDK messages. Save the receipt
             // instant before making these bytes visible to attached readers.
             end += n as u64;
@@ -180,7 +171,9 @@ mod host {
             notify.notify_waiters();
         }
         timing.sync_data()?;
-        file.sync_data().await
+        tokio::task::spawn_blocking(move || output.finish())
+            .await
+            .map_err(io::Error::other)?
     }
     async fn handle(
         request: Request,
@@ -190,14 +183,14 @@ mod host {
         match request {
             Request::Status => Ok(serde_json::to_value(&state.lock().await.status)?),
             Request::Receipt { id } => {
-                Ok(serde_json::to_value(state.lock().await.receipts.get(&id))?)
+                Ok(serde_json::to_value(state.lock().await.receipts.get(&id)?)?)
             }
             Request::Write { id, bytes } => {
                 let input = state.lock().await.input.clone();
                 let mut input = input.lock().await;
                 {
                     let mut s = state.lock().await;
-                    if let Some(r) = s.receipts.get(&id) {
+                    if let Some(r) = s.receipts.get(&id)? {
                         return Ok(serde_json::to_value(r)?);
                     }
                     if input.is_none() {
@@ -213,7 +206,7 @@ mod host {
                 let result = input.as_mut().unwrap().write_all(&bytes).await;
                 let mut s = state.lock().await;
                 if result.is_err() {
-                    return Ok(serde_json::to_value(s.receipts.get(&id))?);
+                    return Ok(serde_json::to_value(s.receipts.get(&id)?)?);
                 }
                 Ok(serde_json::to_value(receipt(&mut s, &id, "written")?)?)
             }
@@ -221,7 +214,7 @@ mod host {
                 let input = state.lock().await.input.clone();
                 let mut input = input.lock().await;
                 let mut s = state.lock().await;
-                if let Some(r) = s.receipts.get(&id) {
+                if let Some(r) = s.receipts.get(&id)? {
                     return Ok(serde_json::to_value(r)?);
                 }
                 receipt(&mut s, &id, "unknown")?;
@@ -243,7 +236,11 @@ mod host {
                     .map_err(|_| io::Error::other("child already exited"))??;
                 Ok(serde_json::Value::Null)
             }
-            Request::Read { stream, offset } => {
+            Request::Read {
+                stream,
+                offset,
+                compact,
+            } => {
                 let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(250);
                 let (len, exited) = loop {
                     let notified = notify.notified();
@@ -269,13 +266,12 @@ mod host {
                         Stream::Stdout => "stdout",
                         Stream::Stderr => "stderr",
                     });
-                    let mut file = tokio::fs::File::open(path).await?;
-                    file.seek(std::io::SeekFrom::Start(offset)).await?;
-                    let cap = (len - offset).min(65536) as usize;
-                    let mut buf = vec![0u8; cap];
-                    let n = file.read(&mut buf).await?;
-                    buf.truncate(n);
-                    buf
+                    let cap = (len - offset).min(if compact { 524288 } else { 65536 }) as usize;
+                    tokio::task::spawn_blocking(move || {
+                        sdkhost_client::segments::read(&path, offset, cap)
+                    })
+                    .await
+                    .map_err(io::Error::other)??
                 } else {
                     Vec::new()
                 };
@@ -285,11 +281,19 @@ mod host {
                 {
                     return Err(io::Error::other(error.clone()));
                 }
-                Ok(serde_json::to_value(ReadResult {
-                    bytes: buf,
-                    next_offset: offset + n as u64,
-                    eof: exited && n == 0,
-                })?)
+                if compact {
+                    use base64::Engine;
+                    Ok(
+                        serde_json::json!({"bytes":base64::engine::general_purpose::STANDARD.encode(&buf),
+                        "next_offset":offset+n as u64,"eof":exited && n==0}),
+                    )
+                } else {
+                    Ok(serde_json::to_value(ReadResult {
+                        bytes: buf,
+                        next_offset: offset + n as u64,
+                        eof: exited && n == 0,
+                    })?)
+                }
             }
             Request::Remove => {
                 let s = state.lock().await;
@@ -376,7 +380,7 @@ mod host {
                 output_error: None,
             },
             input: Arc::new(Mutex::new(child.stdin.take())),
-            receipts: HashMap::new(),
+            receipts: crate::receipts::Receipts::new(&dir)?,
             signals,
         }));
         persist(&*state.lock().await)?;

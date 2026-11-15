@@ -117,10 +117,11 @@ class ActionsServer(FakeAppServer):
             await self.notify("item/completed", {"turnId": "review-turn", "item": {
                 "id": "review-exited", "type": "exitedReviewMode", "review": "Synthetic review result: no findings"}})
         elif method == "turn/start":
-            await reply({"turn": {"id": "plain-chat", "status": "inProgress", "items": []}})
-            await self.notify("item/completed", {"turnId": "plain-chat", "item": {
+            turn_id = f'plain-chat-{len(self.methods("turn/start"))}'
+            await reply({"turn": {"id": turn_id, "status": "inProgress", "items": []}})
+            await self.notify("item/completed", {"turnId": turn_id, "item": {
                 "id": "plain-answer", "type": "agentMessage", "text": "Plain chat accepted"}})
-            await self.notify("turn/completed", {"turn": {"id": "plain-chat", "status": "completed"}})
+            await self.notify("turn/completed", {"turn": {"id": turn_id, "status": "completed"}})
 
 
 def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"):
@@ -277,7 +278,10 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         expect(box).to_have_value("")
         fake.wait_for(lambda: len(fake.methods("turn/start")) == before + 1)
         assert fake.methods("turn/start")[-1]["params"]["input"][0]["text"] == text
-        page.wait_for_function("!CodexSdkView.turn")
+        # This fake can complete without turn/started. A null live turn alone
+        # does not prove its completion SSE has reached the page.
+        page.wait_for_function("id => CodexSdkView.summary?.last_turn?.id === id",
+                               arg=f'plain-chat-{before+1}')
 
     # A rejected native operation preserves the user's command and session.
     box.fill("/fork reject-this-turn")
@@ -286,7 +290,9 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_have_value('/fork reject-this-turn')
     assert not fake.methods('thread/fork')
     send.click()
-    confirmation.get_by_role('button', name='分支', exact=True).click()
+    with page.expect_response('**/api/codex-sdk/fork') as rejected:
+        confirmation.get_by_role('button', name='分支', exact=True).click()
+    assert rejected.value.status == 502, (rejected.value.status, rejected.value.json())
     expect(pane.locator("#sdk-status-menu")).to_contain_text("turn not found")
     expect(box).to_have_value("/fork reject-this-turn")
     assert page.evaluate("S.sel") == source_uid

@@ -142,7 +142,12 @@ def main():
                 status = json.loads((source / 'status.json').read_text())
                 assert status['exit'] is not None and status['stdout_eof'] and status['stderr_eof']
                 (closed / 'status.json').write_text(json.dumps(status))
-                shutil.copyfile(source / 'stdout', closed / 'stdout')
+                if (source/'stdout').exists():
+                    shutil.copyfile(source/'stdout', closed/'stdout')
+                else:
+                    import gzip
+                    with gzip.open(source/'stdout.gz','rb') as incoming, open(closed/'stdout','wb') as outgoing:
+                        shutil.copyfileobj(incoming,outgoing)
                 (closed / 'stderr').write_bytes(b'')
                 legacy = root / 'state/sdk-adapters/kiro/cold-fixture.json'
                 legacy.write_text(json.dumps(state))
