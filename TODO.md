@@ -9,8 +9,8 @@
   原会话保留，以及同 SID 回退是否支持仅修改对话，再接能力与节点／Hub 浏览器验收；
   不改写原生数据库或文本镜像替代操作。见 [Agy SDK 能力](docs/agy-sdk.md#能力和限制)。
 
-- [ ] Orion、Cetus 补发 Agent 周期用量及 API 价值列修正 `61a76d83`
-  （版本 `20261115T154936436603Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
+- [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
+  （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
   Hub、Vela 已部署、重启并健康，原生会话宿主保持运行。
 
 - [ ] Orion、Cetus 补发周期性读取及 Hub 快照修复的后端快照 `db78edd0`
@@ -77,6 +77,10 @@
   正式部署 SSH 探测超时，前端待恢复后补发。
 
 ## Droid integration
+
+- [ ] Orion、Cetus 补发 BUG-20261115-160646-a893db 的 Droid 内部提醒投影修复
+  `0e045cf1`（已包含于服务发布 `ac3ea3d6`）：正式 SSH 尝试超时；其余五目标
+  已部署、重启并健康。验收见 [事故记录](docs/history-incidents.md#bug-20261115-160646-a893dbdroid-内部提醒在连接前闪现)。
 
 - [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
   最新版本（含文件回退、子代理控制、活动通知、CLI 设置及普通会话移动）：正式 SSH 尝试超时。
@@ -360,9 +364,16 @@
   SDK 区域。两者不能认定为同一原因；此前额度、底栏和菜单步骤已执行，
   周期用量专项通过不等于该综合套件完整通过。
 
-- [ ] 清理 sessiondock 严格 Clippy 的既有告警：2026-11-15 对 lib/bins 运行
-  `--locked -- -D warnings` 因 42 个既有告警失败；周期读取修改新增的告警已修复，
-  普通 Linux/macOS 构建和 Windows 交叉检查通过不能代替严格 lint。
+- [ ] 清理 sessiondock 严格 Clippy 与格式基线：`ec4f5458` 的发布门禁
+  `--all-targets --locked -- -D warnings` 因 43 个既有告警失败，额度修改文件无告警；
+  fmt 另在 api/codex_sdk.rs、api/lifecycle.rs、lifecycle/service.rs、model_cache.rs 失败。
+  普通构建与浏览器通过不能代替严格 lint。
+
+- [ ] 补齐发布门禁浏览器夹具的测试宿主定位：不发布宿主的 stage/bin 缺 ptyhost/sdkhost，
+  quotas_browser 启动报 Launcher(UnsafePath)，droid_usage_browser 等待发送可用失败。
+  `ec4f5458` 发布二进制放入独立测试目录、配已有测试宿主后，两套节点/Hub Chromium 通过；
+  agent_usage_browser 同样通过，已验宽窄屏/明暗主题及错误状态。Droid 夹具需 cryptography，
+  在 Lyra p311 验收；Cygnus 缺该依赖。该次按独立专项结果以 `--test none` 发布，未宣称全库门禁通过。
 
 - [ ] 更新 `header_fold_browser.py` 对已有前后导航按钮的折叠预期：780px 时菜单包含
   `m-prev`、`m-next`，动作顺序断言遗漏二者；本次默认视图修改前的 `e6dffc16`
