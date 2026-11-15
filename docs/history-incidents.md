@@ -1624,3 +1624,20 @@ Orion SSH 超时跳过；Vela 原生构建通过，但 launchd 与健康检查�
 修复在发送前持久化原请求、调用者关系及宿主/RPC 绑定，读取迟到结果时先保存
 身份与关系，再推进检查点。标题中的代理消息不能充当关系证据；不改写既有生产
 会话或自动重跑迁移。具体回归见[迟到创建浏览器套件](../tests/codex_sdk_late_create_browser.py)。
+
+旧发布二进制在新增 Chromium 场景中复现同请求重试持续 502。修复 `ce8c24a8`
+已提交推送；包含该修复的最终发布快照 `bba2b5d3` 通过
+`codex_sdk_late_create_browser.py`、`sdk_creation_retention_browser.py`、
+`sdk_spawn_browser.py --sources codex` 与 `codex_sdk_create_browser.py`。
+覆盖迟到结果、服务重启、同 SID 幂等重试、原父关系、首条发送与审批、迁移树含原生
+子代理、明确解除附属，以及节点／Hub、宽窄屏和明暗主题新建流程。
+release 构建和文档检查通过，没有调用真实付费 CLI。
+`codex_sdk_stalled_browser.py:74` 的静默连接恢复在旧发布基线与修复版均超时，
+保留断言并单独记入 TODO，不将该套件记为通过。存量关系与补迁仍待正式入口处理。
+
+发布合并采用并发性能修复后的已提交 HEAD `bba2b5d3`，避免旧产物覆盖新版本。
+官方部署工具按 bin-only 范围尝试全部七个节点／Hub；Lyra、Cygnus、Pavo、Hub、
+Vela 均已重启并健康，服务版本 `20261115T000523201265Z`；Orion、Cetus 正式 SSH
+尝试超时，待恢复后补发。保留回滚和原会话，未替换前端、ptyhost、sdkhost 或资源代理。
+部署门使用 `--test none`，实际验收为上述最终快照 Chromium 四套件。
+报告为 `target/deploy/20261115-000523-bba2b5d3/report-20261115-001037.json`。
