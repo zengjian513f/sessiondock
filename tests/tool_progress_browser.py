@@ -33,7 +33,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         for i in range(6):
             items.append({'id': f'tool-{i}', 'call_id': f'call-{i}', 'role': 'tool', 'turn_id': 'turn',
                           'name': 'exec_command', 'summary': '$ ' + commands[i],
-                          'text': commands[i],
+                          'text': commands[i], 'input': {'command': commands[i]},
                           'status': 'in_progress' if i == 5 else 'completed',
                           'result': {'role': 'tool_result', 'text': output}})
         if source != 'codex':
@@ -114,7 +114,8 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
                 page.wait_for_function('tick => SdkView.raw.test_tick === tick', arg=tick)
                 assert painted.evaluate("node => node.isConnected && node.querySelector('.hljs-section') !== null"), \
                     'unchanged snapshot replaced the highlighted tool output'
-            tail.locator('..').get_by_text('展开全文', exact=False).click()
+            output_card = tail.locator('xpath=ancestor::*[contains(@class, "tool-entry")][1]')
+            output_card.get_by_text('展开全文', exact=False).click()
             expect(tail).to_contain_text('输出第 17 行')
             expect(tail).to_have_attribute('data-syntax-done', '1')
             expect(tail.locator('.hljs-section')).to_have_count(1)
@@ -123,7 +124,7 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
             page.wait_for_function('SdkView.raw.test_tick === 3')
             assert painted.evaluate("node => node.isConnected && node.querySelector('.hljs-section') !== null")
             expect(tail).to_contain_text('输出第 17 行')
-            tail.locator('..').get_by_text('收起', exact=True).click()
+            output_card.get_by_text('收起', exact=True).click()
             expect(tail).to_have_attribute('data-syntax-done', '1')
             expect(tail.locator('.hljs-section')).to_have_count(1)
             painted.dispose()
@@ -323,7 +324,7 @@ def main():
                     hub.start()
                     try:
                         for label, url in [('node', base), ('hub', f'http://127.0.0.1:{hub.port}')]:
-                            for mode in (['sdk'] if source == 'kiro' else ['chat', 'sdk']):
+                            for mode in (['sdk'] if source in ('kiro', 'codebuddy', 'droid') else ['chat', 'sdk']):
                                 exercise(browser, url, source, events, watch, args.screenshots, label, mode)
                     finally: hub.stop()
         finally: browser.close()

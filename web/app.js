@@ -8773,9 +8773,18 @@ document.addEventListener('focusin', event => {
   if (event.target.matches('input, textarea, [contenteditable="true"]')) setTextScrollBubble(null);
 });
 
+let previewTailFrame = null;
+function schedulePreviewTails() {
+  if (previewTailFrame !== null) return;
+  previewTailFrame = requestAnimationFrame(() => {
+    previewTailFrame = null;
+    scrollPreviewsToTail();
+  });
+}
+
 function queuePreviewTail(body) {
   body.dataset.tailPending = 'true';
-  requestAnimationFrame(scrollPreviewsToTail);
+  schedulePreviewTails();
 }
 
 function scrollPreviewsToTail() {
@@ -8786,7 +8795,7 @@ function scrollPreviewsToTail() {
   }
 }
 // A preview can first become visible when its enclosing tool/turn is opened.
-document.addEventListener('click', () => requestAnimationFrame(scrollPreviewsToTail));
+document.addEventListener('click', schedulePreviewTails);
 
 // Keep vertical breathing room outside the scrolling text viewport.
 function toolTextFrame(pre) {

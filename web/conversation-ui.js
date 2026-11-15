@@ -3,6 +3,10 @@
 // Presentation shared by SDK and CLI-backed conversation views. Callers own
 // transport, draft identity and delivery evidence; these helpers never send.
 const ConversationUI = {
+  messageTimeFormatter: new Intl.DateTimeFormat('sv-SE', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }),
   messageHeader(node, message) {
     const header = el('div', 'message-header');
     const time = el('time', 'message-time');
@@ -34,7 +38,7 @@ const ConversationUI = {
       }
       const date = new Date(knownTime);
       const valid = Number.isFinite(date.getTime());
-      const value = valid ? date.toLocaleString('sv-SE', {hour12: false}) : '';
+      const value = valid ? this.messageTimeFormatter.format(date) : '';
       time.hidden = !valid;
       if (time.textContent !== value) time.textContent = value;
       if (valid) { time.dateTime = date.toISOString(); time.title = `${knownSource} · 本地时间 · ${knownTime}`; }

@@ -97,7 +97,7 @@ def exercise(browser, base, source, events, screenshots, mode):
             if screenshots: page.screenshot(path=str(screenshots / f'{name}-{entry}.png'), full_page=True)
         check(page.locator('.sdk-history'), 'sdk')
         chat = page.locator('#a-chat')
-        if source not in ('kiro', 'codebuddy'):
+        if source not in ('kiro', 'codebuddy', 'droid'):
             chat.click()
             check(page.locator('#detail'), 'conversation')
             page.locator('#a-sdk').click()

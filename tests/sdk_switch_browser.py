@@ -43,8 +43,21 @@ def exercise(browser, base, streams, shots, width, theme):
     context = browser.new_context(viewport={'width': width, 'height': 900},
                                   color_scheme=theme, service_workers='block')
     page = context.new_page(); page.set_default_timeout(15000)
-    errors, opens, held, timings, background = [], [], [], [], []
-    state = {'hold': False}
+    errors, opens, held, timings, background, stream_reads = [], [], [], [], [], []
+    state = {'hold': False, 'hold_stream': False}
+    page.add_init_script('''
+      window.tailScans = new Map();
+      const raf = window.requestAnimationFrame;
+      let frame = -1;
+      window.requestAnimationFrame = callback => raf.call(window, timestamp => {
+        frame = timestamp; callback(timestamp);
+      });
+      const query = Document.prototype.querySelectorAll;
+      Document.prototype.querySelectorAll = function(selector) {
+        if (selector === '[data-tail-pending]') tailScans.set(frame, (tailScans.get(frame) || 0) + 1);
+        return query.call(this, selector);
+      };
+    ''')
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.on('request', lambda r: opens.append(r.url) if r.method == 'POST' and r.url.endswith('/open') else None)
     try:
@@ -73,9 +86,11 @@ def exercise(browser, base, streams, shots, width, theme):
                 body.update(messages=data[uid], partial=None, message_total=len(data[uid]), activity={'state': 'idle'})
             route.fulfill(response=response, json=body)
         page.route('**/api/messages/*?*', messages)
+        def stream_read(route):
+            if state['hold_stream']: stream_reads.append(route)
+            else: route.continue_(url=packets[parse_qs(urlsplit(route.request.url).query)['uid'][0]])
         for api in ('codex-sdk', 'native-sdk'):
-            page.route(f'**/api/{api}/events?*', lambda r: r.continue_(
-                url=packets[parse_qs(urlsplit(r.request.url).query)['uid'][0]]))
+            page.route(f'**/api/{api}/events?*', stream_read)
             for name in ('models', 'limits', 'usage', 'agents'):
                 page.route(f'**/api/{api}/{name}*', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
         page.goto(base, wait_until='domcontentloaded')
@@ -172,8 +187,9 @@ def exercise(browser, base, streams, shots, width, theme):
             if uid.startswith('codex:'):
                 raw['turn'] = {'id': f'live-{i}', 'status': 'inProgress'}
                 raw['items'] = [{'id': f'live-tool-{j}', 'type': 'commandExecution',
+                                 'ts': '2026-11-05T08:03:49Z',
                                  'command': f'check {j}', 'status': 'completed',
-                                 'aggregatedOutput': '检查结果\n' * 50} for j in range(40)]
+                                 'aggregatedOutput': '检查结果\n' * 50} for j in range(600)]
                 raw['items'].append({'id': 'live-answer', 'type': 'agentMessage', 'text': f'实时会话 {i}: '})
             else:
                 raw['running'] = True
@@ -201,6 +217,22 @@ def exercise(browser, base, streams, shots, width, theme):
                     streams[i].publish(event if uid.startswith('codex:') else None)
         worker = threading.Thread(target=push, daemon=True); worker.start()
         try:
+            # Hold subscription responses while the server continues updating.
+            # The page must still accept navigation and typing, then catch up
+            # from a large snapshot without one full-page scan per output.
+            state['hold_stream'] = True
+            for uid in uids:
+                select(uid)
+                page.wait_for_timeout(100)
+            page.wait_for_timeout(1500)
+            assert stream_reads, 'no delayed subscriptions'
+            expect(page.locator('.sdk-history')).to_contain_text('会话 3 的历史结论')
+            page.locator('#sdk-input').fill('网络等待期间仍能编辑')
+            expect(page.locator('#sdk-input')).to_have_value('网络等待期间仍能编辑')
+            page.locator('#sdk-input').fill('')
+            state['hold_stream'] = False
+            for route in reversed(stream_reads): stream_read(route)
+            stream_reads.clear()
             for lap in range(3):
                 for uid in uids:
                     select(uid)
@@ -218,6 +250,9 @@ def exercise(browser, base, streams, shots, width, theme):
         reads = page.evaluate('hiddenComposerReads')
         print(f'STREAM SWITCHES {width}/{theme}: hidden composer height reads={reads}', flush=True)
         assert reads == 0, f'hidden ordinary composer forced layout during SDK updates: {reads}'
+        scans = page.evaluate('Math.max(0, ...tailScans.values())')
+        print(f'PREVIEW SCANS {width}/{theme}: max full-page scans per frame={scans}', flush=True)
+        assert scans <= 1, f'large snapshots repeatedly scanned output previews in one frame: {scans}'
         page.screenshot(path=str(shots/f'{width}-{theme}-stream.png'), full_page=True)
         # The ordinary conversation is built lazily when actually selected.
         page.locator('#a-chat').click()
@@ -253,6 +288,7 @@ def exercise(browser, base, streams, shots, width, theme):
         print(f'PASS {width}/{theme}: repeated four-session switches, preview/focus/draft retained, '
               f'late replies isolated; click_ms={timings}', flush=True)
     finally:
+        for route in stream_reads: route.abort()
         for route in held: route.abort()
         for route in background: route.abort()
         page.unroute_all(behavior='ignoreErrors')
