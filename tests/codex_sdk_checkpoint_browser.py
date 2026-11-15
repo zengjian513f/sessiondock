@@ -63,6 +63,18 @@ def main():
                             }));
                         }
                     }''', uid)
+                    # Native writes a 2 MiB reply before reading another request.
+                    # Both socket buffers fill unless query reads drain independently.
+                    page.evaluate("""async uid => {
+                        await Promise.all(Array.from({length:6}, async (_,i) => {
+                            const r = await fetch('/api/codex-sdk/turns', {
+                                method:'POST', signal:AbortSignal.timeout(20000),
+                                headers:{'Content-Type':'application/json'},
+                                body:JSON.stringify({uid,cursor:'duplex-'+i+'x'.repeat(512*1024)})});
+                            if (!r.ok) throw new Error(await r.text());
+                            await r.arrayBuffer();
+                        }));
+                    }""", uid)
                     assert counter.count() == 0, 'read-only polling rewrote the durable checkpoint'
                     counter.close()
                     assert (channel_dir/'stdout').stat().st_size == before_output

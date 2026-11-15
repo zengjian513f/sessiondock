@@ -14,6 +14,8 @@ class CheckpointPeer(FakeAppServer):
         method = message.get('method')
         if method == 'thread/loaded/list':
             await self.send(writer, {'id': message['id'], 'result': {'data': [self.thread_id]}})
+        elif method == 'thread/turns/list' and str(message.get('params',{}).get('cursor','')).startswith('duplex-'):
+            await self.send(writer, {'id':message['id'],'result':{'data':[], 'nextCursor':None,'padding':'p'*(2*1024*1024)}})
         elif method == 'thread/turns/list' and str(message.get('params',{}).get('cursor','')).startswith('sustained-'):
             async def later():
                 await asyncio.sleep(2)

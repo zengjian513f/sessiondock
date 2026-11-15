@@ -64,6 +64,9 @@ browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel
   WebSocket. It initializes as `sessiondock-query`, multiplexes pending reads and
   never resumes threads, sends input or answers approvals. Its requests/results
   do not enter the durable channel, checkpoints, raw output or transport receipts.
+  Its writer runs independently of the response reader, so a large pending
+  request cannot block draining a large reply. Each pending request has its own
+  deadline; overlapping successful reads do not inherit an expired timer.
   Closing or timing out that socket does not close the owning subscription; the
   next read reconnects without replaying mutations. Provider routing still checks
   native configuration; account refresh keeps its existing notification/open/turn

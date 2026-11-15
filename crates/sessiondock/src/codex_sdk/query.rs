@@ -109,21 +109,19 @@ impl Query {
     }
 }
 
-async fn run(
-    mut socket: Socket,
-    mut work: mpsc::UnboundedReceiver<Work>,
-    closed: CancellationToken,
-) {
+async fn run(socket: Socket, mut work: mpsc::UnboundedReceiver<Work>, closed: CancellationToken) {
     let mut initialize = super::channel::Channel::initialize_frame();
     initialize["id"] = json!("query:initialize");
     initialize["params"]["clientInfo"]["name"] = json!("sessiondock-query");
-    if socket
-        .send(Message::text(initialize.to_string()))
-        .await
-        .is_err()
-    {
-        return;
-    }
+    let (mut sink, mut stream) = socket.split();
+    let (output, mut outgoing) = mpsc::unbounded_channel();
+    let mut writer = tokio::spawn(async move {
+        while let Some(frame) = outgoing.recv().await {
+            sink.send(frame).await?;
+        }
+        Ok::<_, tokio_tungstenite::tungstenite::Error>(())
+    });
+    let _ = output.send(Message::text(initialize.to_string()));
     let mut ready = false;
     let mut sequence = 0u64;
     let mut pending: HashMap<String, (Reply, tokio::time::Instant)> = HashMap::new();
@@ -138,6 +136,7 @@ async fn run(
             .unwrap_or(handshake_deadline);
         tokio::select! {
             _ = closed.cancelled() => break,
+            _ = &mut writer => break,
             _ = tokio::time::sleep_until(deadline), if !ready || !pending.is_empty() => break,
             next = work.recv(), if ready => {
                 let Some((mut frame, reply)) = next else { break };
@@ -145,13 +144,13 @@ async fn run(
                 let id = format!("query:{sequence}");
                 frame["id"] = json!(id);
                 pending.insert(id, (reply, tokio::time::Instant::now() + Duration::from_secs(120)));
-                if socket.send(Message::text(frame.to_string())).await.is_err() { break; }
+                if output.send(Message::text(frame.to_string())).is_err() { break; }
             }
-            next = socket.next() => {
+            next = stream.next() => {
                 let text = match next {
                     Some(Ok(Message::Text(t))) => t.to_string(),
                     Some(Ok(Message::Binary(b))) => match String::from_utf8(b.to_vec()) { Ok(t) => t, Err(_) => break },
-                    Some(Ok(Message::Ping(b))) => { if socket.send(Message::Pong(b)).await.is_err() { break; } continue; },
+                    Some(Ok(Message::Ping(b))) => { if output.send(Message::Pong(b)).is_err() { break; } continue; },
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => continue,
                 };
@@ -160,7 +159,7 @@ async fn run(
                 if frame.get("method").is_some() { continue; }
                 if id == "query:initialize" {
                     if frame.get("error").is_some() { break; }
-                    if socket.send(Message::text(json!({"method":"initialized","params":{}}).to_string())).await.is_err() { break; }
+                    if output.send(Message::text(json!({"method":"initialized","params":{}}).to_string())).is_err() { break; }
                     ready = true;
                 } else if let Some((reply, _)) = pending.remove(id) {
                     let result = match frame.get("error") {
@@ -172,5 +171,8 @@ async fn run(
             }
         }
     }
+    // These are repeatable reads, with no delivery or subscription ownership.
+    // Cancellation must also drop a writer blocked on native backpressure.
+    writer.abort();
     // Dropping waiters reports failure; only the next read opens another socket.
 }
