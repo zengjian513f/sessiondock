@@ -196,6 +196,8 @@ def run(binary, screenshots):
                             expect(change.locator('.diff-line.add')).to_contain_text('quota = current_usage')
                             change.get_by_role('button', name='并排', exact=True).click()
                             expect(change.locator('.diff-split')).to_be_visible()
+                            expect(change.locator('button[data-diff-wrap]')).to_have_attribute('aria-pressed', 'true')
+                            change.get_by_role('button', name='原行', exact=True).click()
                             change.get_by_role('button', name='换行', exact=True).click()
                             change.get_by_role('button', name='展开原始参数', exact=True).click()
                             assert json.loads(change.locator('.tool-args').inner_text()) == edit
@@ -253,13 +255,13 @@ def run(binary, screenshots):
                             result.locator('summary').click()
                             file_result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='agyfilepreview')
                             expect(file_result.locator('.tool-status')).to_have_text('文件内容 · report.py · 行 1–2 / 2')
-                            expect(file_result.locator(':scope > .tool-out')).to_contain_text('1: print("agyfilepreview")')
+                            expect(file_result.locator(':scope > .tool-text-frame > .tool-out')).to_contain_text('1: print("agyfilepreview")')
                             expect(file_result).not_to_contain_text('The following code has been modified')
                             waiting = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='Waiting for a message')
                             expect(waiting.locator(':scope > .tool-head')).to_have_text('工具结果')
-                            expect(waiting.locator(':scope > .tool-out')).to_have_text(WAIT_OUTPUT)
+                            expect(waiting.locator(':scope > .tool-text-frame > .tool-out')).to_have_text(WAIT_OUTPUT)
                             expect(waiting.locator('.tool-toggle')).to_have_count(0)
-                            assert waiting.locator('.tool-out').evaluate(
+                            assert waiting.locator('.tool-text-frame:has(> .tool-out)').evaluate(
                                 '(e) => getComputedStyle(e).borderTopWidth') == '1px'
                             # Plain and error results share the header; labels never enter the output.
                             plain = page.locator('#msgs .tool-entry').filter(has_text='Updated statusline.py')

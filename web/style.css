@@ -98,21 +98,21 @@
 
 * { box-sizing: border-box; }
 
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body) {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-text-frame > pre, .file-change-body) {
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-text-frame > pre, .file-change-body)::-webkit-scrollbar {
   width: 8px; height: 8px;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-track {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-text-frame > pre, .file-change-body)::-webkit-scrollbar-track {
   background: var(--scroll-track); border-radius: 999px;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-thumb {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-text-frame > pre, .file-change-body)::-webkit-scrollbar-thumb {
   min-width: 28px; min-height: 28px; border: 2px solid transparent; border-radius: 999px;
   background: var(--scroll-thumb); background-clip: padding-box;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-thumb:hover {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-text-frame > pre, .file-change-body)::-webkit-scrollbar-thumb:hover {
   background-color: var(--scroll-thumb-hover);
 }
 
@@ -1322,7 +1322,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 :is(.fold-toggle, .tool-toggle):focus-visible {
   outline: 2px solid var(--accent); outline-offset: -1px;
 }
-.msg .mb { padding: 8px 12px; }
+/* Borders reserve vertical space outside the scrollport, including at the tail. */
+.msg .mb { padding: 0 12px; border-block: 8px solid transparent; }
 .msg[data-role="user"] {
   --bubble: var(--bubble-user); margin-left: auto; margin-right: 0;
 }
@@ -1360,10 +1361,10 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   font-size: 11.5px; line-height: 1.45;
 }
 .msg[data-role="thinking"]::before {
-  content: ""; flex: none; width: 5px; height: 5px; margin: 6px 0 0 3px;
+  content: ""; flex: none; width: 5px; height: 5px; margin: 12px 0 0 3px;
   border-radius: 50%; background: var(--brand-b);
 }
-.msg[data-role="thinking"] > .mb { min-width: 0; padding: 0; }
+.msg[data-role="thinking"] > .mb { min-width: 0; padding: 0; border-block-width: 6px; }
 .msg[data-role="thinking"] > .mb p { margin: 0; }
 .msg[data-role="thinking"] > .more { grid-column: 2; }
 .msg[data-role="tool"], .msg[data-role="tool_result"],
@@ -1521,11 +1522,12 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .event-details { flex: 0 0 100%; margin-top: 3px; }
 .timeline-event.has-details { flex-wrap: wrap; }
 .event-details > summary { width: fit-content; cursor: pointer; color: var(--accent); font-size: 11px; }
-.event-detail-body {
-  margin-top: 5px; padding: 7px 9px; max-height: 420px; overflow: auto;
+.event-detail-frame {
+  margin-top: 5px; padding-block: 7px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
   color: var(--text); font-size: 12px;
 }
+.event-detail-body { margin: 0; padding: 0 9px; max-height: 406px; overflow: auto; }
 .event-detail-body > :first-child { margin-top: 0; }
 .event-detail-body > :last-child { margin-bottom: 0; }
 pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--terminal-font); }
@@ -1570,16 +1572,19 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   border: 1px solid var(--border); border-radius: var(--bubble-radius); overflow: hidden;
   background: var(--bubble-tool); color: var(--terminal-fg); box-shadow: var(--shadow);
 }
-.tool-entry > pre, .tool-head {
-  margin: 0; padding: 8px 10px; overflow-x: auto; white-space: pre;
+.tool-text-frame, .tool-head {
+  margin: 0; padding: 8px 10px; white-space: pre;
   word-break: normal; overflow-wrap: normal;
   border: 1px solid var(--border); border-radius: var(--bubble-radius);
   background: var(--bubble-tool); color: var(--terminal-fg); box-shadow: var(--shadow);
   font: 400 var(--tool-font-size)/1.5 var(--terminal-font); font-synthesis: none;
 }
-.tool-entry > pre.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tool-entry > pre.collapsed-output { max-height: 12em; overflow-y: auto; }
-.tool-entry > pre.clip { max-height: 340px; overflow: hidden; }
+.tool-text-frame { padding-inline: 0; }
+.tool-text-frame[hidden] { display: none; }
+.tool-text-frame > pre { margin: 0; padding: 0 10px; overflow-x: auto; font: inherit; color: inherit; white-space: pre; }
+.tool-text-frame > pre.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-text-frame > pre.collapsed-output { max-height: calc(12em - 16px); overflow-y: auto; }
+.tool-text-frame > pre.clip { max-height: 340px; overflow: hidden; }
 
 /* 紧凑工具卡片: 摘要头(`$ cmd`) + 参数(默认收起) + 状态行 + 输出预览 */
 .msg.tool-msg {
@@ -1593,7 +1598,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 }
 .tool-head > .tool-toggle { margin-left: auto; }
 .tool-head > .tool-meta + .tool-toggle { margin-left: 0; }
-.tool-entry:is([data-role="tool"], .tool-result-card) > :is(.tool-head, pre) {
+.tool-entry:is([data-role="tool"], .tool-result-card) > :is(.tool-head, .tool-text-frame) {
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
 }
 .tool-head:hover { background: color-mix(in srgb, var(--bubble-tool) 96%, var(--terminal-fg)); }
@@ -1604,11 +1609,11 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-head > .tool-meta {
   flex: none; margin-left: auto; color: var(--muted); font-size: 11px;
 }
-.tool-entry > .tool-args {
+.tool-entry > .tool-text-frame:has(> .tool-args) {
   margin-top: 0; border-top: 0; border-radius: 0; border-style: solid;
   box-shadow: none; opacity: .92;
 }
-.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-args { border-top: 1px solid var(--border); }
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-text-frame:has(> .tool-args) { border-top: 1px solid var(--border); }
 .tool-entry > .tool-args-close {
   display: block; width: 100%; margin: 0; padding: 3px 10px;
   border: 0; border-top: 1px solid var(--border); border-radius: 0;
@@ -1621,15 +1626,15 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   padding: 1px 10px 5px; color: var(--muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere;
 }
 .tool-entry > .tool-status.err { color: #e5534b; }
-.tool-entry > .tool-out { margin-top: 3px; }
-.tool-entry > .tool-out.err { border-color: color-mix(in srgb, #e5534b 45%, var(--border)); }
+.tool-entry > .tool-text-frame:has(> .tool-out) { margin-top: 3px; }
+.tool-entry > .tool-text-frame:has(> .tool-out.err) { border-color: color-mix(in srgb, #e5534b 45%, var(--border)); }
 .tool-entry:is([data-role="tool"], .tool-result-card):has(> .tool-status.err) {
   border-color: color-mix(in srgb, #e5534b 45%, var(--border));
 }
-.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out {
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-text-frame:has(> .tool-out) {
   margin-top: 0; border-top: 1px solid var(--border);
 }
-.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out.err {
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-text-frame:has(> .tool-out.err) {
   border-top-color: color-mix(in srgb, #e5534b 45%, var(--border));
 }
 
@@ -1664,10 +1669,10 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 }
 .file-change-toolbar button:hover { background: var(--hover); color: var(--text); }
 .file-change-toolbar button.on { border-color: var(--border); background: var(--sel); color: var(--text); }
-.file-change-body { width: 100%; overflow-x: auto; background: var(--panel); }
+.file-change-body { border-block: 8px solid transparent; width: 100%; overflow-x: auto; background: var(--panel); }
 .file-change-body.clip { max-height: 340px; overflow-y: auto; }
 .file-change-card > .file-diff-more { margin: 0; border-width: 1px 0 0; border-radius: 0; }
-.diff-unified { min-width: max-content; padding: 8px 0 18px; }
+.diff-unified { min-width: max-content; padding: 0 0 10px; }
 .diff-line {
   display: grid; grid-template-columns: 24px minmax(0, 1fr); min-height: 21px;
   font: 12px/1.55 var(--terminal-font); font-synthesis: none;
@@ -1704,12 +1709,13 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   text-rendering: geometricPrecision;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-:where(.mb pre, .tool-entry > pre)[data-code-language]::before {
+:where(.mb pre, .tool-text-frame > pre)[data-code-language]::before {
   content: attr(data-code-language); position: sticky; float: right; right: 0; top: 0;
   margin: -5px -7px 3px 10px; padding: 1px 5px; border-radius: 4px;
   background: var(--panel); color: var(--muted); font: 9px/1.45 var(--terminal-font);
   text-transform: uppercase; letter-spacing: .04em; opacity: .78; pointer-events: none;
 }
+.tool-text-frame > pre[data-code-language]::before { margin-top: 0; margin-right: 3px; }
 .hljs-comment, .hljs-quote { color: var(--syntax-comment); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section { color: var(--syntax-keyword); }
 .hljs-string, .hljs-regexp, .hljs-addition { color: var(--syntax-string); }
@@ -1743,13 +1749,14 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 
 /* Inactive bubbles pass wheel/touch scrolling to the conversation. Programmatic
    tail positioning still works with hidden overflow; text stays selectable. */
-.tool-entry:not(.text-scroll-active) > pre,
+.tool-entry:not(.text-scroll-active) > .tool-text-frame > pre,
 .file-change-card:not(.text-scroll-active) .file-change-body,
 .msg:not(.text-scroll-active) > .mb,
 .msg:not(.text-scroll-active) > .message-bubble > .mb,
 .msg:not(.text-scroll-active) > .mb :is(pre, .tw, .katex-display),
 .msg:not(.text-scroll-active) > .message-bubble > .mb :is(pre, .tw, .katex-display),
 .event-detail-body:not(.text-scroll-active),
+.event-detail-body:not(.text-scroll-active) .tool-text-frame > pre,
 .sdk-queued:not(.text-scroll-active) .mb {
   overflow: hidden;
 }
@@ -1810,7 +1817,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .more:hover { background: var(--hover); }
 
 /* 普通命令输出中出现 git/unified diff 时，保留黑底但恢复增删语义色。 */
-.tool-entry > pre:has(> .tool-diff-line) { padding-inline: 0; }
+.tool-text-frame > pre:has(> .tool-diff-line) { padding-inline: 0; }
 .tool-diff-line {
   display: block; min-height: 1.5em; padding-inline: 10px; white-space: pre;
 }
@@ -1821,15 +1828,15 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   color: var(--muted); opacity: .7; text-align: center; font-style: normal; user-select: none;
 }
 .tool-diff-line.code > code { min-width: 0; padding-right: 10px; color: inherit; font: inherit; white-space: pre; }
-.tool-entry > pre.wrap > .tool-diff-line { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tool-entry > pre.wrap > .tool-diff-line.code > code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-text-frame > pre.wrap > .tool-diff-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-text-frame > pre.wrap > .tool-diff-line.code > code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-diff-line.meta { color: var(--muted); }
 .tool-diff-line.hunk { background: var(--panel-2); color: var(--accent); }
 .tool-diff-line.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
 .tool-diff-line.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
 
 /* 落单输出仍由正文和操作栏拼成一张卡；已配对调用在下方覆盖成卡内分区。 */
-.tool-entry > pre:has(+ .tool-out-actions) {
+.tool-text-frame:has(+ .tool-out-actions) {
   border-bottom: 0;
   border-radius: var(--bubble-radius) var(--bubble-radius) 0 0;
 }
@@ -1852,7 +1859,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-out-actions > .more, .tool-out-actions > .tool-args-close { flex: 1; }
 
 /* 已配对的调用、状态、输出是一张卡；操作栏只是卡内最后一个分区。 */
-.tool-entry:is([data-role="tool"], .tool-result-card) > pre:has(+ .tool-out-actions) { border-radius: 0; }
+.tool-entry:is([data-role="tool"], .tool-result-card) > .tool-text-frame:has(+ .tool-out-actions) { border-radius: 0; }
 .tool-entry:is([data-role="tool"], .tool-result-card) > .tool-out-actions {
   border: 0; border-top: 1px solid var(--border); border-radius: 0;
   background: transparent;
@@ -2789,8 +2796,8 @@ header .btn[data-session-docked] { display: none; }
 .msg[data-role="thinking"].message-with-header::before { display: none; }
 .msg[data-role="thinking"] > .message-bubble { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 7px; }
 .msg[data-role="thinking"] > .message-bubble::before { content: ""; width: 5px; height: 5px;
-  margin: 6px 0 0 3px; border-radius: 50%; background: var(--brand-b); }
-.msg[data-role="thinking"] > .message-bubble > .mb { min-width: 0; padding: 0; }
+  margin: 12px 0 0 3px; border-radius: 50%; background: var(--brand-b); }
+.msg[data-role="thinking"] > .message-bubble > .mb { min-width: 0; padding: 0; border-block-width: 6px; }
 .msg[data-role="thinking"] > .message-bubble > .mb p { margin: 0; }
 .msg[data-role="thinking"] > .message-bubble > .more { grid-column: 2; }
 .msg.native-settings > .message-bubble { padding: 3px 8px; box-shadow: none; }

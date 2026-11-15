@@ -371,7 +371,8 @@ DELTA（BUG-20261115-043012-a301cc）：工具参数、输出、Markdown 代码�
 用户正文、思考、工具输出和文件差异的收起预览统一保留全文，首次显示与再次收起时定位末尾，
 不再以截掉 4,000 字后的内容充当预览；展开后完整铺开。气泡不显示蓝色轮廓，
 点击正文、悬停工具标题或聚焦展开按钮均不改变气泡边框。
-验收见 [工具输出](../tests/tool_output_browser.py)、
+DELTA（BUG-20261115-160737-2a51fa）：长正文、思考、排队正文、工具参数／输出、文件差异及事件详情的上下留白位于滚动视口外；定位末尾、内部滚动和展开／收起后仍保留间距，不改变滚动启用条件或原文。
+验收见 [气泡间距](../tests/bubble_spacing_browser.py)、[工具输出](../tests/tool_output_browser.py)、
 [SDK 共用界面](../tests/sdk_shared_ui_browser.py) 与
 [普通会话](../tests/remaining_ui_conversation_browser.py)。
 

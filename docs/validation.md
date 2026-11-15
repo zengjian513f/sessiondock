@@ -664,6 +664,8 @@ wide and narrow widths, checking durable receipts and browser/server log
 correlation. The insecure case asserts that `crypto.randomUUID` is unavailable;
 ordinary localhost tests alone do not cover that environment.
 
+[气泡间距](../tests/bubble_spacing_browser.py) 覆盖节点／Hub 的普通对话与 SDK 历史，在宽窄屏、明暗主题中展开／收起长消息、工具输出、文件差异和事件详情，验证内部滚动后的上下留白。
+
 [Input hit regression](../tests/input_hit_browser.py) checks named peer controls,
 real pointer hits before editing, wheel reachability of long error states,
 wide/narrow viewports and interface scaling. Relation saves are checked against

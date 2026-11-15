@@ -8785,11 +8785,24 @@ function scrollPreviewsToTail() {
 // A preview can first become visible when its enclosing tool/turn is opened.
 document.addEventListener('click', () => requestAnimationFrame(scrollPreviewsToTail));
 
+// Keep vertical breathing room outside the scrolling text viewport.
+function toolTextFrame(pre) {
+  const frame = el('div', 'tool-text-frame' + (pre.classList.contains('err') ? ' err' : ''));
+  frame.appendChild(pre);
+  return frame;
+}
+
+function eventDetailFrame(body) {
+  const frame = el('div', 'event-detail-frame');
+  frame.appendChild(body);
+  return frame;
+}
+
 function addClippedPre(entry, cls, text, codePath = '') {
   const pre = el('pre', cls);
   if (codePath) pre.dataset.codePath = codePath;
   setToolOutput(pre, text);
-  entry.appendChild(pre);
+  entry.appendChild(toolTextFrame(pre));
   const actions = el('div', 'tool-out-actions');
   actions.appendChild(toolWrapButton(pre));
   if (outputStats(text).lines > OUT_LINES || text.length > OUT_CHARS) {
@@ -8848,6 +8861,7 @@ function toolEntry(m) {
       `未生成文件差异：${m.changes_unavailable_reason}；可展开原始参数查看。`));
   }
   const args = el('pre', 'tool-args');
+  const argsFrame = toolTextFrame(args);
   args.hidden = !!m.summary;   // 识别不了的工具直接铺参数, 不藏
   const argsActions = el('div', 'tool-out-actions');
   argsActions.appendChild(toolWrapButton(args));
@@ -8858,7 +8872,7 @@ function toolEntry(m) {
   const paintArgs = () => { if (!painted) { args.textContent = m.text; painted = true; } };
   const setArgsOpen = open => {
     if (open) paintArgs();
-    args.hidden = !open;
+    args.hidden = argsFrame.hidden = !open;
     closeArgs.hidden = !open;
     argsActions.hidden = !open;
     entry.classList.toggle('args-open', open);
@@ -8868,7 +8882,7 @@ function toolEntry(m) {
   if (!args.hidden) paintArgs();
   toggle.onclick = () => setArgsOpen(args.hidden);
   closeArgs.onclick = () => setArgsOpen(false);
-  entry.appendChild(args);
+  entry.appendChild(argsFrame);
   argsActions.appendChild(closeArgs);
   entry.appendChild(argsActions);
   setArgsOpen(!args.hidden);
@@ -8908,7 +8922,7 @@ function appendAgyOutputPreview(entry, m) {
   raw.ontoggle = () => {
     if (raw.open && !raw.querySelector('pre')) {
       const body = el('div', 'event-detail-body');
-      raw.appendChild(body);
+      raw.appendChild(eventDetailFrame(body));
       addClippedPre(body, 'tool-out', m.text);
     }
   };
@@ -9912,7 +9926,7 @@ function messageBodyNode(m) {
         if (!details.open || details.querySelector('.event-detail-body')) return;
         const body = el('div', 'event-detail-body');
         body.innerHTML = md(m.text, true);
-        details.appendChild(body);
+        details.appendChild(eventDetailFrame(body));
       };
       n.appendChild(details);
       return n;
@@ -10100,7 +10114,7 @@ function eventNode(m) {
         body.innerHTML = md(m.details, true);
         renderFormulae(body); paintSyntax(body);
       }
-      disclosure.appendChild(body);
+      disclosure.appendChild(eventDetailFrame(body));
     };
     n.appendChild(disclosure);
   }

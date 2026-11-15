@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
 from droid_sdk_fixtures import DroidFixture
 from history_fixtures import BINARY
+from bubble_scroll_fixtures import check_scroll_inset
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN, free_port, node_env
 
@@ -44,6 +45,7 @@ def check(browser, base, label, shots):
             && p.scrollHeight - p.clientHeight - p.scrollTop < 2;
         }""")
         assert output.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1')
+        check_scroll_inset(output)
         page.screenshot(path=str(shots / f'{label}-{width}-{theme}-collapsed.png'), full_page=True)
         outer = page.locator('.sdk-msgs')
         tail = output.evaluate('(e) => e.scrollTop')
@@ -99,6 +101,7 @@ def check(browser, base, label, shots):
         expect(output).to_contain_text('FIRST LINE')
         tool.get_by_role('button', name='展开全文', exact=True).click()
         assert output.evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')
+        check_scroll_inset(output)
         page.screenshot(path=str(shots / f'{label}-{width}-{theme}-expanded.png'), full_page=True)
         tool.get_by_role('button', name='收起', exact=True).click()
         page.wait_for_function("""() => { const p=document.querySelector('.tool-out');
