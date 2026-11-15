@@ -232,7 +232,14 @@ including before the first click and after a service restart. Observation never
 starts the daemon, resumes threads or grants terminal coexistence authority;
 unload or failed observation withdraws discovered evidence. Destructive migration/trash
 checks freshly query native loaded threads and retain stopped-but-loaded writers;
-an unsubscribe reply does not prove that delayed native writes have finished. An external process
+an unsubscribe reply does not prove that delayed native writes have finished.
+DELTA: stopped threads still observed in native loaded/list are carried separately in
+`/api/live.retained_sdk_uids` through nodes and Hub. Sidebar/header retain a blue
+“已停止，等待原生卸载” marker until native observation confirms unload. This is
+display evidence only; it does not reopen the SDK or make the thread runnable.
+Explicit stop already removes bridge retention and unsubscribes; the installed
+protocol offers no immediate unload request, and other clients may retain subscriptions.
+An external process
 alone stays green.
 `/api/live.sdk_uids` carries this evidence through the Hub and live events,
 separately from `tmux_uids`, which continues to mean console ownership. SDK

@@ -354,13 +354,18 @@ DELTA（BUG-20261022-070639-43d4b2）：普通会话和六种 SDK 共用工具�
 连续组默认收起；仅整个消息流最末尾的工具留在摘要外，后续文字、思考、用户输入或其它消息都会结束该例外。
 工具组顶部摘要及按钮在展开后保留原位，同一按钮再次点击收起，切换时保持滚动位置；不提供底部长条收起按钮。
 展开组后按原有工具样式显示全部条目，不再逐条折成一行；参数按钮仅切换原始参数，
-结果默认显示 8 行/1,600 字预览并可展开全文，文件差异保留原来的高度预览和显示选项。
+结果超过 8 行或 1,600 字时默认收为约 8 行高度的内部滚动区，首次显示及收起时定位末尾；
+展开全文后完整铺开，不限制高度、不保留内部纵向滚动条。文件差异保留高度预览和显示选项。
 本页手动展开组、参数和结果的选择在增量更新中保留，重新加载恢复默认。
 实时更新复用工具组及未变化的摘要行；数量、错误标志和新增摘要按需更新，避免重复高亮造成闪烁。
 回合外层规则不变，审批/问答卡不折进工具组。
 [`tests/tool_progress_browser.py`](../tests/tool_progress_browser.py) 覆盖节点/Hub、普通对话与 SDK 的结果到达、手动查看、后续调用和后续非工具消息。
 [`tests/sdk_turns_browser.py`](../tests/sdk_turns_browser.py) 和
 [`tests/rich_tools_browser.py`](../tests/rich_tools_browser.py) 覆盖实时更新与历史操作。
+DELTA（BUG-20261115-043012-a301cc）：工具参数、输出、Markdown 代码块和文件差异默认自动换行；
+参数与输出共用“保持原行／自动换行”按钮，diff 保留已有切换按钮。原文不变，
+流式更新保留用户选择。验收见 [工具输出](../tests/tool_output_browser.py)。
+
 输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
 DELTA（2026-10-18 按气泡类型收缩）：助手正文（包括过程说明、计划、最终回答）
@@ -368,7 +373,7 @@ DELTA（2026-10-18 按气泡类型收缩）：助手正文（包括过程说明�
 也按实际渲染高度提供 340 px 预览；短字数、多行或窄屏折行的内容同样有“展开全文/收起”，搜索命中仍沿用
 原来的自动展开规则。文件差异默认显示路径、增删统计和 340 px 高度预览，可展开全部差异；切换并排、统一和换行保持显示。
 Agy 设置通知默认收为旧值 → 新值的一行摘要，完整说明按需展开；已识别的命令/文件
-结果头收进“原始记录”，有效输出使用原有的 8 行预览和全文展开。回归见
+结果头收进“原始记录”，有效输出使用同一末尾滚动预览和全文展开。回归见
 [`tests/agy_message_presentation_browser.py`](../tests/agy_message_presentation_browser.py)。
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。

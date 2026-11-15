@@ -74,6 +74,7 @@ pub struct LiveKey {
     pub generation: Generation,
     pub rows: Vec<SessionRow>,
     pub sdk_uids: Vec<String>,
+    pub retained_sdk_uids: Vec<String>,
 }
 
 impl LiveKey {
@@ -87,6 +88,7 @@ impl LiveKey {
             && self.generation == other.generation
             && self.rows == other.rows
             && self.sdk_uids == other.sdk_uids
+            && self.retained_sdk_uids == other.retained_sdk_uids
     }
 }
 

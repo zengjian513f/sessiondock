@@ -65,12 +65,12 @@ def main():
      done('sd.conversation.turn-start sd.conversation.turn-conclusion','Turn navigation clicks reveal corresponding start/conclusion',width)
      tool=process.locator('.tool-entry').first
      # Tool group itself can remain folded after turn expansion.
-     for toggle in process.locator('.tool-group.folded .fold-toggle').all():toggle.click()
+     for toggle in process.get_by_role('button', name='展开工具调用组', exact=True).all():toggle.click()
      tool.locator('.tool-toggle').click();expect(tool.locator('.tool-args')).to_be_visible();tool.locator('.tool-args-close').click();expect(tool.locator('.tool-args')).to_be_hidden()
      done('sd.conversation.tool-arguments-close','Open original tool arguments then explicit close hides them',width)
      more=process.locator('.tool-out-actions .more').first;more.click();expect(more).to_have_attribute('aria-expanded','true');expect(process).to_contain_text('OUTPUT 79')
      done('sd.conversation.tool-more','Expand clipped output exposes independent fixture last line',width)
-     wrap=process.locator('button[data-diff-wrap]').first;wrap.click();expect(wrap).to_have_attribute('aria-pressed','true');wrap.click();expect(wrap).to_have_attribute('aria-pressed','false')
+     wrap=process.locator('button[data-diff-wrap]').first;expect(wrap).to_have_attribute('aria-pressed','true');wrap.click();expect(wrap).to_have_attribute('aria-pressed','false');wrap.click();expect(wrap).to_have_attribute('aria-pressed','true')
      done('sd.conversation.file-diff-wrap','Diff wrap control toggles aria state and restores original layout',width)
      link=msgs.locator('a[data-file-ref]').last
      # Finish scrolling the long output before opening its context menu.
@@ -97,9 +97,9 @@ def main():
      page.locator(f'#side .item[data-uid="{c.uid(sid)}"]').click()
      if not page.locator('#m-next').is_visible():page.locator('#a-more').click()
      expect(page.locator('#m-next')).to_be_visible()
-     first=page.locator('#mcount').inner_text();page.locator('#m-next').click();second=page.locator('#mcount').inner_text();assert first!=second
+     first=page.evaluate('S.cur');page.locator('#m-next').click();page.wait_for_function('previous => S.cur !== previous',arg=first)
      if not page.locator('#m-prev').is_visible():page.locator('#a-more').click()
-     page.locator('#m-prev').click();expect(page.locator('#mcount')).to_have_text(first)
+     page.locator('#m-prev').click();page.wait_for_function('previous => S.cur === previous',arg=first)
      done('sd.search.previous sd.search.next','Search real history; next/previous buttons change and restore current match',width)
      if width<720:page.locator('.mobile-back').click()
      page.locator('#side-search-exit').click();expect(page.locator('#q')).to_have_value('')

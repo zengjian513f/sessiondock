@@ -25,6 +25,19 @@ impl CodexSdk {
         self.observe_threads(true).await
     }
 
+    /// Display stopped threads until native loaded/list confirms their release.
+    pub async fn retained_threads(&self) -> Vec<String> {
+        self.observe_threads(false).await;
+        let sample = self.inner.observation.lock().await;
+        let stopped = self.inner.stopped.lock().expect("stopped");
+        sample
+            .ids
+            .iter()
+            .filter(|id| stopped.contains(*id))
+            .cloned()
+            .collect()
+    }
+
     async fn observe_threads(&self, writers: bool) -> Vec<String> {
         // One small read per observer interval, shared by concurrent fleet reads.
         let mut sample = self.inner.observation.lock().await;

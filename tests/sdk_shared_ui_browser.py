@@ -90,12 +90,9 @@ def streaming_code(page, source, events, raw, publish, screenshots, width, theme
     expect(blocks.nth(2).locator('.hljs-attr')).to_have_text('"taxRate"')
     scroll = live.locator('pre').last
     scroll.scroll_into_view_if_needed()
-    scroll.hover()
-    page.mouse.wheel(420, 0)
-    offset = page.evaluate('420 / parseFloat(getComputedStyle(document.documentElement).zoom)')
-    expect(scroll).to_have_js_property('scrollLeft', offset)
-    update(text + '\n\n滚动后继续生成', '\n\n滚动后继续生成')
-    expect(scroll).to_have_js_property('scrollLeft', offset)
+    assert scroll.evaluate('(p) => p.scrollWidth <= p.clientWidth + 1')
+    update(text + '\n\n换行后继续生成', '\n\n换行后继续生成')
+    assert scroll.evaluate('(p) => p.scrollWidth <= p.clientWidth + 1')
     assert page.evaluate('window.codeStreamProbe.code.isConnected')
 
     # Source and language edits must invalidate the old paint; do not reuse
@@ -223,15 +220,16 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     tool = page.locator('[data-sdk-item="shared-tool"]')
     tool.get_by_text('展开全文', exact=False).click()
     tool.get_by_role('button', name='展开原始参数', exact=True).click()
-    tool.get_by_role('button', name='自动换行', exact=True).click()
+    tool.locator('.tool-wrap').last.click()
     tool_update('\n工具新增尾行')
     expect(tool.locator('.tool-out')).to_contain_text('工具新增尾行')
     expect(tool.locator('.tool-args')).to_be_visible()
-    expect(tool.get_by_role('button', name='保持原行', exact=True)).to_have_attribute('aria-pressed', 'true')
+    expect(tool.locator('.tool-wrap').last).to_have_attribute('aria-pressed', 'false')
     tool.get_by_text('收起', exact=True).click()
     tool_update('\n折叠后仍保留选择')
     expect(tool.get_by_text('展开全文', exact=False)).to_be_visible()
-    expect(tool.locator('.tool-out')).not_to_contain_text('折叠后仍保留选择')
+    expect(tool.locator('.tool-out')).to_contain_text('折叠后仍保留选择')
+    expect(tool.locator('.tool-out')).to_have_class(__import__('re').compile('collapsed-output'))
     raw['items'] = []
     events.packet = {'type': 'snapshot', 'raw': raw}
     publish()

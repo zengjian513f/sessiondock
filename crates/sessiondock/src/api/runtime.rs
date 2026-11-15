@@ -262,6 +262,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         Err(_) => Vec::new(),
     };
     let mut sdk_uids = BTreeSet::new();
+    let mut retained_sdk_uids = BTreeSet::new();
     sdk_uids.extend(state.native_sdks.loaded_uids());
     let external_sdk_uids: Vec<_> = scanned
         .as_ref()
@@ -281,6 +282,13 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         .unwrap_or_default();
     if let Some(sdk) = &state.codex_sdk {
         let loaded = sdk.live_threads().await;
+        let retained = sdk.retained_threads().await;
+        retained_sdk_uids.extend(
+            rows.iter()
+                .filter(|row| row.source == "codex" && retained.contains(&row.sid))
+                .map(|row| row.uid.clone()),
+        );
+        retained_sdk_uids.extend(sdk.live_session_uids(&retained));
         sdk_uids.extend(
             rows.iter()
                 .filter(|row| row.source == "codex" && loaded.contains(&row.sid))
@@ -297,6 +305,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         runtime: shared.as_ref().map(|shared| shared.snapshot.clone()),
         generation,
         sdk_uids: sdk_uids.into_iter().collect(),
+        retained_sdk_uids: retained_sdk_uids.into_iter().collect(),
         rows,
     };
     let managed_report = match (&shared, &state.runtime) {
@@ -323,6 +332,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     }
     let mut response = assemble(state, shared.as_ref(), scanned, &key).await?;
     response["sdk_uids"] = json!(key.sdk_uids);
+    response["retained_sdk_uids"] = json!(key.retained_sdk_uids);
     response["external_sdk_uids"] = json!(external_sdk_uids);
     if let Some(uids) = response["uids"].as_array_mut() {
         for uid in &key.sdk_uids {

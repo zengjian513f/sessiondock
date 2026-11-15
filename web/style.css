@@ -1578,6 +1578,7 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   font: 400 var(--tool-font-size)/1.5 var(--terminal-font); font-synthesis: none;
 }
 .tool-entry > pre.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-entry > pre.collapsed-output { max-height: 12em; overflow-y: auto; }
 .tool-entry > pre.clip { max-height: 340px; overflow: hidden; }
 
 /* 紧凑工具卡片: 摘要头(`$ cmd`) + 参数(默认收起) + 状态行 + 输出预览 */
@@ -1699,14 +1700,14 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 
 .mb pre {
   position: relative; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
-  padding: 9px 11px; overflow-x: auto; margin: 8px 0;
+  padding: 9px 11px; overflow-x: auto; margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere;
   /* System CJK monospace fonts can give box drawing two cells but spaces one.
      Use our bundled face for both so terminal-style diagrams retain columns. */
   font: 12px/1.5 "SessionDock Cascadia Mono", "SessionDock Code Symbols", "SessionDock Code CJK", ui-monospace, SFMono-Regular, Consolas, monospace;
   font-variant-ligatures: none;
   text-rendering: geometricPrecision;
 }
-.mb pre > code.code-block { color: inherit; font: inherit; white-space: pre; }
+.mb pre > code.code-block { color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where(.mb pre, .tool-entry > pre)[data-code-language]::before {
   content: attr(data-code-language); position: sticky; float: right; right: 0; top: 0;
   margin: -5px -7px 3px 10px; padding: 1px 5px; border-radius: 4px;
@@ -1842,7 +1843,8 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .tool-out-actions > button:hover, .tool-out-actions > button.on {
   background: var(--hover); color: var(--terminal-fg);
 }
-.tool-out-actions > .more { flex: 1; }
+.tool-out-actions[hidden] { display: none; }
+.tool-out-actions > .more, .tool-out-actions > .tool-args-close { flex: 1; }
 
 /* 已配对的调用、状态、输出是一张卡；操作栏只是卡内最后一个分区。 */
 .tool-entry:is([data-role="tool"], .tool-result-card) > pre:has(+ .tool-out-actions) { border-radius: 0; }

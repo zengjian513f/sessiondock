@@ -126,6 +126,7 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             "uids",
             "tmux_uids",
             "sdk_uids",
+            "retained_sdk_uids",
             "external_sdk_uids",
             "working_uids",
         ] {

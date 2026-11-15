@@ -192,6 +192,7 @@ const S = {
   syncGap: 350,       // 当前会话的同步间隔, 随有无新内容自适应
   live: new Set(),    // 仍在运行的会话 uid
   liveExternalSdk: new Set(), // observed external ACP owners, no control authority
+  retainedSdk: new Set(), // stopped native threads awaiting unload; display only
   liveSdk: new Set(), // threads loaded on the node’s live SDK bridge
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
@@ -785,14 +786,14 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端或 SDK）
 const liveStatusTitle = (tmux, uid = S.sel) => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
-  : sessionLiveStatus(uid).sdk ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
+  : S.retainedSdk.has(uid) ? '已停止，等待原生卸载' : sessionLiveStatus(uid).sdk ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
 const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
   const status = sessionLiveStatus(uid);
-  live ||= status.live; tmux ||= status.tmux;
+  live ||= status.live || status.retained; tmux ||= status.tmux;
   const frozen = sessionFrozen(uid);
   const label = frozen ? '会话已暂停' : liveStatusTitle(tmux, uid) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
-    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${status.sdk ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${status.sdk || status.retained ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
     title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -2281,7 +2282,8 @@ function sessionLiveStatus(uid) {
     || (draft?.cli?.instance?.running === true && typeof takenOver === 'function' && !!takenOver(uid));
   const sdk = S.liveSdk.has(uid) || (typeof SdkView !== 'undefined'
     && SdkView.uid === uid && !SdkView.agent && SdkView.connected === true);
-  return {live: S.live.has(uid) || tmux || sdk, tmux, sdk};
+  const retained = S.retainedSdk.has(uid);
+  return {live: S.live.has(uid) || tmux || sdk, tmux, sdk, retained};
 }
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 由受管终端或 SDK 连接承载，灰 = 已退出但还有没看的新内容。
@@ -2295,7 +2297,7 @@ function paintItemStatus(node) {
   const isPending = !!node.dataset.tmuxName;
   const pending = isPending && node.classList.contains('live');
   const status = sessionLiveStatus(node.dataset.uid);
-  const active = isPending ? pending : status.live;
+  const active = isPending ? pending : status.live || status.retained;
   const tmux = isPending ? pending : status.tmux;
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
@@ -2303,12 +2305,12 @@ function paintItemStatus(node) {
   badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
-  badge.classList.toggle('sdk', status.sdk);
+  badge.classList.toggle('sdk', status.sdk || status.retained);
   badge.classList.toggle('idle', !active);
-  const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
+  const turn = frozen || pending || status.retained ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
+  const running = status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
@@ -2353,16 +2355,16 @@ function paintHeaderTurn() {
   const status = sessionLiveStatus(S.sel);
   const tmux = status.tmux || !!row?.classList.contains('live-tmux');
   const frozen = sessionFrozen(S.sel);
-  const active = status.live || !!row?.classList.contains('live');
+  const active = status.live || status.retained || !!row?.classList.contains('live');
   const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
   h.classList.toggle('tmux', tmux);
-  h.classList.toggle('sdk', status.sdk);
-  const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
+  h.classList.toggle('sdk', status.sdk || status.retained);
+  const turn = frozen || status.retained || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
-  h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux)
+  h.title = h.ariaLabel = status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : liveStatusTitle(tmux)
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   paintTransferAvailability($('#a-clone-group'), S.sel);
 }
@@ -2417,6 +2419,7 @@ async function refreshLive(force = false, onlineOnly = false) {
   } finally { clearTimeout(timeout); }
   if (!Array.isArray(d.uids)) throw new Error('运行状态格式错误');
   applyNodeState(d, 'live');
+  const nextRetained = new Set(d.retained_sdk_uids || []);
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
   const nextSdk = new Set((d.sdk_uids || []).filter(u => next.has(u)));
@@ -2433,11 +2436,12 @@ async function refreshLive(force = false, onlineOnly = false) {
   const setChanged = (a, b) => a.size !== b.size || [...a].some(u => !b.has(u));
   const mapChanged = (a, b) => a.size !== b.size
     || [...a].some(([u, t]) => b.get(u) !== t);
-  const changed = setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
+  const changed = setChanged(nextRetained, S.retainedSdk) || setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
     || setChanged(nextSdk, S.liveSdk)
     || setChanged(nextExternalSdk, S.liveExternalSdk)
     || setChanged(nextWorking, S.liveWorking)
     || mapChanged(nextStarted, S.liveStarted);
+  S.retainedSdk = nextRetained;
   S.live = next;
   S.liveTmux = nextTmux;
   S.liveSdk = nextSdk;
@@ -8683,26 +8687,12 @@ function addAction(n) {
   };
 }
 
-// 输出预览: 前几行足够判断结果, 大段日志靠"展开全文"。
+// 长输出默认显示可滚动的末尾；展开后完整铺开。
 const OUT_LINES = 8;
 const OUT_CHARS = 1600;
 function outputStats(t) {
   const body = String(t || '').replace(/\n+$/, '');
   return { lines: body ? body.split('\n').length : 0, chars: String(t || '').length };
-}
-
-function outPreviewInfo(t) {
-  const body = t.replace(/\n+$/, '');
-  const lines = body ? body.split('\n') : [];
-  let preview = lines.length > OUT_LINES ? lines.slice(0, OUT_LINES).join('\n') : t;
-  const lineCut = lines.length > OUT_LINES;
-  if (preview.length > OUT_CHARS) preview = preview.slice(0, OUT_CHARS);
-  const truncated = preview !== t;
-  return {
-    text: truncated ? preview.replace(/\s+$/, '') + '\n…' : t,
-    omittedLines: lineCut ? Math.max(0, outputStats(t).lines - OUT_LINES) : 0,
-    omittedChars: truncated ? Math.max(0, t.length - preview.length) : 0,
-  };
 }
 
 function toolOutputPath(m) {
@@ -8738,36 +8728,48 @@ function setToolOutput(pre, text) {
   paintSyntax(pre);
 }
 
+function toolWrapButton(pre) {
+  pre.classList.add('wrap');
+  const button = el('button', 'tool-wrap on', '保持原行');
+  button.type = 'button';
+  button.setAttribute('aria-pressed', 'true');
+  button.onclick = () => {
+    const on = pre.classList.toggle('wrap');
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.textContent = on ? '保持原行' : '自动换行';
+  };
+  return button;
+}
+
+function scrollToolPreviewsToTail() {
+  for (const pre of document.querySelectorAll('pre[data-tail-pending]')) {
+    if (!pre.clientHeight) continue;
+    pre.scrollTop = pre.scrollHeight;
+    delete pre.dataset.tailPending;
+  }
+}
+// A preview can first become visible when its enclosing tool/turn is opened.
+document.addEventListener('click', () => requestAnimationFrame(scrollToolPreviewsToTail));
+
 function addClippedPre(entry, cls, text, codePath = '') {
   const pre = el('pre', cls);
   if (codePath) pre.dataset.codePath = codePath;
-  const info = outPreviewInfo(text);
-  setToolOutput(pre, info.text);
+  setToolOutput(pre, text);
   entry.appendChild(pre);
   const actions = el('div', 'tool-out-actions');
-  let wrap = null;
-  if (String(text).split('\n').some(line => line.length > 160)) {
-    wrap = el('button', 'tool-wrap', '自动换行');
-    wrap.type = 'button';
-    wrap.setAttribute('aria-pressed', 'false');
-    wrap.onclick = () => {
-      const on = pre.classList.toggle('wrap');
-      wrap.classList.toggle('on', on);
-      wrap.setAttribute('aria-pressed', String(on));
-      wrap.textContent = on ? '保持原行' : '自动换行';
-    };
-    actions.appendChild(wrap);
-  }
-  if (info.text !== text) {
-    const rest = info.omittedLines > 0
-      ? `另有 ${info.omittedLines.toLocaleString()} 行`
-      : `另有 ${info.omittedChars.toLocaleString()} 字符`;
-    const expandLabel = `展开全文（${rest}）`;
+  actions.appendChild(toolWrapButton(pre));
+  if (outputStats(text).lines > OUT_LINES || text.length > OUT_CHARS) {
+    const expandLabel = '展开全文';
+    pre.classList.add('collapsed-output');
+    pre.dataset.tailPending = 'true';
+    requestAnimationFrame(scrollToolPreviewsToTail);
     const more = el('button', 'more', expandLabel);
     let expanded = false;
     more.onclick = () => {
       expanded = !expanded;
-      setToolOutput(pre, expanded ? text : info.text);
+      pre.classList.toggle('collapsed-output', !expanded);
+      if (!expanded) requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
       more.textContent = expanded ? '收起' : expandLabel;
       more.setAttribute('aria-expanded', String(expanded));
     };
@@ -8815,6 +8817,8 @@ function toolEntry(m) {
   }
   const args = el('pre', 'tool-args');
   args.hidden = !!m.summary;   // 识别不了的工具直接铺参数, 不藏
+  const argsActions = el('div', 'tool-out-actions');
+  argsActions.appendChild(toolWrapButton(args));
   const closeArgs = el('button', 'tool-args-close', '收起参数');
   closeArgs.type = 'button';
   closeArgs.hidden = args.hidden;
@@ -8824,6 +8828,7 @@ function toolEntry(m) {
     if (open) paintArgs();
     args.hidden = !open;
     closeArgs.hidden = !open;
+    argsActions.hidden = !open;
     entry.classList.toggle('args-open', open);
     toggle.setAttribute('aria-expanded', String(open));
     toggle.title = toggle.ariaLabel = open ? '收起原始参数' : '展开原始参数';
@@ -8832,7 +8837,8 @@ function toolEntry(m) {
   toggle.onclick = () => setArgsOpen(args.hidden);
   closeArgs.onclick = () => setArgsOpen(false);
   entry.appendChild(args);
-  entry.appendChild(closeArgs);
+  argsActions.appendChild(closeArgs);
+  entry.appendChild(argsActions);
   setArgsOpen(!args.hidden);
   if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
   entry.insertAdjacentHTML('beforeend', nativeFileLinks(m.native_files));
@@ -9083,7 +9089,7 @@ function fileChangeNode(m) {
       const button = e.target.closest('[data-diff-view]');
       if (button) paintInlineFileDiff(card, change, button.dataset.diffView);
     };
-    setInlineFileDiffWrap(card, false);
+    setInlineFileDiffWrap(card, true);
     paintInlineFileDiff(card, change, 'unified');
     body.appendChild(card);
   }
@@ -10023,9 +10029,6 @@ function eventNode(m) {
     n.dataset.role = 'event';
     n.dataset.counted = 'false';
     const entry = toolEntry({role: 'tool_result', text: m.text, error: true});
-    const wrap = entry.querySelector('.tool-wrap');
-    if (wrap) wrap.click();
-    else entry.querySelector('.tool-out').classList.add('wrap');
     n.appendChild(entry);
     return n;
   }

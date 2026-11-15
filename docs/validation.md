@@ -48,6 +48,8 @@ Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure reco
 
 [voice_input_browser.py](../tests/voice_input_browser.py) covers the reusable composer microphone control across node/Hub, all four composer surfaces, 3-provider (`openai`, `google`, `openrouter`) model tabs, live WebSocket streaming dictation while holding (`gpt-live-transcribe`, `gemini-3.5-transcribe-live`) with dedicated live HUD and cancel rollback, HTTP/SSE WAV transcription, and tool/process context exclusion.
 
+[tool_output_browser.py](../tests/tool_output_browser.py) covers Droid tool arguments and outputs on node/Hub: default wrapping, scrollable tail previews, wheel access, full expansion and collapse in wide/light and narrow/dark views.
+
 ## When to run which tier
 
 Validation scope and delivery requirements are defined in

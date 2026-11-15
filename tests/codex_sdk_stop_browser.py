@@ -191,6 +191,23 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
     live = page.request.get(base + '/api/live?force=1').json()
     assert source not in live['uids'] and branch in live['sdk_uids'], live
+    assert source in live['retained_sdk_uids'], live
+    page.evaluate('refreshLive(true)')
+    badge = page.locator(f'#side .item[data-uid="{source}"] > .ico > .item-status')
+    expect(badge).to_have_attribute('title', '已停止，等待原生卸载')
+    expect(badge).to_have_class(__import__('re').compile('sdk'))
+    expect(page.locator('#dlive') if 'narrow' in label else badge).to_be_visible()
+    if 'narrow' not in label:
+        expect(page.locator('#dlive')).to_have_attribute('title', '已停止，等待原生卸载')
+        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-retained.png'))
+    fake.loaded.discard(THREAD)
+    page.wait_for_timeout(2100)
+    page.evaluate('refreshLive(true)')
+    page.wait_for_function('uid => !S.retainedSdk.has(uid)', arg=source)
+    expect(badge).not_to_have_class(__import__('re').compile('visible'))
+    fake.loaded.add(THREAD)
+
     assert not errors, errors
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-parent-stopped.png'))
     # The branch stays usable, then stopping it unsubscribes only its thread.
