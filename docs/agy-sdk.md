@@ -185,6 +185,13 @@ user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能
 `items` 仅为当前桥接接受/观察的实时消息，与普通历史区独立。原生步骤消息的
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
+DELTA（BUG-20261115-234238-df94ad）：后台工具未完成时，Agy 可能先写入用户历史，
+稍后才输出 headless `user_input`。对尚未回显的引导，桥接只读核对当前会话原生数据库中
+已完成的 `USER_INPUT`，以 `clientMessageId` 精确匹配投递 request_id，补齐原生步骤身份与
+消费回执。Agy 1.5.9 的未压缩 `step_payload` 使用 CascadeStep 字段 19 下的
+UserInput 字段 19 保存该身份。数据库不可读、格式未知或身份未匹配时继续等待原生回显；
+不按正文或时间猜配，不重发、不改写原生数据。迟到的 NDJSON 更新同一消息；相同正文的
+不同请求仍各自保留。浏览器验收覆盖历史先落盘、回显延迟及两次同文引导。
 DELTA：普通历史保留每条投影的 `native_step_index`、`native_step_status`。
 SDK 连接后保留已完成原生步骤的完整历史（含工具结果、设置说明和分页缺口），
 只接入该边界之后的实时步骤；未知步骤身份的待回显输入仍保留。

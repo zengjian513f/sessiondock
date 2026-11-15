@@ -4,6 +4,7 @@ mod actions;
 mod context;
 mod control;
 mod control_log;
+mod echo;
 mod transcript;
 mod transport;
 
@@ -869,9 +870,12 @@ async fn actor(
                     }
                     continue;
                 },
-                _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !runtime.transcript.is_empty()=>{
+                _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !runtime.transcript.is_empty() || echo::pending(&live)=>{
                     let turn=live.data.lock().unwrap().runtime.clone();
-                    if let Some(turn)=turn { runtime.transcript.refresh(&process,&live,&turn).await; }
+                    if let Some(turn)=turn {
+                        echo::refresh(&process,&live,&turn).await;
+                        runtime.transcript.refresh(&process,&live,&turn).await;
+                    }
                     continue;
                 }
             }
@@ -1152,7 +1156,8 @@ async fn execute(
     let mut saw_assistant = false;
     loop {
         tokio::select! {
-            _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty()=>{
+            _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty() || echo::pending(live)=>{
+                echo::refresh(process,live,turn).await;
                 saw_assistant |= transcript.refresh(process,live,turn).await;
             }
             _=shutdown.cancelled()=>{ return Err("agy_sdk_shutdown".into()); }
@@ -1439,6 +1444,8 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
                     item["role"] == "user"
                         && item["native_id"].is_null()
                         && item["status"] != "unknown"
+                        && (step["client_message_id"].is_null()
+                            || item["request_id"] == step["client_message_id"])
                 })
             });
         if let Some(index) = target {

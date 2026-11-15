@@ -150,6 +150,7 @@ def exercise(browser, base, peer, label, screenshots):
 
 
 def exercise_transport(browser, base, peer, screenshots):
+    (peer.root / 'native-echo-store').touch()
     context = browser.new_context(viewport={'width': 1280, 'height': 900})
     page = context.new_page()
     page.goto(base); page.wait_for_function('T.listLoaded')
@@ -212,6 +213,38 @@ def exercise_transport(browser, base, peer, screenshots):
     expect(notices).to_have_count(notice_count)
     expect(answer).to_have_count(1)
     assert notice.evaluate('(node, next) => !!(node.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)', answer.element_handle())
+    # BUG-20261115-234238-df94ad: native DB/transcript already contain a
+    # steered user step while headless output waits for an older background
+    # tool. Confirm consumption by clientMessageId before releasing NDJSON.
+    send(page, 'hold:delayed-echo-' + text.split()[-1])
+    wait_snapshot(page, uid, lambda raw: raw['running'])
+    echo_gate = peer.root / 'steer-echo-delay'
+    echo_gate.touch()
+    repeated = '相同文字的独立引导 ' + text.split()[-1]
+    ids = []
+    for count in (1, 2):
+        page.locator('#sdk-input').fill(repeated)
+        with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/steer')) as response:
+            page.locator('#sdk-input').press('Control+Enter')
+        assert response.value.ok, response.value.text()
+        request_id = response.value.json()['request_id']
+        ids.append(request_id)
+        page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
+        expect(page.locator('.sdk-history [data-role=user]').filter(has_text=repeated)).to_have_count(count)
+        expect(page.locator('.sdk-msgs [data-role=user]').filter(has_text=repeated)).to_have_count(count)
+        wait_snapshot(page, uid, lambda raw: any(item.get('request_id') == request_id and item.get('native_echo') for item in raw['items']))
+        expect(page.locator('.sdk-live [data-role=user]').filter(has_text=repeated)).to_have_count(0)
+    assert len(set(ids)) == 2
+    assert len(peer.steers(repeated)) == 2
+    page.reload(); page.wait_for_function('T.listLoaded')
+    open_sdk(page, peer, expect, uid=uid)
+    expect(page.locator('.sdk-msgs [data-role=user]').filter(has_text=repeated)).to_have_count(2)
+    echo_gate.unlink()
+    wait_snapshot(page, uid, lambda raw: sum(item.get('role') == 'user' and item.get('content') == repeated for item in raw['items']) == 2
+                  and all(any(item.get('request_id') == ident and item.get('native', {}).get('conversation_id') for item in raw['items']) for ident in ids))
+    expect(page.locator('.sdk-msgs [data-role=user]').filter(has_text=repeated)).to_have_count(2)
+    peer.release('delayed-echo-' + text.split()[-1])
+    wait_snapshot(page, uid, lambda raw: not raw['running'])
     if screenshots:
         for width, theme in [(1280, 'light'), (390, 'dark')]:
             page.set_viewport_size({'width': width, 'height': 900})
@@ -223,7 +256,7 @@ def exercise_transport(browser, base, peer, screenshots):
             page.locator('.sdk-msgs').evaluate('box => box.scrollTop = box.scrollHeight')
             page.screenshot(path=str(screenshots / f'cancel-{text.split()[-1]}-{width}-{theme}.png'), full_page=True)
     context.close()
-    print(text, 'PASS real transport with fake CLI: open, send, native persist, cancel, two later turns, reconnect and stable notice order', flush=True)
+    print(text, 'PASS fake CLI transport: open, send, cancel, reconnect, delayed native echoes and identical independent steers', flush=True)
 
 
 def main():

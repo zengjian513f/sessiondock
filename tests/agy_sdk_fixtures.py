@@ -69,12 +69,25 @@ with sqlite3.connect(native/'conversation_summaries.db') as catalog:
         json.dumps([Path.cwd().as_uri()]),'','IDLE',index,''))
 logs=native/'brain'/sid/'.system_generated/logs';logs.mkdir(parents=True,exist_ok=True)
 transcript=logs/'transcript_full.jsonl'
+def varint(value):
+    out=bytearray()
+    while value>127:out.append((value&127)|128);value>>=7
+    out.append(value);return bytes(out)
+def proto_field(number,value):
+    return varint(number*8+2)+varint(len(value))+value
 def native_record(kind,content,**fields):
+    if (root/'native-echo-store').exists():
+        connection.execute('CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB)')
+        payload=proto_field(19,proto_field(2,content.encode())+proto_field(19,fields.pop('client_message_id','').encode()))
+        connection.execute('INSERT OR REPLACE INTO steps VALUES (?,?,3,0,?)',(index,14 if kind=='USER_INPUT' else 1,payload));connection.commit()
     with transcript.open('a') as output:
         output.write(json.dumps({'type':kind,'content':content,'step_index':index,
           'created_at':'2026-10-18T00:00:00Z','status':'DONE','source':'MODEL',**fields},ensure_ascii=False)+'\n')
+delayed_steps=[]
 def step(kind,**fields):
-    emit({'event':'step_update','step_update':dict(conversation_id=sid,step_index=index,step_type=kind,**fields)})
+    event={'event':'step_update','step_update':dict(conversation_id=sid,step_index=index,step_type=kind,**fields)}
+    if (root/'steer-echo-delay').exists():delayed_steps.append(event)
+    else:emit(event)
 def advance():
     global index
     index+=1
@@ -327,14 +340,17 @@ for line in sys.stdin:
         steered_seen=False
         deadline=time.monotonic()+25
         while not (root/'release'/token).exists() and not cancelled.is_set():
+            if not (root/'steer-echo-delay').exists() and delayed_steps:
+                for event in delayed_steps:emit(event)
+                delayed_steps.clear()
             if not (root/'steer-consume-delay').exists() and not steered_queue.empty():
                 if not steered_seen:
                     native_record('PLANNER_RESPONSE','Agy running '+token+' ')
                     step('agent_response',state='DONE',text_delta='');advance()
                     steered_seen=True
                 while not steered_queue.empty() and not (root/'steer-consume-delay').exists():
-                    _,steer_text=steered_queue.get_nowait()
-                    native_record('USER_INPUT','<USER_REQUEST>\n'+steer_text+'\n</USER_REQUEST>')
+                    steer_id,steer_text=steered_queue.get_nowait()
+                    native_record('USER_INPUT','<USER_REQUEST>\n'+steer_text+'\n</USER_REQUEST>',client_message_id=steer_id)
                     step('user_input',state='DONE');advance()
                     steer_reply='Agy steered: '+steer_text
                     native_record('PLANNER_RESPONSE',steer_reply)
