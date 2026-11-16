@@ -50,7 +50,10 @@ struct Live {
 
 impl Live {
     fn snapshot(&self) -> Value {
-        json!({"seq":self.seq,"type":"snapshot","raw":self.raw})
+        crate::presentation::native_snapshot(
+            "opencode",
+            json!({"seq":self.seq,"type":"snapshot","raw":self.raw}),
+        )
     }
     fn publish(&mut self) {
         self.raw["items"] = json!(self.items);

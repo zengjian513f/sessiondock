@@ -477,6 +477,28 @@ const NativeSdkView = {
     return entry.mapped;
   },
 
+  foldedSnapshotIds(raw) {
+    const hidden = new Set(), presentation = raw.presentation;
+    if (!S.compactTurns || S.term || presentation?.version !== 1) return hidden;
+    const complete = !raw.running && !raw.requests?.length;
+    // A history join can cut a server turn. Only defer nodes when the exact
+    // displayed slice can use the server plan; the legacy fallback stays eager.
+    const messages = this.snapshotItems(raw).map(item => this.mapSnapshotItem(item, this.uid.split(':')[0]));
+    const byId = new Map(messages.map(item => [String(item.id), item]));
+    rememberPresentation(presentation.ids.map(id => byId.get(id)), presentation);
+    const plan = backendPlan(messages, {tailComplete: complete});
+    if (!plan) return hidden;
+    for (const {turn} of plan) {
+      if (!turn) continue;
+      const ids = turn.items.map(item => String(item.id));
+      const previous = this.liveTurns.get(`${turn.key}:${ids[0]}`);
+      if (previous && (previous._sdkMaterialized || !previous.classList.contains('folded'))) continue;
+      for (const item of turn.items)
+        if (['assistant', 'thinking', 'tool', 'tool_result'].includes(item.role)) hidden.add(String(item.id));
+    }
+    return hidden;
+  },
+
   applySnapshot(raw) {
     // Full snapshots supersede each other, but finish an in-flight build before
     // applying its successor. Restarting on every delta would starve rendering.
@@ -484,7 +506,8 @@ const NativeSdkView = {
       if (raw !== this.raw) this.snapshotBuild.latest = raw;
       return;
     }
-    const missing = this.snapshotItems(raw).filter(item => !this.nodes.has(String(item?.id)));
+    const hidden = this.foldedSnapshotIds(raw);
+    const missing = this.snapshotItems(raw).filter(item => !hidden.has(String(item?.id)) && !this.nodes.has(String(item?.id)));
     if (missing.length < 80) { this.applySnapshotNow(raw); return; }
     const job = {generation: this.generation, raw, latest: null, nodes: new Map(), index: 0, timer: 0};
     this.snapshotBuild = job;
@@ -534,12 +557,18 @@ const NativeSdkView = {
     const source = String(this.uid).split(':')[0];
     const filteredRaw = this.snapshotItems(raw);
     const mappedItems = filteredRaw.map(item => this.mapSnapshotItem(item, source));
+    const presentation = raw.presentation;
+    if (presentation?.version === 1 && Array.isArray(presentation.ids)) {
+      const byId = new Map(mappedItems.map(item => [String(item.id), item]));
+      rememberPresentation(presentation.ids.map(id => byId.get(id)), presentation);
+    }
     this.items = mappedItems;
     this.setConnected(true);
     if (source === 'agy') this.agyJoinedHistory = this.historyData;
     this.paintHistory();
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
     const tailComplete = !this.running && !requests.size;
+    const hidden = this.foldedSnapshotIds(raw);
     const turnMetaKey = item => `${item.role || ''}\0${item.turn_id ?? ''}\0${item.phase || ''}\0${item.interrupted ? 1 : 0}\0${item.silent ? 1 : 0}\0${item.event_kind || ''}\0${item.subtask_outcome ? 1 : 0}`;
     let canPatchInPlace = Array.isArray(this.renderedItemIds)
       && this.renderedItemIds.length === mappedItems.length
@@ -615,21 +644,38 @@ const NativeSdkView = {
         }
         const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
         const ready = prepared?.get(rawItem);
-        const node = ready && ready.ts === item.ts ? ready.node : msgNode(item);
-        node.dataset.sdkItem = id;
-        node._sdkMessage = item;
-        node._sdkToolMessage = item; node._sdkItemShape = null;
-        node._sdkRawItem = rawItem; node._sdkItemTs = item.ts; node._sdkTurnMeta = turnMetaKey(item);
-        if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
-          // Keep partial stdout rendered, but never label a partial rawOutput as
-          // completed just because it already contains a default exit_code:0.
-          const status = node.querySelector('.tool-status') || el('div','tool-status');
-          status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
-          if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
-        }
-        NativeSdkControls.decorate(this,node,item);
+        const create = () => {
+          const node = ready && ready.ts === item.ts ? ready.node : msgNode(item);
+          node.dataset.sdkItem = id;
+          node._sdkMessage = item;
+          node._sdkToolMessage = item; node._sdkItemShape = null;
+          node._sdkRawItem = rawItem; node._sdkItemTs = item.ts; node._sdkTurnMeta = turnMetaKey(item);
+          if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
+            // Keep partial stdout rendered, but never label a partial rawOutput as
+            // completed just because it already contains a default exit_code:0.
+            const status = node.querySelector('.tool-status') || el('div','tool-status');
+            status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
+            if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
+          }
+          NativeSdkControls.decorate(this,node,item);
+          ConversationUI.restoreToolState(node, toolState);
+          return node;
+        };
+        let node;
+        if (hidden.has(id)) {
+          node = el('div', 'msg');
+          node.dataset.sdkItem = id;
+          node.dataset.role = item.role;
+          node._sdkRawItem = rawItem; node._sdkItemTs = item.ts;
+          node._sdkMessage = item;
+          node._sdkMaterialize = () => {
+            if (this.nodes.get(id) !== node) return;
+            const rendered = create();
+            node.replaceWith(rendered);
+            this.nodes.set(id, rendered);
+          };
+        } else node = create();
         if (old) old.replaceWith(node); else this.live.append(node);
-        ConversationUI.restoreToolState(node, toolState);
         this.nodes.set(id, node);
       }
       for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }

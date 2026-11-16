@@ -292,7 +292,9 @@ impl Session {
     }
 
     fn snapshot(&self, live: &Live) -> Value {
-        json!({"seq":live.seq,"type":"snapshot","raw":{
+        crate::presentation::native_snapshot(
+            "codebuddy",
+            json!({"seq":live.seq,"type":"snapshot","raw":{
             "session_id":self.sid,"running":!live.turns.is_empty() || live.native_running,"items":live.items,
             "requests":live.requests.values().collect::<Vec<_>>(),"model":live.model.as_ref().or(self.observed_model.as_ref()),"effort":live.effort,
             "model_observed":live.model.is_none() && self.observed_model.is_some(),
@@ -301,7 +303,8 @@ impl Session {
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
             "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
-            "capabilities":capabilities()}})
+            "capabilities":capabilities()}}),
+        )
     }
 
     fn publish(&self, live: &mut Live) {

@@ -740,7 +740,10 @@ impl Live {
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
     fn snapshot(&self, data: &Data) -> Value {
-        json!({"seq":data.seq,"type":"snapshot","raw":self.raw(data)})
+        crate::presentation::native_snapshot(
+            "agy",
+            json!({"seq":data.seq,"type":"snapshot","raw":self.raw(data)}),
+        )
     }
     fn publish(&self, data: &mut Data) {
         data.seq += 1;

@@ -57,6 +57,29 @@ pub(crate) struct Selected<'a> {
     pub event: &'a Event,
 }
 
+/// Media URLs are granted after selection; the planner only needs to know that
+/// an otherwise empty result carries an image and must remain visible.
+pub(crate) fn presentation_plan(selected: &[Selected<'_>], split: Option<usize>) -> Value {
+    use std::borrow::Cow;
+    let messages: Vec<_> = selected
+        .iter()
+        .map(|s| {
+            if s.event.media.is_empty() {
+                Cow::Borrowed(&s.event.message)
+            } else {
+                let mut message = s.event.message.clone();
+                message["media"] = json!([true]);
+                Cow::Owned(message)
+            }
+        })
+        .collect();
+    crate::presentation::plans(
+        &messages.iter().map(|m| m.as_ref()).collect::<Vec<_>>(),
+        split,
+        false,
+    )
+}
+
 /// One candidate file, fully streamed and projected. Immutable once built;
 /// the AST it came from lives (bounded) in the shared `RecordCache` only to
 /// speed up the next incremental extension.
@@ -966,7 +989,10 @@ pub(crate) fn batch_fields(snapshot: &ViewSnapshot, selection: &Selection<'_>) -
         "reset": selection.reset, "start": selection.start,
         "end": parsed.committed, "anchor": current_anchor,
     });
+    let split = selection.partial["head"].as_u64().map(|n| n as usize);
+    let presentation = presentation_plan(&selection.selected, split);
     let tail = json!({
+        "presentation": presentation,
         "message_total": selection.total, "partial": selection.partial,
         "activity_changed": selection.activity_changed, "activity": selection.activity,
     });

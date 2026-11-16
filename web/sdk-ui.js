@@ -404,7 +404,7 @@ const SdkUI = {
         run = [];
       };
       for (const node of [...parent.children]) {
-        if (node._sdkToolMessage && isGroupableTool(node._sdkToolMessage)) run.push(node);
+        if (!node._sdkMaterialize && node._sdkToolMessage && isGroupableTool(node._sdkToolMessage)) run.push(node);
         else flush();
       }
       flush();
@@ -418,8 +418,9 @@ const SdkUI = {
   foldLiveTurns(view, messages, {tailComplete}) {
     // Native snapshots can replay the whole session. Apply the same completed
     // turn boundaries as history, but retain the streaming message/tool nodes.
-    const plan = planTurns(messages.map(message => ({...message,
-      turn_id: message.turn_id || String(message.id)})), {tailComplete, openTail: !tailComplete});
+    const plan = backendPlan(messages, {tailComplete, openTail: !tailComplete})
+      || planTurnsLocal(messages.map(message => ({...message,
+        turn_id: message.turn_id || String(message.id)})), {tailComplete, openTail: !tailComplete});
     const previous = view.liveTurns, groups = new Map(), membership = new Map();
     const place = (parent, nodes) => {
       let before = parent.firstElementChild;
@@ -432,14 +433,28 @@ const SdkUI = {
       if (!turn) continue;
       const ids = turn.items.map(item => String(item.id));
       const key = `${turn.key}:${ids[0]}`;
-      const shape = JSON.stringify([ids, turnProcessSummary(turn.items),
+      const shape = JSON.stringify([ids, turn.summary || turnProcessSummary(turn.items),
         turn.hasConclusion, turn.inferred, turn.interrupted]);
       let node = previous.get(key);
       if (!node || node._sdkTurnShape !== shape) {
         const expanded = node ? !node.classList.contains('folded') : open;
-        // These messages are already materialized by the protocol adapter.
-        // An empty plan prevents the disclosure from creating duplicate nodes.
-        node = turnProcessNode({...turn, plan: []}, expanded);
+        // Adapters own message identities. Materialize deferred nodes on first
+        // expansion without creating a second copy from the nested plan.
+        node = turnProcessNode({...turn, plan: [], materialize: () => {
+          const generation = view.generation;
+          let index = 0;
+          const paint = () => {
+            if (view.generation !== generation || !node.isConnected) return;
+            node._sdkMaterialized = true;
+            const started = performance.now();
+            while (index < ids.length && performance.now() - started < 8)
+              view.nodes.get(ids[index++])?._sdkMaterialize?.();
+            if (index < ids.length) setTimeout(paint, 0);
+            else { SdkUI.groupTools(view); SdkUI.syncAssistantBubbles(view); }
+          };
+          // The fold node is placed after construction, including initially-open turns.
+          queueMicrotask(paint);
+        }}, expanded);
         node._sdkTurnShape = shape;
       }
       node._turnItems = turn.items;
@@ -615,7 +630,7 @@ const SdkUI = {
         if (!cached) {
           const {data, bytes} = await fetchMessages(this.uid, {agent: this.agent, windowed: true});
           if (!this.current(generation)) return;
-          cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+          cachePut(key, {meta: data.meta, msgs: data.messages, presentation: data.presentation, version: data.version,
             end: data.end, anchor: data.anchor, activity: data.activity, bytes,
             prompt: data.prompt || null, cli: data.cli ?? null,
             total: data.message_total, partial: data.partial || null});

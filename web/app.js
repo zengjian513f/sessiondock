@@ -1508,6 +1508,8 @@ function trimCache() {
 }
 
 function cachePut(uid, e) {
+  if (!e.msgs?.some(m => m.interrupted || m.role === 'answer'))
+    rememberPresentation(e.msgs, e.presentation);
   cache.delete(uid);
   cache.set(uid, e);
   trimCache();
@@ -1612,6 +1614,7 @@ async function fetchMessageBody(uid, opts = {}) {
   let at = 0;
   for (const c of chunks) { buf.set(c, at); at += c.length; }
   const data = JSON.parse(new TextDecoder().decode(buf));
+  rememberPresentation(data.messages, data.presentation);
   browserAuditEvent('http.response.parsed', {
     url, status: r.status, bytes: got, reset: !!data.reset,
     start: data.start, end: data.end, messages: data.messages?.length || 0,
@@ -1834,7 +1837,7 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   });
   if (data.reset) {                         // 回滚 / 重写过, 缓存作废
     markInterruptedTurn(data.messages, data.activity);
-    cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
+    cachePut(key, { meta: data.meta, msgs: data.messages, presentation: data.presentation, version: data.version,
                     end: data.end, anchor: data.anchor, activity: data.activity, bytes,
                     prompt: data.prompt || null, cli: data.cli ?? null,
                     total: data.message_total, partial: data.partial || null });
@@ -2007,7 +2010,7 @@ async function retryMigrationRead(uid, agent = null) {
       const {data, bytes} = await fetchMessages(uid, {agent, windowed: true, signal: ac.signal});
       if (!data?.meta || !data.version || !Array.isArray(data.messages)
           || !Number.isFinite(data.end)) throw new Error('服务端返回了无效的会话快照');
-      cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+      cachePut(key, {meta: data.meta, msgs: data.messages, presentation: data.presentation, version: data.version,
         end: data.end, anchor: data.anchor, activity: data.activity, bytes,
         prompt: data.prompt || null, cli: data.cli ?? null, total: data.message_total, partial: data.partial || null});
       S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
@@ -6184,7 +6187,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }).then(result => {
     if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return result;
     const {data, bytes} = result;
-    cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+    cachePut(key, {meta: data.meta, msgs: data.messages, presentation: data.presentation, version: data.version,
       end: data.end, anchor: data.anchor, activity: data.activity, bytes,
       prompt: data.prompt || null, cli: data.cli ?? null,
       total: data.message_total, partial: data.partial || null});
@@ -6672,7 +6675,9 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial, mode = 'all
   const buffer = new Uint8Array(bytes);
   let offset = 0;
   for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
-  return {data: JSON.parse(new TextDecoder().decode(buffer)), bytes};
+  const data = JSON.parse(new TextDecoder().decode(buffer));
+  rememberPresentation(data.messages, data.presentation);
+  return {data, bytes};
 }
 
 function historyPageFailure(request, button, error) {
@@ -6839,7 +6844,7 @@ async function loadFullHistory(uid, agent, button) {
       agent, signal: ac.signal,
       onProgress: (a, b, detail) => progress(a, b, '下载完整历史', detail),
     });
-    cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+    cachePut(key, {meta: data.meta, msgs: data.messages, presentation: data.presentation, version: data.version,
                    end: data.end, anchor: data.anchor, activity: data.activity, bytes,
                    prompt: data.prompt || null, cli: data.cli ?? null,
                    total: data.message_total, partial: null});
@@ -8311,6 +8316,8 @@ function markInterruptedTurn(messages, activity) {
     const message = messages[i];
     if (String(message?.turn_id || '') !== turnId || !isTurnAssistant(message)) continue;
     if (!isFinalAssistant(message)) {
+      const binding = backendPresentation.get(message)?.binding;
+      if (binding) binding.invalid = true;
       message.interrupted = true;
       message.interrupt_reason = activity.reason || '本轮在最终答复前被中断';
       return true;
@@ -8446,7 +8453,62 @@ function planTurn(messages, options = {}) {
 
 /** 历史缺口两侧会分别调用，绝不跨缺口猜轮次。answer 是代理提问的回答，
  *  留在同一轮过程内；只有真正的 user/user·subagent 开新轮。 */
-function planTurns(msgs, {
+const backendPresentation = new WeakMap();
+function rememberPresentation(messages, presentation) {
+  if (presentation?.version !== 1 || !Array.isArray(messages)) return;
+  for (const span of presentation.spans || []) {
+    const binding = {messages, span};
+    for (let index = span.start; index < span.end; index++) {
+      if (messages[index]) backendPresentation.set(messages[index], {binding, index});
+    }
+  }
+}
+
+function backendPlan(messages, {tailComplete = false, foldTail = tailComplete, openTail = false} = {}) {
+  if (!messages.length) return [];
+  const first = backendPresentation.get(messages[0]);
+  if (!first) return null;
+  const {binding} = first, indices = new Set();
+  if (binding.invalid) return null;
+  let last = -1;
+  for (const message of messages) {
+    const row = backendPresentation.get(message);
+    if (row?.binding !== binding || row.index <= last) return null;
+    last = row.index; indices.add(last);
+  }
+  if (last + 1 < binding.span.end && !isTurnStart(binding.messages[last + 1])) return null;
+  const wire = binding.span[tailComplete ? 'complete' : foldTail ? 'fold' : 'active'];
+  if (!Array.isArray(wire)) return null;
+  let partial = false;
+  const message = entry => {
+    const original = binding.messages[entry.index];
+    return entry.result != null || entry.silent ? {...original,
+      ...(entry.result != null ? {result: binding.messages[entry.result]} : {}),
+      ...(entry.silent ? {silent: true} : {})} : original;
+  };
+  const hydrate = plan => plan.flatMap(p => {
+    if (p.m) {
+      if (!indices.has(p.m.index)) return [];
+      if (p.m.result != null && !indices.has(p.m.result)) { partial = true; return []; }
+      return [{m: message(p.m), sealedTurnHead: p.sealedTurnHead}];
+    }
+    const members = p.g ? p.g.flatMap(m => [m.index, ...(m.result != null ? [m.result] : [])]) : p.turn.items;
+    const included = members.filter(index => indices.has(index)).length;
+    if (!included) return [];
+    if (included !== members.length) {partial = true; return [];}
+    if (p.g) return [{g: p.g.map(message), open: !!p.tail && openTail}];
+    return [{turn: {...p.turn, items: p.turn.items.map(index => binding.messages[index]),
+      plan: hydrate(p.turn.plan)}, open: !S.compactTurns}];
+  });
+  const result = hydrate(wire);
+  return partial ? null : result;
+}
+
+function planTurns(messages, options = {}) {
+  return backendPlan(messages, options) || planTurnsLocal(messages, options);
+}
+
+function planTurnsLocal(msgs, {
   openTail = false, tailComplete = false, foldTail = tailComplete,
 } = {}) {
   const out = [];
@@ -9196,7 +9258,7 @@ function turnProcessSummary(items) {
  *  diff 和现有工具组，大会话既减少高度，也避免为不可见过程支付首屏成本。 */
 function turnProcessNode(turn, initiallyOpen = false) {
   const items = turn.items || [];
-  const summary = turnProcessSummary(items);
+  const summary = turn.summary || turnProcessSummary(items);
   const n = el('div', 'msg turn-process folded');
   n.dataset.role = 'process';
   // 这是多个原始消息的虚拟容器，不能让 DOM 计数把容器本身再算一条。
@@ -9239,6 +9301,7 @@ function turnProcessNode(turn, initiallyOpen = false) {
   const materialize = () => {
     if (materialized) return false;
     materialized = true;
+    if (turn.materialize) { turn.materialize(); return true; }
     const plan = turn.plan || planMessages(items), generation = renderSeq;
     let offset = 0;
     const paint = () => {
@@ -9771,7 +9834,9 @@ async function fetchMediaPage(uid, agent, cursor, signal) {
   const buffer = new Uint8Array(bytes);
   let offset = 0;
   for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
-  return {data: JSON.parse(new TextDecoder().decode(buffer)), bytes};
+  const data = JSON.parse(new TextDecoder().decode(buffer));
+  rememberPresentation(data.messages, data.presentation);
+  return {data, bytes};
 }
 
 function mediaPageFailure(request, button, error) {

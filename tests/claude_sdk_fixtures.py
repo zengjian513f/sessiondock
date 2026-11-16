@@ -380,6 +380,10 @@ def fake_cli():
             if content == 'finish-background':
                 send({'type':'system','subtype':'background_tasks_changed','tasks':[]})
             stream_text("streaming Claude progress", message_id)
+            if content == 'presentation-heavy':
+                for index in range(160):
+                    assistant([{"type": "thinking", "thinking": f"Presentation thinking {index}\n" * 20}],
+                              f"presentation-{message_id}-{index}")
             if content == "hold":
                 interrupted.wait(30)
             elif content in ("approval", "question"):

@@ -558,6 +558,9 @@ impl ViewSnapshot {
         body.extend_from_slice(b",\"page\":");
         serde_json::to_writer(&mut body, &page)
             .map_err(|_| SessionError::new(500, "历史页响应序列化失败"))?;
+        body.extend_from_slice(b",\"presentation\":");
+        serde_json::to_writer(&mut body, &super::views::presentation_plan(&selected, None))
+            .map_err(|_| SessionError::new(500, "历史页展示计划序列化失败"))?;
         body.push(b'}');
         Ok(body)
     }

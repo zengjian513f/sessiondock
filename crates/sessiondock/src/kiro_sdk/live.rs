@@ -1813,7 +1813,7 @@ impl LiveState {
         if let Some(ref title) = self.title {
             raw["title"] = json!(title);
         }
-        json!({
+        let snapshot = json!({
             "seq": self.seq,
             "type": "snapshot",
             "uid": uid,
@@ -1821,7 +1821,12 @@ impl LiveState {
             "cwd": cwd,
             "capabilities": capabilities,
             "raw": raw,
-        })
+        });
+        if wire {
+            crate::presentation::native_snapshot("kiro", snapshot)
+        } else {
+            snapshot
+        }
     }
 }
 

@@ -144,7 +144,10 @@ impl Live {
             raw["error"] = json!(error);
             raw["error_kind"] = json!(self.error_kind);
         }
-        json!({"seq":self.seq,"type":"snapshot","raw":raw})
+        crate::presentation::native_snapshot(
+            "grok",
+            json!({"seq":self.seq,"type":"snapshot","raw":raw}),
+        )
     }
     pub fn has_pending_steers(&self) -> bool {
         self.steers.values().any(|r| {

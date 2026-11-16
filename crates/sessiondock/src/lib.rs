@@ -42,6 +42,7 @@ pub(crate) mod native_sdk;
 mod observe;
 pub(crate) mod opencode_sdk;
 pub(crate) mod polls;
+pub(crate) mod presentation;
 pub mod quota_statusline;
 pub(crate) mod quotas;
 pub(crate) mod runtime;
