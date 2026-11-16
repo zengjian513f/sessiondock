@@ -162,27 +162,43 @@ TasksMax is split 124 + 4, preserving the previous total of 128. Workloads never
 move cgroups. `PartOf` couples helper restart/stop to the main collector, and
 releases/rollback include both unit files.
 
-The private PSS socket permits only its owner; requests identify a PID and start
-time, and the worker checks the monitored UID. Observation time is captured before
-the read, so quota wait or extended intervals never make an old observation appear
-fresh. Cheap processes run ahead of multi-GiB address spaces, and unattributed
-processes with RSS at or above 512 MiB skip background `smaps_rollup` walks until
-attributed to a session. Each helper reply also reports the thread CPU time spent
-walking `smaps_rollup`: reads costing at most 15 ms keep the 30-second cadence and
-60-second cache expiry, while expensive walks stretch per-process
-`refresh_interval_seconds` to `2,000 × read_cpu_time` (capped at 60 minutes, with
-cache expiry `max(60s, 2 × refresh_interval_seconds)`) and enforce a `24 × read_cpu_time`
-cooldown between heavy reads so sustained helper CPU stays below 4% of one core
-even across dozens of 100+ GiB session workers (owned synthetic benchmarks measured
-~375 ms kernel CPU at 8 GiB and ~1.50 s at 32 GiB, with `mmap_lock` read contention
-raising concurrent target `mmap`/`munmap` `p99` latency under back-to-back reads).
-Processes previously at or above 512 MiB RSS refresh early when RSS drops below half
-of that baseline so freed memory is reflected promptly without raising cgroup quotas
-or weights. Newly attributed `< 512 MiB` processes wake the worker within one second.
-The main collector cancels its wait on shutdown; missing/failed helper reads are
-unavailable, never RSS. Standalone runs without `RESOURCE_AGENT_PSS_SOCKET` retain
-direct reads, adaptive per-process scheduling and CPU-time pacing. Unit budget setup
-failures are logged.
+DELTA: PSS is demand-driven. A session drawer read renews `pss_demand`
+(`{session, inclusive}`) for 30 seconds. The collector unions exact process
+incarnations selected by ownership, initiator and launch chain, just like the
+resource view. Readers of the same scope share the latest expiry; one reader
+leaving cannot cancel another. Bare `resources`, `report` and `health` are
+read-only and never renew demand. With no demand there are no PSS walks, including
+unattributed or large processes. Restart clears demand.
+
+Cheap due processes run during heavy cooldown; each class selects the oldest
+observation first, with unsampled processes first. Expensive reads keep the
+24 × measured CPU-time cooldown. There is no 30-second batch cutoff or RSS
+ordering that repeatedly puts the largest process last. The heavy interval is
+ceil(29 × sum of active process read CPU seconds + 30); the initial estimate is
+50 ms/GiB (at least 1 ms), replaced by measurements. This accounts for the 20%
+quota plus cooldown and shares the budget across all viewed sessions. Cheap
+reads target max(30 seconds, five times total cheap CPU cost plus the estimated
+longest quota-limited read). These are estimates, not hard kernel latency guarantees; late data is
+marked queued after interval + 30 seconds, never silently presented as fresh.
+
+The private PSS socket checks PID/start and monitored UID; observation time is
+captured before reading. No demand yields `not_sampled`; pending first/fresh
+observations yield `queued`; successful reads yield `ok`; read failures yield
+`unavailable`. There is no background policy that permanently skips a requested
+large process. Missing PSS never substitutes RSS. Health exposes `pss.demands`,
+`reads`, `cpu_seconds`, and `backlog`; these are published with the fast snapshot.
+Demand expiry prevents subsequent reads; an already running kernel walk must
+finish (kernel mmap-lock walks cannot be preempted by browser closure).
+
+Roll out nodes/Hub first, then collectors. New nodes tolerate an old collector's
+invalid-operation response and retain its existing PSS observations. Old nodes
+with a new collector report unsampled PSS with an upgrade explanation. New Hub
+with old nodes retains compact/full-snapshot fallback. Old pages' drawer polling
+renews demand through updated nodes; hidden/closed pages stop polling, and new
+pages also stop on page sleep. Nodes without collectors retain explicit unknown
+metrics. The intermediate sidebar-removal release retains background sampling.
+Neither main/PSS quotas, weights, priority nor task limits change. I/O diagnostic
+leases remain independent and keep their existing semantics.
 
 Thread-local write counters retain open proc I/O descriptors for live threads.
 [Linux pins these descriptors to their original task](https://www.kernel.org/doc/html/v6.11/filesystems/proc.html),

@@ -59,6 +59,9 @@ class Collector:
                             continue
                         self.enabled = request['data']['enabled']
                         result = {'state': 'active' if self.enabled else 'off', 'remaining_seconds': 60 if self.enabled else 0}
+                    elif op == 'pss_demand':
+                        conn.sendall(b'{"ok":false,"error":"invalid request"}\n')
+                        continue
                     elif op == 'resources':
                         samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
                                     'read_bytes': None, 'write_bytes': None, 'metrics': {

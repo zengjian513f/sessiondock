@@ -71,6 +71,7 @@ pub async fn compact_session_resources(
     State(state): State<AppState>,
     Json(query): Json<CompactSessionQuery>,
 ) -> Json<serde_json::Value> {
+    crate::runtime::process_links::demand_pss(&state, &query.session, query.inclusive).await;
     let value = crate::runtime::process_links::resources(&state).await;
     let node_id = state.local_node_id.as_deref().unwrap_or_default();
     Json(crate::hub::resources::node_row(
@@ -105,6 +106,7 @@ pub async fn session_resources(
         .await?;
     let session = crate::hub::resources::session_from_list(&document, &query.uid, &node_id)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "session_not_found", "会话不存在"))?;
+    crate::runtime::process_links::demand_pss(&state, &session, inclusive).await;
     let value = crate::runtime::process_links::resources(&state).await;
     let row =
         crate::hub::resources::node_row(&node_id, &state.hostname, value, &session, inclusive);

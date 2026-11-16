@@ -129,7 +129,7 @@ def main():
                   SessionDockResources.setLoader(async (uid, scope) => {
                     resourceCalls.push({uid, scope});
                     const metrics = {cpu_cores: {value: scope === 'inclusive' ? 4.5 : 1.25, status:'ok'}, gpu_count:{value:1,status:'partial',reason:'NVIDIA compute-app residency only'},
-                      memory_pss_bytes:{value:1073741824,status:'ok'}, nfs_read_bytes_per_second:{value:null,status:'unsupported',reason:'NFS 探针不可用'}};
+                      memory_pss_bytes:{value:1073741824,status:'partial',coverage_observed:1,coverage_total:3}, nfs_read_bytes_per_second:{value:null,status:'unsupported',reason:'NFS 探针不可用'}};
                     return {sampled_at:1790812800, totals:metrics, nodes:[
                       {node_id:'a',node_name:'compute-a',status:'ok',metrics,diagnostic:{...probeState}} ,
                       {node_id:'b',node_name:'compute-b',status:'offline',reason:'机器离线',metrics:{},diagnostic:{state:'unsupported',remaining_seconds:0}}]};
@@ -181,6 +181,7 @@ def main():
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('1.25')")
                 assert page.evaluate('resourceCalls.at(-1).scope') == 'direct'
                 assert page.get_by_role('button', name='仅当前会话', exact=True).get_attribute('aria-pressed') == 'true'
+                expect(page.locator('.sr-totals')).to_contain_text('1/3 已观测')
                 page.get_by_role('button', name='包含子会话', exact=True).click()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
                 assert page.evaluate('resourceCalls.at(-1).scope') == 'inclusive'
@@ -215,6 +216,7 @@ def main():
                     ['disk_read_operations_per_second', 1234567.8],
                     ['proc_storage_write_bytes_per_second', 999.9 * 1024 ** 2],
                   ].map(([key, value]) => [key, {value, status:'ok'}]));
+                  metrics.memory_pss_bytes = {...metrics.memory_pss_bytes,status:'partial',coverage_observed:137,coverage_total:307};
                   return {sampled_at:1790812800, totals:metrics, nodes:[
                     {node_id:'a', node_name:'compute-with-a-long-hostname-测试执行机器', status:'ok', metrics},
                     {node_id:'b', node_name:'compute-offline', status:'offline', metrics:{}}]};
@@ -222,6 +224,16 @@ def main():
                 page.get_by_role('button', name='刷新资源').click()
                 page.get_by_text('compute-with-a-long-hostname-测试执行机器', exact=True).wait_for()
                 check_responsive_drawer(page, args.screenshots)
+                for status, text in [('not_sampled','未查看，未采样'), ('queued','排队采样')]:
+                    page.evaluate("""status => SessionDockResources.setLoader(async () => {
+                        const metrics={memory_pss_bytes:{value:null,status,coverage_observed:0,coverage_total:307}};
+                        return {totals:metrics,nodes:[]};
+                    })""",status)
+                    page.get_by_role('button',name='刷新资源').click()
+                    expect(page.locator('.sr-totals')).to_contain_text(text)
+                    expect(page.locator('.sr-totals')).to_contain_text('0/307 已观测')
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / f'pss-{status}.png'))
                 page.locator('#a-chat').click()
                 if not page.locator('#side').is_visible():
                     page.locator('.mobile-back:visible').click()

@@ -34,6 +34,10 @@ pub enum Request {
     Health,
     Report,
     Resources,
+    PssDemand {
+        session: Session,
+        inclusive: bool,
+    },
     Usage,
     Probe {
         enabled: bool,

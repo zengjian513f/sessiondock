@@ -7,11 +7,74 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import socket
+import json
+import time
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode, SID
 from spawned_by_fixtures import START, proc_pid
+
+
+def collector(socket_path, op):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(5)
+        client.connect(str(socket_path))
+        client.sendall(json.dumps({'op':op}).encode()+b'\n')
+        return json.loads(client.makefile('rb').readline())['result']
+
+
+def demand_lifecycle(browser, page, base, root):
+    """Real browser readers, real scheduler, private synthetic proc tree."""
+    sock = root/'collector.sock'
+    # Earlier drawer checks may leave leases; close the view and wait for expiry.
+    page.locator('#a-chat').click()
+    deadline=time.monotonic()+60
+    while collector(sock,'health')['pss']['demands'] and time.monotonic()<deadline:
+        page.wait_for_timeout(1000)
+    health=collector(sock,'health')['pss']
+    assert health['demands']==0,health
+    before=health['reads']
+    page.wait_for_timeout(6000)
+    assert collector(sock,'health')['pss']['reads']==before
+    raw=collector(sock,'resources')
+    assert all(s['metrics']['memory_pss_bytes']['status']=='not_sampled' for s in raw['samples'])
+    def open_view(p,sid):
+        p.goto(base,wait_until='networkidle')
+        uid=p.evaluate('sid=>S.sessions.find(s=>s.sid===sid).uid',sid)
+        p.locator(f'#side .item[data-uid="{uid}"]').click()
+        p.locator('#a-resources').click()
+        p.get_by_role('button',name='仅当前会话',exact=True).click()
+    started=time.monotonic()
+    open_view(page,'thread-b')
+    expect(page.locator('.sr-totals')).to_contain_text('2 MiB',timeout=30000)
+    print('PSS drawer light coverage seconds',round(time.monotonic()-started,2),flush=True)
+    deadline=time.monotonic()+30
+    while collector(sock,'health')['pss']['reads'] <= before and time.monotonic()<deadline:
+        page.wait_for_timeout(500)
+    health=collector(sock,'health')['pss'];assert health['reads']>before,health
+    raw=collector(sock,'resources')
+    assert next(x for x in raw['samples'] if x['process']['pid']==900)['metrics']['memory_pss_bytes']['status']=='not_sampled'
+    second=browser.new_page()
+    try:
+        open_view(second,'launcher')
+        expect(second.locator('.sr-totals')).to_contain_text('1 MiB',timeout=30000)
+        # Hiding one document stops its polling while the other continues.
+        page.evaluate("Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_timeout(52000)
+        assert collector(sock,'health')['pss']['demands']==1
+        raw=collector(sock,'resources')
+        assert next(x for x in raw['samples'] if x['process']['pid']==300)['metrics']['memory_pss_bytes']['status']=='not_sampled'
+        expect(second.locator('.sr-totals')).to_contain_text('1 MiB')
+        second.locator('#a-chat').click()
+        second.wait_for_timeout(52000)
+        a=collector(sock,'health')['pss'];assert a['demands']==0,a
+        second.wait_for_timeout(6000)
+        assert collector(sock,'health')['pss']['reads']==a['reads']
+    finally:
+        second.close()
+    print('PASS PSS demand starts, exact scope, hidden/closed expiry, independent readers and idle read count',flush=True)
 
 
 def main():
@@ -89,6 +152,8 @@ def main():
                             if args.screenshots and sid in ('thread-a',SID):
                                 args.screenshots.mkdir(parents=True,exist_ok=True)
                                 page.screenshot(path=str(args.screenshots/f'shared-{sid}-{args.with_agent}-{restarted}.png'),full_page=True)
+                        if args.with_agent and not restarted:
+                            demand_lifecycle(browser,page,base,root)
                         if restarted:
                             # No evidence on a reused worker: never inherit the old
                             # session or the daemon launcher's identity.

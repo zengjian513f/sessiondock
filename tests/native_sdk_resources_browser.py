@@ -105,7 +105,7 @@ def main():
                                     }''',arg=uid,timeout=30000,polling=500)
                                     page.get_by_role('button',name='刷新资源').click()
                                     expect(page.locator('.sr-node .sr-status')).to_have_text('在线')
-                                    expect(page.locator('.sr-totals')).to_contain_text('2 MiB')
+                                    expect(page.locator('.sr-totals')).to_contain_text('2 MiB', timeout=30000)
                                 if args.screenshots:
                                     args.screenshots.mkdir(parents=True,exist_ok=True)
                                     page.screenshot(path=str(args.screenshots/f'{source}-{args.with_agent}-{restarted}.png'),full_page=True)

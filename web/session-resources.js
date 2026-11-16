@@ -23,7 +23,7 @@
     gpu_count: '使用到的计算设备数，同机按设备去重；不代表独占或满卡算力。约 10 秒更新。',
     gpu_memory_bytes: '计算进程的显存占用；不含纯图形任务，共享计算服务可能无法细分到工作进程。约 10 秒更新。',
     memory_bandwidth_bytes_per_second: '常驻硬件监控，约 5 秒更新；按会话统计总内存流量，未拆分读写。子会话依标签范围汇总；不代表逐进程带宽，短命任务可能漏计。',
-    memory_pss_bytes: '按比例分摊共享内存后的驻留内存，不用普通驻留内存替代缺失值。约 30 秒更新。',
+    memory_pss_bytes: '按比例分摊共享内存后的驻留内存，不用普通驻留内存替代缺失值。查看时按需更新，昂贵进程按实际读取成本排队。',
     proc_storage_read_bytes_per_second: '进程在存储层引起的读取量，与缓存命中的文件读取量不同。',
     proc_storage_write_bytes_per_second: '进程在存储层引起的写入量；延迟回写可能影响归属和时间。',
     disk_read_bytes_per_second: '本地普通文件的同步逻辑读取量，含缓存命中；不含 NFS、内存映射和异步直接通道。',
@@ -33,7 +33,7 @@
     nfs_read_bytes_per_second: 'NFS 文件的同步逻辑读取量，含缓存命中；不是实际远程请求或网卡流量。',
     nfs_write_bytes_per_second: 'NFS 文件的同步逻辑写入量；不含完整远程请求、重传及协议开销。',
   };
-  const reasons = {unsupported: '采集端不支持', unavailable: '暂无采样', offline: '机器离线', stale: '采样已过期', partial: '部分覆盖', warming_up: '等待下一次采样'};
+  const reasons = {not_sampled:'未查看，未采样', queued:'排队采样', unsupported: '采集端不支持', unavailable: '暂无采样', offline: '机器离线', stale: '采样已过期', partial: '部分覆盖', warming_up: '等待下一次采样'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
   function number(value, unit) {
     if (unit === 'count') return `${value.toLocaleString('zh-CN')}<small> 个</small>`;
@@ -49,12 +49,17 @@
     return fields.map(([key, label, unit]) => {
       const raw = values?.[key];
       const item = typeof raw === 'number' ? {value: raw, status: 'ok'} : (raw || {});
-      const usable = Number.isFinite(item.value) && !['unsupported', 'unavailable', 'offline', 'stale', 'warming_up'].includes(item.status);
+      const usable = Number.isFinite(item.value) && !['unsupported', 'unavailable', 'offline', 'stale', 'warming_up', 'not_sampled', 'queued'].includes(item.status);
       const detail = /[\u3400-\u9fff]/.test(item.reason || '') ? item.reason : '';
       const status = reasons[item.status] || (!usable ? reasons[fallback] || '暂无采样' : '');
       const stamp = Number.isFinite(item.sampled_at) ? `采样 ${new Date(item.sampled_at * 1000).toLocaleTimeString('zh-CN', {hour12:false})}` : '';
-      const tip = [descriptions[key], status, detail, stamp].filter(Boolean).join(' · ');
-      return `<div class="sr-metric${item.status === 'partial' ? ' sr-partial' : ''}" tabindex="0" data-metric-key="${esc(JSON.stringify([owner, key]))}" title="${esc(tip)}"><dt>${label}</dt><dd>${usable ? number(item.value, unit) : '—'}</dd></div>`;
+      const cadence = key === 'memory_pss_bytes' && item.refresh_interval_seconds > 0
+        ? `目标约 ${item.refresh_interval_seconds.toLocaleString('zh-CN')} 秒更新` : '';
+      const tip = [descriptions[key], status, detail, cadence, stamp].filter(Boolean).join(' · ');
+      const coverage = key === 'memory_pss_bytes' && Number.isFinite(item.coverage_total)
+        && item.coverage_observed < item.coverage_total
+        ? `<small> · ${esc(item.coverage_observed || 0)}/${esc(item.coverage_total)} 已观测</small>` : '';
+      return `<div class="sr-metric${item.status === 'partial' ? ' sr-partial' : ''}" tabindex="0" data-metric-key="${esc(JSON.stringify([owner, key]))}" title="${esc(tip)}"><dt>${label}</dt><dd>${usable ? number(item.value, unit) : (['not_sampled','queued'].includes(item.status) ? reasons[item.status] : '—')}${coverage}</dd></div>`;
     }).join('');
   }
   const probeStates = {off:'未探测', starting:'正在启动', active:'探测中', stopping:'正在停止', failed:'探测失败', unsupported:'不支持探测'};
@@ -185,7 +190,7 @@
   }
 
   async function refresh(force = false) {
-    if (!dialog?.open || (pending && !force)) return;
+    if (!dialog?.open || document.hidden || globalThis.SessionDockSleep?.sleeping || (pending && !force)) return;
     const selected = selection();
     if (!selected) { content.innerHTML = '<p class="sr-empty">请选择一个会话。</p>'; return; }
     const changed = currentUid !== selected.uid;

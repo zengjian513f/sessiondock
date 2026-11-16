@@ -757,6 +757,18 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
     report(state).await?;
     Ok(count)
 }
+pub async fn demand_pss(state: &AppState, session: &process_links::Session, inclusive: bool) {
+    if let Some(path) = agent_socket(state) {
+        let request = process_links::agent::Request::PssDemand {
+            session: session.clone(),
+            inclusive,
+        };
+        // Old collectors reject the new operation; their existing resource path remains usable.
+        let _ = tokio::task::spawn_blocking(move || process_links::agent::request(&path, &request))
+            .await;
+    }
+}
+
 pub async fn resources(state: &AppState) -> serde_json::Value {
     if let Some(path) = agent_socket(state)
         && let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {

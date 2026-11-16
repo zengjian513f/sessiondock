@@ -137,6 +137,39 @@ fn sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value, devices: bo
     value
 }
 
+fn pss_sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value) -> Value {
+    let items: Vec<_> = items.collect();
+    let mut result = sum(items.iter().copied(), fallback, false);
+    let mut covered = 0u64;
+    let mut total = 0u64;
+    let mut states = BTreeSet::new();
+    let mut interval = 0u64;
+    for item in &items {
+        total += item["coverage_total"].as_u64().unwrap_or(1);
+        covered += item["coverage_observed"]
+            .as_u64()
+            .unwrap_or(u64::from(item["value"].is_number()));
+        states.insert(item["status"].as_str().unwrap_or("unavailable"));
+        interval = interval.max(item["refresh_interval_seconds"].as_u64().unwrap_or(0));
+    }
+    result["coverage_total"] = json!(total);
+    result["coverage_observed"] = json!(covered);
+    result["refresh_interval_seconds"] = json!(interval);
+    result["reason"] = json!(format!(
+        "PSS 已观测 {covered}/{total} 个进程；仅合计已观测部分，缺失不代表零"
+    ));
+    if covered == 0 && total > 0 {
+        result["status"] = json!(if states.iter().all(|s| *s == "not_sampled") {
+            "not_sampled"
+        } else if states.contains("warming_up") || states.contains("queued") {
+            "queued"
+        } else {
+            "unavailable"
+        });
+    }
+    result
+}
+
 pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Value {
     let selected: BTreeSet<_> = resources
         .bindings
@@ -203,6 +236,16 @@ pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Val
                 }
                 return ((*field).to_owned(), value);
             }
+            if *field == "memory_pss_bytes" {
+                let mut value = pss_sum(
+                    samples.values().map(|s| s.metrics.get(key).unwrap_or(&absent)),
+                    fallback,
+                );
+                if value["sampled_at"].is_null() && !value["value"].is_null() {
+                    value["sampled_at"] = json!(resources.sampled_at);
+                }
+                return ((*field).to_owned(), value);
+            }
             let mut value = sum(
                 samples
                     .values()
@@ -230,6 +273,22 @@ pub fn totals(rows: &[Value]) -> Value {
     FIELDS
         .iter()
         .map(|key| {
+            if *key == "memory_pss_bytes" {
+                let mut value = pss_sum(
+                    rows.iter()
+                        .map(|row| row["metrics"].get(*key).unwrap_or(&absent)),
+                    &absent,
+                );
+                if rows
+                    .iter()
+                    .any(|row| !row["metrics"][*key]["coverage_total"].is_number())
+                {
+                    value.as_object_mut().unwrap().remove("coverage_total");
+                    value.as_object_mut().unwrap().remove("coverage_observed");
+                    value["reason"] = json!("部分机器未提供 PSS 进程覆盖数量；缺失值不代表零");
+                }
+                return ((*key).to_owned(), value);
+            }
             let value = sum(
                 rows.iter()
                     .map(|row| row["metrics"].get(*key).unwrap_or(&absent)),

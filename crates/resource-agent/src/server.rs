@@ -469,6 +469,7 @@ struct State {
     execs: u64,
     exits: u64,
     diagnostic: Arc<Mutex<Diagnostic>>,
+    pss_control: Arc<Mutex<PssControl>>,
 }
 impl State {
     fn update(&mut self, snapshot: Snapshot, resources: Resources) {
@@ -512,10 +513,33 @@ impl State {
         json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id,
             "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,
             "collector":self.status,"processes":self.snapshot.entries.len(),
-            "fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits})
+            "fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits,"pss":self.pss_control.lock().unwrap_or_else(|e| e.into_inner()).health()})
     }
     fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
+            Request::PssDemand { session, inclusive } => {
+                let mut control = self.pss_control.lock().unwrap_or_else(|e| e.into_inner());
+                control
+                    .demands
+                    .retain(|(_, _, deadline)| *deadline > Instant::now());
+                let same = |a: &process_links::Session, b: &process_links::Session| {
+                    a.node_id == b.node_id && a.source == b.source && a.sid == b.sid
+                };
+                if let Some((_, _, deadline)) = control
+                    .demands
+                    .iter_mut()
+                    .find(|(s, i, _)| same(s, &session) && *i == inclusive)
+                {
+                    *deadline = Instant::now() + Duration::from_secs(30);
+                } else {
+                    control.demands.push((
+                        session,
+                        inclusive,
+                        Instant::now() + Duration::from_secs(30),
+                    ));
+                }
+                Ok(Response::Value(json!({"lease_seconds":30})))
+            }
             Request::Usage => Ok(usage_response(&self.usage)),
             Request::Health => Ok(Response::Value(self.health())),
             Request::Probe {
@@ -835,6 +859,19 @@ struct ResourceSampler {
     writes: crate::thread_writes::ThreadWrites,
     previous: Option<PriorSnapshot>,
 }
+#[derive(Default)]
+struct PssControl {
+    demands: Vec<(process_links::Session, bool, Instant)>,
+    reads: u64,
+    cpu_seconds: f64,
+    backlog: usize,
+}
+impl PssControl {
+    fn health(&self) -> Value {
+        json!({"demands":self.demands.iter().filter(|(_,_,d)| *d > Instant::now()).count(),
+            "reads":self.reads,"cpu_seconds":self.cpu_seconds,"backlog":self.backlog})
+    }
+}
 type PssCache = BTreeMap<Process, (Option<u64>, f64, u64)>;
 #[derive(Clone, Default)]
 struct GpuObservation {
@@ -846,6 +883,7 @@ struct GpuObservation {
 struct SlowObservations {
     bandwidth: bandwidth::Observation,
     pss: PssCache,
+    pss_active: BTreeMap<Process, u64>,
     gpu: GpuObservation,
 }
 impl ResourceSampler {
@@ -946,48 +984,57 @@ impl ResourceSampler {
                 }
                 sample.metrics.insert(name.into(), value);
             }
-            let pss = if root == Path::new("/proc") {
-                slow_cache.pss.get(&sample.process).copied()
-            } else {
-                let observation = memory::observation(root, &sample.process);
-                Some((observation.value, observation.sampled_at, 30))
-            };
+            let pss = slow_cache.pss.get(&sample.process).copied();
             let (mut pss_metric, pss_interval) = match pss {
                 Some((value, at, interval_secs)) => {
-                    let max_age = interval_secs.saturating_mul(2).max(60);
+                    let interval_secs = slow_cache
+                        .pss_active
+                        .get(&sample.process)
+                        .copied()
+                        .unwrap_or(interval_secs);
+                    let max_age = interval_secs.saturating_add(30);
                     let result = if sampled_at - at <= max_age as f64 {
                         let reason = if interval_secs > 30 {
                             format!(
-                                "Proportional resident memory from smaps_rollup; adaptive background refresh every {interval_secs} seconds for expensive page-table walks; never substitutes RSS"
+                                "Proportional resident memory from smaps_rollup; on-demand refresh approximately every {interval_secs} seconds for expensive page-table walks; never substitutes RSS"
                             )
                         } else {
-                            "Proportional resident memory from smaps_rollup; background refresh approximately every 30 seconds; never substitutes RSS".to_owned()
+                            "Proportional resident memory from smaps_rollup; on-demand refresh approximately every 30 seconds; never substitutes RSS".to_owned()
                         };
                         let mut result = metric(
                             json!(value),
                             if value.is_some() { "ok" } else { "unavailable" },
-                            &reason,
+                            if value.is_some() {
+                                &reason
+                            } else {
+                                "PSS 读取失败；进程可能已退出或读取权限不足"
+                            },
                         );
                         result["sampled_at"] = json!(at);
                         result
                     } else {
                         metric(
                             Value::Null,
-                            "unavailable",
-                            &format!("PSS observation is older than {max_age} seconds"),
+                            "queued",
+                            &format!(
+                                "PSS queued for a fresh observation (target {interval_secs} seconds)"
+                            ),
                         )
                     };
                     (result, interval_secs)
                 }
                 None => (
-                    metric(
-                        Value::Null,
-                        "warming_up",
-                        "Waiting for first background PSS observation",
-                    ),
+                    metric(Value::Null, "warming_up", "等待按需 PSS 首次观测"),
                     30,
                 ),
             };
+            if !slow_cache.pss_active.contains_key(&sample.process) {
+                pss_metric = metric(
+                    Value::Null,
+                    "not_sampled",
+                    "未收到此会话的查看需求，PSS 未采样；旧节点需升级以发送需求",
+                );
+            }
             pss_metric["refresh_interval_seconds"] = json!(pss_interval);
             sample.metrics.insert("memory_pss_bytes".into(), pss_metric);
             if let Some(reason) = gpu_reason.as_ref() {
@@ -1270,6 +1317,7 @@ fn serve(
         .unwrap_or(false);
     let decoded = serde_json::from_str::<Request>(&line);
     let op = match &decoded {
+        Ok(Request::PssDemand { .. }) => "pss_demand",
         Ok(Request::Probe { .. }) => "probe",
         Ok(Request::Catalog(_)) => "catalog",
         Ok(Request::Publish(_)) => "publish",
@@ -1410,6 +1458,7 @@ pub fn run() -> io::Result<()> {
     }));
     let io_window = IoWindow::new(false);
     let mut sampler = ResourceSampler::default();
+    let pss_control = Arc::new(Mutex::new(PssControl::default()));
     let slow_cache = Arc::new(Mutex::new(SlowObservations::default()));
     let data = sampler.collect(
         &config.proc_root,
@@ -1442,6 +1491,7 @@ pub fn run() -> io::Result<()> {
         execs: 0,
         exits: 0,
         diagnostic: diagnostic.clone(),
+        pss_control: pss_control.clone(),
     }));
     state
         .lock()
@@ -1483,179 +1533,165 @@ pub fn run() -> io::Result<()> {
             None
         }
     };
-    // PSS walks page tables and is substantially more expensive than stat/io.
-    // Spread a 30-second refresh over due processes instead of blocking the fast sampler,
-    // and stretch per-process cadence proportionally to actual kernel walk cost so
-    // multi-GiB processes neither burn steady kernel CPU nor contend on mmap_lock.
-    let pss_worker = if config.proc_root == Path::new("/proc") {
+    // Demand expires independently of browser disconnects. No demand means no walks.
+    let pss_worker = {
+        let proc_root = config.proc_root.clone();
         let pss_state = state.clone();
         let cache = slow_cache.clone();
+        let control = pss_control.clone();
         let budget = slow_budget.clone();
         Some(std::thread::spawn(move || {
-            const BASE_INTERVAL_SECS: f64 = 30.0;
-            const MAX_INTERVAL_SECS: f64 = 3600.0;
-            const HEAVY_READ_CPU_MS: f64 = 15.0;
-            const LARGE_RSS_BYTES: u64 = 512 * 1024 * 1024;
             let remote = std::env::var_os("RESOURCE_AGENT_PSS_SOCKET").is_some();
             if !remote {
                 memory::enter_cpu_budget(budget.as_deref());
             }
-            let mut schedule: BTreeMap<Process, (Instant, u64, f64)> = BTreeMap::new();
-            let mut heavy_cooldown_until = Instant::now();
+            // last observation start, measured CPU seconds, RSS at read
+            let mut schedule: BTreeMap<Process, (Instant, f64, u64)> = BTreeMap::new();
+            let mut heavy_ready = Instant::now();
             while !STOP.load(Ordering::Relaxed) {
-                let started = Instant::now();
-                let (processes, rss_by_proc, bound): (Vec<_>, BTreeMap<_, _>, BTreeSet<_>) = {
-                    let guard = pss_state.lock().unwrap_or_else(|e| e.into_inner());
-                    let procs = guard
-                        .snapshot
-                        .entries
-                        .values()
-                        .map(|entry| entry.process.clone())
-                        .collect();
-                    let rss = guard
-                        .resources
-                        .raw()
-                        .samples
-                        .iter()
-                        .map(|sample| (sample.process.clone(), sample.rss_bytes))
-                        .collect();
-                    let bound = guard
-                        .report
-                        .bindings
-                        .iter()
-                        .map(|binding| binding.process.clone())
-                        .collect();
-                    (procs, rss, bound)
+                let idle = {
+                    let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
+                    c.demands
+                        .retain(|(_, _, deadline)| *deadline > Instant::now());
+                    if c.demands.is_empty() {
+                        c.backlog = 0;
+                        true
+                    } else {
+                        false
+                    }
                 };
-                let current: BTreeSet<_> = processes.iter().cloned().collect();
-                cache
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .pss
-                    .retain(|process, _| current.contains(process));
-                schedule.retain(|process, _| current.contains(process));
-                let now = Instant::now();
-                let mut due: Vec<_> = processes
-                    .into_iter()
-                    .filter_map(|process| {
-                        let rss = rss_by_proc.get(&process).copied().unwrap_or(0);
-                        let is_bound = bound.contains(&process);
-                        if rss >= LARGE_RSS_BYTES && !is_bound {
-                            return None;
-                        }
-                        let prior = schedule.get(&process).copied();
-                        let is_heavy = rss >= LARGE_RSS_BYTES
-                            || prior.is_some_and(|(_, _, cpu_ms)| cpu_ms > HEAVY_READ_CPU_MS);
-                        let should_sample = match prior {
-                            None => true,
-                            Some((next_due, last_rss, _)) => {
-                                now >= next_due
-                                    || (last_rss >= LARGE_RSS_BYTES
-                                        && rss > 0
-                                        && rss < last_rss / 2)
-                            }
-                        };
-                        should_sample.then_some((process, rss, is_bound, is_heavy, prior.is_some()))
+                if idle {
+                    cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .pss_active
+                        .clear();
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                let (bindings, rss): (Vec<_>, BTreeMap<_, _>) = {
+                    let guard = pss_state.lock().unwrap_or_else(|e| e.into_inner());
+                    (
+                        guard.report.bindings.clone(),
+                        guard
+                            .resources
+                            .raw()
+                            .samples
+                            .iter()
+                            .map(|s| (s.process.clone(), s.rss_bytes))
+                            .collect(),
+                    )
+                };
+                let demands = {
+                    let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
+                    c.demands
+                        .retain(|(_, _, deadline)| *deadline > Instant::now());
+                    c.demands.clone()
+                };
+                let same = |a: &process_links::Session, b: &process_links::Session| {
+                    a.node_id == b.node_id && a.source == b.source && a.sid == b.sid
+                };
+                let selected: BTreeSet<_> = bindings
+                    .iter()
+                    .filter(|b| {
+                        demands.iter().any(|(s, inclusive, _)| {
+                            same(&b.session, s)
+                                || (*inclusive
+                                    && (b.initiator.as_ref().is_some_and(|a| same(a, s))
+                                        || b.launch_chain.iter().any(|a| same(&a.session, s))))
+                        })
+                    })
+                    .filter(|b| rss.contains_key(&b.process))
+                    .map(|b| b.process.clone())
+                    .collect();
+                schedule.retain(|p, _| rss.contains_key(p));
+                // Conservative first-pass estimates are replaced by measurements.
+                let costs: BTreeMap<_, _> = selected
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.clone(),
+                            schedule.get(p).map_or(
+                                (rss[p] as f64 / (1u64 << 30) as f64 * 0.05).max(0.001),
+                                |(_, cpu, _)| *cpu,
+                            ),
+                        )
                     })
                     .collect();
-                due.sort_by_key(|(_, rss, is_bound, is_heavy, scheduled)| {
-                    (*is_heavy, !*is_bound, *scheduled, *rss)
-                });
-                let fast_count = due
+                let heavy_cycle = (costs.values().sum::<f64>() * 29.0 + 30.0).ceil().max(30.0);
+                let longest = costs.values().copied().fold(0.0, f64::max) * 5.0;
+                let cheap_cycle =
+                    costs.values().filter(|c| **c <= 0.015).sum::<f64>() * 5.0 + longest;
+                let intervals: BTreeMap<_, _> = costs
                     .iter()
-                    .take_while(|(_, _, _, is_heavy, _)| !*is_heavy)
-                    .count();
-                // Budget ~15 seconds across fast processes, then pace multi-GiB page-table walks
-                // so sustained helper CPU stays well below one twentieth of a core.
-                let spacing = Duration::from_secs_f64((15.0 / fast_count.max(1) as f64).min(0.25));
-                for (process, rss, _, is_heavy, _) in due {
-                    if STOP.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if is_heavy {
-                        let deadline = started + Duration::from_secs(30);
-                        let now = Instant::now();
-                        if now >= deadline || heavy_cooldown_until >= deadline {
-                            break;
-                        }
-                        while Instant::now() < heavy_cooldown_until && !STOP.load(Ordering::Relaxed)
-                        {
-                            std::thread::sleep(Duration::from_millis(20).min(
-                                heavy_cooldown_until.saturating_duration_since(Instant::now()),
-                            ));
-                        }
-                        if STOP.load(Ordering::Relaxed) {
-                            return;
-                        }
-                    }
-                    let cpu_started = memory::thread_cpu_time();
-                    let observation = memory::observation(Path::new("/proc"), &process);
-                    let local_cpu = memory::thread_cpu_time().saturating_sub(cpu_started);
-                    let read_cpu_ms = observation.cpu_ms.max(local_cpu.as_secs_f64() * 1000.0);
-                    let next_secs =
-                        (read_cpu_ms * 2.0).clamp(BASE_INTERVAL_SECS, MAX_INTERVAL_SECS);
-                    let interval_secs = next_secs.round() as u64;
-                    let finished = Instant::now();
-                    schedule.insert(
-                        process.clone(),
+                    .map(|(p, c)| {
                         (
-                            finished + Duration::from_secs_f64(next_secs),
-                            rss,
-                            read_cpu_ms,
-                        ),
-                    );
-                    if read_cpu_ms > HEAVY_READ_CPU_MS {
-                        let read_cpu = Duration::from_secs_f64(read_cpu_ms / 1000.0);
-                        heavy_cooldown_until = finished + read_cpu.saturating_mul(24);
+                            p.clone(),
+                            if *c <= 0.015 {
+                                cheap_cycle.max(30.0).ceil() as u64
+                            } else {
+                                heavy_cycle as u64
+                            },
+                        )
+                    })
+                    .collect();
+                let now = Instant::now();
+                let mut due: Vec<_> = selected
+                    .iter()
+                    .filter(|p| {
+                        schedule.get(*p).is_none_or(|(at, _, old_rss)| {
+                            at.elapsed().as_secs_f64() >= intervals[*p] as f64
+                                || (*old_rss >= 512 * 1024 * 1024 && rss[*p] < *old_rss / 2)
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                control.lock().unwrap_or_else(|e| e.into_inner()).backlog = due.len();
+                {
+                    let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+                    c.pss_active = intervals.clone();
+                    c.pss.retain(|p, _| rss.contains_key(p));
+                }
+                // Cheap due reads can run during heavy cooldown. Oldest first prevents starvation.
+                due.sort_by_key(|p| (costs[p] > 0.015, schedule.get(p).map(|(at, _, _)| *at)));
+                let next = due
+                    .into_iter()
+                    .find(|p| costs[p] <= 0.015 || now >= heavy_ready);
+                if let Some(process) = next {
+                    let started = Instant::now();
+                    let local_start = memory::thread_cpu_time();
+                    let observation = memory::observation(&proc_root, &process);
+                    let local_cpu = memory::thread_cpu_time().saturating_sub(local_start);
+                    let cpu = (observation.cpu_ms / 1000.0).max(local_cpu.as_secs_f64());
+                    schedule.insert(process.clone(), (started, cpu, rss[&process]));
+                    if cpu > 0.015 {
+                        heavy_ready = Instant::now() + Duration::from_secs_f64(cpu * 24.0);
+                    }
+                    {
+                        let mut c = control.lock().unwrap_or_else(|e| e.into_inner());
+                        c.reads += 1;
+                        c.cpu_seconds += cpu;
                     }
                     cache.lock().unwrap_or_else(|e| e.into_inner()).pss.insert(
-                        process,
-                        (observation.value, observation.sampled_at, interval_secs),
+                        process.clone(),
+                        (
+                            observation.value,
+                            observation.sampled_at,
+                            intervals[&process],
+                        ),
                     );
-                    let pause_for = if remote {
-                        spacing
-                    } else {
-                        memory::sampling_pause(local_cpu, spacing)
-                    };
-                    let pause = Instant::now();
-                    while pause.elapsed() < pause_for && !STOP.load(Ordering::Relaxed) {
-                        std::thread::sleep(
-                            Duration::from_millis(20)
-                                .min(pause_for.saturating_sub(pause.elapsed())),
-                        );
-                    }
-                }
-                let mut ticks = 0u32;
-                while started.elapsed() < Duration::from_secs(30) && !STOP.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(100));
-                    ticks += 1;
-                    if ticks.is_multiple_of(10) {
-                        let wake_early = {
-                            let guard = pss_state.lock().unwrap_or_else(|e| e.into_inner());
-                            let rss_map: BTreeMap<_, _> = guard
-                                .resources
-                                .raw()
-                                .samples
-                                .iter()
-                                .map(|sample| (&sample.process, sample.rss_bytes))
-                                .collect();
-                            let now = Instant::now();
-                            guard.report.bindings.iter().any(|binding| {
-                                rss_map.get(&binding.process).is_some_and(|&rss| {
-                                    !schedule.contains_key(&binding.process)
-                                        && (rss < LARGE_RSS_BYTES || now >= heavy_cooldown_until)
-                                })
-                            })
-                        };
-                        if wake_early {
-                            break;
+                    if !remote {
+                        let until =
+                            Instant::now() + memory::sampling_pause(local_cpu, Duration::ZERO);
+                        while Instant::now() < until && !STOP.load(Ordering::Relaxed) {
+                            std::thread::sleep(Duration::from_millis(20));
                         }
                     }
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
                 }
             }
         }))
-    } else {
-        None
     };
     let bandwidth_worker = if config.memory_bandwidth && config.proc_root == Path::new("/proc") {
         let bandwidth_state = state.clone();

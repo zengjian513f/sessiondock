@@ -378,8 +378,7 @@ same boot and exact process incarnation. CPU is occupied logical cores, not a
 percentage of the entire machine. GPU count is the distinct set of resident
 compute devices per execution machine, not exclusive allocation or GPU compute
 utilization. Graphics-only work and MPS worker attribution are not covered by
-the NVIDIA compute query. PSS failure never substitutes RSS. PSS uses a separate low-frequency cache
-(target about 30 seconds). The supplied PSS helper runs in a separate 20%-core
+the NVIDIA compute query. PSS failure never substitutes RSS. PSS uses a separate demand-driven cache. The supplied PSS helper runs in a separate 20%-core
 service; the main collector has 80%, preserving the total one-core budget.
 Uninterruptible page-table walks can overrun a kernel scheduling period, and a
 child CPU quota alone cannot isolate the main service from that cost. Within the
@@ -391,12 +390,17 @@ never rejuvenate an old observation.
 The report timestamp is the start of the complete sampling cycle, including
 process discovery; metric timestamps retain the oldest contributing sample through aggregation.
 GPU queries also run independently, about every 10 seconds; values older than
-30 seconds are unavailable. Ordinary PSS reads (`<= 15 ms` CPU) refresh about every
-30 seconds and expire after 60 seconds; expensive multi-GiB `smaps_rollup` walks
-stretch per-process `refresh_interval_seconds` up to 60 minutes with a `2 ×` expiry
-window and `24 ×` inter-read CPU cooldown while preserving exact `sampled_at`
-timestamps, and unattributed `>= 512 MiB` processes skip background PSS walks until
-attributed (see [Optional Linux resource collector](resource-agent.md)).
+30 seconds are unavailable. DELTA: PSS reads occur only for the union of currently viewed session scopes.
+Drawer reads renew a 30-second collector demand; bare collector resources reads
+remain diagnostic-only. Cheap processes target 30 seconds. Heavy intervals account
+for the entire demanded queue and retain the 24 × CPU-time cooldown; they have
+no fixed upper cap. Original timestamps are preserved. Missing or late readings
+are visibly unsampled/queued, not zero or RSS. Session and fleet PSS carry
+observed/total process coverage where all nodes support it, with bounded coverage
+reasons; the drawer displays incomplete counts next to the subtotal. Old nodes
+without coverage metadata do not receive invented process counts.
+See [Optional Linux resource collector](resource-agent.md) for scheduling,
+expiry, mixed-version behavior and health counters.
 
 GPU aggregation also checks sampled compute processes without a binding for
 their exact process incarnation. When any exist, GPU count and memory metrics
@@ -518,8 +522,8 @@ Counters aggregate in kernel maps instead of sending an event for every I/O.
 The temporary probe covers the monitored user's processes on each participating
 machine, so other session views share that machine's diagnostic window. Turning
 it off from one view stops it for all views on that machine. Probe execution can
-still affect small-I/O throughput. CPU, PSS, GPU and proc storage accounting
-remain available while diagnostics are off; unavailable diagnostic rates are
+still affect small-I/O throughput. CPU, GPU and proc storage accounting remain available while diagnostics are off;
+PSS demand follows the visible drawer independently of diagnostic leases; unavailable diagnostic rates are
 null, never stale values presented as live zeroes.
 
 ### Resident memory bandwidth
