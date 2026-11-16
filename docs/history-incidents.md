@@ -2059,3 +2059,8 @@ Token title 断言，在当前前端及改动前 `5ca71a0b` 前端均失败；�
 43 项 lint，新增展示模块无诊断；不把构建成功称为 Clippy 通过。
 Codex 实时增量、跨批历史合并、Markdown／高亮的进一步服务端迁移与残余布局
 优化仍记在 [TODO](../TODO.md)。
+
+运行提交 `347b563e` 已推送，版本 `20261116T025637998799Z` 已在 Lyra、Cygnus、
+Pavo、Hub、Vela 部署、重启并健康。Orion、Cetus 正式 SSH 尝试超时，待补发见 TODO。
+三个资源代理按范围排除，ptyhost 未替换，现有宿主保留，部署工具保留回滚。
+发布报告：`target/deploy/20261116-025637-347b563e/report-20261116-030028.json`。
