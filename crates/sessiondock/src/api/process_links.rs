@@ -60,12 +60,6 @@ pub async fn resources(State(state): State<AppState>) -> Json<serde_json::Value>
     Json(crate::runtime::process_links::resources(&state).await)
 }
 
-/// Node-side aggregation keeps process samples on their execution machine.
-pub async fn compact_resources(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let value = crate::runtime::process_links::resources(&state).await;
-    Json(crate::hub::resources::list_document(value))
-}
-
 #[derive(serde::Deserialize)]
 pub struct CompactSessionQuery {
     session: process_links::Session,
@@ -177,16 +171,4 @@ pub async fn session_probe(
         )
         .await?,
     ))
-}
-
-/// Cached resource badges for all directly owned sessions on this node.
-pub async fn list_resources(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let value = crate::runtime::process_links::resources(&state).await;
-    let node_id = value["node_id"].as_str().unwrap_or_default().to_owned();
-    let mut summary = crate::hub::resources::list_summary(
-        vec![(node_id.clone(), crate::hub::resources::list_document(value))],
-        false,
-    );
-    summary["node_id"] = serde_json::json!(node_id);
-    Json(summary)
 }

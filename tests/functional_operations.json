@@ -389,7 +389,7 @@
     {
       "id": "sd.sidebar.resize-reset",
       "input": "双击左右分隔条",
-      "expected": "恢复默认宽度加资源列额外宽度",
+      "expected": "恢复默认侧栏宽度",
       "suites": [
         "sidebar_input_browser"
       ],
@@ -3760,16 +3760,6 @@
       ],
       "scope": "scenario",
       "remaining": "State/input combinations beyond the named scenario require separate evidence"
-    },
-    {
-      "id": "sd.sidebar.resources-toggle",
-      "input": "点击列表资源按钮",
-      "expected": "切换六格资源列和附加宽度，保存偏好",
-      "suites": [
-        "resource_probe_browser"
-      ],
-      "scope": "scenario",
-      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.cwd-open",

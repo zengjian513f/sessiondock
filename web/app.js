@@ -5079,8 +5079,6 @@ function agentRow(s, a, depth) {
        <div class="m">${esc(agentMeta(s.uid, a))}</div>
        ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
      </div>`);
-  it._resourceSession = s; it._resourceAgent = true; it._resourceMeta = agentMeta(s.uid, a);
-  globalThis.SessionDockSidebarResources?.paint(it);
   it.dataset.key = rowKey({s, agent: a});
   it.dataset.owner = s.uid;
   it.dataset.agent = a.id;
@@ -5165,9 +5163,7 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const meta = node.querySelector('.m');
   const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
-  node._resourceSession = s; node._resourceAgent = !!agent; node._resourceMeta = metaText;
   if (meta && meta.textContent !== metaText) meta.textContent = metaText;
-  globalThis.SessionDockSidebarResources?.paint(node);
   const snippet = node.querySelector('.snip'), snippetText = sidebarRowSnippet(s, agent);
   if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
     snippet.title = snippetText;
@@ -5260,8 +5256,6 @@ function createSidebarRow(r, picked = pickedSessions) {
        ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
-  it._resourceSession = s; it._resourceAgent = false; it._resourceMeta = meta;
-  globalThis.SessionDockSidebarResources?.paint(it);
   globalThis.SessionDockGroups?.paintRow(it, s);
   it.dataset.uid = s.uid;
   it.dataset.key = s.uid;
@@ -11465,7 +11459,6 @@ function toggleNestFold(uid) {
 
 // ---------------------------------------------------------------- 栏宽拖动
 const SIDE_DEFAULT = 340;
-const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 144 : 0;
 
 function setSideWidth(px, save) {
   if (MOBILE.matches) {
@@ -11476,7 +11469,7 @@ function setSideWidth(px, save) {
   $('#left').style.width = w + 'px';
   document.documentElement.style.setProperty('--side-width',
     document.body.classList.contains('side-collapsed') ? '0px' : w + 'px');
-  if (save) store.set('width', Math.max(200, w - sideResourceExtra()));
+  if (save) store.set('width', Math.max(200, w));
 }
 
 function setSideCollapsed(collapsed, save = true) {
@@ -11536,7 +11529,7 @@ function finishSideDrag(e) {
 document.addEventListener('pointerup', finishSideDrag);
 document.addEventListener('pointercancel', finishSideDrag);
 sideDragHandle.addEventListener('lostpointercapture', finishSideDrag);
-$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true));
+$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT, true));
 window.addEventListener('resize', () => setSideWidth(
   parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
 MOBILE.addEventListener?.('change', e => {
@@ -11553,7 +11546,7 @@ MOBILE.addEventListener?.('change', e => {
   }
   syncSessionNotices();
   syncMobileViewport();
-  setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
+  setSideWidth(store.get('width', SIDE_DEFAULT));
   setSideCollapsed(store.get('sideCollapsed', false), false);
 });
 
@@ -12416,7 +12409,7 @@ if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }
-setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
+setSideWidth(store.get('width', SIDE_DEFAULT));
 setSideCollapsed(store.get('sideCollapsed', false), false);
 renderOpts();
 renderPickBar();

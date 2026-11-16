@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flat timeline scrolling must fill the viewport, including resource columns."""
+"""Flat timeline scrolling must fill the viewport, with obsolete resource preferences."""
 
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -31,17 +31,14 @@ def main():
             try:
                 for width, height in [(445, 850), (720, 1000), (1280, 900)]:
                     context = browser.new_context(viewport={'width': width, 'height': height})
-                    context.add_init_script("window.EventSource=undefined; localStorage.setItem('sessiondock.view', JSON.stringify('date'));")
+                    context.add_init_script("window.EventSource=undefined; localStorage.setItem('sessiondock.sidebarResources', 'true'); localStorage.setItem('sessiondock.view', JSON.stringify('date'));")
                     context.route('**/api/sessions*', lambda route: route.fulfill(json={'sessions':rows, 'sig':'flat-scroll'}))
                     page = context.new_page()
                     page.goto(base, wait_until='networkidle')
                     page.locator('#nest-flat').click()
-                    page.get_by_role('button', name='列表资源', exact=True).click()
                     expect(page.locator('#side .item').first).to_be_visible()
                     seen_groups = set()
                     for step in range(90):
-                        if step in (20, 40):
-                            page.get_by_role('button', name='列表资源', exact=True).click()
                         page.locator('#side').hover()
                         page.mouse.wheel(0, 600 if step < 60 else -600)
                         page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')

@@ -125,8 +125,7 @@ class Fixture:
         uid = scoped(self.nodes[0].nid,self.corpora[0].uid('parent'))
         item = page.locator(f'#side .item[data-uid="{uid}"]')
         item.click()
-        toggle = page.get_by_role('button',name='列表资源',exact=True)
-        if toggle.get_attribute('aria-pressed') != 'true': toggle.click()
+        page.locator('#a-resources').click()
         return page,item
 
 
@@ -202,7 +201,7 @@ def synthetic(fixture,pw):
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
     bindings = {b['process']['pid']:b for b in fixture.bindings()}
     assert bindings[500]['session']['sid']=='parent' and bindings[501]['session']['sid']=='other', bindings
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='3')
     assert any(b['process']['pid']==300 and b['session']['sid']=='parent'
                for b in fixture.report(0)['bindings'])
     page.locator('#a-resources').click()
@@ -211,15 +210,17 @@ def synthetic(fixture,pw):
     wait_for(lambda: request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at'] > sampled_at)
     assert time.time() - request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at'] < 15
     page.get_by_role('button',name='刷新资源',exact=True).click()
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='3')
     finish_readers()
     assert len(reads) >= 3
     print('PASS browser resources remain fresh with 30000 retained SSH spans and concurrent report readers', flush=True)
-    page.locator('#a-chat').click()
+    page.locator('#a-resources').click()
     fixture.hub.stop()
     fixture.restart_agents()
     fixture.hub.start()
     page.reload(wait_until='networkidle')
+    item.click()
+    page.locator('#a-resources').click()
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
     # A destination's established links outlive expired source evidence, even
     # across collector and Hub restarts. Short retention is private to this fixture.
@@ -234,21 +235,25 @@ def synthetic(fixture,pw):
     assert any(r['process']['pid']==200 for r in remaining),remaining
     fixture.hub.start()
     page.reload(wait_until='networkidle')
+    item.click()
+    page.locator('#a-resources').click()
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
     assert next(b for b in fixture.bindings() if b['process']['pid']==501)['session']['sid']=='other'
-    wait_for(lambda:item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    wait_for(lambda:page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='3')
     print('PASS source retention deletes evidence while destination links and browser ownership survive restart',flush=True)
     # PID reuse cannot inherit the old process's origin or durable binding.
     stat=fixture.procs[1]/'500/stat'
     stat.write_text(stat.read_text().replace(' 50000 ',' 50001 '))
     wait_for(lambda: not any(b['process']['pid']==500 for b in fixture.bindings()))
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='2')
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='2')
     stat=fixture.procs[0]/'300/stat'
     stat.write_text(stat.read_text().replace(' 30000 ',' 30001 '))
     wait_for(lambda: not any(b['process']['pid']==300 for b in fixture.report(0)['bindings']))
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='1')
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='1')
     print('PASS late local fork attribution recovers through exited parents, survives restart and rejects PID reuse',flush=True)
     print('PASS closed IPv6 SSH evidence, late descendants, collector/Hub restart, tuple reuse, unknown/ambiguous/shared rejection, PID reuse and browser resources',flush=True)
 
@@ -366,11 +371,12 @@ for line in sys.stdin:
     fixture.restart_agents()  # No Hub correlation has happened yet.
     page,item=fixture.browser(pw)
     wait_for(lambda:{first,second} <= {b['process']['pid'] for b in fixture.bindings()})
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda:item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda:page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='3')
     page.locator('#a-resources').click()
     page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length===2")
-    page.locator('#a-chat').click()
+    page.locator('#a-resources').click()
     print('PASS real BPF IPv4/IPv6 short SSH, delayed orphan grandchildren, no live-client snapshot, saved evidence before Hub startup and browser resource ownership',flush=True)
     control=root/'control'
     run([*common,'-M','-S',str(control),'-f','-N',f'{user}@127.0.0.1'])
@@ -380,8 +386,9 @@ for line in sys.stdin:
     wait_for(lambda:fixture.report(1)['sampled_at']>sample+4)
     assert not any(b['process']['pid']==shared for b in fixture.bindings())
     assert any(r['shared'] for r in fixture.report(0)['connections']), fixture.report(0)['connections']
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    assert item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3'
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    assert page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0]=='3'
     for index in (0,1):
         assert fixture.report(index)['collector']['lost_events']==0,fixture.report(index)['collector']
     print('PASS real ControlMaster/ControlPersist fork/listener exclusion; no attribution by shared transport',flush=True)
@@ -446,12 +453,13 @@ if __name__=='__main__':
     tracked.append(expose('pool'))
     wait_for(lambda: set(tracked) <= {b['process']['pid'] for b in fixture.report(0)['bindings']
                                     if b['session']['sid']=='parent'})
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked)))
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0] == str(3 + len(tracked)))
     page.locator('#a-resources').click()
     page.get_by_role('button', name='仅当前会话', exact=True).click()
     page.get_by_role('button', name='刷新资源').click()
-    page.locator('#a-chat').click()
+    page.locator('#a-resources').click()
     print('PASS real background/nohup/setsid/double-fork/env-clear/Popen/multiprocessing launch attribution', flush=True)
 
     # Daemon-mediated requests are not process ancestry. An existing private
@@ -473,8 +481,9 @@ if __name__=='__main__':
     sampled = fixture.report(0)['sampled_at']
     wait_for(lambda: fixture.report(0)['sampled_at'] > sampled + 3)
     assert not set(controls) & {b['process']['pid'] for b in fixture.report(0)['bindings']}
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    assert item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked))
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    assert page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0] == str(3 + len(tracked))
     print('PASS measured coverage gap: shared tmux and systemd requests remain unassigned', flush=True)
     run(['tmux','-S',tmux_socket,'new-window','-t','control',
          shlex.join(['env','CODEX_THREAD_ID=parent','/usr/bin/python3',str(worker),str(jobs),'tmux-identity'])])
@@ -489,13 +498,15 @@ if __name__=='__main__':
     fixture.restart_agents()
     wait_for(lambda: set(tracked) <= {b['process']['pid'] for b in fixture.report(0)['bindings']
                                     if b['session']['sid']=='parent'})
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked)))
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0] == str(3 + len(tracked)))
     print('PASS explicit per-job identity across tmux/systemd and detached workers after collector restart', flush=True)
     cleanup()
     wait_for(lambda: not set(spawned) & {b['process']['pid'] for b in fixture.report(0)['bindings']})
-    page.evaluate('SessionDockSidebarResources.refresh()')
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '3')
+    page.locator('#a-resources').click()
+    page.get_by_role('button', name='刷新资源', exact=True).click()
+    wait_for(lambda: page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='进程')).locator('dd').inner_text().split()[0] == '3')
     print('PASS actual worker exit releases browser process counts; no production process was signalled', flush=True)
 
 

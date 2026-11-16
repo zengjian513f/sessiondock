@@ -548,45 +548,22 @@ the parent monitor without stopping them. The shared resctrl mount remains
 available to other monitoring applications. Temporary I/O probe controls have
 no effect on this resident collector. Private agent instances default to off.
 
-### Sidebar resource summary
+### Resource drawer entry
 
-`GET /api/resources/summary` reads each execution node once and returns six
-metrics for all currently attributed sessions, keyed by native node/source/SID:
-CPU cores, process count, PSS, GPU count, and proc storage read/write bytes per second.
-Process counts deduplicate sampled process incarnations within each machine; GPU
-counts deduplicate resident device UUIDs within each machine before summing nodes. The scope is direct
-ownership, including SSH commands owned by that session, excluding separately
-owned child sessions. The Hub merges execution-machine rows without inferring
-identity from UI UIDs. Offline/unsupported/stale contributors set `partial`;
-missing sessions and measurements remain unknown.
-
-The optional sidebar resource column defaults to off and remembers its toolbar
-toggle. Enabling it widens the desktop sidebar by 144px and displays a three-row
-resource column beside each original entry. Disabling it restores the normal
-width and stops polling. While enabled and visible it polls every five seconds. It updates only the
-resource values, preserving selection, focus, expansion and list ordering.
-Resource cells are created near the visible viewport and refreshed only there;
-scrolling fills newly visible rows. Space is reserved independently of those
-cells, keeping row height and separators stable. Disabling the column hides
-existing cells for reuse. Nesting changes reuse rows whose structure is unchanged.
-The original title and metadata remain in the main column. Agent subrows
-without independent process attribution never copy the parent's usage.
-
-The sidebar resource area is display-only. It has no separate click or keyboard
-action; clicking it selects the session row and never starts a diagnostic lease.
-Resource details and probing open only from the detail header’s resources tab.
+DELTA: the optional sidebar resource column and its stored preference are retired.
+Resource details open from the detail header's resources tab. Old pages requesting
+`GET /api/resources/summary` fail without reading the collector. Publish the Hub
+before nodes so an old Hub cannot fall back from the retired GET compact route
+to full snapshots. The resource agents are unchanged in this removal release.
 
 ### Node-side resource aggregation
 
-DELTA: Hub resource reads use `GET /api/resources/compact` for sidebar metrics
-and `POST /api/resources/compact` with `{session, inclusive}` for one native
-session's execution-node row. Nodes apply the existing resource aggregation
-before transmission; process samples, bindings and device sets stay local.
-The GET envelope retains collector version, node/boot identity, sample time,
-the six direct-owner metrics and fleet-wide incomplete GPU attribution evidence.
-The POST returns the same detail metrics, diagnostic state and verified
-participation as the full-snapshot calculation, including inclusive process/device
-deduplication. Hub still merges nodes and preserves stale/unknown observations.
+DELTA: Hub resource reads use `POST /api/resources/compact` with
+`{session, inclusive}` for one native session's execution-node row. Nodes apply
+the existing aggregation before transmission; process samples and bindings stay
+local. GET compact is retired. POST retains detail metrics, diagnostic state,
+verified participation, inclusive process/device deduplication and incomplete GPU
+attribution. Hub still merges nodes and preserves stale/unknown observations.
 
 Older nodes returning HTTP 404, 405 or 501 use the existing `/api/resources`
 read and Hub-side aggregation during a rolling upgrade. Timeouts and other

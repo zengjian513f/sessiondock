@@ -78,10 +78,9 @@ pub fn router() -> Router<AppState> {
         .route("/usage/settings", post(agent_usage::configure))
         .route("/sessions/cleanup-counts", get(cleanup::get))
         .route("/resources", get(process_links::resources))
-        .route("/resources/summary", get(process_links::list_resources))
         .route(
             "/resources/compact",
-            get(process_links::compact_resources).post(process_links::compact_session_resources),
+            post(process_links::compact_session_resources),
         )
         .route("/session/resources", get(process_links::session_resources))
         .route(

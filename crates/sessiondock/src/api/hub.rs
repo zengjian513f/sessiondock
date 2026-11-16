@@ -73,7 +73,6 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/session/transfer/progress"),
     ("GET", "/api/session/transfers"),
     ("GET", "/api/session/resources"),
-    ("GET", "/api/resources/summary"),
     ("POST", "/api/session/resources/probe"),
     ("GET", "/api/voice/models"),
     ("POST", "/api/voice/transcribe"),
@@ -653,9 +652,6 @@ async fn handle(
             &json!({"mode": "hub", "protocol": PROTOCOL, "build": state.assets.build,
             "hostname": HUB_HOSTNAME, "capabilities": &*state.capabilities}),
         );
-    }
-    if method == Method::GET && path == "/api/resources/summary" {
-        return ok(&crate::hub::resources::get_list_summary(registry, client).await);
     }
     if method == Method::GET && path == "/api/session/resources" {
         let uid = pairs

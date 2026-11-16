@@ -172,7 +172,6 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     assert report['node_id'] == 'a' * 32
                     assert any(b['process']['pid'] == 100 and b['session']['sid'] == 'parent'
                                for b in report['bindings']), report
-                    page.get_by_role('button', name='列表资源', exact=True).click()
                     page.locator('#a-resources').click()
                     page.locator('.session-resources .sr-node').first.wait_for()
                     page.get_by_role('button', name='仅当前会话', exact=True).click()
@@ -492,8 +491,6 @@ def main():
                             assert len(local_resources['nodes']) == 1
                             assert local_resources['nodes'][0]['metrics']['memory_pss_bytes']['value'] == 200 * 1024
                             page.locator(f'[data-uid="{parent}"]').first.click()
-                            if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
-                                page.get_by_role('button', name='列表资源', exact=True).click()
                             page.locator('#a-resources').click()
                             page.locator('.session-resources .sr-node').first.wait_for()
                             gpu = page.locator('.sr-totals .sr-metric').nth(1).locator('dd')
@@ -531,8 +528,6 @@ def main():
                             assert page.locator('.session-resources [data-scope]').count() == 2
                             page.locator('#a-chat').click()
                             page.locator(f'[data-uid="{uid}"]').first.click()
-                            if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
-                                page.get_by_role('button', name='列表资源', exact=True).click()
                             page.locator('#a-resources').click()
                             page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length === 1")
                             assert page.locator('.session-resources .sr-node h3').inner_text() == 'b'

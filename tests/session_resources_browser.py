@@ -123,7 +123,6 @@ def main():
                 info.get_by_role('button', name='取消', exact=True).click()
                 page.locator('#a-chat').click()
                 expect(page.locator('#msgs')).to_be_visible()
-                page.get_by_role('button', name='列表资源', exact=True).click()
                 page.evaluate('''() => {
                   window.resourceCalls = [];
                   window.probeState = {state:"unsupported", remaining_seconds:0};
@@ -194,7 +193,7 @@ def main():
                 page.set_viewport_size({'width':390,'height':844})
                 page.locator('.mobile-back:visible').click()
                 expect(page.locator('#side')).to_be_visible()
-                page.locator('#side .item-resources').first.click()
+                page.locator('#side .item .body').first.click()
                 assert not page.locator('dialog[open]').count()
                 page.locator('#a-resources').press('Enter')
                 expect(page.get_by_role('dialog')).to_be_visible()
@@ -227,7 +226,7 @@ def main():
                 if not page.locator('#side').is_visible():
                     page.locator('.mobile-back:visible').click()
                 page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
-                page.locator('#side .item-resources').first.click()
+                page.locator('#side .item .body').first.click()
                 page.locator('#a-resources').click()
                 page.get_by_text('测试采集端离线').wait_for()
                 print('PASS resource drawer: selection, inclusive totals, Chinese tooltips, compact layout, refresh, offline/unknown, mobile, close, unsupported probe and error', flush=True)

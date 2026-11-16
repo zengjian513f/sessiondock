@@ -87,32 +87,6 @@ class Collector:
         self.socket.close()
 
 
-def assert_resource_spacing(sidebar):
-    """Both columns align across sessions, without crowding titles or the star."""
-    geometry = sidebar.evaluate('''e => {
-        const panel=e.querySelector('.item-resources'), box=panel.getBoundingClientRect();
-        const cells=[...panel.children], second=[1,3,5].map(i=>cells[i]);
-        const panels=[...document.querySelectorAll('#side .item-resources')].filter(p=>p.getClientRects().length);
-        const positions=p=>[...p.children].map(c=>c.querySelector('.ui-icon').getBoundingClientRect().left);
-        const expected=positions(panel);
-        return {
-            columns:expected,
-            acrossRows:panels.every(p=>positions(p).every((x,i)=>Math.abs(x-expected[i])<1)),
-            starGap:e.querySelector('.item-star').getBoundingClientRect().left-box.right,
-            titleGap:box.left-e.querySelector('.body').getBoundingClientRect().right,
-            aligned:second.every(c=>Math.abs(c.getBoundingClientRect().left-second[0].getBoundingClientRect().left)<1),
-            overflow:cells.some(c=>c.scrollWidth>c.clientWidth),
-            clipped:cells.some(c=>{const v=c.querySelector('.item-resource-value');return v.scrollWidth>v.clientWidth;}),
-        };
-    }''')
-    assert geometry['acrossRows'], geometry
-    assert 2 <= geometry['starGap'] <= 4, geometry
-    assert 8 <= geometry['titleGap'] <= 12, geometry
-    assert geometry['aligned'] and not geometry['overflow'], geometry
-    assert not geometry['clipped'], geometry
-    return geometry['columns']
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -180,18 +154,18 @@ def main():
         page.clock.install()
         page.goto(base, wait_until='networkidle')
         sidebar = page.locator(f'#side .item[data-uid="{uid}"]')
-        assert page.evaluate("[...document.querySelector('.header-filters').children].map(e=>e.id).slice(1,5).join(',')") == 'sidebar-resource-control,nest,view,node-picker'
-        toggle = page.get_by_role('button', name='列表资源', exact=True)
-        assert toggle.get_attribute('aria-pressed') == 'false'
-        assert sidebar.locator('.item-resources').count() == 0
+        assert page.locator('#sidebar-resources-toggle,.item-resources').count() == 0
         original_width = page.locator('#left').bounding_box()['width']
-        original_meta = sidebar.locator('.m').inner_text()
-        toggle.click()
-        assert page.locator('#left').bounding_box()['width'] == original_width + 144
-        wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
-        assert sidebar.locator('.item-resources .ui-icon').count() == 6
-        assert sidebar.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '2'
-        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '2'
+        page.evaluate("localStorage.setItem('sessiondock.sidebarResources', 'true')")
+        page.reload(wait_until='networkidle')
+        assert page.locator('#left').bounding_box()['width'] == original_width
+        assert not page.evaluate("document.body.classList.contains('sidebar-resources')")
+        before = len([r for c in traffic for r in c.resources])
+        assert context.request.get(base + '/api/resources/summary').status != 200
+        assert len([r for c in traffic for r in c.resources]) == before
+        for url, _ in local:
+            assert context.request.get(url + '/api/resources/summary').status != 200
+            assert context.request.get(url + '/api/resources/compact').status == 405
         # A detached SSH workload can outlive all launch evidence. The GPU
         # sampler still sees it, but it must neither be assigned by guesswork
         # nor disappear as zero when Hub hides its unverified execution node.
@@ -203,10 +177,7 @@ def main():
                                   'gpu_memory_bytes': {'value':64*1024**2,'status':'partial'}}}
         collectors[2].extra_samples = [unassigned, unassigned]
         # Same PID, different incarnation: the existing binding is not evidence.
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '—'
-        summary = context.request.get(base + '/api/resources/summary').json()
-        metric = next(r for r in summary['sessions'] if r['session']['node_id'] == nodes[0].nid)['metrics']['gpu_count']
+        metric = context.request.get(resource_url).json()['totals']['metrics']['gpu_count']
         assert metric['value'] is None and metric['attribution_incomplete'] is True, metric
         view = context.request.get(resource_url).json()
         assert {n['node_id'] for n in view['nodes']} == {nodes[0].nid,nodes[1].nid}, view
@@ -224,84 +195,21 @@ def main():
         page.locator('#a-chat').click()
         # Keep a confirmed positive subtotal, with explicit incomplete coverage.
         collectors[0].gpu_devices = ['GPU-confirmed']
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '1'
         view = context.request.get(resource_url).json()
         metric = view['totals']['metrics']['gpu_count']
         assert metric['value'] == 1 and metric['status'] == 'partial' and metric['attribution_incomplete'], metric
         # Once full process identity is verified, count remote devices once.
         collectors[2].bindings.append({'process': unassigned['process'], 'session':owner,
                                       'first_observed_at':time.time(), 'launch_chain':[]})
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '3'
-        summary = context.request.get(base + '/api/resources/summary').json()
-        metric = next(r for r in summary['sessions'] if r['session']['node_id'] == nodes[0].nid)['metrics']['gpu_count']
-        assert metric['value'] == 3 and not metric.get('attribution_incomplete'), metric
+        metric = context.request.post(local[2][0] + '/api/resources/compact',
+            data={'session':owner,'inclusive':True}).json()['metrics']['gpu_count']
+        assert metric['value'] == 2 and not metric.get('attribution_incomplete'), metric
         collectors[2].bindings.pop()
         collectors[2].extra_samples = []
         collectors[0].gpu_devices = []
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '0'
         for collector in collectors[:3]:
             collector.gpu_devices = ['GPU-fixture']
-        page.evaluate('SessionDockSidebarResources.refresh()')
         print('PASS unassigned remote GPU coverage, PID incarnation, known subtotal, verified recovery and true zero', flush=True)
-        assert sidebar.locator('.item-resources').evaluate('''e => {
-            const cells=[...e.children];
-            const names=cells.map(c=>c.dataset.resource);
-            return names.join(',')==='cpu_cores,process_count,memory_pss_bytes,gpu_count,proc_storage_read_bytes_per_second,proc_storage_write_bytes_per_second'
-              && [0,2,4].every(i=>cells[i].getBoundingClientRect().top===cells[i+1].getBoundingClientRect().top)
-              && cells.every(c=>{const gap=c.querySelector('.item-resource-value').getBoundingClientRect().left-c.querySelector('.ui-icon').getBoundingClientRect().right;return gap>=2 && gap<=4;});
-        }''')
-        assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
-        assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
-        assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
-        for operation, label in (('read', '读取'), ('write', '写入')):
-            cell = sidebar.locator(f'[data-resource="proc_storage_{operation}_bytes_per_second"]')
-            assert cell.get_attribute('aria-label').startswith(f'磁盘{label}速度：')
-            assert cell.locator('use').get_attribute('href') == f'#i-resource-{operation}'
-        assert_resource_spacing(sidebar)
-        assert sidebar.locator('.item-resources [title], .item-resources[title]').count() == 0
-        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
-        assert sidebar.locator('.m').inner_text() == original_meta
-        assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
-        # Mixed short/long/unknown values must align across sessions and refreshes;
-        # larger values must still fit without moving the title or separator.
-        sample = context.request.get(base + '/api/resources/summary').json()
-        page.route('**/api/resources/summary', lambda route: route.fulfill(json=sample))
-        for viewport in ({'width':1724,'height':1040}, {'width':390,'height':844}):
-            page.set_viewport_size(viewport)
-            title_width = sidebar.locator('.body').bounding_box()['width']
-            boundary = sidebar.locator('.item-resources').bounding_box()['x']
-            columns = assert_resource_spacing(sidebar)
-            for values in ((.02, 2, 154*1024**2, 0, 0, 0),
-                           (123.45, 123, 9.9*1024**3, 16, 9.9*1024**3, 9.9*1024**3)):
-                for row in sample['sessions']:
-                    if row['session']['node_id'] != nodes[0].nid:
-                        continue
-                    for key, value in zip(('cpu_cores', 'process_count', 'memory_pss_bytes', 'gpu_count',
-                                           'proc_storage_read_bytes_per_second', 'proc_storage_write_bytes_per_second'), values):
-                        row['metrics'][key] = {'value':value, 'status':'ok'}
-                page.evaluate('SessionDockSidebarResources.refresh()')
-                assert assert_resource_spacing(sidebar) == columns
-                assert abs(sidebar.locator('.body').bounding_box()['width']-title_width)<1
-                assert abs(sidebar.locator('.item-resources').bounding_box()['x']-boundary)<1
-        page.unroute('**/api/resources/summary')
-        page.set_viewport_size({'width':1280,'height':960})
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        toggle.click()
-        assert not sidebar.locator('.item-resources').is_visible()
-        assert page.locator('#left').bounding_box()['width'] == original_width
-        toggle.click()
-        page.reload(wait_until='networkidle')
-        assert toggle.get_attribute('aria-pressed') == 'true'
-        assert page.locator('#left').bounding_box()['width'] == original_width + 144
-        # Rows without a star keep the same resource-column boundary.
-        star = sidebar.locator('.item-star')
-        aligned_left = sidebar.locator('.item-resources').bounding_box()['x']
-        sidebar.evaluate("e => { e._testStar=e.querySelector('.item-star'); e._testStar.remove(); }")
-        assert abs(sidebar.locator('.item-resources').bounding_box()['x']-aligned_left)<1
-        sidebar.evaluate("e => { e.append(e._testStar); delete e._testStar; }")
         # Pointer moves change only the guide; releasing commits one new width.
         handle = page.locator('#drag').bounding_box()
         start_width = page.locator('#left').bounding_box()['width']
@@ -314,41 +222,25 @@ def main():
         page.mouse.up()
         assert page.locator('#left').bounding_box()['width']>=start_width+99
         page.locator('#drag').dblclick()
-        assert page.locator('#left').bounding_box()['width']==original_width+144
-        sidebar.click()
-        saved = sidebar.element_handle()
+        assert page.locator('#left').bounding_box()['width']==original_width
         collectors[0].cpu = 3
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
-        assert sidebar.evaluate('(node, old) => node === old', saved)
-        assert 'sel' in sidebar.get_attribute('class')
-        page.route('**/api/resources/summary', lambda route: route.fulfill(status=503, body='unavailable'))
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '—'
-        page.unroute('**/api/resources/summary')
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
         page.set_viewport_size({'width':390,'height':844})
         if not sidebar.is_visible():
             page.locator('.mobile-back:visible').click()
         assert sidebar.is_visible()
         assert sidebar.evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
-        assert sidebar.locator('.item-resources').is_visible()
-        assert_resource_spacing(sidebar)
         for theme in ('light', 'dark'):
             page.evaluate('(theme) => applyTheme(theme)', theme)
             for size, viewport in (('mobile', {'width':390,'height':844}),
                                    ('desktop', {'width':1280,'height':960})):
                 page.set_viewport_size(viewport)
-                assert_resource_spacing(sidebar)
                 page.screenshot(path=f'/tmp/sidebar-resources-{theme}-{size}.png')
         page.set_viewport_size({'width':1280,'height':960})
         other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid("probe"))}"]')
         other.locator('.body').click()
         selected_before = page.evaluate('S.sel')
-        sidebar.locator('.item-resources').click()
+        sidebar.locator('.body').click()
         assert page.evaluate('S.sel') == uid
-        assert sidebar.locator('.item-resources').evaluate('e => e.tagName') == 'DIV'
         assert not page.locator('dialog[open]').count()
         assert not any(c.enabled for c in collectors)
         page.locator('#a-resources').click()
@@ -404,7 +296,7 @@ def main():
         # above must transfer summaries, never the multi-MB process samples.
         records = [r for c in traffic for r in c.resources]
         assert records and all(r[1] == '/api/resources/compact' for r in records), records[:20]
-        for method in ('GET', 'POST'):
+        for method in ('POST',):
             sizes = [r[3] for r in records if r[0] == method and r[2] == 200]
             assert sizes and max(sizes) < 16000, (method, sizes)
             print(f'PASS compact {method} resource responses: {len(sizes)} requests, max {max(sizes)} bytes', flush=True)
@@ -416,14 +308,11 @@ def main():
         page.clock.set_system_time(datetime.now(timezone.utc))
         # A temporarily failing new endpoint must not fall back to a full fetch.
         traffic[0].fail_resources = True
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '2'
+        assert context.request.get(resource_url).json()['partial']
         assert not any(r[1] == '/api/resources' for c in traffic for r in c.resources)
         traffic[0].fail_resources = False
         # Stale contributors remain missing and keep the partial indication.
         collectors[0].sample_age = 30
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '2'
         view = context.request.get(resource_url).json()
         assert next(r for r in view['nodes'] if r['node_id'] == nodes[0].nid)['status'] == 'stale'
         assert view['partial'] is True
@@ -436,13 +325,9 @@ def main():
             if isinstance(value, list):
                 return [stable(v) for v in value]
             return value
-        expected_summary = stable(context.request.get(base + '/api/resources/summary').json())
         expected_views = {scope: stable(context.request.get(resource_url.replace('inclusive', scope)).json())
                           for scope in ('direct','inclusive')}
         traffic[0].legacy_resources = True
-        page.evaluate('SessionDockSidebarResources.refresh()')
-        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
-        assert stable(context.request.get(base + '/api/resources/summary').json()) == expected_summary
         for scope in ('direct','inclusive'):
             assert stable(context.request.get(resource_url.replace('inclusive', scope)).json()) == expected_views[scope]
         assert any(r[1] == '/api/resources' and r[3] > 1000000 for r in traffic[0].resources)
@@ -475,7 +360,6 @@ def main():
         direct.set_viewport_size({'width':1280,'height':960})
         direct.goto(local[0][0], wait_until='networkidle')
         direct.locator('#side .item').first.click()
-        direct.get_by_role('button', name='列表资源', exact=True).click()
         direct.locator('#a-resources').click()
         for scope, cpu in [('direct',3), ('inclusive',6)]:
             direct.locator(f'.session-resources [data-scope="{scope}"]').click()
@@ -492,7 +376,7 @@ def main():
         direct.set_viewport_size({'width':1280,'height':960})
         direct.locator('#a-chat').click()
         print('PASS direct node and Hub browser scopes, child attribution and same-device deduplication', flush=True)
-        print('PASS sidebar resource badges, refresh, outage, mobile layout and real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
+        print('PASS retired sidebar endpoints, normal layout and real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
 
 
 if __name__ == '__main__':

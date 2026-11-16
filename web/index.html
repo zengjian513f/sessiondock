@@ -207,9 +207,6 @@
         <button type="button" id="livecount" role="radio" aria-checked="false" tabindex="-1" title="只显示活跃会话"><b id="session-active">0</b></button>
         <button type="button" id="allcount" role="radio" aria-checked="true" tabindex="0" class="on" title="显示全部会话"><b id="session-total">0</b></button>
       </div>
-      <div class="seg" id="sidebar-resource-control">
-        <button type="button" id="sidebar-resources-toggle" aria-pressed="false" aria-label="列表资源" title="显示列表资源列：CPU、进程、内存、GPU、磁盘读写"><svg class="ui-icon" aria-hidden="true"><use href="#i-resource-cpu"/></svg><span class="mobile-label">资源</span></button>
-      </div>
       <div class="seg" id="nest" role="group" aria-label="子会话显示方式">
         <button type="button" id="nest-hidden" data-mode="hidden" aria-pressed="true" title="按需展开：默认只加载主会话，点击箭头临时加载下一层子会话" aria-label="按需展开"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg><span class="mobile-label">按需</span></button>
         <button type="button" id="nest-toggle" data-mode="nested" aria-pressed="false" title="层叠显示：子会话挂在所属会话下面" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">层叠</span></button>
@@ -709,7 +706,6 @@
 <script defer src="list-sync.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="search-controller.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="app.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="sidebar-resources.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="session-resources.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="groups.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script type="module">

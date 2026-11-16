@@ -32,7 +32,6 @@
 | --- | --- |
 | `#side-toggle` | 收起/展开左栏。`setSideCollapsed`，键 `sideCollapsed`，默认展开 |
 | `#session-scope` | 「只显示活跃会话」/「显示全部会话」。计数在 `#session-active`、`#session-total`。`selectSessionScope`；`activeOnly` 默认关，且 `live` 能力为 false 时不按空集合筛选 |
-| `#sidebar-resources-toggle` | 见第 2 节资源列 |
 | `#nest` | 子会话三档：按需展开、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认按需展开。 |
 | `#view` | 时间轴 `date`（默认）、目录聚合 `directory`、会话分组 `group`、项目树 `tree`。`renderView` |
 | `#node-chips` | 仅 Hub。见第 2 节 |
@@ -142,7 +141,7 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 全部展开后行数超过 400（`SIDE_WINDOW_MIN`）时，每个展开组的 `.glist` 只放视口及上下各 600px 内的行，其余由首尾两个 `aria-hidden` 占位块（`.glist-spacer`）撑住高度；组标题全部保留。滚动和尺寸变化时 `layoutSidebarWindow` 只增删进出窗口的行，未变化的行沿用原元素（`placeSidebarRows`，与全量渲染同一套签名对账，离开窗口的行先删，保留下来的行不移动）。行高按行键记住实测值，未渲染过的行用同类行均值估计；`#side` 关闭了 `overflow-anchor`，窗口更新后按视口顶部的那一行补偿滚动位置。
 
-时间轴路径必须先完成缩写，再测量并缓存行高；否则长路径的临时换行高度会被当成实际行高，滚动时只渲染少量行并露出占位空白。窄屏、资源列切换和跨日期分组滚动由 [`tests/sidebar_flat_scroll_browser.py`](../tests/sidebar_flat_scroll_browser.py) 覆盖。
+时间轴路径必须先完成缩写，再测量并缓存行高；否则长路径的临时换行高度会被当成实际行高，滚动时只渲染少量行并露出占位空白。窄屏和跨日期分组滚动由 [`tests/sidebar_flat_scroll_browser.py`](../tests/sidebar_flat_scroll_browser.py) 覆盖。
 
 窗口范围、顶部行滚动补偿及深链定位统一使用未缩放的布局坐标；屏幕坐标须先除以界面缩放比例。行高估算更新时，即使某组的渲染行范围未变化，也同步其占位高度，使最终布局与窗口计算一致。缩放 50–150%、宽窄屏、明暗主题、项目树／时间轴／目录聚合／会话分组、六来源及嵌套行的滚动和深链定位由 [`tests/sidebar_zoom_browser.py`](../tests/sidebar_zoom_browser.py) 覆盖。
 
@@ -158,7 +157,7 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
 
-左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
+左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。
 
 DELTA：会话模式复用 SDK 的底部状态／用量样式；处理中、待回答、失败等状态移出消息列表。窗口名称统一为“5小时 / 7天”，Agy 按模型额度组区分，不将不同组的同周期额度混为一项。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
 
@@ -270,9 +269,9 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 [`tests/child_modes_browser.py`](../tests/child_modes_browser.py) 覆盖桌面和手机的模式切换、
 真实历史打开、折叠、已退出绑定及未确认绑定。
 
-### 资源列与会话资源
+### 会话资源
 
-资源列默认关（`sidebarResources`）。打开后每行显示六格只读资源摘要：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`web/sidebar-resources.js`](../web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台和休眠恢复时，`GET api/resources/summary`；页面休眠期间不读。失败则清空数字，不把缺失显示成 0。资源格不再提供独立点击或键盘操作，也不触发探测；点击所在行仍选择会话，详情与探测统一从右侧「资源」tab 进入。
+DELTA：侧栏资源列及旧偏好已移除；会话资源从右侧「资源」tab 进入。
 
 磁盘图标以硬盘为参照：读取箭头向上离开硬盘，写入箭头向下进入硬盘；两者使用相同的硬盘轮廓。读写字段、顺序与数值不因图标改变而互换。
 
@@ -286,7 +285,7 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 
 ### 侧栏缺口
 
-以下操作的覆盖尚需逐项核对：星标与父会话链的全部菜单路径（星标/可见性在 metadata 套件里有一部分）、资源列六格各自的数值格式。不据套件名称判断这些操作是否已有覆盖。
+以下操作的覆盖尚需逐项核对：星标与父会话链的全部菜单路径（星标/可见性在 metadata 套件里有一部分）。不据套件名称判断这些操作是否已有覆盖。
 
 ---
 
@@ -726,7 +725,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 | `activeOnly` | `false` | 活跃/全部 |
 | `compactTurns` | `true` | 会话头 |
 | `unread` | `[]` | 未读；0 不保留 |
-| `width` | `340` | 左栏，不含资源列加宽 |
+| `width` | `340` | 左栏宽度 |
 | `sideCollapsed` | `false` | 左栏 |
 | `mobilePage` | `list` | 窄屏列表/详情 |
 | `sel` / `agent` | 无 | 上次会话 |
@@ -735,7 +734,6 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 | `termmode` | `full` | 终端布局 |
 | `termviews` | `[]` | 按 tmux 名记 mode/height |
 | `termLayoutPolicyVersion` | 迁到 `2` | 一次性 |
-| `sidebarResources` | `false` | 资源列 |
 | `timelineDirectoryColors` | `[]` | 目录首选颜色 `[path, color]`，最多 256 条 |
 | `timelineDirectoryTintOnly` | `false` | 目录只显示上色部分（单击目录位置切换） |
 | `newDirs` 或 `newDirs.<node>` | `[]` | 最近工作目录，最多 8 |
@@ -763,7 +761,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 转移与回收站：`api/session/clone/plan`、`api/session/clone`、`api/session/clone/progress`、`api/session/clone/cancel`、`api/session/transfer/clone`、`api/session/transfer/progress`、`api/session/transfer/cancel`、`api/session/transfers`、`api/trash`、`api/trash/restore`、`api/trash/purge`。
 
-机器与其它：`api/nodes`、`api/nodes/order`、`api/clients`、`api/clients/update`、`api/shell-env`、`api/shell-env/restart`、`api/resources/summary`、`api/session/resources`、`api/session/resources/probe`、`api/audit/browser`、`api/bug-report`。
+机器与其它：`api/nodes`、`api/nodes/order`、`api/clients`、`api/clients/update`、`api/shell-env`、`api/shell-env/restart`、`api/session/resources`、`api/session/resources/probe`、`api/audit/browser`、`api/bug-report`。
 
 文件跳转目标来自 `SESSIONDOCK_FILEDOCK_URL`，未配置时使用单文件预览或目录未配置提示，见[文件合同](files.md)。
 

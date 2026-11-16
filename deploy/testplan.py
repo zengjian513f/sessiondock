@@ -38,7 +38,7 @@ say = lambda line: print(line, flush=True)   # noqa: E731  (progress must reach 
 
 WEB_SUITES = {
     "codex-sdk": ["codex_sdk_*"], "quotas": ["quotas_browser"],
-    "session-resources": ["process_links_browser"], "sidebar-resources": ["process_links_browser"],
+    "session-resources": ["process_links_browser"],
     "session-research": ["session_research_browser"], "session-info": ["session_relations_browser", "session_resources_browser"],
     "session-card": ["list_rows_*", "sidebar_flat_scroll_browser"],
     "file": ["files_browser"], "files": ["files_browser"],

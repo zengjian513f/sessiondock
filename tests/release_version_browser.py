@@ -109,7 +109,6 @@ def main():
             expect(page.locator('meta[name="sessiondock-build"]')).to_have_attribute('content', version)
             page.locator(f'#side .item[data-uid="{corpus.uid("version")}"]').click()
             expect(page.locator('#msgs')).to_contain_text('Version fixture')
-            page.locator('#sidebar-resources-toggle').click()
             page.add_script_tag(url=f'{node.base}/version-probe.js?v={version}')
             assert page.evaluate('releaseProbe') == text
             assert page.evaluate("fetch('api/meta').then(r=>r.json()).then(d=>d.build)") == version

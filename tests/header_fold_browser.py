@@ -60,8 +60,7 @@ HEADER_FOLD_JS = """() => {
       + parseFloat(getComputedStyle(actions).columnGap),
     height: header.getBoundingClientRect().height,
     overflow: document.documentElement.scrollWidth > innerWidth,
-    labels: shown(header.querySelector('#sidebar-resource-control .mobile-label'))
-      || shown(header.querySelector('#chips .chip span'))
+    labels: shown(header.querySelector('#chips .chip span'))
       || shown(header.querySelector('#view .mobile-label'))
       || shown(header.querySelector('#nest .mobile-label')),
     brand: shown(header.querySelector('.brand-name')),
