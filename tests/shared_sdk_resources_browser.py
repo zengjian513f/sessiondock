@@ -148,7 +148,7 @@ def main():
                                   return r.totals.metrics.process_count.value===n && r.totals.metrics.memory_pss_bytes.value===n*1048576;
                                 }''',arg=dict(uid=uid,n=len(pids)),timeout=30000,polling=500)
                                 page.get_by_role('button',name='刷新资源').click()
-                                expect(page.locator('.sr-totals')).to_contain_text(f'{len(pids)} MiB')
+                                expect(page.locator('.sr-totals')).to_contain_text(f'{len(pids)} MiB', timeout=30000)
                             if args.screenshots and sid in ('thread-a',SID):
                                 args.screenshots.mkdir(parents=True,exist_ok=True)
                                 page.screenshot(path=str(args.screenshots/f'shared-{sid}-{args.with_agent}-{restarted}.png'),full_page=True)

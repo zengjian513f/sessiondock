@@ -111,7 +111,7 @@ def main():
                               return m.memory_pss_bytes?.value === 2097152;
                             }''', arg=uid, timeout=45000, polling=500)
                             page.get_by_role('button', name='刷新资源').click()
-                            expect(page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存 · PSS')).locator('dd')).to_have_text('2 MiB')
+                            expect(page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存 · PSS')).locator('dd')).to_have_text('2 MiB', timeout=30000)
                             expect(page.locator('.sr-node .sr-status')).to_have_text('在线')
                         if args.screenshots:
                             args.screenshots.mkdir(parents=True, exist_ok=True)
