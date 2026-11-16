@@ -40,6 +40,24 @@ Kiro、Native、Shared SDK（均带 agent）、资源抽屉、资源探测套件
 普通 Clippy、构建、文档链接、规则检查通过。额外 strict Clippy 的 -D warnings
 被既有 gpu/runtime_log 等警告阻断，未声称该额外检查通过。
 
+运行时提交 30d62056 已推送，发布版本 20261116T104805242977Z。按顺序先
+Hub/节点再采集器；Hub、lyra、cygnus、pavo、vela 及三个 resources 实例均更新、
+重启并通过健康/版本检查。orion、cetus 各尝试后 SSH 超时，待补发；未更新
+sdkhost/ptyhost，现有宿主保留，备份可回滚。报告：
+`target/deploy/20261116-104805-30d62056/report-20261116-105338.json`。
+
+从实际发布 stage 复制二进制并使用 stage/web，复验 Kiro/Native/Shared SDK
+（带 agent）、resource_probe、session_resources 全部通过；亲自检查该快照的
+宽窄屏大数值和覆盖状态。Kiro/Shared 的显示断言等待上限对齐 30 秒合同，
+测试提交 c14bb70b 已推送，不重复发布未变的运行时产物。合成进程与私有宿主均清理。
+
+生产闲置验收持续 660 秒，仅在起点、330 秒和终点读取 collector socket，
+并用两个单元的 cgroup cpu.stat 起末差值计算平均 CPU。三机均无活动需求，
+累计 PSS 读取、读取 CPU 秒和积压始终为 0；进程和会话均如实显示 not_sampled。
+PSS 单元平均占用均为 0.000 核，满足低于 0.005 核的闲置门槛；主单元平均
+占用 lyra 0.211、cygnus 0.137、pavo 0.100 核。该窗口没有额外读取研究进程
+的 smaps 或 fd，也没有创建查看需求；主单元数字只记录现场值，不作严格性能归因。
+
 前置侧栏移除提交 9f217108 已推送并发布：Hub、lyra、cygnus、pavo、vela
 健康，orion/cetus 已尝试但 SSH 超时；未重启采集器或宿主。
 
