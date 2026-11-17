@@ -14,7 +14,7 @@ from node_auth_fixtures import node_env, TOKEN
 from opencode_sdk_fixtures import FakeOpenCode, SID
 from session_bundle_browser import Peer
 from session_transfer_browser import ident
-from transfer_ui import select_target
+from transfer_ui import select_target, submit_transfer, wait_transfer
 
 
 def corpus_at(root, count=5):
@@ -101,8 +101,8 @@ def main():
             if page.locator('#detail .mobile-back').is_visible():
                 page.locator('#detail .mobile-back').click()
             row = page.locator(f'#side .item[data-uid="{uid}"]')
-            if not row.is_visible() and page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
-                page.locator('#nest-toggle').click()
+            if not row.is_visible():
+                page.locator('#nest-flat').click()
             row.click(button='right')
             page.locator('#item-menu [data-act="clone"]').click()
             dialog = page.locator('#clone-group-dialog')
@@ -170,9 +170,8 @@ def main():
             if stale:
                 with source.paths['1'].open('ab') as stream:
                     stream.write((json.dumps(codex_message('assistant', '预览之后追加的原生历史'))+'\n').encode())
-                with page.expect_response('**/api/session/transfer/clone', timeout=60000) as refused:
-                    dialog.locator('.clone-confirm').click()
-                assert refused.value.status == 409, refused.value.text()
+                refused = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+                assert refused['phase'] == 'aborted', refused
                 assert source.paths['1'].exists()
                 saved = json.loads(metadata.read_text())['sessions']
                 assert 'node_id' not in saved[source.uid('2')]['nest_parent']
@@ -186,18 +185,16 @@ def main():
                     assert response.ok, response.text()
                     results.append(response.json())
                     route.abort('failed')
-                page.route('**/api/session/transfer/clone', lost, times=1)
+                page.route('**/api/session/transfer/start', lost, times=1)
                 dialog.locator('.clone-confirm').click()
                 expect(dialog).not_to_be_visible(timeout=60000)
                 assert len(results) == 1
-                result = results[0]
+                result = wait_transfer(page, f'http://127.0.0.1:{hub.port}', results[0]['request'])['result']
                 print('PASS lost completion reply resolves through the same durable operation without another move', flush=True)
             else:
-                with page.expect_response(lambda response: response.url.endswith('/api/session/transfer/clone'), timeout=60000) as completed:
-                    dialog.locator('.clone-confirm').click()
-                response = completed.value
-                assert response.ok, response.text()
-                result = response.json()
+                completed = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+                assert completed['phase'] == 'complete', completed
+                result = completed['result']
             assert result['mode'] == 'move' and result['new_ids'] is False, result
             pending = page.evaluate("""async () => {
                 const response = await fetch('/api/session/transfers');

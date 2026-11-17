@@ -732,14 +732,50 @@ pub fn retire(native: &Native, apply: bool) -> Result<(), TransferError> {
         {
             let current = read(&tx, &table.name, &row_ids(table))?
                 .ok_or_else(|| TransferError::new("move_native_unsupported", "源端原生表不存在"))?;
-            if current.schema != table.schema
-                || current.rows.iter().any(|r| !table.rows.contains(r))
-            {
+            if current.schema != table.schema {
                 return Err(TransferError::new(
                     "move_plan_stale",
                     "源端原生记录已变化，保留清理现场",
                 ));
             }
+            // A large projection must not scan every planned row for every
+            // current row. Index only primary keys, then compare the full row.
+            // Keep buckets for nullable/duplicate keys and old keyless journals.
+            let key = |row: &Row| {
+                let values: Vec<_> = table
+                    .keys
+                    .iter()
+                    .map(|k| {
+                        let value = row.get(k).cloned().unwrap_or(Value::Null);
+                        // JSON number equality treats -0.0 and 0.0 as equal.
+                        if value.is_f64() && value.as_f64() == Some(0.0) {
+                            Value::from(0.0)
+                        } else {
+                            value
+                        }
+                    })
+                    .collect();
+                serde_json::to_string(&values).expect("native SQL scalar keys")
+            };
+            let progress =
+                super::progress::Task::new("核对数据库记录", "条", Some(current.rows.len() as u64));
+            let mut planned = BTreeMap::<String, Vec<&Row>>::new();
+            for row in &table.rows {
+                planned.entry(key(row)).or_default().push(row);
+            }
+            for (index, row) in current.rows.iter().enumerate() {
+                if !planned
+                    .get(&key(row))
+                    .is_some_and(|rows| rows.contains(&row))
+                {
+                    return Err(TransferError::new(
+                        "move_plan_stale",
+                        "源端原生记录已变化，保留清理现场",
+                    ));
+                }
+                progress.set(index as u64 + 1);
+            }
+            drop(progress);
             if apply {
                 let progress = super::progress::Task::new(
                     "清理源数据库记录",

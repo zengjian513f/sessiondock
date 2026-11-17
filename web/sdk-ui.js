@@ -137,6 +137,7 @@ const SdkUI = {
       getUid: () => view.uid || '',
     });
     this.bindSteerSend(view);
+    queueMicrotask(() => { if (typeof paintTransferFreezeControls === 'function') paintTransferFreezeControls(); });
     for (const kind of ['model', 'effort']) {
       pane.querySelector(`#sdk-${kind}`).onchange = async event => {
         const generation = view.generation, value = event.target.value;

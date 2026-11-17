@@ -1,5 +1,6 @@
 //! Browser-facing clone orchestration. Paths and identity maps never come from
 //! the browser; the operation journal owns both between plan and confirmation.
+pub mod fence;
 pub mod scp;
 
 use crate::{
@@ -186,11 +187,24 @@ pub async fn tree(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         Ok(live) => live,
         Err(error) => return error.into_response(),
     };
+    let frozen = state
+        .transfer
+        .as_ref()
+        .map(|s| s.frozen_uids())
+        .unwrap_or_default();
     if let Some(members) = tree["sessions"].as_array_mut() {
         for member in members
             .iter_mut()
             .filter(|member| member["selectable"] == true)
         {
+            if member["uid"]
+                .as_str()
+                .is_some_and(|uid| frozen.contains(uid))
+            {
+                member["selectable"] = json!(false);
+                member["disabled_reason"] = json!("会话正在迁移，已冻结修改操作");
+                continue;
+            }
             if let RunState::Running(evidence) =
                 live.state(member["uid"].as_str().unwrap_or_default())
             {

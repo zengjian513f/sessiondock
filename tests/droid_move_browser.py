@@ -17,7 +17,7 @@ from history_fixtures import BINARY, Corpus, isolated_server
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
 from session_bundle_browser import Peer
-from transfer_ui import select_target
+from transfer_ui import select_target, submit_transfer, wait_transfer
 
 
 def encoded(value):
@@ -96,15 +96,17 @@ def main():
             page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
             dialog=choose(nodes[0]);page.screenshot(path=str(args.screenshots/f'tree-{width}-{theme}.png'),full_page=True);dialog.locator('.clone-cancel').click()
         page.set_viewport_size({'width':1280,'height':900});page.emulate_media(color_scheme='light')
+        def submit(dialog):
+            status=submit_transfer(page,dialog,f'http://127.0.0.1:{hub.port}')
+            return wait_transfer(page,f'http://127.0.0.1:{hub.port}',status['request'],phases=('complete','aborted'))
         def move(owner,destination):
             dialog=choose(owner);select_target(dialog,destination.nid)
             try:expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
             except Exception:
                 print('PLAN',dialog.inner_text(),flush=True);raise
-            with page.expect_response(lambda response:response.url.endswith('/api/session/transfer/clone'),timeout=90000) as completed:
-                dialog.locator('.clone-confirm').click()
-            assert completed.value.ok,completed.value.text()
-            result=completed.value.json();assert result['mode']=='move' and result['new_ids'] is False,result
+            completed=submit(dialog)
+            assert completed['phase']=='complete',completed
+            result=completed['result'];assert result['mode']=='move' and result['new_ids'] is False,result
             expect(dialog).not_to_be_visible(timeout=30000)
             return result
         # Mission pointers require a separately verified persistent dependency closure.
@@ -132,9 +134,8 @@ def main():
         peer.call('unlink',path=str(metadata))
         dialog=choose(nodes[0]);select_target(dialog,nodes[1].nid)
         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
-        with page.expect_response(lambda response:response.url.endswith('/api/session/transfer/clone'),timeout=90000) as incomplete:
-            dialog.locator('.clone-confirm').click()
-        assert not incomplete.value.ok and '共享元数据不完整' in incomplete.value.text(),incomplete.value.text()
+        incomplete=submit(dialog)
+        assert incomplete['phase']=='aborted' and '共享元数据不完整' in incomplete['error'],incomplete
         assert peer.read(index)==baseline[index] and source.paths['droid'].exists()
         missing=False
         try:peer.read(metadata)
@@ -155,9 +156,8 @@ def main():
             {'relative':str((proc/pid/'cwd').relative_to(root)),'kind':'symlink','target':str(cwd),'mode':0o700}])
         dialog=choose(nodes[0]);select_target(dialog,nodes[1].nid)
         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
-        with page.expect_response(lambda response:response.url.endswith('/api/session/transfer/clone'),timeout=90000) as busy:
-            dialog.locator('.clone-confirm').click()
-        assert not busy.value.ok and '会话仍在运行' in busy.value.text(),busy.value.text()
+        busy=submit(dialog)
+        assert busy['phase']=='aborted' and '会话仍在运行' in busy['error'],busy
         assert source.paths['droid'].exists()
         assert peer.read(metadata)==baseline[metadata]
         dialog.locator('.clone-cancel').click()
@@ -172,9 +172,8 @@ def main():
         operation=planned.value.json()['operation_id']
         marker=metadata.with_name(f'.sessiondock-{operation}-{metadata.name}.pending')
         peer.write(marker,b'private fixture publication collision')
-        with page.expect_response(lambda response:response.url.endswith('/api/session/transfer/clone'),timeout=90000) as failed:
-            dialog.locator('.clone-confirm').click()
-        assert not failed.value.ok,failed.value.text()
+        failed=submit(dialog)
+        assert failed['phase']=='aborted',failed
         for path,data in first.items():assert path.read_bytes()==data
         assert peer.read(index)==baseline[index] and peer.read(metadata)==baseline[metadata]
         for path,data in target_other.items():assert peer.read(path)==data

@@ -81,7 +81,8 @@ impl TransferService {
                         finished.insert(id);
                         continue;
                     }
-                    if op.incoming
+                    if self.owns_freeze(&id)
+                        || op.incoming
                         || !matches!(
                             op.summary.phase.as_str(),
                             "planned" | "failed" | "publishing" | "verifying" | "rollback_required"

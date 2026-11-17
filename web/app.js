@@ -1,5 +1,9 @@
 'use strict';
 
+let transferFrozenUids = new Set();
+const transferFrozenReason = '会话正在迁移，已冻结修改操作';
+function sessionTransferFrozen(uid) { return transferFrozenUids.has(uid); }
+
 const SOURCES = Object.freeze(Object.fromEntries(
   [...Object.values(SESSIONDOCK_CLIS), {source: 'shell', name: 'SSH', icon: 'i-terminal', color: 'var(--muted)'}].map(cli => [cli.source, {
     name: cli.name, icon: cli.icon, color: cli.color,
@@ -4217,6 +4221,7 @@ function openItemMenu(uid, x, y) {
   paintSessionRunMenu(row);
   paintTreeStopAvailability(menu.querySelector('[data-act="stop-tree"]'), row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
+  paintTransferFreezeControls();
   menu.hidden = false;
   placeFixedMenu(menu, x, y);
   menu.querySelector('button:not([aria-disabled="true"])')?.focus({ preventScroll: true });
@@ -7608,6 +7613,7 @@ function head(m, total) {
   if (typeof renderTakeoverBtn === 'function') setTimeout(renderTakeoverBtn, 0);
   renderSessionAction(m, h.querySelector('#a-session-action'));
   bindSessionActions(h);
+  queueMicrotask(paintTransferFreezeControls);
   return h;
 }
 
@@ -7734,6 +7740,7 @@ function unusedNewAssignedLaunch(session) {
 // 快照不能把已落盘会话重新变成可丢弃的启动。
 function sessionDeleteState(row) {
   if (!row) return {discard: false, launch: null, unavailable: '会话状态尚未读取。'};
+  if (sessionTransferFrozen(row.uid)) return {discard: false, launch: null, unavailable: transferFrozenReason};
   const launch = !row.pending && unusedNewAssignedLaunch(row);
   const discard = !!(SdkView.pending(row.uid) || launch || (row.pending && row.source !== 'shell'));
   const running = row.pending ? pendingShellRunning(row) : sessionStoppable(row.uid);
@@ -7815,6 +7822,7 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
 }
 
 function sessionStartUnavailable(row, mode) {
+  if (sessionTransferFrozen(row?.uid)) return transferFrozenReason;
   if (!row || row.pending) return sessionRunUnavailable(row);
   if (ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
   if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null)
@@ -7831,10 +7839,12 @@ function sessionRunActive(row) {
   return !!row && (row.pending ? !!row.running && !row.stale : sessionStoppable(row.uid));
 }
 function sessionStopUnavailable(row) {
+  if (sessionTransferFrozen(row?.uid)) return transferFrozenReason;
   return row?.pending && row.source !== 'shell'
     ? '新会话尚未保存会话记录，停止后无法续接。可继续使用或丢弃会话。' : '';
 }
 function sessionRunUnavailable(row, mode = agentStartMode(row?.source)) {
+  if (sessionTransferFrozen(row?.uid)) return transferFrozenReason;
   if (!row) return '会话状态尚未读取。';
   if (S.liveExternalSdk.has(row.uid)) return '外部 ACP 会话仅可查看，请在原程序中操作。';
   if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在切换会话运行状态，请稍候。';
@@ -12610,6 +12620,7 @@ loadSessions(!!DEEP_SID).then(async ok => {
 
 /** Migration selects native histories; display parents may remain on other nodes. */
 function transferUnavailableReason(uid) {
+  if (sessionTransferFrozen(uid)) return transferFrozenReason;
   return !uid || uid.startsWith('tmux:') ? '此会话尚无可迁移的原生记录。' : '';
 }
 function paintTransferAvailability(button, uid) {
@@ -12620,7 +12631,7 @@ function paintTransferAvailability(button, uid) {
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
   const transferReason = transferUnavailableReason(uid);
   const reason = unavailable ? '此会话当前不支持迁移会话树。' : transferReason;
-  button.hidden = !!transferReason;
+  button.hidden = !uid || uid.startsWith('tmux:');
   setControlUnavailable(button, reason);
 }
 function setupTransferTarget(dialog, machines, sourceId, selectedId) {
@@ -12803,6 +12814,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   const closeTarget = setupTransferTarget(dialog, machines, sourceId, resumed?.request.target_node || sourceId);
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
+  let backgroundAccepted = resumed?.background === true;
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
   let executionOptions = resumed?.request.mode
     ? {mode:resumed.request.mode, new_ids:resumed.request.new_ids} : {};
@@ -12828,9 +12840,11 @@ async function cloneSessionGroup(uid, resumed = null) {
     return '';
   };
   const renderSelection = () => {
-    const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
-    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? '正在迁移…' : uncertain ? '重试同一次迁移' : '迁移所选会话';
-    confirm.disabled = busy || planning || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
+    const reason = blockedReason();
+    notice.textContent = reason || (operationStarted ? '迁移在后台运行，关闭窗口后仍会继续。可从迁移任务查看进度。' : '');
+    notice.hidden = !notice.textContent;
+    confirm.textContent = aborting ? '正在撤回…' : backgroundAccepted ? '后台迁移中' : busy && operationStarted ? '正在提交…' : uncertain ? '重试提交同一次迁移' : '迁移所选会话';
+    confirm.disabled = backgroundAccepted || busy || planning || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || aborting || uncertain;
     if (target.disabled) closeTarget();
@@ -12838,6 +12852,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
     $d('.transfer-abort').textContent = '撤回本次迁移';
     $d('.clone-cancel').disabled = aborting;
+    $d('.clone-cancel').textContent = operationStarted ? '关闭' : '取消';
     $d('.transfer-close').disabled = aborting;
     $d('.transfer-abort').disabled = aborting;
     dialog.setAttribute('aria-busy', String(busy));
@@ -12854,7 +12869,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     clearInterval(progressTimer); closeTarget(); dialog.close(); dialog.remove(); refreshTransferTasks();
     if (refresh) resumeTransferSidebar();
   };
-  const cancelAndClose = () => cancelTransfer(true);
+  const cancelAndClose = () => operationStarted ? close() : cancelTransfer(true);
   $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
   dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
   document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
@@ -12890,7 +12905,7 @@ async function cloneSessionGroup(uid, resumed = null) {
         ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
         : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
       if (result.phase === 'complete' && result.target_uid) {await finishTransfer(result); return;}
-      uncertain = false; operationStarted = false; plan = null; busy = false; overallProgress = 0;
+      uncertain = false; operationStarted = false; backgroundAccepted = false; plan = null; busy = false; overallProgress = 0;
       $d('.transfer-progress').hidden = true; refreshTransferTasks();
       if (closing || result.phase === 'complete') {close();}
       else await refreshPlan();
@@ -12966,16 +12981,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     tree = await request('api/session/transfer/tree', {uid});
     if (tree.selection !== true) throw new Error('源机器尚不支持选择迁移会话，请更新节点');
     tree.sessions = migrationMembers(tree.sessions);
-    for (const member of tree.sessions) {
-      if (member.selectable && member.member_uids.some(uid => sessionStoppable(uid))) {
-        member.selectable = false; member.disabled_reason = '会话正在运行，请先停止';
-      }
-    }
-    // An inseparable native unit must be stopped and supported as a whole.
-    const unavailable = new Set(tree.sessions.filter(member => !member.selectable).flatMap(member => member.member_uids));
-    for (const member of tree.sessions) if (member.selectable && member.required_uids?.some(id => unavailable.has(id))) {
-      member.selectable = false; member.disabled_reason = '原生历史依赖当前不可迁移';
-    }
+    // Eligibility and inseparable native dependencies come from the source.
     selectedUids.clear();
     for (const member of tree.sessions) if (member.selectable) for (const uid of member.member_uids) selectedUids.add(uid);
     renderMembers(null);
@@ -13098,10 +13104,14 @@ async function cloneSessionGroup(uid, resumed = null) {
       const data = await request(operationStarted && !planning && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value}, AbortSignal.timeout(10000));
       if (planning && !id && dialog.isConnected) paintProgress(data);
       if (operationStarted && !planning && dialog.isConnected && plan?.operation_id === id) {
+        backgroundAccepted = data.background === true;
+        if (data.error) {error.textContent = data.error; error.hidden = false;}
+        else if (backgroundAccepted) error.hidden = true;
+        renderSelection();
         paintProgress(data);
         if (!aborting && data.phase === 'complete') await finishTransfer(data.result || data);
         else if (!aborting && data.phase === 'aborted') {
-          ++executionSequence; busy = false; uncertain = false; operationStarted = false; plan = null; overallProgress = 0;
+          ++executionSequence; busy = false; uncertain = false; operationStarted = false; backgroundAccepted = false; plan = null; overallProgress = 0;
           // Progress may finish rollback before the execution response arrives.
           // Keep its durable failure reason when replacing the stale preview.
           if (await refreshPlan() && dialog.isConnected) {
@@ -13137,11 +13147,16 @@ async function cloneSessionGroup(uid, resumed = null) {
     operationStarted = true; error.hidden = true; renderSelection();
     paintProgress({phase:'planned'});
     try {
-      const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
+      const result = await request(crossMachine() ? 'api/session/transfer/start' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
         ...executionOptions,
       });
       if (execution !== executionSequence) return;
+      if (result.background === true) {
+        backgroundAccepted = true; uncertain = true;
+        paintProgress(result); void pollProgress();
+        return;
+      }
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('迁移未完成，请重试检查结果');
       await finishTransfer(result);
     } catch (failure) {
@@ -13225,7 +13240,42 @@ function transferPhaseLabel(task) {
   return label;
 }
 let transferTasksLoading = false, transferTasksOpen = 0, transferTasksAt = 0;
+const transferControlReasons = new WeakMap();
+function paintTransferFreezeControls() {
+  const mark = (control, uid) => {
+    if (!control) return;
+    if (sessionTransferFrozen(uid)) {
+      if (!transferControlReasons.has(control)) transferControlReasons.set(control, control.dataset.unavailableReason || '');
+      setControlUnavailable(control, transferFrozenReason);
+    } else if (transferControlReasons.has(control)) {
+      setControlUnavailable(control, transferControlReasons.get(control)); transferControlReasons.delete(control);
+    }
+  };
+  for (const control of document.querySelectorAll('[data-star-uid]')) mark(control, control.dataset.starUid);
+  for (const control of document.querySelectorAll('#item-menu button[data-act]')) {
+    if (!['copy-identity','pick'].includes(control.dataset.act)) mark(control, menuUid);
+  }
+  for (const control of document.querySelectorAll('#a-session-toggle, #a-session-freeze, #a-clone-group, #a-delete-tree, #a-session-action, .composer-run-action, [data-continue-session]')) mark(control, S.sel);
+  for (const composer of document.querySelectorAll('#sdk-composer .composer-row, #sdk-composer .sdk-options, #composer .composer-row')) {
+    composer.inert = sessionTransferFrozen(S.sel);
+    if (composer.inert) composer.title = transferFrozenReason;
+    else if (composer.title === transferFrozenReason) composer.removeAttribute('title');
+  }
+}
+let transferFrozenLoading = false;
+async function refreshTransferFrozen() {
+  if (transferFrozenLoading || SessionDockNetwork.paused) return;
+  transferFrozenLoading = true;
+  try {
+    const response = await fetch(appUrl('api/session/frozen'));
+    if (!response.ok) return;
+    transferFrozenUids = new Set((await response.json()).uids || []);
+    paintTransferFreezeControls();
+  } catch (error) { console.warn('迁移冻结状态读取失败', error); }
+  finally { transferFrozenLoading = false; }
+}
 async function refreshTransferTasks() {
+  void refreshTransferFrozen();
   if (!HUB_MODE || transferTasksLoading || SessionDockNetwork.paused) return;
   transferTasksLoading = true;
   try {
@@ -13254,7 +13304,7 @@ async function refreshTransferTasks() {
       nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
       const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
       const action = document.createElement('td'), open = document.createElement('button');
-      open.className = 'btn'; open.textContent = '继续处理';
+      open.className = 'btn'; open.textContent = '查看进度';
       open.onclick = async () => {
         open.disabled = true;
         try {
@@ -13292,6 +13342,9 @@ $('#transfer-tasks').onclick = () => {
 // this page's own actions refresh the button; a slow read covers operations
 // started elsewhere, and polling stays fast while the event channel is down.
 const TRANSFER_TASKS_MS = 5000, TRANSFER_TASKS_IDLE_MS = 60000;
+refreshTransferFrozen();
+setInterval(() => { if (!document.hidden) void refreshTransferFrozen(); }, TRANSFER_TASKS_MS);
+addEventListener('sessiondock-ui-sessions', () => refreshTransferFrozen());
 if (HUB_MODE) {
   refreshTransferTasks();
   setInterval(() => {
@@ -13305,6 +13358,7 @@ if (HUB_MODE) {
 }
 
 function treeDeleteUnavailable(row) {
+  if (sessionTransferFrozen(row?.uid)) return transferFrozenReason;
   if (SessionDockCapabilities.config.session_delete_tree !== true) return '此节点尚未启用删除会话树。';
   if (!row || row.pending || !['claude','codex','grok'].includes(row.source)) return '此会话来源尚不支持整棵树移入回收站。';
   if (sessionStoppable(row.uid)) return '会话正在运行，请先停止后再删除会话树。';

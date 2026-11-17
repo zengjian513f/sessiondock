@@ -32,6 +32,7 @@ mod search;
 mod shell_env;
 mod terminal;
 mod transfer;
+pub(crate) use transfer::fence as transfer_fence;
 mod trash;
 mod trash_tree;
 mod voice;
@@ -104,6 +105,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/session/group", post(metadata::session_group))
         .route("/session/info", get(relations::info))
+        .route("/session/frozen", get(transfer::fence::frozen))
         .route("/session/relations/hints", get(relations::hints))
         .route("/session/predecessor", post(relations::save))
         .route("/sessions/relations", get(relations::catalog))
@@ -324,6 +326,10 @@ pub fn router() -> Router<AppState> {
 /// message, media, file, terminal, SSE and WS route; the static page is 404.
 pub fn node_router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/session/transfer/freeze",
+            post(transfer::fence::freeze),
+        )
         .route(
             "/api/session/transfer/scp/prepare",
             post(transfer::scp::prepare),

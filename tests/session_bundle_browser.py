@@ -53,7 +53,7 @@ def reopen_transfer(page, hub, operation):
     button.first.click()
     row=page.locator(f'#transfer-tasks-dialog tr[data-operation="{operation}"]')
     with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/progress')) as restored:
-        row.get_by_role('button',name='继续处理').click()
+        row.get_by_role('button',name='查看进度').click()
     assert restored.value.ok,restored.value.text()
     data=restored.value.json()
     assert data['request']['operation_id']==operation and data['plan']['operation_id']==operation

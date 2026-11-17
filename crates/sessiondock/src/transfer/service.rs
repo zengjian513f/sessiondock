@@ -2,6 +2,8 @@
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
 #[path = "compact.rs"]
 mod compact;
+#[path = "frozen.rs"]
+mod frozen;
 #[path = "journal.rs"]
 mod journal;
 #[path = "names.rs"]
@@ -113,6 +115,7 @@ impl<N> Operation<N> {
     }
 }
 pub struct TransferService {
+    frozen: std::sync::Mutex<BTreeMap<String, BTreeSet<String>>>,
     inventory: SessionStore,
     pub progress: super::progress::Registry,
     progress_public: std::sync::Mutex<BTreeMap<String, Value>>,
@@ -252,6 +255,11 @@ impl TransferService {
         }
         let names_path = names_path.unwrap_or_else(|| home.join("session_index.jsonl"));
         let service = Self {
+            frozen: std::sync::Mutex::new(match fs::read(directory.join("frozen.json")) {
+                Ok(raw) => serde_json::from_slice(&raw)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+                Err(e) => return Err(e.into()),
+            }),
             inventory: SessionStore::with_metadata_and_names(
                 roots.clone(),
                 metadata.clone(),
@@ -441,12 +449,18 @@ impl TransferService {
         uids: &std::collections::BTreeSet<String>,
     ) -> Result<bool, TransferError> {
         let now = super::bundle::now();
+        if self.frozen_uids().iter().any(|uid| uids.contains(uid)) {
+            return Ok(true);
+        }
         Ok(self.journal_summaries()?.iter().any(|op| {
             (op.phase != "exporting" || op.export_lease_until > now)
                 && op.locked_uids.iter().any(|uid| uids.contains(uid))
         }))
     }
     pub fn locked(&self, uid: &str) -> Result<bool, TransferError> {
+        if self.frozen_uids().contains(uid) {
+            return Ok(true);
+        }
         Ok(self.journal_summaries()?.iter().any(|op| {
             op.locked_uids.contains(uid)
                 && (op.phase != "exporting" || op.export_lease_until > super::bundle::now())

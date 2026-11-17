@@ -30,6 +30,12 @@ impl Request {
 #[derive(Clone, Deserialize, Serialize)]
 struct Journal {
     #[serde(default)]
+    execution_requested: bool,
+    #[serde(default)]
+    cancel_requested: bool,
+    #[serde(default)]
+    frozen_ready: bool,
+    #[serde(default)]
     created_ms: u64,
     request: Request,
     phase: String,
@@ -42,6 +48,8 @@ struct Journal {
     bytes_total: u64,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    error_code: Option<String>,
     #[serde(default)]
     transport: Option<transport::Report>,
 }
@@ -139,17 +147,21 @@ impl Transfers {
                     }
                     _ = interval.tick() => {
                         let requests: Vec<_> = self.unfinished.lock().unwrap_or_else(|e| e.into_inner())
-                            .values().map(|journal| journal.request.clone()).collect();
-                        for request in requests {
+                            .values().map(|journal| (journal.request.clone(), journal.execution_requested && !journal.cancel_requested)).collect();
+                        for (request, execute) in requests {
                             let id = request.operation_id.clone();
                             let active = self.executions.lock().unwrap_or_else(|e| e.into_inner())
                                 .get(&id).is_some_and(|worker| worker.strong_count() > 0);
                             if active || !recovering.insert(id.clone()) { continue; }
                             let transfers = self.clone(); let registry = registry.clone(); let client = client.clone();
                             workers.spawn(async move {
-                                // Cancellation first fences late preparation/publication; after
-                                // ownership switch reconciliation completes the same transaction.
-                                let _ = transfers.cancel_inner(registry, client, request, true).await;
+                                if execute {
+                                    let _ = transfers.execute(registry, client, request).await;
+                                } else {
+                                    // Legacy abandoned operations and explicit cancellation retain
+                                    // their source-first compensation/committed-move recovery.
+                                    let _ = transfers.cancel_inner(registry, client, request, true).await;
+                                }
                                 id
                             });
                         }
@@ -172,14 +184,24 @@ impl Transfers {
     }
     async fn save(&self, journal: &Journal) -> Result<(), TransferError> {
         let path = self.path(&journal.request.operation_id)?;
-        let raw = serde_json::to_vec(journal)?;
-        let journal = journal.clone();
+        let mut journal = journal.clone();
         let unfinished = self.unfinished.clone();
         let links = self.links.clone();
         let save_guard = self
             .saves
             .acquire(vec![journal.request.operation_id.clone()])
             .await;
+        // Cancellation intent is monotonic. A worker holding an older journal
+        // must not erase an accepted cancellation on its next phase save.
+        if let Some(previous) = self
+            .unfinished
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&journal.request.operation_id)
+        {
+            journal.cancel_requested |= previous.cancel_requested;
+        }
+        let raw = serde_json::to_vec(&journal)?;
         tokio::task::spawn_blocking(move || {
             let _save_guard = save_guard;
             let temp = path.with_extension("tmp");
@@ -342,8 +364,9 @@ impl Transfers {
     }
     fn public(journal: &Journal) -> Value {
         json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,
+            "background":journal.execution_requested,"cancel_requested":journal.cancel_requested,
             "bytes_sent":journal.bytes_sent,"bytes_total":journal.bytes_total,
-            "error":journal.error,"result":journal.result,"transport":journal.transport})
+            "error":journal.error,"code":journal.error_code,"result":journal.result,"transport":journal.transport})
     }
     /// Startup recovery and successful saves keep this view current without
     /// reopening completed journals or waiting for the operation's mutation gate.
@@ -351,6 +374,29 @@ impl Transfers {
         let unfinished = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
         let pending: Vec<_> = unfinished.values().map(Self::public).collect();
         json!({"operations":pending})
+    }
+    pub fn frozen(&self) -> Value {
+        let pending = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
+        let mut uids = std::collections::BTreeSet::new();
+        for journal in pending.values().filter(|j| j.execution_requested) {
+            for member in journal
+                .preview
+                .as_ref()
+                .and_then(|p| p["sessions"].as_array())
+                .into_iter()
+                .flatten()
+            {
+                if let Some(uid) = member["uid"].as_str() {
+                    uids.insert(uid.to_owned());
+                    if let Ok((_, local)) = namespace::split(uid, true)
+                        && let Some((kind, id)) = local.split_once(':')
+                    {
+                        uids.insert(format!("{kind}:{}~{id}", journal.request.target_node));
+                    }
+                }
+            }
+        }
+        json!({"uids":uids})
     }
     pub async fn progress(
         &self,
@@ -459,6 +505,7 @@ impl Transfers {
             && journal.request.same_transfer(request)
         {
             journal.error = Some(error.message.clone());
+            journal.error_code = Some(error.code.clone());
             let _ = self.save(&journal).await;
         }
     }
@@ -486,6 +533,10 @@ impl Transfers {
         }
         if matches!(journal.phase.as_str(), "complete" | "aborted") {
             return Ok(journal.result.unwrap_or_else(|| json!({"phase":"aborted"})));
+        }
+        if !recovery {
+            journal.cancel_requested = true;
+            self.save(&journal).await?;
         }
         // Validate binding above, then interrupt preparation before taking the
         // operation lock. Never wait behind an unrelated transfer.
@@ -709,8 +760,140 @@ impl Transfers {
         )
         .await?;
         journal.phase = "aborted".into();
+        self.freeze(registry, client, journal, true).await?;
         self.save(journal).await?;
         Ok(json!({"phase":"aborted"}))
+    }
+    /// Persist acceptance before replying. The scheduler owns all later work;
+    /// neither this request nor status readers are an execution lease.
+    pub async fn start(
+        &self,
+        registry: Arc<Registry>,
+        client: Arc<Client>,
+        mut request: Request,
+    ) -> Result<Value, TransferError> {
+        if let Some(journal) = self
+            .unfinished
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&request.operation_id)
+            .cloned()
+        {
+            if request.mode.is_none() {
+                request.mode = journal.request.mode.clone();
+            }
+            if request.new_ids.is_none() {
+                request.new_ids = journal.request.new_ids;
+            }
+            if journal.request != request {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "操作已绑定其他迁移选项",
+                ));
+            }
+            if journal.execution_requested && journal.frozen_ready {
+                return Ok(Self::public(&journal));
+            }
+        }
+        let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
+        let path = self.path(&request.operation_id)?;
+        namespace::split(&request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        let mut journal = if path.exists() {
+            let previous = self.load(&request.operation_id).await?;
+            if request.mode.is_none() {
+                request.mode = previous.request.mode.clone();
+            }
+            if request.new_ids.is_none() {
+                request.new_ids = previous.request.new_ids;
+            }
+            if previous.request != request {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "操作已绑定其他迁移选项",
+                ));
+            }
+            previous
+        } else {
+            Journal {
+                execution_requested: true,
+                cancel_requested: false,
+                frozen_ready: false,
+                created_ms: crate::session_links::now_ms(),
+                request,
+                phase: "planned".into(),
+                result: None,
+                preview: None,
+                bytes_sent: 0,
+                bytes_total: 0,
+                error: None,
+                error_code: None,
+                transport: None,
+            }
+        };
+        journal.execution_requested = true;
+        self.save(&journal).await?;
+        if !matches!(journal.phase.as_str(), "complete" | "aborted") && !journal.cancel_requested {
+            self.freeze(&registry, &client, &mut journal, false).await?;
+        }
+        Ok(Self::public(&journal))
+    }
+    async fn freeze(
+        &self,
+        registry: &Registry,
+        client: &Client,
+        journal: &mut Journal,
+        release: bool,
+    ) -> Result<(), TransferError> {
+        let (source_id, _) = namespace::split(&journal.request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        let mut uids = Value::Null;
+        for (index, id) in [&source_id, &journal.request.target_node]
+            .into_iter()
+            .enumerate()
+        {
+            if index == 1 && id == &source_id {
+                continue;
+            }
+            let node = registry
+                .get(id)
+                .ok_or_else(|| TransferError::new("move_node_unavailable", "迁移节点不可用"))?;
+            let target = registry
+                .target(&node)
+                .map_err(|_| TransferError::new("move_node_unavailable", "迁移节点不可用"))?;
+            let mut body = json!({"operation_id":journal.request.operation_id,"release":release});
+            if index == 0 && !release {
+                body["uid"] = json!(namespace::split(&journal.request.uid, true).unwrap().1);
+                body["target_node"] = json!(journal.request.target_node);
+            }
+            if !uids.is_null() {
+                body["uids"] = uids.clone();
+            }
+            let (_, preview) =
+                call(client, &target, "/api/session/transfer/freeze", &body, true).await?;
+            if id == &source_id && !release {
+                if preview["uid"] != namespace::split(&journal.request.uid, true).unwrap().1 {
+                    return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
+                }
+                uids = json!(
+                    preview["sessions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|m| m["uid"].as_str())
+                        .collect::<Vec<_>>()
+                );
+                journal.preview = Some(namespace::public_payload(
+                    preview,
+                    &node,
+                    "/api/session/clone",
+                ));
+                self.save(journal).await?;
+            }
+        }
+        journal.frozen_ready = !release;
+        self.save(journal).await?;
+        Ok(())
     }
     pub async fn execute(
         &self,
@@ -735,6 +918,10 @@ impl Transfers {
                     "操作已绑定其他迁移选项",
                 ));
             }
+            if previous.cancel_requested {
+                let mut previous = previous;
+                return self.reconcile(registry, client, &mut previous).await;
+            }
         }
         let cancellation = tokio_util::sync::CancellationToken::new();
         let execution = Arc::new(());
@@ -745,6 +932,13 @@ impl Transfers {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(request.operation_id.clone(), cancellation.clone());
+        }
+        // Cancellation may have been persisted between the earlier journal
+        // read and registering this token. Close that admission race.
+        if let Ok(journal) = self.load(&request.operation_id).await
+            && journal.cancel_requested
+        {
+            cancellation.cancel();
         }
         let result = tokio::select! {
             result = self.run(registry.clone(), client.clone(), request.clone()) => result,
@@ -760,6 +954,14 @@ impl Transfers {
             .remove(&request.operation_id);
         if let Err(error) = &result {
             self.record_error(&request, error).await;
+            // Lost connections and post-handoff cleanup are retried by the
+            // scheduler with the same operation, without browser resubmission.
+            if matches!(
+                error.code.as_str(),
+                "move_node_unavailable" | "move_cleanup_pending"
+            ) {
+                return result;
+            }
             // Release the operation gate before the shared cancellation path.
             // It interrupts node workers before compensating their publications.
             drop(_guard);
@@ -790,6 +992,9 @@ impl Transfers {
             previous
         } else {
             Journal {
+                execution_requested: true,
+                cancel_requested: false,
+                frozen_ready: false,
                 created_ms: crate::session_links::now_ms(),
                 request: request.clone(),
                 phase: "planned".into(),
@@ -798,6 +1003,7 @@ impl Transfers {
                 bytes_sent: 0,
                 bytes_total: 0,
                 error: None,
+                error_code: None,
                 transport: None,
             }
         };
@@ -821,6 +1027,7 @@ impl Transfers {
             .target(&target)
             .map_err(|_| TransferError::new("move_node_unavailable", "目标机器不可用"))?;
         journal.error = None;
+        journal.error_code = None;
         if source_id != request.target_node {
             self.save(&journal).await?;
         }
@@ -931,6 +1138,14 @@ impl Transfers {
             return Ok(result);
         }
         let moving = source_state["mode"] == "move";
+        if moving
+            && matches!(
+                source_state["phase"].as_str(),
+                Some("planned" | "exporting")
+            )
+        {
+            self.freeze(&registry, &client, &mut journal, false).await?;
+        }
         let mut current = call(
             &client,
             &target_address,
@@ -1115,6 +1330,7 @@ impl Transfers {
             .await?;
         }
         journal.phase = "complete".into();
+        self.freeze(&registry, &client, &mut journal, true).await?;
         self.save(&journal).await?;
         Ok(result)
     }

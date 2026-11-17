@@ -16,6 +16,21 @@
 不能确认。目标机器、勾选集合和原生依赖必须与最终预检一致；执行或结果不确定时锁定选择，
 重试沿用同一事务，不能重新分配身份。取消预览不移动原生历史。
 
+### 后台任务与冻结
+
+DELTA：确认后由 Hub 持久化接收执行意图，返回 `202`；前端只提交指令和读取状态。
+关闭窗口、页面断网或退出浏览器不撤回迁移。Hub 重启继续同一任务；节点暂时不可达、
+交接后的清理失败由后端重试。确定的交接前错误仍按事务合同补偿，不隐式另建迁移。
+“关闭”只收起窗口，迁移任务中的“查看进度”恢复状态展示；只有明确的“撤回本次迁移”
+提交持久化撤回意图。重启不能把撤回请求变回执行请求。
+
+DELTA：任务接收时在源、目标节点持久冻结本次选择及原生依赖，直至完成或撤回收尾。
+冻结不依赖浏览器心跳，也不因导出租约到期或节点重启自动解除。启动、SDK 打开/发送、
+修改草稿/元数据/附属关系、删除及另建迁移等写操作由节点后端拒绝；查看历史、
+读取进度和明确撤回仍可用。未选入迁移的独立会话不冻结。目标发布前也保留同身份围栏。
+冻结解除保存终态标记，迟到的冻结请求不能重新锁住已结束任务。
+这不扩展对独立原生 CLI 的控制能力，原生写者仍按停写检查与快照复核处理。
+
 ### 操作与身份选项
 
 只有“迁移所选会话”一种操作。没有复制切换或新 ID 开关。
@@ -126,10 +141,13 @@ DELTA：Droid 的 `.factory/snapshots` 使用会话专属 manifest 和共享内�
 - `POST /api/session/transfer/tree {uid}`：读取树、可选状态、原生联动 UID；不创建迁移事务。
 - `POST /api/session/clone/plan {uid, target_node, selected_uids, mode:"move", new_ids:false}`：
   固定实际选择并预检。省略选择时默认源端支持成员；空选择报错。新建复制或新身份请求被拒绝。
-- `POST /api/session/transfer/clone {uid, target_node, operation_id, mode:"move", new_ids:false}`：Hub 执行已确认事务。
+- `POST /api/session/transfer/start {uid, target_node, operation_id, mode:"move", new_ids:false}`：
+  Hub 持久化接收后台任务并冻结所选成员，返回 `202` 与任务状态；重复提交返回同一任务。
+- `POST /api/session/transfer/clone`：保留旧调用方等待执行结果的兼容入口，同样由后台恢复接管。
 - `POST /api/session/clone/progress`、`/api/session/transfer/progress`：读取节点或 Hub 进度。
 - `POST /api/session/clone/cancel`、`/api/session/transfer/cancel`：取消预览或按交接阶段撤回/继续恢复。
 - `GET /api/session/transfers`：未完成事务；客户端关闭后由服务端继续恢复。
+- `GET /api/session/frozen`：当前节点或 Hub 的冻结会话 UID，用于展示不可用操作。
 
 入口沿用 `session_clone_local_codex` 的历史能力名，跨机移动使用 `session_move_remote`；
 Hub 不再声明跨机复制可用。传输和交接控制端点只开放给认证节点通道，见
@@ -144,6 +162,8 @@ Hub 不再声明跨机复制可用。传输和交接控制端点只开放给认�
 [Agy 历史套件](../tests/agy_history_browser.py)验证不支持来源保持原生数据及可见不可选状态。
 
 [Droid 移动浏览器套件](../tests/droid_move_browser.py)通过私有 SSH 节点覆盖设置、文件回退快照、共享内容及回迁。
+[后台迁移浏览器套件](../tests/session_background_browser.py)覆盖关闭窗口、无浏览器时的 Hub 重启续跑、
+显式撤回持久恢复、两端写操作冻结及目标节点重启。
 
 ## 交付验收
 

@@ -69,9 +69,11 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/audit/browser"),
     ("GET", "/api/session/file"),
     ("POST", "/api/session/transfer/clone"),
+    ("POST", "/api/session/transfer/start"),
     ("POST", "/api/session/transfer/cancel"),
     ("POST", "/api/session/transfer/progress"),
     ("GET", "/api/session/transfers"),
+    ("GET", "/api/session/frozen"),
     ("GET", "/api/session/resources"),
     ("POST", "/api/session/resources/probe"),
     ("GET", "/api/voice/models"),
@@ -701,6 +703,9 @@ async fn handle(
     if method == Method::GET && path == "/api/session/transfers" {
         return ok(&state.transfers.pending());
     }
+    if method == Method::GET && path == "/api/session/frozen" {
+        return ok(&state.transfers.frozen());
+    }
     if method == Method::GET && path == "/api/groups" {
         return ok(&state.groups.sync(registry, client, None).await);
     }
@@ -825,6 +830,7 @@ async fn handle(
         && !matches!(
             path.as_str(),
             "/api/session/transfer/clone"
+                | "/api/session/transfer/start"
                 | "/api/session/transfer/cancel"
                 | "/api/session/transfer/progress"
                 | "/api/session/transfer/tree"
@@ -1064,6 +1070,31 @@ async fn handle(
     } else {
         (None, None)
     };
+    // Check fleet identities before relation preparation replaces remote UIDs
+    // with descriptors that the receiving node cannot fence locally.
+    if method != Method::GET && !super::transfer_fence::readonly(&path) {
+        let mut uids = std::collections::BTreeSet::new();
+        if let Some(body) = &body {
+            super::transfer_fence::identities(&Value::Object(body.clone()), &mut uids);
+        }
+        for (key, value) in &pairs {
+            super::transfer_fence::identities(&json!({key:value}), &mut uids);
+        }
+        if state.transfers.frozen()["uids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|uid| uids.contains(uid))
+        {
+            return status(
+                StatusCode::CONFLICT,
+                json!({
+                    "code":"move_session_locked", "error":"会话正在迁移，已冻结修改操作"
+                }),
+            );
+        }
+    }
     if matches!(
         path.as_str(),
         "/api/term/create" | "/api/codex-sdk/create" | "/api/native-sdk/create"
@@ -1098,6 +1129,7 @@ async fn handle(
                 path.as_str(),
                 "/api/session/clone"
                     | "/api/session/transfer/clone"
+                    | "/api/session/transfer/start"
                     | "/api/session/transfer/cancel"
                     | "/api/session/transfer/progress"
             )
@@ -1122,8 +1154,11 @@ async fn handle(
             // Detached workers own execution and compensation even if the browser sleeps.
             let cancel = path == "/api/session/transfer/cancel";
             let progress = path == "/api/session/transfer/progress";
+            let start = path == "/api/session/transfer/start";
             let result = tokio::spawn(async move {
-                if progress {
+                if start {
+                    transfers.start(registry, client, request).await
+                } else if progress {
                     transfers.progress(&registry, &client, &request).await
                 } else if cancel {
                     transfers.cancel(registry, client, request).await
@@ -1133,6 +1168,9 @@ async fn handle(
             })
             .await;
             return match result {
+                Ok(Ok(value)) if start => {
+                    Ok((StatusCode::ACCEPTED, axum::Json(value)).into_response())
+                }
                 Ok(Ok(value)) => ok(&value),
                 Ok(Err(e)) => Ok(error_json(StatusCode::CONFLICT, &e.message, &e.code)),
                 Err(e) => Ok(error_json(

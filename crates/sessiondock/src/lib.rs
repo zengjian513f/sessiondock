@@ -706,6 +706,10 @@ fn build_app(
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {
         api::node_router()
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                api::transfer_fence::middleware,
+            ))
             .layer(middleware::from_fn(log::requests))
             .layer(DefaultBodyLimit::disable())
             .layer(middleware::from_fn_with_state(
@@ -716,6 +720,10 @@ fn build_app(
     });
     let router = Router::new()
         .nest("/api", api::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api::transfer_fence::middleware,
+        ))
         .fallback(assets::serve)
         .layer(middleware::from_fn(log::requests))
         .layer(DefaultBodyLimit::disable())
