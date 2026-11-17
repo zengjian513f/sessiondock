@@ -19,6 +19,13 @@ codex_quota_order_browser、quota_sync_browser、conversation_status_browser。
 滚动；同夹具对照确认旧版全部藏入 ⋯，新版直接显示短标签。截图位于
 `target/readonly-quota-shots`、`target/quota-comparison` 及相关用量套件输出目录。
 
+运行时提交 `fb9f8249` 已推送；Web 版本 `20261117T100656751161Z`。完整范围
+Lyra、Cygnus、Pavo、Orion、Hub、Vela、Cetus 均已正式尝试。Lyra、Cygnus、Pavo、
+Hub、Vela 已部署、重启并通过健康检查，原会话宿主保留；Orion、Cetus SSH 超时，
+待联网补发。三台 resource-agent 不在本次范围内。仅发布 Web，没有替换后端、
+ptyhost 或 sdkhost；保留回滚。部署复用上述验证，`--test none` 本身不算验证。
+报告：`target/deploy/20261117-100656-fb9f8249/report-20261117-100714.json`。
+
 ## 2026-11-17：迁移源端清理卡顿与后台任务
 
 BUG-20261117-030514-c3841a 的浏览器诊断没有迁移请求，按 Hub 事务与源端
