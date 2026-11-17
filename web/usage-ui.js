@@ -95,6 +95,12 @@ const UsageUI = {
   group(value) {
     return {'Gemini Models':'Gemini','Claude and GPT models':'Claude/GPT',codex:'Codex'}[value] || value || '额度';
   },
+  shortLabel(label) {
+    if(label==='上下文')return 'ctx';
+    if(label==='月度')return '1m';
+    return label.replace(/^(\d+(?:\.\d+)?)小时$/, '$1h')
+      .replace(/^(\d+(?:\.\d+)?)天$/, '$1d').replace(/^(\d+(?:\.\d+)?)分钟$/, '$1min');
+  },
   effort(value) { return {none:'无',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高'}[value] || value; },
   percent(value) { return value.toLocaleString(undefined,{maximumFractionDigits:1}); },
   time(value) { return new Date(value).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}); },
@@ -160,11 +166,10 @@ const UsageUI = {
       if(core && exhausted)current=groups.find(([name])=>/^core$/i.test(name));
       else if(core || /^(claude|gpt|gemini|grok)(-|$)/.test(selected))current=standard;
     }
-    // Single account pools do not need a model mapping. Unknown multi-pool
-    // accounts stay accessible in ⋯ without claiming an arbitrary active pool.
+    // Unknown model mappings keep every pool visible without choosing one.
     if(!current && groups.length===1 && !['agy','droid','codex'].includes(source))current=groups[0];
     if(!current && source==='agy' && groups.length===1 && /^agy standard$/i.test(groups[0][0]))current=groups[0];
-    return {inline:current ? [current] : [],other:groups.filter(group=>group!==current)};
+    return {inline:current ? [current] : groups,other:current ? groups.filter(group=>group!==current) : []};
   },
   paintQuotaMenu(menu, quota, groups) {
     let section=menu.querySelector(':scope > .sdk-other-quotas');
@@ -183,7 +188,7 @@ const UsageUI = {
         const label=this.window(bucket.window);
         const title=()=>`${name} · ${label}${this.reset(bucket.resets_at)}${quota?.captured_at ? `；更新于 ${this.time(quota.captured_at)}` : ''}`;
         const node=Number.isFinite(bucket.remaining_percent) ? this.gauge(label,100-bucket.remaining_percent,title)
-          : el('span','sdk-gauge',`${label} ${bucket.remaining_text || 'N/A'}`);
+          : el('span','sdk-gauge',`${this.shortLabel(label)} ${bucket.remaining_text || 'N/A'}`);
         this.title(node,title);windows.append(node);
       }
       section.append(group);
@@ -199,11 +204,11 @@ const UsageUI = {
     fill.style.width=`${value}%`;bar.append(fill);
     for(const [key,text] of Object.entries({role:'progressbar','aria-label':`${label} 已用`,'aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':String(value)}))bar.setAttribute(key,text);
     const display=value>0 && value<0.1 ? '<0.1%' : value<100 && value>99.9 ? '>99.9%' : `${this.percent(value)}%`;
-    node.append(el('span','',label),bar,el('b','',display));node.classList.toggle('low',value>=80);
+    node.append(el('span','',this.shortLabel(label)),bar,el('b','',display));node.classList.toggle('low',value>=80);
     return node;
   },
   appendQuotas(holder,quota,source,selection=null) {
-    const groups=(selection || this.groups(quota?.buckets)).filter(([,rows])=>rows.some(bucket=>Number.isFinite(bucket.remaining_percent)));
+    const groups=(selection || this.groups(quota?.buckets)).filter(([,rows])=>rows.some(bucket=>bucket.window!=null || Number.isFinite(bucket.remaining_percent)));
     for(const [name,buckets] of groups) {
       let target=holder;
       if(source==='agy' || source==='droid' || groups.length>1) {
@@ -211,7 +216,14 @@ const UsageUI = {
         target=el('span','sdk-quota-windows');group.append(label,target);holder.append(group);
       }
       for(const bucket of buckets) {
-        if(!Number.isFinite(bucket.remaining_percent))continue;
+        if(!Number.isFinite(bucket.remaining_percent)) {
+          if(bucket.window!=null) {
+            const label=this.window(bucket.window),node=el('span','sdk-gauge',`${this.shortLabel(label)} ${bucket.remaining_text || 'N/A'}`);
+            this.title(node,()=>`${name} · ${label}：${bucket.remaining_text || '暂无数据'}${this.reset(bucket.resets_at)}`);
+            target.append(node);
+          }
+          continue;
+        }
         const label=this.window(bucket.window || (source==='agy'?'额度':name)),used=100-bucket.remaining_percent;
         const title=()=>`${name} · ${label} 已用 ${this.percent(used)}%，剩余 ${this.percent(bucket.remaining_percent)}%${this.reset(bucket.resets_at)}${quota.captured_at ? `；更新于 ${this.time(quota.captured_at)}`:''}`;
         const gauge=this.gauge(label,used,title);

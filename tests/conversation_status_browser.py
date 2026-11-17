@@ -75,7 +75,7 @@ def main():
                     expect(footer.locator('#conversation-quota-menu .sdk-quota-name')).to_have_text(['专项模型'])
                     expect(footer.locator('#conversation-quota-menu .sdk-gauge.low')).to_contain_text('91%')
                     page.keyboard.press('Escape')
-                    expect(footer.locator('.sdk-gauges .sdk-gauge > span')).to_have_text(['5小时','7天'])
+                    expect(footer.locator('.sdk-gauges .sdk-gauge > span')).to_have_text(['5h','7d'])
                     expect(footer.locator('[data-balance="codex:credits"]')).to_have_text('🪙 1,235')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_text('重置卡 3 张')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_attribute('title', re.compile('最近到期'))

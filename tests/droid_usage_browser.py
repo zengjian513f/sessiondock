@@ -20,7 +20,7 @@ def check(page,base,f,state,out,hub=False):
         expect(row).to_be_visible();f.uid=row.get_attribute('data-uid')
     open_sdk(page,f,expect)
     gauges=page.locator('.native-sdk-pane .sdk-gauges')
-    expect(gauges).to_contain_text('上下文')
+    expect(gauges).to_contain_text('ctx')
     expect(gauges).to_contain_text('Standard')
     expect(gauges.locator('.sdk-quota-name')).to_have_text(['Standard'])
     page.locator('#sdk-more').click()
@@ -49,7 +49,7 @@ def check(page,base,f,state,out,hub=False):
         if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
         page.locator('#sdk-model').select_option(model)
         page.wait_for_function('!NativeSdkView.settingChoices.size')
-        expect(gauges.locator('.sdk-quota-name')).to_have_text([expected] if expected else [])
+        expect(gauges.locator('.sdk-quota-name')).to_have_text([expected] if expected else ['Standard','Core'])
     state['used']=100
     send(page,'/usage')
     expect(gauges).to_contain_text('100%')

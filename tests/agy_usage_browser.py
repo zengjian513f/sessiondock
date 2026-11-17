@@ -33,6 +33,10 @@ def exercise(browser, base, fixture, screenshots):
         {'id':'gemini-5h','group':'Gemini Models','window':'5h','remaining_percent':99.7},
         {'id':'3p-weekly','group':'Claude and GPT models','window':'seven_day','remaining_percent':53.429800271987915},
         {'id':'3p-5h','group':'Claude and GPT models','window':'5h','remaining_percent':100}]
+    (fixture.root/'quota-groups.json').write_text(json.dumps([{'name':name,'buckets':[
+        {'id':b['id'],'window':b['window'],'remaining_fraction':b['remaining_percent']/100,
+         'reset_time':b.get('resets_at')} for b in buckets if b['group']==name]}
+        for name in ['Gemini Models','Claude and GPT models']]))
     quota={'source':'agy','captured_at':'2026-10-19T10:00:00Z','buckets':buckets}
     context.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[quota]}))
     def grouped_quota(route):
@@ -55,7 +59,7 @@ def exercise(browser, base, fixture, screenshots):
     with page.expect_request('**/api/native-sdk/open'):
         page.locator('#sdk-composer .composer-run-action').click()
     footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
-    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+    expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
     assert held_open,'cold quota must render while native open is blocked'
     for route in held_open:route.continue_()
     context.unroute('**/api/native-sdk/open')
@@ -84,7 +88,7 @@ def exercise(browser, base, fixture, screenshots):
     page.emulate_media(color_scheme='light')
     (fixture.root/'context-usage.json').write_text(json.dumps({'estimatedTokensUsed':235426,'maxContextTokens':256000}))
     send(page,'用量下拉实际发送 synthetic turn')
-    expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply')
+    expect(page.locator('.native-sdk-pane')).to_contain_text('Synthetic Agy reply')
     expect(footer).to_have_attribute('title',re.compile('已用 92.0%'))
     expect(footer).to_have_attribute('title',re.compile('235,426 / 256,000 tokens'))
     page.locator('#sdk-input').fill('保留草稿 retained draft')
@@ -102,8 +106,8 @@ def exercise(browser, base, fixture, screenshots):
                 expect(footer).not_to_have_attribute('title',re.compile(re.escape(text)))
             assert_usage_outside_menu(page)
             expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini'])
-            expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天'])
-            for raw in ('weekly','seven_day','7d'):expect(footer).not_to_contain_text(raw)
+            expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5h','7d'])
+            for raw in ('weekly','seven_day'):expect(footer).not_to_contain_text(raw)
             expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
             if page.locator('#sdk-more').is_visible():
                 page.locator('#sdk-more').click()
@@ -119,7 +123,7 @@ def exercise(browser, base, fixture, screenshots):
             expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
     # Select both known families and an unknown model through the real picker.
     for model,inline,other in [('claude-synthetic',['Claude/GPT'],['Gemini']),
-                               ('unknown-synthetic',[],['Gemini','Claude/GPT']),
+                               ('unknown-synthetic',['Gemini','Claude/GPT'],[]),
                                ('gemini-synthetic',['Gemini'],['Claude/GPT'])]:
         page.keyboard.press('Escape')
         if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
@@ -130,15 +134,17 @@ def exercise(browser, base, fixture, screenshots):
         expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(other)
         expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
     page.keyboard.press('Escape')
+    page.wait_for_function('!NativeSdkView.loadingUsage')
+    (fixture.root/'quota-hold').touch()
     context.unroute('**/api/native-sdk/usage',grouped_quota)
     context.unroute('**/api/quotas/refresh*',grouped_snapshot)
     before=len(fixture.inputs())
-    (fixture.root/'quota-hold').touch()
     refresh_usage(page)
     page.wait_for_function('NativeSdkView.loadingUsage')
     expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
     expect(footer).not_to_have_attribute('title',re.compile('累计 Token'))
     page.screenshot(path=str(screenshots/'agy-usage-loading.png'),full_page=True)
+    (fixture.root/'quota-groups.json').unlink()
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()
     expect(footer).to_have_attribute('title',re.compile('剩余 9%'))
@@ -160,10 +166,10 @@ def exercise(browser, base, fixture, screenshots):
     context.route('**/api/native-sdk/usage',long_quota,times=1)
     refresh_usage(page)
     expect(footer).to_have_attribute('title',re.compile('Enterprise shared premium'))
-    expect(footer).not_to_contain_text('缺失额度字段')
-    page.locator('#sdk-more').click()
-    expect(page.locator('#sdk-more-menu .sdk-other-quotas')).to_contain_text('100%')
-    expect(page.locator('#sdk-more-menu .sdk-other-quotas')).to_contain_text('N/A')
+    expect(footer).to_contain_text('缺失额度字段')
+    expect(footer).to_contain_text('100%')
+    expect(footer).to_contain_text('N/A')
+    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_count(0)
     page.screenshot(path=str(screenshots/'agy-usage-long-menu.png'),full_page=True)
     page.keyboard.press('Escape')
     # The long diagnostic stays in the footer description and never opens ⋯.

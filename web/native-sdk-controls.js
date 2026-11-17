@@ -158,7 +158,7 @@ const NativeSdkControls = {
     const quota=UsageUI.quota(view.uid) || view.usageData?.quota;
     view.usageData.quota=quota;
     const source=view.uid.split(':')[0];
-    const model=sdkSettingValue(view,'model',view.nativeModel || view.historyData?.meta?.model || '');
+    const model=sdkSettingValue(view,'model',view.nativeModel || view.historyData?.model || '');
     const selection=UsageUI.quotaSelection(quota,source,model);
     UsageUI.appendQuotas(gauges,quota,source,selection.inline);
     UsageUI.paintQuotaMenu(view.pane.querySelector('#sdk-more-menu'),quota,selection.other);

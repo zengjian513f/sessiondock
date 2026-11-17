@@ -1,5 +1,24 @@
 # 历史事故与验收记录
 
+## 2026-11-17：外部会话额度分组与底栏简写
+
+BUG-20261117-094310-1e6304：诊断显示 Droid 外部会话未连接 SDK；用户确认
+额度存在于 ⋯。第一个错误出在前端模型衔接：底栏读取不存在的 historyData.meta，
+无法使用已返回的历史模型，随后按旧的未知模型规则把全部额度组收进菜单。
+现按用户要求，无法匹配模型时全部组内联，匹配时只显示对应组；补齐历史模型
+及其变化后的重绘。Codex 未匹配的多组窗口分别渲染，避免同名窗口相互覆盖。
+底栏和其他额度菜单用 ctx/5h/7d/1m，提示与无障碍说明保留完整含义，缺值保留 N/A。
+
+隔离 Chromium 验收通过：readonly_quota_browser（Droid/Agy/Codex，节点/Hub，
+宽屏明色与窄屏暗色，缺失/未知/匹配模型、延迟历史、缓存重开、失败保留与横向滚动），
+droid_usage_browser、agy_usage_browser、native_sdk_footer_browser、
+codex_quota_order_browser、quota_sync_browser、conversation_status_browser。
+复用现有测试二进制；没有调用真实 CLI 推理或改写生产数据。真实 Agy 套件只同步
+文案断言，本次未运行。文档链接、规则、品牌、JavaScript 语法及差异空白检查通过。
+宽窄屏整页与局部已亲自看图：额度沿用现有样式与单行布局，溢出在底栏内横向
+滚动；同夹具对照确认旧版全部藏入 ⋯，新版直接显示短标签。截图位于
+`target/readonly-quota-shots`、`target/quota-comparison` 及相关用量套件输出目录。
+
 ## 2026-11-17：迁移源端清理卡顿与后台任务
 
 BUG-20261117-030514-c3841a 的浏览器诊断没有迁移请求，按 Hub 事务与源端

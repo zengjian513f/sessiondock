@@ -217,12 +217,12 @@ def main():
                     page.locator('#sdk-model').select_option('fake-sol')
                     expect(gauge).to_have_text('0%')
                     page.keyboard.press('Escape')
-                    # A lone unrelated model pool must not become the current pool.
+                    # An unmatched model keeps every available pool visible.
                     fake.only_special = True
                     fake.emit(0)
                     page.wait_for_timeout(200); held.pop().continue_()
-                    expect(page.locator('[data-gauge="5h"]')).to_be_hidden()
-                    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_text(['Fake Luna'])
+                    expect(page.locator('[data-gauge="5h"] b')).to_have_text('9%')
+                    expect(page.locator('#sdk-more-menu .sdk-quota-name')).to_have_count(0)
                     page.wait_for_function('!CodexSdkView.limitsRead')
                     fake.only_special = False
                     fake.extra = False

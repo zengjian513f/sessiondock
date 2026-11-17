@@ -152,6 +152,7 @@ const NativeSdkView = {
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
     this.historyNotices = null;
     this.nativeModel = this.nativeEffort = null;
+    this.usageHistoryModel = undefined;
     const generation = ++this.generation;
     const source = String(uid).split(':')[0];
     const name = SOURCES[source]?.name || NATIVE_SDK_SOURCES[source]?.title || 'Agent';
@@ -749,6 +750,10 @@ const NativeSdkView = {
 
   paintHistory() {
     if (!this.history || !this.historyData) return;
+    if (this.usageHistoryModel !== this.historyData.model) {
+      this.usageHistoryModel = this.historyData.model;
+      NativeSdkControls.paintUsage(this);
+    }
     // History may advance without another SDK event (including delayed native
     // transcript writes). Reconcile both containers in the same paint.
     if (this.uid.startsWith('agy:') && this.connected && this.raw

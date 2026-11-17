@@ -653,6 +653,7 @@ const SdkUI = {
       const data = this.historyData;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
       if (!force && this.historyEntry === entry && data?.end === entry.end
+          && data.model === entry.meta?.model
           && data.messages === entry.msgs && data.length === entry.msgs.length
           && data.partial === entry.partial
           && data.activity?.state === entry.activity?.state
@@ -672,7 +673,7 @@ const SdkUI = {
         return;
       }
       this.historyEntry = entry;
-      this.historyData = {messages: entry.msgs, partial: entry.partial,
+      this.historyData = {messages: entry.msgs, partial: entry.partial, model: entry.meta?.model,
         activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
       measureBrowserWork('sdk.history', () => this.paintHistory(),
         {source: this.uid.split(':')[0], messages: entry.msgs.length});

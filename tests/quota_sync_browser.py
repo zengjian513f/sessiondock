@@ -57,7 +57,7 @@ def main():
                 page.wait_for_function('async sid => { await loadSessions(true); return S.sessions.some(r=>r.sid===sid); }', arg=fixture.sid)
                 uid = page.evaluate('sid=>S.sessions.find(r=>r.sid===sid).uid', fixture.sid)
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
-                gauge = page.locator('.sdk-pane .sdk-gauges .sdk-gauge').filter(has_text='月度').locator('b')
+                gauge = page.locator('.sdk-pane .sdk-gauges .sdk-gauge').filter(has_text='1m').locator('b')
                 # Explicit quota page refresh also supports a stopped SDK.
                 page.locator('#sdk-input').fill('draft survives quota refresh')
                 page.locator('#settings').click()

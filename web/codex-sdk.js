@@ -343,7 +343,15 @@ const CodexSdkView = {
     const model=sdkSettingValue(this,'model',this.summary?.settings?.model || this.recordedModel || '');
     const selection=UsageUI.quotaSelection(quota,'codex',model);
     UsageUI.paintQuotaMenu(this.pane.querySelector('#sdk-more-menu'),quota,selection.other);
-    const windows = quota ? selection.inline.flatMap(([,rows])=>rows)
+    const gauges=this.pane.querySelector('.sdk-gauges');
+    for(const group of gauges.querySelectorAll(':scope > .sdk-quota-group'))group.remove();
+    const multipleGroups=selection.inline.length>1;
+    if(multipleGroups) {
+      const groups=document.createDocumentFragment();
+      UsageUI.appendQuotas(groups,quota,'codex',selection.inline);
+      gauges.insertBefore(groups,gauges.querySelector('.sdk-credits'));
+    }
+    const windows = multipleGroups ? [] : quota ? selection.inline.flatMap(([,rows])=>rows)
       .filter(row=>Number.isFinite(row.remaining_percent)).map(row=>({usedPercent:100-row.remaining_percent,
         windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null}))
       : [bucket.primary, bucket.secondary].filter(window => window && Number.isFinite(window.usedPercent));

@@ -64,7 +64,7 @@ def main():
                 measurement=page.evaluate('NativeSdkView.raw.context_usage')
                 assert measurement['used_tokens']>0 and measurement['percent']>0,measurement
                 footer=page.locator('.native-sdk-pane .sdk-gauges')
-                expect(footer).to_contain_text('上下文')
+                expect(footer).to_contain_text('ctx')
                 hosts=list((root/'state/sdkhost').glob('*/status.json'))
                 pid=json.loads(hosts[0].read_text())['pid']
                 page.wait_for_function('!NativeSdkView.running')
@@ -74,7 +74,7 @@ def main():
                 assert json.loads(hosts[0].read_text())['pid']==pid
                 assert len(records)==before,'context query must not run a model'
                 page.reload(wait_until='domcontentloaded')
-                expect(page.locator('.native-sdk-pane .sdk-gauges')).to_contain_text('上下文',timeout=20000)
+                expect(page.locator('.native-sdk-pane .sdk-gauges')).to_contain_text('ctx',timeout=20000)
                 print('NATIVE_CONTEXT',measurement,flush=True)
                 assert not errors,errors
                 assert records and all(r['request']['model']==MODELS[0 if r['kind']=='main' else 1] for r in records)
