@@ -239,6 +239,13 @@ DELTA: stopped threads still observed in native loaded/list are carried separate
 display evidence only; it does not reopen the SDK or make the thread runnable.
 Explicit stop already removes bridge retention and unsubscribes; the installed
 protocol offers no immediate unload request, and other clients may retain subscriptions.
+DELTA (BUG-20261117-022739-f304d7): `/api/live.sdk_child_uids` identifies list
+rows with loaded native spawned descendants, including an unloaded parent.
+This is separate from the parent's own SDK/process ownership and never resumes
+it. Single-session and mounted-tree stop remain available for those rows;
+the lifecycle stop checks native ancestry even when the root has unloaded.
+Stopped-but-loaded descendants contribute to the parent's retained marker until
+native unload, while migration continues to check every actual writer.
 An external process
 alone stays green.
 `/api/live.sdk_uids` carries this evidence through the Hub and live events,

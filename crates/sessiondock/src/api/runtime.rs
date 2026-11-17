@@ -248,21 +248,22 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     // Wait for a reader like the SSE coordinators: the legacy poller must
     // not see a spurious `reader_busy` from liveness. Only the topology
     // fields leave the reader; the document itself is neither cloned nor
-    // decorated.
-    let rows: Arc<[SessionRow]> = match &scanned {
-        Ok(_) => {
-            let polls = state.polls.clone();
-            state
-                .reader
-                .run_wait(&state.shutdown, move |store| {
-                    let document = store.recent_document()?;
-                    Ok(polls.topology(&document))
-                })
-                .await?
-        }
-        Err(_) => Arc::from([]),
+    // decorated. SDK ancestry also needs this topology on platforms without
+    // process scanning; native observation is independent of /proc support.
+    let rows: Arc<[SessionRow]> = if scanned.is_ok() || state.codex_sdk.is_some() {
+        let polls = state.polls.clone();
+        state
+            .reader
+            .run_wait(&state.shutdown, move |store| {
+                let document = store.recent_document()?;
+                Ok(polls.topology(&document))
+            })
+            .await?
+    } else {
+        Arc::from([])
     };
     let mut sdk_uids = BTreeSet::new();
+    let mut sdk_child_uids = BTreeSet::new();
     let mut retained_sdk_uids = BTreeSet::new();
     sdk_uids.extend(state.native_sdks.loaded_uids());
     let external_sdk_uids: Vec<_> = scanned
@@ -284,9 +285,23 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     if let Some(sdk) = &state.codex_sdk {
         let loaded = sdk.live_threads().await;
         let retained = sdk.retained_threads().await;
+        // A closed parent can leave native spawned threads loaded. Keep this
+        // separate from exact SDK ownership: observation must not reopen it.
+        sdk_child_uids.extend(
+            rows.iter()
+                .filter(|row| {
+                    row.source == "codex" && row.agent_ids.iter().any(|id| loaded.contains(id))
+                })
+                .map(|row| row.uid.clone()),
+        );
         retained_sdk_uids.extend(
             rows.iter()
-                .filter(|row| row.source == "codex" && retained.contains(&row.sid))
+                .filter(|row| {
+                    row.source == "codex"
+                        && (retained.contains(&row.sid)
+                            || (!loaded.contains(&row.sid)
+                                && row.agent_ids.iter().any(|id| retained.contains(id))))
+                })
                 .map(|row| row.uid.clone()),
         );
         retained_sdk_uids.extend(sdk.live_session_uids(&retained));
@@ -306,6 +321,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         runtime: shared.as_ref().map(|shared| shared.snapshot.clone()),
         generation,
         sdk_uids: sdk_uids.into_iter().collect(),
+        sdk_child_uids: sdk_child_uids.into_iter().collect(),
         retained_sdk_uids: retained_sdk_uids.into_iter().collect(),
         rows,
     };
@@ -333,6 +349,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     }
     let mut response = assemble(state, shared.as_ref(), scanned, &key).await?;
     response["sdk_uids"] = json!(key.sdk_uids);
+    response["sdk_child_uids"] = json!(key.sdk_child_uids);
     response["retained_sdk_uids"] = json!(key.retained_sdk_uids);
     response["external_sdk_uids"] = json!(external_sdk_uids);
     if let Some(uids) = response["uids"].as_array_mut() {

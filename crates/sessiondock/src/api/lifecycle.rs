@@ -1330,7 +1330,10 @@ pub async fn stop(
             .await;
         if let Ok(scope) = scope
             && scope.source == "codex"
-            && sdk.live_threads().await.contains(&scope.session_id)
+            && sdk
+                .has_live_tree(&scope.session_id)
+                .await
+                .map_err(super::codex_sdk::rpc)?
         {
             sdk.stop_thread(&scope.session_id)
                 .await

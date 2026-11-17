@@ -40,6 +40,11 @@ class StatusDaemon(FakeAppServer):
                 await writer.wait_closed()
         asyncio.run_coroutine_threadsafe(close(), self.loop).result(timeout=5)
 
+    def unload(self):
+        self.listed = False
+        asyncio.run_coroutine_threadsafe(self.notify('thread/closed', {'threadId': THREAD}),
+                                        self.loop).result(timeout=5)
+
 
 def exercise(browser, base, fake, width, theme, screenshots, label):
     print(label, 'open SDK, reload, external writer, disconnect', flush=True)
@@ -94,7 +99,8 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     if width < 500:
         page.locator('#detail .mobile-back').click()
     external.click()
-    expect(page.locator('#sdk-status-menu')).to_contain_text('独立运行')
+    expect(page.locator('.sdk-pane .sdk-status [role="status"]')).to_have_text('正在外部CLI运行')
+    expect(page.locator('.sdk-pane .composer-run-action')).to_have_text('接管')
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bsdk\b'))
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\btmux\b'))
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))
@@ -105,22 +111,27 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.locator('#a-chat').click()
     expect(page.locator('#msgs')).to_contain_text('SDK 状态回归')
     # Losing only the bridge connection must not hide a still-loaded daemon
-    # thread. Observe it again while there is no SDK view/subscriber.
+    # thread. Retention may restore the already managed subscription, but
+    # must not adopt the external thread or replay input.
     resumes = len(fake.methods('thread/resume'))
     lists = len(fake.methods('thread/loaded/list'))
     fake.disconnect()
     fake.wait_for(lambda: len(fake.methods('thread/loaded/list')) > lists)
     expect(marker).to_have_class(re.compile(r'\bsdk\b'))
     page.wait_for_function('S.liveSdk.has(S.sel)')
-    assert len(fake.methods('thread/resume')) == resumes
+    assert all(m['params']['threadId'] == THREAD for m in fake.methods('thread/resume')[resumes:])
+    assert not fake.methods('turn/start')
     # The daemon then unloads it; exact subscription evidence was withdrawn
-    # by disconnect above, so the remaining external process stays green.
-    fake.listed = False
+    # by disconnect above. The shared daemon's open file is not a CLI owner;
+    # only the separate external session keeps its green marker.
+    fake.unload()
     expect(marker).not_to_have_class(re.compile(r'\bsdk\b'), timeout=20000)
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bsdk\b'))
-    expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))
+    expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bvisible\b'))
     data = page.request.get(base + '/api/live').json()
-    assert uid not in data['sdk_uids'] and uid in data['uids'], data
+    assert uid not in data['sdk_uids'] and uid not in data['uids'], data
+    assert independent in data['uids'] and independent not in data['sdk_uids'], data
+    resumes = len(fake.methods('thread/resume'))
     fake.listed = True
     expect(marker).to_have_class(re.compile(r'\bsdk\b'))
     assert len(fake.methods('thread/resume')) == resumes

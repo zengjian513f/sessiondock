@@ -901,6 +901,8 @@ pub struct SessionRow {
     pub uid: String,
     pub source: String,
     pub sid: String,
+    /// Native spawned descendants represented inside this session's list row.
+    pub agent_ids: Vec<String>,
     pub path: String,
     pub cwd: Option<String>,
     pub created: String,
@@ -927,6 +929,12 @@ impl SessionRow {
                 .unwrap_or("")
                 .to_owned(),
             path: text("path"),
+            agent_ids: row["agent_items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|agent| agent["id"].as_str().map(str::to_owned))
+                .collect(),
             cwd: row["cwd"]
                 .as_str()
                 .filter(|cwd| !cwd.is_empty())

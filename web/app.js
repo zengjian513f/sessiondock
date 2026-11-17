@@ -193,6 +193,7 @@ const S = {
   live: new Set(),    // 仍在运行的会话 uid
   liveExternalSdk: new Set(), // observed external ACP owners, no control authority
   retainedSdk: new Set(), // stopped native threads awaiting unload; display only
+  liveSdkChildren: new Set(), // parents with loaded native spawned descendants
   liveSdk: new Set(), // threads loaded on the node’s live SDK bridge
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
@@ -786,14 +787,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端或 SDK）
 const liveStatusTitle = (tmux, uid = S.sel) => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
+  : S.liveSdkChildren.has(uid) && !S.liveSdk.has(uid) ? '原生子代理仍在运行'
   : S.retainedSdk.has(uid) ? '已停止，等待原生卸载' : sessionLiveStatus(uid).sdk ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
 const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
   const status = sessionLiveStatus(uid);
-  live ||= status.live || status.retained; tmux ||= status.tmux;
+  live ||= status.live || status.children || status.retained; tmux ||= status.tmux;
   const frozen = sessionFrozen(uid);
   const label = frozen ? '会话已暂停' : liveStatusTitle(tmux, uid) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
-    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${status.sdk || status.retained ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${status.sdk || status.children || status.retained ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
     title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -2286,7 +2288,7 @@ function sessionLiveStatus(uid) {
   const sdk = S.liveSdk.has(uid) || (typeof SdkView !== 'undefined'
     && SdkView.uid === uid && !SdkView.agent && SdkView.connected === true);
   const retained = S.retainedSdk.has(uid);
-  return {live: S.live.has(uid) || tmux || sdk, tmux, sdk, retained};
+  return {live: S.live.has(uid) || tmux || sdk, tmux, sdk, retained, children: S.liveSdkChildren.has(uid)};
 }
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 由受管终端或 SDK 连接承载，灰 = 已退出但还有没看的新内容。
@@ -2300,7 +2302,7 @@ function paintItemStatus(node) {
   const isPending = !!node.dataset.tmuxName;
   const pending = isPending && node.classList.contains('live');
   const status = sessionLiveStatus(node.dataset.uid);
-  const active = isPending ? pending : status.live || status.retained;
+  const active = isPending ? pending : status.live || status.children || status.retained;
   const tmux = isPending ? pending : status.tmux;
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
@@ -2308,12 +2310,12 @@ function paintItemStatus(node) {
   badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
-  badge.classList.toggle('sdk', status.sdk || status.retained);
+  badge.classList.toggle('sdk', status.sdk || status.children || status.retained);
   badge.classList.toggle('idle', !active);
   const turn = frozen || pending || status.retained ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
+  const running = status.children && !status.sdk ? '原生子代理仍在运行' : status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
@@ -2358,16 +2360,16 @@ function paintHeaderTurn() {
   const status = sessionLiveStatus(S.sel);
   const tmux = status.tmux || !!row?.classList.contains('live-tmux');
   const frozen = sessionFrozen(S.sel);
-  const active = status.live || status.retained || !!row?.classList.contains('live');
+  const active = status.live || status.children || status.retained || !!row?.classList.contains('live');
   const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
   h.classList.toggle('tmux', tmux);
-  h.classList.toggle('sdk', status.sdk || status.retained);
+  h.classList.toggle('sdk', status.sdk || status.children || status.retained);
   const turn = frozen || status.retained || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
-  h.title = h.ariaLabel = status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : liveStatusTitle(tmux)
+  h.title = h.ariaLabel = status.children && !status.sdk ? '原生子代理仍在运行' : status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : liveStatusTitle(tmux)
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   paintTransferAvailability($('#a-clone-group'), S.sel);
 }
@@ -2422,6 +2424,7 @@ async function refreshLive(force = false, onlineOnly = false) {
   } finally { clearTimeout(timeout); }
   if (!Array.isArray(d.uids)) throw new Error('运行状态格式错误');
   applyNodeState(d, 'live');
+  const nextChildren = new Set(d.sdk_child_uids || []);
   const nextRetained = new Set(d.retained_sdk_uids || []);
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
@@ -2439,11 +2442,12 @@ async function refreshLive(force = false, onlineOnly = false) {
   const setChanged = (a, b) => a.size !== b.size || [...a].some(u => !b.has(u));
   const mapChanged = (a, b) => a.size !== b.size
     || [...a].some(([u, t]) => b.get(u) !== t);
-  const changed = setChanged(nextRetained, S.retainedSdk) || setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
+  const changed = setChanged(nextChildren, S.liveSdkChildren) || setChanged(nextRetained, S.retainedSdk) || setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
     || setChanged(nextSdk, S.liveSdk)
     || setChanged(nextExternalSdk, S.liveExternalSdk)
     || setChanged(nextWorking, S.liveWorking)
     || mapChanged(nextStarted, S.liveStarted);
+  S.liveSdkChildren = nextChildren;
   S.retainedSdk = nextRetained;
   S.live = next;
   S.liveTmux = nextTmux;
@@ -2738,7 +2742,7 @@ function forkLeafUid(uid) {
 const sidebarSessions = () => [...pendingTmuxSessions(),
   ...(typeof T === 'undefined' ? [] : T.sdkSessions.filter(row => !S.sessions.some(native => native.uid === row.uid))), ...S.sessions]
   .filter(s => !sessionHidden(s) && sidebarChildVisible(s));
-const sessionScopeActive = s => s.pending || s.sdk_pending || S.live.has(s.uid);
+const sessionScopeActive = s => s.pending || s.sdk_pending || S.live.has(s.uid) || S.liveSdkChildren.has(s.uid);
 const sessionInScope = s => !S.activeOnly || sessionScopeActive(s);
 
 function cursorViews(sessions) {
@@ -3692,7 +3696,7 @@ async function deleteSessions(uids, button = null) {
   const recorded = uids.filter(uid => !pendingIds.has(uid));
   const action = pending.length ? (recorded.length ? '删除 / 丢弃' : '丢弃') : '删除';
   const only = uids.length === 1 ? (sessionsByUid.get(uids[0])?.title || '') : '';
-  const running = recorded.filter(uid => S.live.has(uid)).length;
+  const running = recorded.filter(uid => S.live.has(uid) || S.liveSdkChildren.has(uid)).length;
   // OpenCode keeps sessions in its own database: they are deleted there,
   // with their child sessions, and never reach the recycle bin.
   const opencode = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'opencode');
@@ -3863,7 +3867,7 @@ async function stopSessionTargets(targets, onProgress = () => {}) {
     progress.phase = 'verifying';
     publish();
     const live = await refreshLive(true);
-    const liveUids = new Set(live?.uids || []);
+    const liveUids = new Set([...(live?.uids || []), ...(live?.sdk_child_uids || [])]);
     for (const target of targets) {
       const outcome = progress.results.get(target.uid);
       if (target.pending || !['stopped', 'verifying'].includes(outcome.state)) continue;
@@ -7850,7 +7854,7 @@ function sessionModeActive(row, mode) {
   if (row.agent_id) return mode === 'sdk' && sessionRunActive(row);
   if (row.pending) return mode === 'cli' && sessionRunActive(row);
   const live = sessionLiveStatus(row.uid);
-  return mode === 'sdk' ? live.sdk || sessionHasRunningSdk(row.uid)
+  return mode === 'sdk' ? live.sdk || live.children || sessionHasRunningSdk(row.uid)
     : (typeof takenOver === 'function' && !!takenOver(row.uid)) || live.tmux || live.live && !live.sdk;
 }
 function sessionModesExclusive(row) {
@@ -8069,7 +8073,7 @@ function sessionStopUid(uid) {
     ? bound.uid : uid;
 }
 function sessionStoppable(uid) {
-  if (S.live.has(uid)) return true;
+  if (S.live.has(uid) || S.liveSdkChildren.has(uid)) return true;
   const boundUid = sessionStopUid(uid);
   return sessionStopCapable() && typeof T !== 'undefined'
     && (T.list || []).some(row => row.uid === boundUid && !!row.instance_id && !row.stale);

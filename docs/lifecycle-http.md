@@ -440,6 +440,10 @@ failures remain failures. This also handles a stale loaded/list after an older
 release moved only the latest rollout generation into trash: a missing rollout
 must not prevent stopping. The HTTP stop receipt updates the selected SDK view
 even if its unreadable history prevented an event stream from attaching.
+An unloaded parent with loaded native spawned descendants remains a stop target,
+including in a collapsed mounted tree. The lifecycle endpoint verifies native
+ancestry on existing listeners and stops the descendants without reopening the
+parent. Independent forks and display nesting are not native descendants.
 `tests/codex_sdk_stop_browser.py` covers a middle-message fork, subsequent
 parent/branch stops, unreadable history after a bridge restart, active startup,
 unload races and shared-daemon preservation through node and Hub browsers.

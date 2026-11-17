@@ -495,6 +495,7 @@ fn live_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
         "uids",
         "tmux_uids",
         "sdk_uids",
+        "sdk_child_uids",
         "retained_sdk_uids",
         "external_sdk_uids",
         "working_uids",

@@ -7,6 +7,24 @@ use std::{
 };
 
 impl CodexSdk {
+    /// A stopped/unloaded parent can still own loaded native descendants.
+    /// Read ancestry on the existing listener; never resume to discover them.
+    pub async fn has_live_tree(&self, thread_id: &str) -> Result<bool, RpcError> {
+        let loaded = self.live_threads().await;
+        if loaded.iter().any(|id| id == thread_id) {
+            return Ok(true);
+        }
+        if !loaded.is_empty() {
+            for connection in self.inner.observed_connections().await {
+                let descendants = spawned_descendants(&connection, thread_id).await?;
+                if loaded.iter().any(|id| descendants.contains(id)) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Interrupt the root first, then stop its spawned descendants. Re-read the
     /// native relation metadata to catch children spawned while stop was arriving.
     /// A final root unsubscribe releases auto-subscriptions caused by child events.

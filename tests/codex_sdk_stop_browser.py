@@ -41,9 +41,13 @@ class StopServer(MessageServer):
         self.active = {THREAD} if case == 'unreadable' else set()
         self.fail_interrupt = False
         self.fail_thread = None
-        self.parents = {CHILD: THREAD, GRANDCHILD: CHILD} if case == 'unreadable' else {}
+        self.parents = {CHILD: THREAD, GRANDCHILD: CHILD} if case in ('unreadable', 'orphaned') else {}
         self.loaded.update(self.parents)
         self.active.update(self.parents)
+        if case == 'orphaned':
+            self.loaded.difference_update({THREAD, OTHER})
+            self.unloaded.update({THREAD, OTHER})
+            self.loaded.add(FORK)
         self.subscribed = set(self.loaded)
 
     async def _handle(self, writer, message):
@@ -351,17 +355,92 @@ def unreadable_history(browser, base, fake, proc, screenshots, label, case):
     print(f'PASS {label}: unreadable history cannot block stop; no resume, exact interrupt/unsubscribe, unrelated thread retained; {case}', flush=True)
 
 
+def orphaned_tree(browser, base, fake, screenshots, label):
+    context = browser.new_context(viewport={'width': 390 if 'narrow' in label else 1280, 'height': 900},
+                                  color_scheme='dark' if 'dark' in label else 'light', service_workers='block')
+    context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
+    context.add_init_script("localStorage.setItem('sessiondock.childMode', '\"hidden\"')")
+    page = context.new_page()
+    popups, errors = [], []
+    on_popup(page, lambda d: (popups.append(d.message), d.accept()))
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.goto(base, wait_until='networkidle')
+    source, outer = page.evaluate("ids => ids.map(id => S.sessions.find(row => row.sid === id).uid)", [THREAD, OTHER])
+    nested = page.request.post(base + '/api/session/nest', data={'uid': source, 'parent_uid': outer})
+    assert nested.ok, nested.text()
+    page.reload(wait_until='networkidle')
+    page.evaluate('refreshLive(true)')
+    page.wait_for_function('uid => S.liveSdkChildren.has(uid)', arg=source)
+    live = page.request.get(base + '/api/live?force=1').json()
+    assert source in live['sdk_child_uids'] and source not in live['sdk_uids'], live
+    assert source not in live['uids'], 'child evidence must not claim a running parent'
+    runtime = page.request.get(base + '/api/session/runtime', params={'uid': source}).json()
+    assert not runtime['sdk'] and not runtime['running'], runtime
+    # The same evidence survives when only the grandchild remains loaded.
+    fake.loaded.discard(CHILD)
+    page.wait_for_timeout(2100)
+    page.evaluate('refreshLive(true)')
+    assert page.evaluate('uid => S.liveSdkChildren.has(uid)', source)
+    fake.loaded.add(CHILD)
+    page.get_by_role('button', name='分层显示', exact=True).click()
+    badge = page.locator(f'#side .item[data-uid="{source}"] .item-status')
+    expect(badge).to_have_attribute('title', '原生子代理仍在运行')
+    page.locator(f'#side .item[data-uid="{source}"]').click()
+    expect(page.locator('#dlive')).to_have_attribute('title', '原生子代理仍在运行')
+    assert not fake.methods('thread/resume'), 'viewing an unloaded parent resumed it'
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-children.png'), full_page=True)
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.get_by_role('button', name='按需展开', exact=True).click()
+    # A cold, collapsed tree must stop the hidden parent through the normal
+    # lifecycle endpoint even though only its native descendants remain loaded.
+    row = page.locator(f'#side .item[data-uid="{outer}"]')
+    row.click(button='right')
+    stop = page.locator('#item-menu [data-act="stop-tree"]')
+    expect(stop).to_be_visible()
+    expect(stop).not_to_have_attribute('aria-disabled', 'true')
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-tree.png'), full_page=True)
+    with page.expect_response(lambda r: r.url.endswith('/api/session/stop')) as stopped:
+        stop.click()
+    assert stopped.value.ok and stopped.value.json()['stopped'], stopped.value.text()
+    page.wait_for_function('!sessionStopBusy')
+    assert {THREAD, CHILD, GRANDCHILD, LATE_CHILD} <= {
+        m['params']['threadId'] for m in fake.methods('thread/unsubscribe')}
+    assert FORK in fake.subscribed, 'an independent fork was stopped'
+    assert not fake.methods('thread/resume') and not fake.methods('thread/read'), 'stop reopened history'
+    assert not errors, errors
+    assert not any('未全部确认' in message or '都没有在运行' in message for message in popups), popups
+    page.evaluate('refreshLive(true)')
+    page.wait_for_function('uid => !S.liveSdkChildren.has(uid) && S.retainedSdk.has(uid)', arg=source)
+    # Expand only the list, without opening/resuming the parent, to inspect its
+    # waiting marker after successful stop. Migration still waits for unload.
+    page.get_by_role('button', name='分层显示', exact=True).click()
+    badge = page.locator(f'#side .item[data-uid="{source}"] .item-status')
+    expect(badge).to_have_attribute('title', '已停止，等待原生卸载')
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-retained.png'), full_page=True)
+    tree = page.request.post(base + '/api/session/transfer/tree', data={'uid': source}).json()
+    assert any('尚未卸载' in row.get('disabled_reason', '') for row in tree['sessions']), tree
+    fake.loaded.difference_update({CHILD, GRANDCHILD, LATE_CHILD})
+    page.wait_for_timeout(2100)
+    page.evaluate('refreshLive(true)')
+    page.wait_for_function('uid => !S.retainedSdk.has(uid)', arg=source)
+    tree = page.request.post(base + '/api/session/transfer/tree', data={'uid': source}).json()
+    assert all(row['selectable'] for row in tree['sessions']), tree
+    assert not fake.methods('thread/resume'), 'observation reopened stopped parent'
+    context.close()
+    print(f'PASS {label}: unloaded parent/loaded descendants, collapsed tree stop, independent fork, retained writer then unload', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--screenshots', type=Path)
-    parser.add_argument('--case', action='append', choices=('normal','unreadable','unloaded'))
+    parser.add_argument('--case', action='append', choices=('normal','unreadable','unloaded','orphaned'))
     args = parser.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-sdk-stop-') as temporary, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            for mode, size, theme, case in [(m,s,t,c) for m,s,t in [('node','wide','light'),('hub','wide','light'),('hub','narrow','dark')] for c in (args.case or ('normal','unreadable','unloaded'))]:
+            for mode, size, theme, case in [(m,s,t,c) for m,s,t in [('node','wide','light'),('hub','wide','light'),('hub','narrow','dark')] for c in (args.case or ('normal','unreadable','unloaded','orphaned'))]:
                 label = f'{mode}-{size}-{theme}-{case}'
                 root = Path(temporary) / label
                 root.mkdir()
@@ -386,7 +465,7 @@ def main():
                     other = corpus.put('other', 'codex', [codex_row('session_meta', {'id': OTHER}),
                         codex_message('user', 'Unrelated loaded thread')], [])
                 children = {}
-                if case == 'unreadable':
+                if case in ('unreadable', 'orphaned'):
                     for child, parent in ((CHILD, THREAD), (GRANDCHILD, CHILD)):
                         children[child] = corpus.put(child, 'codex', [codex_row('session_meta', {
                             'id':child, 'cwd':str(root/'work'),
@@ -404,6 +483,7 @@ def main():
                     'normal': ['codex', '-c', 'model_provider="openai"', 'app-server'],
                     'unreadable': ['codex', '--config', 'model_provider = "openai"',
                                    '--enable', 'example', 'app-server'],
+                    'orphaned': ['codex', 'app-server'],
                     'unloaded': ['codex', '--config=model_provider="openai"', 'app-server'],
                 }[case]
                 proc_pid(proc, 400, 'codex', daemon_args, 1, fds={3: path})
@@ -422,9 +502,11 @@ def main():
                         hub.start()
                         try:
                             if case == 'normal': exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, proc, args.screenshots, label)
+                            elif case == 'orphaned': orphaned_tree(browser, f'http://127.0.0.1:{hub.port}', fake, args.screenshots, label)
                             else: unreadable_history(browser, f'http://127.0.0.1:{hub.port}', fake, proc, args.screenshots, label, case)
                         finally: hub.stop()
                     elif case == 'normal': exercise(browser, base, corpus, fake, proc, args.screenshots, label)
+                    elif case == 'orphaned': orphaned_tree(browser, base, fake, args.screenshots, label)
                     else: unreadable_history(browser, base, fake, proc, args.screenshots, label, case)
         finally: browser.close()
 

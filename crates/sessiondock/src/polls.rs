@@ -76,6 +76,7 @@ pub struct LiveKey {
     pub generation: Generation,
     pub rows: Arc<[SessionRow]>,
     pub sdk_uids: Vec<String>,
+    pub sdk_child_uids: Vec<String>,
     pub retained_sdk_uids: Vec<String>,
 }
 
@@ -90,6 +91,7 @@ impl LiveKey {
             && self.generation == other.generation
             && (Arc::ptr_eq(&self.rows, &other.rows) || self.rows == other.rows)
             && self.sdk_uids == other.sdk_uids
+            && self.sdk_child_uids == other.sdk_child_uids
             && self.retained_sdk_uids == other.retained_sdk_uids
     }
 }
