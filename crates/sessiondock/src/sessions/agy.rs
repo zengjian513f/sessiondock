@@ -130,8 +130,7 @@ fn background_tasks(sid: &str, bytes: &[u8]) -> usize {
             if record["status"] == "RUNNING"
                 && text
                     .lines()
-                    .skip_while(|line| line.starts_with("Created At: "))
-                    .next()
+                    .find(|line| !line.starts_with("Created At: "))
                     .is_some_and(|line| {
                         line == format!("Tool is running as a background task with task id: {id}")
                     })
