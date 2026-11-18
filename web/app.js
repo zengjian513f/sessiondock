@@ -2968,6 +2968,7 @@ function refreshSessionMeta() {
     replaceSessionHead(oldHead, current.meta, entryTotal(current));
     auditDetailRendered('meta-refresh');
   }
+  if (S.agent) refreshComposerRunControls();
 }
 
 function sidebarChildVisible(s) {
@@ -7961,6 +7962,21 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   button.disabled = busy || !!reason || (mode === 'sdk' && SdkView.discovering);
   button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
   button.onclick = () => runComposerSession(uid, agent, mode, external);
+  if (agent && (mode === 'cli' || view?.readOnly)) {
+    notice.classList.remove('external-cli-status');
+    const item = (row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items || [])
+      .find(item => item.id === agent);
+    if (['idle', 'connecting', 'ready', 'neutral'].includes(notice.dataset.state)) {
+      const running = item && agentRunning(uid, item);
+      const text = running ? '运行中' : item ? '未运行' : '只读子会话';
+      notice.querySelector('[role=status]').textContent = text;
+      notice.dataset.state = running ? 'ready' : 'idle';
+      notice.title = text;
+      notice.hidden = false;
+      const details = notice.parentElement.querySelector('.sdk-status-menu');
+      if (details) details.textContent = text;
+    }
+  }
 }
 function refreshComposerRunControls() {
   if (S.sel && $('#conversation-status'))

@@ -110,6 +110,51 @@ pub(crate) fn system_message(text: &str) -> (String, Value) {
     }
 }
 
+/// The catalog can be IDLE while a background command or schedule still owns
+/// work. Native task steps remain RUNNING even after their completion notice;
+/// reconcile by task identity, including timers whose notice is just a prompt.
+fn background_tasks(sid: &str, bytes: &[u8]) -> usize {
+    let mut tasks = BTreeSet::new();
+    for record in bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b"\n"))
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+    {
+        let text = record["content"].as_str().unwrap_or_default();
+        if record["type"] == "GENERIC" {
+            let Some(index) = record["step_index"].as_u64() else {
+                continue;
+            };
+            let id = format!("{sid}/task-{index}");
+            // Only the native task header, before arbitrary command/log text.
+            if record["status"] == "RUNNING"
+                && text
+                    .lines()
+                    .skip_while(|line| line.starts_with("Created At: "))
+                    .next()
+                    .is_some_and(|line| {
+                        line == format!("Tool is running as a background task with task id: {id}")
+                    })
+            {
+                tasks.insert(id);
+            } else if matches!(record["status"].as_str(), Some("DONE" | "ERROR")) {
+                tasks.remove(&id);
+            }
+        } else if record["type"] == "SYSTEM_MESSAGE" && record["status"] == "DONE" {
+            let (body, meta) = system_message(text);
+            if let Some(sender) = meta["system_sender"].as_str() {
+                tasks.remove(sender);
+                if sender == "system"
+                    && body == "[Notice] Native runtime restarted; background tasks have stopped."
+                {
+                    tasks.clear();
+                }
+            }
+        }
+    }
+    tasks.len()
+}
+
 #[cfg(unix)]
 type FileIdentity = (u64, u64);
 #[cfg(not(unix))]
@@ -365,6 +410,8 @@ impl Mirror {
         ]);
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
+        // Recompute existing mirrors once when this derived field is introduced.
+        cache_session["activity_projection"] = json!(1);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -465,8 +512,13 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
+        value["background_tasks"] = previous
+            .as_ref()
+            .map(|v| v["session"]["background_tasks"].clone())
+            .unwrap_or(Value::Null);
         let transcript_changed = cached.is_none_or(|(last_session, last_stamp, last_path)| {
             last_session["native_database_version"] != database_version
+                || last_session["activity_projection"] != cache_session["activity_projection"]
                 || *last_stamp != current
                 || *last_path != native
         });
@@ -498,7 +550,11 @@ impl Mirror {
             value["model"] = transcript_model(&bytes[..complete])
                 .map(|name| json!({"id":name}))
                 .unwrap_or(Value::Null);
+            value["background_tasks"] = json!(background_tasks(sid, &bytes[..complete]));
             publish(&messages, &bytes[..complete], true)?;
+        }
+        if value["background_tasks"].is_null() {
+            value["background_tasks"] = json!(background_tasks(sid, &fs::read(&messages)?));
         }
         if value["time_created"].is_null() || zero_time(&value["time_created"]) {
             value["time_created"] = value["time_updated"].clone();

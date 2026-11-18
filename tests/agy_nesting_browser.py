@@ -10,8 +10,10 @@ import sys
 import tempfile
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
-from agy_history_browser import SCHEMA, record, write_transcript, private_environment, execute
+from agy_history_browser import SCHEMA, record, system_record, write_transcript, private_environment, execute
 from history_fixtures import BINARY, Corpus, isolated_server, encoded, get_json
+from spawned_by_fixtures import proc_pid
+from send_browser import initialize
 
 PARENT = 'a6000000-0000-4000-8000-000000000011'
 CHILD = 'a6000000-0000-4000-8000-000000000012'
@@ -20,13 +22,32 @@ MISSING = 'a6000000-0000-4000-8000-000000000014'
 ORPHAN = 'a6000000-0000-4000-8000-000000000015'
 
 
+def task(index, sid=CHILD):
+    value = record(index, 'GENERIC', 'Created At: 2026-10-16T14:23:00Z\n'
+        f'Tool is running as a background task with task id: {sid}/task-{index}\n'
+        'Task Description: Timer: 10m, Prompt: Check training progress.')
+    value['status'] = 'RUNNING'
+    return value
+
+
+def pending_tasks():
+    return [record(0, 'PLANNER_RESPONSE', 'History ' + CHILD), task(1), task(2),
+            system_record(3, f'Task id "{CHILD}/task-1" finished with result:\nCommand exited with code 0.',
+                          sender=CHILD + '/task-1'),
+            # A task can outlive the bounded row-summary tail and a final answer.
+            {**record(4, 'PLANNER_RESPONSE', '训练任务已提交，继续等待后台通知。'),
+             'synthetic_padding': 'x' * (600 * 1024)},
+            record(5, 'PLANNER_RESPONSE', '已启动后台定时器，等待检查训练进度。')]
+
+
 def run(binary, screenshots):
     screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-nesting-') as tmp, sync_playwright() as pw:
         root = Path(tmp)
-        for name in ('home', 'native', 'work', 'proc', 'state', 'host', 'claude', 'codex', 'grok'):
+        for name in ('home', 'native', 'work', 'proc', 'state', 'host', 'ledger', 'claude', 'codex', 'grok'):
             (root / name).mkdir(mode=0o700)
-        native = root / 'native'
+        native = root / 'home/.gemini/antigravity-cli'
+        native.mkdir(parents=True, mode=0o700)
         db = native / 'conversation_summaries.db'
         with sqlite3.connect(db) as connection:
             connection.execute(SCHEMA)
@@ -39,6 +60,20 @@ def run(binary, screenshots):
                     (sid, title, '2026-10-16T14:23:00Z', json.dumps([(root / 'work').as_uri()]),
                      parent, status, 1, 'self'))
                 write_transcript(native, sid, [record(0, 'PLANNER_RESPONSE', 'History ' + sid)])
+        write_transcript(native, CHILD, pending_tasks())
+        (native / 'conversations').mkdir()
+        parent_db = native / 'conversations' / (PARENT + '.db')
+        parent_db.touch()
+        proc_pid(root / 'proc', 100, 'agy', ['agy', '--conversation', PARENT], 1,
+                 cwd=str(root / 'work'), fds={3: parent_db})
+        executable = root / 'agy'
+        executable.write_text('#!/bin/sh\nexit 1\n')
+        executable.chmod(0o700)
+        launcher = root / 'launcher.json'
+        launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(binary.resolve().with_name('ptyhost')),
+            'host_dir': str(root / 'host'), 'adapters': [], 'profiles': [
+                {'id': 'agy-read-only', 'source': 'agy', 'executable': str(executable), 'args': [], 'env': {}}]}))
+        initialize('--initialize-lifecycle', root / 'ledger', binary.resolve())
         options = {'headless': True}
         if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
             options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -48,6 +83,8 @@ def run(binary, screenshots):
                 for restart in (False, True):
                     with isolated_server(Corpus(root), binary, state_dir=root / 'state', host_dir=root / 'host',
                         extra_env={'SESSIONDOCK_AGY_HOME': str(native), 'SESSIONDOCK_AGY_ROOT': str(root / 'mirror'),
+                                   'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_LAUNCHER_CONFIG': str(launcher),
+                                   'SESSIONDOCK_LIFECYCLE_DIR': str(root / 'ledger'),
                                    'SESSIONDOCK_PROC_ROOT': str(root / 'proc')}) as (base, opener):
                         for width, theme in ([(1280, 'light')] if restart else
                                               [(1280, 'light'), (1280, 'dark'), (390, 'light'), (390, 'dark')]):
@@ -56,39 +93,54 @@ def run(binary, screenshots):
                             context.route('**/*', lambda route: route.continue_()
                                           if route.request.url.startswith(base + '/') else route.abort())
                             page = context.new_page()
-                            errors = []
+                            errors, opens = [], []
                             page.on('pageerror', lambda error: errors.append(str(error)))
+                            page.on('request', lambda request: opens.append(request.url)
+                                if request.method == 'POST' and request.url.split('?')[0].endswith('/open') else None)
                             page.set_default_timeout(15000)
                             page.goto(base)
                             page.wait_for_function('sid => S.sessions.some(r => r.sid === sid && r.agents === 2)', arg=PARENT)
                             rows = page.evaluate('S.sessions')
                             parent = next(row for row in rows if row['sid'] == PARENT)
                             assert not any(row['sid'] in (CHILD, GRANDCHILD, ORPHAN) for row in rows)
-                            agents = {row['id']: row for row in parent['agent_items']}
-                            assert not agents[CHILD]['active'] and agents[GRANDCHILD]['active']
                             child = page.locator(f'#side .item.agent[data-agent="{CHILD}"]')
                             caret = page.locator(f'#side .item[data-uid="{parent["uid"]}"] .nest-caret')
                             if not child.is_visible():
                                 caret.click()
                             expect(child).to_be_visible()
+                            agents = page.evaluate('uid => S.sessions.find(r => r.uid === uid).agent_items', parent['uid'])
+                            agents = {row['id']: row for row in agents}
+                            assert agents[CHILD]['active'] and agents[GRANDCHILD]['active']
                             caret.click()
                             expect(child).not_to_be_visible()
                             caret.click()
                             child.click()
+                            page.locator('#a-chat').click()
                             expect(page.locator('#msgs')).to_contain_text('History ' + CHILD)
                             assert page.evaluate('S.agent') == CHILD
+                            page.wait_for_function('uid => S.live.has(uid)', arg=parent['uid'])
+                            expect(page.locator('#conversation-status .sdk-status')).to_have_text('运行中')
+                            page.locator('#a-sdk').click()
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect(page.locator('#sdk-send')).to_be_disabled()
+                            page.locator('#a-view-switch').click()
+                            expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_be_visible()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-running-menu.png'))
+                            page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
+                            page.locator('#a-chat').click()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-child.png'))
                             page.reload()
                             expect(page.locator('#msgs')).to_contain_text('History ' + CHILD)
                             if width == 1280:
                                 page.locator(f'#side .item.agent[data-agent="{GRANDCHILD}"]').click()
+                                page.locator('#a-chat').click()
                                 expect(page.locator('#msgs')).to_contain_text('History ' + GRANDCHILD)
                                 child.click()
                             if not restart and width == 1280 and theme == 'light':
                                 initial = get_json(opener, base, '/api/messages/' + parent['uid'] + '?agent=' + CHILD)
                                 path = native / 'brain' / CHILD / '.system_generated/logs/transcript_full.jsonl'
                                 with path.open('ab') as stream:
-                                    stream.write(encoded(record(1, 'PLANNER_RESPONSE', 'agy child live tail')))
+                                    stream.write(encoded(record(6, 'PLANNER_RESPONSE', 'agy child live tail')))
                                 expect(page.locator('#msgs')).to_contain_text('agy child live tail')
                                 delta = get_json(opener, base, '/api/messages/' + parent['uid'] + '?agent=' + CHILD
                                     + '&start=' + str(initial['end']) + '&anchor=' + initial['anchor']
@@ -108,6 +160,7 @@ def run(binary, screenshots):
                                 page.locator('.dhead .mobile-back').first.click()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-tree.png'))
                             assert not errors, errors
+                            assert not opens, opens
                             context.close()
                             print(f'PASS native Agy ownership: {theme} {width}, restart={restart}', flush=True)
                         # Native parent changes must invalidate graph ownership without metadata writes.
@@ -115,13 +168,79 @@ def run(binary, screenshots):
                             context = browser.new_context()
                             page = context.new_page()
                             page.goto(base)
+                            uid = parent['uid']
+                            page.locator(f'#side .item[data-uid="{uid}"] .nest-caret').click()
+                            expect(page.locator(f'#side .item.agent[data-agent="{CHILD}"]')).to_be_visible()
+                            expect(page.locator(f'#side .item[data-uid="{uid}"] .nest-caret')).to_have_attribute('aria-busy', 'false')
+                            def activity(active):
+                                page.wait_for_function('''({uid, child, active}) => {
+                                    return S.sessions.find(r => r.uid === uid)?.agent_items
+                                        ?.find(a => a.id === child)?.active === active;
+                                }''', arg={'uid': uid, 'child': CHILD, 'active': active})
+                            def append(value):
+                                with (native / 'brain' / CHILD / '.system_generated/logs/transcript_full.jsonl').open('ab') as stream:
+                                    stream.write(encoded(value))
+                            activity(True)
+                            # Quoted task notices and unrelated senders cannot close it.
+                            append(record(7, 'USER_INPUT', system_record(7, 'wake', sender=CHILD + '/task-2')['content']))
+                            append(record(8, 'GENERIC', system_record(8, 'wake', sender=CHILD + '/task-2')['content']))
+                            append(system_record(9, 'wake', sender=GRANDCHILD + '/task-2'))
+                            activity(True)
+                            append(system_record(10, 'Check training progress.', sender=CHILD + '/task-2'))
+                            activity(False)
+                            child = page.locator(f'#side .item.agent[data-agent="{CHILD}"]')
+                            if not child.is_visible():
+                                page.locator(f'#side .item[data-uid="{uid}"] .nest-caret').click()
+                            child.click()
+                            page.locator('#a-chat').click()
+                            expect(page.locator('#msgs')).to_contain_text('Check training progress.')
+                            expect(page.locator('#conversation-status .sdk-status')).to_have_text('未运行')
+                            page.locator('#a-sdk').click()
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            page.locator('#a-view-switch').click()
+                            expect(page.locator('#session-view-menu')).to_be_visible()
+                            expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_have_count(0)
+                            page.screenshot(path=str(screenshots / 'completed-menu.png'))
+                            page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
+                            append(task(11))
+                            activity(True)
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            proc_dir = root / 'proc/100'
+                            proc_dir.rename(root / 'paused-proc')
+                            page.wait_for_function('uid => !S.live.has(uid)', arg=uid)
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            (root / 'paused-proc').rename(proc_dir)
+                            page.wait_for_function('uid => S.live.has(uid)', arg=uid)
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            append(system_record(12, '[Notice] Native runtime restarted; background tasks have stopped.'))
+                            activity(False)
+                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            # Rewrites/rewinds replace the task evidence; completed step updates close it.
+                            write_transcript(native, CHILD, [record(0, 'PLANNER_RESPONSE', 'agy child live tail'), task(1)])
+                            activity(True)
+                            append(record(1, 'GENERIC', 'Command exited with code 0.'))
+                            activity(False)
+                            write_transcript(native, CHILD, [record(0, 'PLANNER_RESPONSE', 'agy child live tail')])
+                            activity(False)
+                            page.locator('#a-chat').click()
+                            print('PASS idle catalog with pending tasks, completion, wakeup, quotes, restart and rewrite', flush=True)
                             execute(db, 'UPDATE conversation_summaries SET parent_conversation_id=? WHERE conversation_id=?', ('', CHILD))
                             page.wait_for_function('sid => S.sessions.some(r => r.sid === sid && r.agents === 1)', arg=CHILD)
                             uid = page.evaluate('sid => S.sessions.find(r => r.sid === sid).uid', CHILD)
                             page.locator(f'#side .item[data-uid="{uid}"]').click()
+                            page.locator('#a-chat').click()
                             expect(page.locator('#msgs')).to_contain_text('agy child live tail')
                             context.close()
                             print('PASS native parent change updates ownership', flush=True)
+                    if not restart:
+                        # Simulate a persisted pre-fix mirror with unchanged native files.
+                        directory = root / 'mirror/cli' / CHILD
+                        for filename, field, key in [('summary.json', 'session', 'background_tasks'),
+                                                     ('mirror-version.json', 'catalog_session', 'activity_projection')]:
+                            path = directory / filename
+                            value = json.loads(path.read_text())
+                            value[field].pop(key, None)
+                            path.write_text(json.dumps(value))
         finally:
             browser.close()
 

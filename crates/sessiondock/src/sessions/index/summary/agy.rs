@@ -93,7 +93,10 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             .or_else(|| text_if_truthy(&session["agent"]))
             .unwrap_or_else(|| title.clone()),
         kind: text_if_truthy(&session["agent"]).unwrap_or_else(|| "subagent".to_owned()),
-        open_turn: session["status"] == "CASCADE_RUN_STATUS_RUNNING",
+        open_turn: session["status"] == "CASCADE_RUN_STATUS_RUNNING"
+            || session["background_tasks"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
         turn_at: None,
     });
     RowSummary {
