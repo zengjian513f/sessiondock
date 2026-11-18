@@ -11022,6 +11022,9 @@ function referenceLink(ref, label, context, explicit = false) {
     if (/^[A-Z0-9]+(?:\/[A-Z0-9]+)+$/.test(ref)) return '';
     // Rendering is lexical only. Resolve history, existence and ambiguity on
     // explicit navigation/menu actions, never once per render or SSE update.
+    // Require an ASCII first component for inferred POSIX paths so a slash
+    // between phrases cannot turn the second phrase into an absolute path.
+    if (!explicit && withoutLine.startsWith('/') && !/^\/[A-Za-z][A-Za-z0-9._+-]*(?:\/|$)/.test(withoutLine)) return '';
     const filename = /^[^\s/<>"'`=;|{}\[\]]+\.[a-zA-Z][\w.-]*$/.test(withoutLine);
     const path = windowsDrive || fileUri || /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
       || (!/[\s<>"'`=;|{}\[\]]/.test(withoutLine) && withoutLine.includes('/')

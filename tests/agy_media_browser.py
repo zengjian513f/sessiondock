@@ -58,7 +58,16 @@ def run(args):
             result = record(index, 'GENERIC', '' if index == 1 else f'音频结果 {index}')
             result['media'] = [{'mime_type': 'audio/mpeg', 'uri': audio.as_uri()}]
             values.append(result)
-        values.append(record(9, 'PLANNER_RESPONSE', '附件处理完成 agymediafinal'))
+        directory = fixture.work / '中文目录'
+        directory.mkdir()
+        relative = './中文目录'
+        values.append(record(9, 'PLANNER_RESPONSE',
+                             '附件处理完成 agymediafinal。\n\n'
+                             '**执行方案**（比如门控/单票限额扫描， 过滤/报告.md）。\n\n'
+                             '自动识别（/中文/报告.md）及 `/home中文/报告.md` 示例。\n\n'
+                             f'目录（/dev， /home/示例）以及 `{directory}`、`{relative}`。\n\n'
+                             r'Windows（X:\工作区， y:/工作区），`Z:相对路径.md`。' '\n\n'
+                             '[显式引用](/中文/报告.md)'))
         path = write_transcript(fixture.native, SID, values)
         # Another selected session does not inherit the attachment references.
         corpus = Corpus(root)
@@ -108,6 +117,21 @@ def run(args):
                                 while buttons.count():
                                     buttons.first.click()
                             page.screenshot(path=str(args.screenshots / f'{label}-{width}-{theme}-{mode}-full.png'))
+                            answer = page.locator(surface + ' .msg[data-role="assistant"]').filter(has_text='agymediafinal')
+                            answer.scroll_into_view_if_needed()
+                            page.screenshot(path=str(args.screenshots / f'{label}-{width}-{theme}-{mode}-paths.png'))
+                            expect(answer).to_contain_text('（比如门控/单票限额扫描， 过滤/报告.md）')
+                            refs = answer.locator('a[data-file-ref]').evaluate_all('links => links.map(a => a.dataset.fileRef)')
+                            assert refs == ['/dev', '/home/示例', str(directory), relative,
+                                            r'X:\工作区', 'y:/工作区', '/中文/报告.md'], refs
+                            expect(answer.get_by_role('link', name='显式引用')).to_have_attribute('data-file-ref', '/中文/报告.md')
+                            for ref in [str(directory), relative]:
+                                with context.expect_page() as opened:
+                                    answer.locator(f'a[data-file-ref={json.dumps(ref, ensure_ascii=False)}]').click()
+                                preview = opened.value
+                                expect(preview.locator('#file-title')).to_have_text('文件浏览器未启用')
+                                expect(preview.locator('#file-content')).to_contain_text(str(directory))
+                                preview.close()
                             expect(page.locator(surface + ' .native-file')).to_have_count(9)
                             expect(page.locator('.native-history-warning')).to_have_count(0)
                             expect(page.locator(surface + ' .media-link img')).to_have_count(1)
@@ -141,11 +165,15 @@ def run(args):
                                 assert download.value.suggested_filename == name
                                 preview.close()
                             page.reload()
-                            expect(page.locator(surface)).to_contain_text('agymediafinal')
+                            # Reload opens this stopped session in its default SDK view.
+                            # Reopen the surface under test before checking its reloaded content.
+                            page.locator('#a-' + mode).click()
+                            expect(answer).to_be_visible()
+                            expect(answer.get_by_role('link', name=relative, exact=True)).to_be_visible()
                         assert not errors, errors
                         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                         context.close()
-                        print(f'PASS Agy JSON/audio/image: {label} {width} {theme}; chat/SDK, reload, preview/play/download', flush=True)
+                        print(f'PASS Agy path links and JSON/audio/image: {label} {width} {theme}; chat/SDK, reload, preview/play/download', flush=True)
                 # Append and same-message rewrite must update typed files without
                 # changing the original user text or requiring a new selection.
                 context = browser.new_context(service_workers='block')

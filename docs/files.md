@@ -93,6 +93,12 @@ prose punctuation remain outside the destination. Markdown links retain their
 labels, and fenced code remains literal. File references in ordinary prose
 still require parentheses, code spans or explicit Markdown links.
 
+DELTA (BUG-20261118-100229-92fa67) applies to inferred POSIX paths in
+parentheses and code spans. The first component must start with an ASCII
+letter and may continue with ASCII letters, digits, `.`, `_`, `+` or `-`.
+Later components can include non-ASCII characters. Explicit Markdown targets,
+file URIs and typed attachments can reference paths under other roots.
+
 FileDock does not load session history, establish conversation grants, or attach
 uploads to a conversation. Its filesystem worker retains checked handles, OS
 permission checks, bounded previews and streaming. Directory and file-manager
@@ -100,7 +106,9 @@ UI preferences belong to FileDock.
 
 Validation: `python3 tests/files_browser.py` exercises actual conversation links,
 node/path routing, unresolved-reference errors and direct directory entry on
-desktop/mobile. `tests/autobind_browser.py` clicks the launch-only directory
+desktop/mobile. `tests/agy_media_browser.py` covers inferred path links and
+typed attachments in chat and SDK history on the node and Hub.
+`tests/autobind_browser.py` clicks the launch-only directory
 before the fake CLI writes its first native record, in wide/narrow light/dark
 views (regression BUG-20261015-153941-18a613). FileDock's own browser and
 node/hub suites validate previews,
