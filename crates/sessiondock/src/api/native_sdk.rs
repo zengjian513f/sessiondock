@@ -523,8 +523,9 @@ pub async fn events(
         Err(error) => (state.native_sdks.input_fallback(&target, &error), None),
     };
     let (input_snapshot, mut queue_events) = state.native_sdks.input_events(&target);
-    let mut snapshot = snapshot;
-    snapshot["raw"]["input_queue"] = input_snapshot;
+    let snapshot = state
+        .native_sdks
+        .with_inputs(&target, snapshot, Some(input_snapshot));
     let queue_scope = crate::native_sdk::NativeSdks::input_scope(&target);
     let sdks = state.native_sdks.clone();
     let source = source.to_owned();
@@ -539,7 +540,7 @@ pub async fn events(
                 _ = heartbeat.tick() => {
                     if events.is_none() && let Ok((snapshot,receiver))=sdks.subscribe(&source,&key) {
                         events=Some(receiver);
-                        yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot)).to_string()));
+                        yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot,None)).to_string()));
                     }
                     yield Ok(Event::default().event("heartbeat").data("{}"));
                 },
@@ -558,7 +559,7 @@ pub async fn events(
                 event = async { match events.as_mut() {Some(events)=>events.recv().await,None=>std::future::pending().await} } => match event {
                     Ok(event) => {
                         match serde_json::from_str::<Value>(&event) {
-                            Ok(snapshot)=>yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot)).to_string())),
+                            Ok(snapshot)=>yield Ok(Event::default().event("sdk").data(encoder.encode(sdks.with_inputs(&target,snapshot,None)).to_string())),
                             Err(_)=>yield Ok(Event::default().event("sdk").data(&*event)),
                         }
                     },

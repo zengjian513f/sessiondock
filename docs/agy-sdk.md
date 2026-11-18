@@ -98,6 +98,8 @@ invocation，保持同一 `stream-json` 回合、同一 PID/SID 及显式 `--mod
 `clientMessageId` 去重：桥接对同一 `request_id` 保存回执，连接前失败／HTTP 非 200 记为确定失败，
 超时或响应体截断记为 `unknown` 且绝不自动重发。已接收未回显的引导随 `Binding.steers` 跨节点重启保留，
 原生 `user_input` 按 FIFO 绑定 `native_id` 并保持步骤时序，与 `/api/messages` 历史去重对齐。
+重开正在运行的会话时，事件快照同时提供持久队列和 `queue_steer` 能力，直接恢复排队气泡的
+“立即引导”，无需再次调用 `/open`。
 
 **headless 限制**：原生接受取消后，最终 NDJSON `result` 仍可能等待后台任务
 完成。此时诊断明确显示“当前回合取消已接受、后台任务继续”，桥接继续等待原生

@@ -49,32 +49,20 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     open_sdk(page, fixture, expect, uid=uid)
     box = page.locator('#sdk-input')
     button = page.locator('#sdk-send')
+    messages = page.locator('.sdk-msgs')
     expect(button).to_have_text('发送')
 
     def idle_done(text: str):
-        expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ' + text)
+        expect(messages).to_contain_text('Synthetic Agy reply: ' + text)
         wait_snapshot(page, uid, lambda raw: not raw['running'])
         assert len(fixture.inputs(text)) == 1
         assert not fixture.steers(text)
 
     exercise_idle_send_gestures(page, 'agy', label, idle_done)
 
-    # Start a held turn and verify Ctrl+click, mobile 500ms touch-hold, and short-tap queueing.
     send(page, 'hold:steer')
     wait_snapshot(page, uid, lambda raw: raw['running'])
     expect(button).to_have_text('排队')
-    resize_sdk(page, uid, 390)
-    exercise_send_gestures(page, 'agy', label, shots)
-    wait_snapshot(page, uid, lambda raw: any('Agy steered: Ctrl click ' + label in (item.get('content') or '') for item in raw['items']))
-    wait_snapshot(page, uid, lambda raw: any('Agy steered: touch hold ' + label in (item.get('content') or '') for item in raw['items']))
-    resize_sdk(page, uid, 1280)
-    live_dom = page.evaluate('''() => [...document.querySelectorAll('.sdk-live > *')].map(node => ({
-        cls: node.className,
-        id: node.dataset.sdkItem || node.dataset.toolGroupKey || node.dataset.turnId || '',
-        text: (node.innerText || '').slice(0, 80),
-    }))''')
-    hold_idx = next(i for i, row in enumerate(live_dom) if 'hold:steer' in row['text'])
-    assert not any('sdk-tool-group' in row['cls'] or 'view_file' in row['text'] for row in live_dom[hold_idx:]), live_dom
 
     # Recall-edit check on a queued message, then FIFO + queue_steer conversion preserving draft.
     send(page, 'recall edit ' + label)
@@ -96,6 +84,37 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     expect(converted.get_by_role('button', name='立即引导', exact=True)).to_be_visible()
     capture(page, shots, f'{label}-queued-actions-wide-light')
 
+    # Selecting an attached Agy session observes it without calling /open.
+    # The initial event snapshot must still expose the durable queue actions.
+    opens = []
+
+    def record_open(request):
+        if request.url.endswith('/api/native-sdk/open'):
+            opens.append(request.url)
+
+    page.on('request', record_open)
+    page.locator('#side .item[data-uid^="claude:"]').click()
+    row.click()
+    page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=uid)
+    assert not opens, opens
+    converted.scroll_into_view_if_needed()
+    capture(page, shots, f'{label}-switched-queue-wide-light')
+    expect(converted.get_by_role('button', name='立即引导', exact=True)).to_be_visible()
+
+    page.reload(wait_until='domcontentloaded')
+    page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=uid)
+    assert not opens, opens
+    page.remove_listener('request', record_open)
+    for width, theme in ((1280, 'light'), (390, 'dark')):
+        page.emulate_media(color_scheme=theme)
+        resize_sdk(page, uid, width)
+        action = converted.get_by_role('button', name='立即引导', exact=True)
+        expect(action).to_be_enabled()
+        action.scroll_into_view_if_needed()
+        capture(page, shots, f'{label}-reopened-queue-{width}-{theme}')
+    page.emulate_media(color_scheme='light')
+    resize_sdk(page, uid, 1280)
+
     queue_id = converted.get_attribute('data-queue-id')
     box.fill('preserve unrelated draft')
     gate = fixture.root / 'steer-delay'
@@ -106,13 +125,28 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     gate.unlink()
     expect(converted).to_have_count(0)
     expect(box).to_have_value('preserve unrelated draft')
-    expect(page.locator('.sdk-live')).to_contain_text('converted steer ' + label)
-    expect(page.locator('.sdk-live')).to_contain_text('Agy steered: converted steer ' + label)
+    expect(messages).to_contain_text('Agy steered: converted steer ' + label)
+    expect(messages.get_by_text('converted steer ' + label, exact=True)).to_have_count(1)
     repeated = page.request.post(base + '/api/native-sdk/queue_steer', data={'uid': uid, 'id': queue_id, 'request_id': 'repeat-conversion'})
     assert repeated.ok, repeated.text()
     assert len(fixture.steers('converted steer ' + label)) == 1
     expect(fifo).to_be_visible()
     assert not fixture.steers('ordinary FIFO ' + label)
+
+    # Ctrl+click, mobile 500ms touch-hold, and short-tap queueing on the held turn.
+    resize_sdk(page, uid, 390)
+    exercise_send_gestures(page, 'agy', label, shots)
+    wait_snapshot(page, uid, lambda raw: any('Agy steered: Ctrl click ' + label in (item.get('content') or '') for item in raw['items']))
+    wait_snapshot(page, uid, lambda raw: any('Agy steered: touch hold ' + label in (item.get('content') or '') for item in raw['items']))
+    resize_sdk(page, uid, 1280)
+    expect(messages).to_contain_text('hold:steer')
+    transcript = page.evaluate('''() => [...document.querySelectorAll('.sdk-history > *, .sdk-live > *')].map(node => ({
+        cls: node.className,
+        id: node.dataset.sdkItem || node.dataset.toolGroupKey || node.dataset.turnId || '',
+        text: (node.innerText || '').slice(0, 80),
+    }))''')
+    hold_idx = next(i for i, row in enumerate(transcript) if 'hold:steer' in row['text'])
+    assert not any('sdk-tool-group' in row['cls'] or 'view_file' in row['text'] for row in transcript[hold_idx:]), transcript
 
     def steer(text: str):
         box.fill(text)
@@ -124,8 +158,8 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     accepted = steer('direct steering ' + label)
     assert accepted.ok, accepted.text()
     expect(box).to_have_value('')
-    expect(page.locator('.sdk-live')).to_contain_text('direct steering ' + label)
-    expect(page.locator('.sdk-live')).to_contain_text('Agy steered: direct steering ' + label)
+    expect(messages).to_contain_text('Agy steered: direct steering ' + label)
+    expect(messages.get_by_text('direct steering ' + label, exact=True)).to_have_count(1)
     repeat = page.request.post(accepted.url, data=accepted.request.post_data_json)
     assert repeat.ok, repeat.text()
     assert len(fixture.steers('direct steering ' + label)) == 1
@@ -140,7 +174,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
         action.click()
     assert menu_resp.value.ok, menu_resp.value.text()
     expect(box).to_have_value('')
-    expect(page.locator('.sdk-live')).to_contain_text('Agy steered: menu steering ' + label)
+    expect(messages).to_contain_text('Agy steered: menu steering ' + label)
     assert len(fixture.steers('menu steering ' + label)) == 1
 
     # Composer attachment + Ctrl+Enter steer and queued attachment + 立即引导.
@@ -157,7 +191,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     expect(attached.get_by_role('button', name='立即引导', exact=True)).to_be_visible()
     attached.get_by_role('button', name='立即引导', exact=True).click()
     expect(attached).to_have_count(0)
-    expect(page.locator('.sdk-live')).to_contain_text('queued attachment ' + label)
+    expect(messages).to_contain_text('Agy steered: queued attachment ' + label)
     assert any('queued attachment ' + label in event['text'] and 'agy-queued-context.txt' in event['text'] for event in fixture.steers())
 
     # Native RPC acknowledgement is distinct from step_update consumption: single user bubble + compact receipt.
@@ -173,7 +207,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     consume_gate.unlink()
     wait_snapshot(page, uid, lambda raw: any(item.get('native_echo') and item.get('content') == 'ack pending ' + label for item in raw['items']) and not any(item.get('text') == 'ack pending ' + label for item in raw.get('steers', [])))
     expect(page.locator('.native-sdk-pane').get_by_text('ack pending ' + label, exact=True)).to_have_count(1)
-    expect(page.locator('.sdk-live')).to_contain_text('Agy steered: ack pending ' + label)
+    expect(messages).to_contain_text('Agy steered: ack pending ' + label)
 
     # Deterministic rejection keeps draft, records failure without retry button, and deduplicates request_id.
     rejected = steer('reject steer')
@@ -220,9 +254,9 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
         page.goto(base, wait_until='networkidle')
         open_sdk(page, fixture, expect, uid=uid)
         assert page.evaluate('NativeSdkView.running')
-        expect(page.locator('.sdk-live').get_by_text('direct steering ' + label, exact=True)).to_have_count(1)
-        expect(page.locator('.sdk-live')).to_contain_text('Agy steered: direct steering ' + label)
-        expect(page.locator('.sdk-live').get_by_text('delayed steer ' + label, exact=True)).to_have_count(1)
+        expect(messages.get_by_text('direct steering ' + label, exact=True)).to_have_count(1)
+        expect(messages).to_contain_text('Agy steered: direct steering ' + label)
+        expect(messages.get_by_text('delayed steer ' + label, exact=True)).to_have_count(1)
         assert len(fixture.steers()) == steer_count_before
     else:
         assert page.evaluate('uid => persistComposerDraft(uid)', uid)
@@ -237,7 +271,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     fifo = page.locator('.sdk-queued').filter(has_text='ordinary FIFO ' + label)
     expect(fifo).to_be_visible()
     fixture.release('steer')
-    expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: ordinary FIFO ' + label)
+    expect(messages).to_contain_text('Synthetic Agy reply: ordinary FIFO ' + label)
     wait_snapshot(page, uid, lambda raw: not raw['running'])
     assert len(fixture.inputs('ordinary FIFO ' + label)) == 1
     capture(page, shots, f'{label}-completed-wide-light')

@@ -833,15 +833,7 @@ impl NativeSdks {
             result["agent"] = target["agent"].clone();
         }
         if method == "open" {
-            if !result["capabilities"].is_object() {
-                result["capabilities"] = json!({});
-            }
-            result["capabilities"]["input_queue"] = json!(true);
-            result["capabilities"]["queue_cancel"] = json!(true);
-            result["capabilities"]["queue_retry"] = json!(true);
-            if matches!(source, "kiro" | "droid" | "agy") {
-                result["capabilities"]["queue_steer"] = json!(true);
-            }
+            Self::add_input_capabilities(source, &mut result["capabilities"]);
         }
         if method == "models" {
             self.observe_session_models(source, bridge, &target, &result);
@@ -1116,9 +1108,32 @@ impl NativeSdks {
         self.input_queue.subscribe(&input_queue::scope(target))
     }
 
-    pub(crate) fn with_inputs(&self, target: &Value, mut snapshot: Value) -> Value {
+    fn add_input_capabilities(source: &str, capabilities: &mut Value) {
+        if !capabilities.is_object() {
+            *capabilities = json!({});
+        }
+        capabilities["input_queue"] = json!(true);
+        capabilities["queue_cancel"] = json!(true);
+        capabilities["queue_retry"] = json!(true);
+        if matches!(source, "kiro" | "droid" | "agy") {
+            capabilities["queue_steer"] = json!(true);
+        }
+    }
+
+    pub(crate) fn with_inputs(
+        &self,
+        target: &Value,
+        mut snapshot: Value,
+        initial_inputs: Option<Value>,
+    ) -> Value {
         if snapshot["type"] == "snapshot" {
-            snapshot["raw"]["input_queue"] = self.input_snapshot(target);
+            let raw = &mut snapshot["raw"];
+            raw["input_queue"] = initial_inputs.unwrap_or_else(|| self.input_snapshot(target));
+            // Agy can subscribe to an attached runtime without calling open.
+            Self::add_input_capabilities(
+                target["source"].as_str().unwrap_or_default(),
+                &mut raw["capabilities"],
+            );
         }
         snapshot
     }
