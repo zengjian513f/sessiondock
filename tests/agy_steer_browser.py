@@ -15,8 +15,9 @@ from urllib.parse import quote
 
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
+from agy_history_browser import execute, record, system_record, write_transcript
 from agy_sdk_browser import resize_sdk, send
-from agy_sdk_fixtures import AgyFixture, TITLE
+from agy_sdk_fixtures import AgyFixture, SID, TITLE
 from claude_sdk_browser import open_sdk, wait_snapshot
 from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
 from hub_fixtures import Hub
@@ -40,11 +41,68 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     status = root / 'foreground-status'
     status.write_text('RUNNING')
     (root / 'native-echo-store').touch()
+    child = 'a6000000-0000-4000-8000-000000000060'
+    fixture.seed(child)
+    execute(fixture.native / 'conversation_summaries.db',
+            'UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
+            (SID, 'Training monitor', child))
+
+    def timer(index, delay, prompt):
+        value = record(index, 'GENERIC',
+                       'Created At: 2026-10-04T00:00:00Z\n'
+                       f'Tool is running as a background task with task id: {child}/task-{index}\n'
+                       f'Task Description: Timer: {delay}, Prompt: {prompt}\n'
+                       'Task logs are available at: file:///private/timer.log')
+        value['status'] = 'RUNNING'
+        return value
+
+    training = '核对训练进度，检查每个种子的最后一个分段，完成后导出预测并报告异常。'
+    replay = '确认所有历史回放已运行完毕。'
+    tasks = [timer(2, '5m', 'already completed'), timer(3, '35m', training), timer(4, '1h 30m', replay),
+             system_record(5, 'Timer fired', sender=f'{child}/task-2')]
+    write_transcript(fixture.native, child, tasks)
     send(page, 'hold:foreground')
     wait_snapshot(page, uid, lambda raw: any(
         item.get('native_echo') and item.get('content') == 'hold:foreground'
         for item in raw['items']))
     pid = fixture.inputs('hold:foreground')[0]['pid']
+    notice = page.locator('#sdk-composer .sdk-status')
+    details = page.locator('#sdk-status-menu')
+    expect(notice).to_have_text('处理中')
+    status.write_text('IDLE')
+    expect(notice).to_have_text('后台定时任务等待中', timeout=20000)
+    for width, theme in ((1280, 'light'), (390, 'dark')):
+        page.emulate_media(color_scheme=theme)
+        resize_sdk(page, uid, width)
+        expect(notice).to_be_enabled()
+        if width == 1280:
+            notice.click()
+        else:
+            notice.press('Enter')
+        expect(details).to_be_visible()
+        expect(details).to_contain_text('Agy 前台已空闲')
+        expect(details).to_contain_text('35m')
+        expect(details).to_contain_text(training)
+        expect(details).to_contain_text('1h 30m')
+        expect(details).to_contain_text(replay)
+        expect(details).not_to_contain_text('already completed')
+        expect(details).not_to_contain_text('file:///')
+        capture(page, shots, f'{label}-foreground-timers-{width}-{theme}')
+        page.keyboard.press('Escape')
+        expect(details).to_be_hidden()
+    page.emulate_media(color_scheme='light')
+    resize_sdk(page, uid, 1280)
+    notice.click()
+    write_transcript(fixture.native, child, [*tasks,
+        system_record(6, 'Timer fired', sender=f'{child}/task-3'),
+        system_record(7, 'Timer fired', sender=f'{child}/task-4')])
+    expect(notice).to_have_text('等待回执', timeout=20000)
+    expect(details).to_be_visible()
+    expect(details).not_to_contain_text(training)
+    expect(details).not_to_contain_text(replay)
+    page.keyboard.press('Escape')
+    status.write_text('RUNNING')
+    expect(notice).to_have_text('处理中', timeout=10000)
     echo = root / 'steer-echo-delay'
     echo.touch()
     consume = root / 'steer-consume-delay'

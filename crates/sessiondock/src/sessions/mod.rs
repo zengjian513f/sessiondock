@@ -1213,14 +1213,34 @@ fn prepare(published: &Arc<Published>, uid: &str, agent: &str) -> Result<Prepare
     let selected = if agent.is_empty() {
         None
     } else {
-        Some(Candidate::of(index.agent(uid, agent).ok_or_else(|| {
-            SessionError::new(404, "子代理不存在或不属于此主会话")
-        })?))
+        Some(
+            index
+                .agent(uid, agent)
+                .ok_or_else(|| SessionError::new(404, "子代理不存在或不属于此主会话"))?,
+        )
     };
-    let row = published
+    let mut row = published
         .row(uid)
         .cloned()
         .ok_or_else(|| SessionError::new(503, "会话行尚未发布，请重试"))?;
+    if owner.source == "agy" {
+        let timers = if let Some(selected) = selected {
+            json!(selected.summary.background_timers)
+        } else {
+            let agents = row["agent_items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| index.agent(uid, item["id"].as_str()?));
+            json!(
+                std::iter::once(owner)
+                    .chain(agents)
+                    .flat_map(|entry| &entry.summary.background_timers)
+                    .collect::<Vec<_>>()
+            )
+        };
+        row["background_timers"] = timers;
+    }
     let owner_candidate = Candidate::of(owner);
     Ok(Prepared {
         request: ViewRequest {
@@ -1228,7 +1248,7 @@ fn prepare(published: &Arc<Published>, uid: &str, agent: &str) -> Result<Prepare
             agent: agent.to_owned(),
             pin: pin_for(published.metadata.as_ref(), &owner_candidate, uid),
             owner: owner_candidate,
-            selected,
+            selected: selected.map(Candidate::of),
             row,
         },
         published: published.clone(),

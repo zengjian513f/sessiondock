@@ -1716,6 +1716,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
     // Keep the catalog count and the current lazy branch scope when following
     // the selected conversation, until a list response updates them.
     const rowMeta = {...meta};
+    delete rowMeta.background_timers;
     if (listed && Object.hasOwn(listed, 'child_count')) rowMeta.child_count = listed.child_count;
     if (S.childMode === 'hidden' && !S.lazyOpen.has(uid)) delete rowMeta.agent_items;
     // Cursor/size updates do not change membership, ordering, nesting or

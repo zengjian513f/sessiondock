@@ -166,6 +166,7 @@ pub struct RowSummary {
     /// backgrounded Bash commands) the tail shows started and not yet
     /// ended; the main turn waits on them (docs/read-model.md).
     pub background: usize,
+    pub(crate) background_timers: Vec<crate::sessions::agy::BackgroundTimer>,
 }
 
 impl RowSummary {
@@ -194,6 +195,7 @@ impl RowSummary {
             committed: None,
             cursor_head: None,
             background: 0,
+            background_timers: Vec::new(),
             turn: None,
         }
     }

@@ -128,6 +128,7 @@ const ConversationUI = {
     text = String(text || '');
     if ([...text].length <= 6) return text;
     const lead = text.split(/[：:，,。；;\s]/)[0];
+    if (kind === 'scheduled') return lead;
     if (lead && [...lead].length <= 6) return lead;
     if (text.startsWith('不支持的命令')) return '命令不支持';
     if (text.startsWith('队列暂停')) return '队列暂停';

@@ -563,7 +563,11 @@ const SdkUI = {
       this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
-      this.pane.querySelector('#sdk-status-menu').textContent = text;
+      const details = this.pane.querySelector('#sdk-status-menu');
+      if (details.textContent !== text) {
+        details.textContent = text;
+        if (details.matches(':popover-open')) this.placeMenu(details, this.notice);
+      }
       paintComposerRunControl(this.notice, this.uid, this.agent, 'sdk', this);
       this.updateStatusDisclosure();
       this.layoutToolbar();
@@ -651,6 +655,7 @@ const SdkUI = {
     useHistory(entry, force = false) {
       if (!this.pane || !entry) return;
       const data = this.historyData;
+      const backgroundTimers = entry.meta?.background_timers;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
       if (!force && this.historyEntry === entry && data?.end === entry.end
           && data.model === entry.meta?.model
@@ -663,18 +668,20 @@ const SdkUI = {
         // Keep the text nodes (and an ongoing native drag selection) intact.
         const activityChanged = data.activity !== entry.activity;
         data.activity = entry.activity;
+        const timersChanged = JSON.stringify(data.backgroundTimers) !== JSON.stringify(backgroundTimers);
+        data.backgroundTimers = backgroundTimers;
         // CLI-only updates can close a native turn whose ending was never
         // written. They must refresh status even when history is unchanged.
         const observedChanged = data.observedActivity?.state !== observed?.state
           || data.observedActivity?.reason !== observed?.reason;
         data.observedActivity = observed;
         if (observedChanged && !this.connected) this.paintHistory();
-        if (this.connected && (activityChanged || observedChanged)) this.paintStatus();
+        if (this.connected && (activityChanged || observedChanged || timersChanged)) this.paintStatus();
         return;
       }
       this.historyEntry = entry;
       this.historyData = {messages: entry.msgs, partial: entry.partial, model: entry.meta?.model,
-        activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
+        activity: entry.activity, observedActivity: observed, backgroundTimers, end: entry.end, length: entry.msgs.length};
       measureBrowserWork('sdk.history', () => this.paintHistory(),
         {source: this.uid.split(':')[0], messages: entry.msgs.length});
       if(this.connected)this.paintStatus();

@@ -734,12 +734,24 @@ const NativeSdkView = {
     const error = raw.error || (compactFailed ? raw.compact.error || '上下文压缩失败' : null)
       || (failed ? raw.last_turn?.error || observed.activity?.error || '上一回合失败' : null);
     const warning = uncertain || raw.error_kind === 'interrupted' || incomplete;
+    const awaitingResult = this.uid.startsWith('agy:') && this.running && raw.foreground_idle === true && !raw.cancel_requested;
+    const timers = awaitingResult ? this.historyData?.backgroundTimers || [] : [];
+    const receiptDetails = 'Agy 前台已空闲，仍在等待回合结束回执。';
+    const waitingText = timers.length
+      ? ['后台定时任务等待中', receiptDetails, ...timers.map(timer => {
+        const created = Date.parse(timer.created_at);
+        const setAt = Number.isFinite(created) ? `${ConversationUI.messageTimeFormatter.format(created)} 设置 · ` : '';
+        return `${setAt}延时 ${timer.delay}\n${timer.prompt}`;
+      })].join('\n\n')
+      : `等待回执\n${receiptDetails}`;
     const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
-      : raw.retry ? 'retrying' : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
+      : raw.retry ? 'retrying' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
+      : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
     let text = scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
+      : awaitingResult ? waitingText
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
       : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成' : '就绪';
     if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;

@@ -2615,6 +2615,7 @@ header .btn[data-session-docked] { display: none; }
   height: var(--sdk-status-row-height); --sdk-status-row-height: 24px; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
 .sdk-status-row > .sdk-status { flex: none; max-width: 7em; }
+.sdk-status-row > .sdk-status[data-state="scheduled"] { max-width: 10.5em; }
 .sdk-status-row > .sdk-status.external-cli-status { max-width: none; }
 .sdk-status-row > .composer-run-action { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
 .sdk-status-row > .sdk-options { flex: none; }
@@ -2634,7 +2635,7 @@ header .btn[data-session-docked] { display: none; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--sdk-status-color) 15%, transparent); }
 .sdk-status[data-state="ready"] { --sdk-status-color: var(--diff-add-fg); }
 .sdk-status[data-state="working"] { --sdk-status-color: var(--accent); }
-.sdk-status:is([data-state="waiting"], [data-state="warning"], [data-state="retrying"]) { --sdk-status-color: var(--star); }
+.sdk-status:is([data-state="waiting"], [data-state="scheduled"], [data-state="warning"], [data-state="retrying"]) { --sdk-status-color: var(--star); }
 .sdk-status[data-state="maintenance"] { --sdk-status-color: var(--syntax-title); }
 .sdk-status.blocked { --sdk-status-color: var(--diff-del-fg); }
 .sdk-status:is([data-state="working"], [data-state="maintenance"], [data-state="connecting"], [data-state="retrying"])::before {

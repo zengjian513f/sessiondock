@@ -454,6 +454,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         } else {
             main_turn(&records)
         },
+        background_timers: Vec::new(),
         background: if agent.is_some() {
             0
         } else {
