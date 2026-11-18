@@ -11,7 +11,7 @@ import tempfile
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
 from agy_history_browser import SCHEMA, record, system_record, write_transcript, private_environment, execute
-from history_fixtures import BINARY, Corpus, isolated_server, encoded, get_json
+from history_fixtures import BINARY, REPO, Corpus, isolated_server, encoded, get_json
 from spawned_by_fixtures import proc_pid
 from send_browser import initialize
 
@@ -70,7 +70,7 @@ def run(binary, screenshots):
         executable.write_text('#!/bin/sh\nexit 1\n')
         executable.chmod(0o700)
         launcher = root / 'launcher.json'
-        launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(binary.resolve().with_name('ptyhost')),
+        launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO / 'target/debug/ptyhost'),
             'host_dir': str(root / 'host'), 'adapters': [], 'profiles': [
                 {'id': 'agy-read-only', 'source': 'agy', 'executable': str(executable), 'args': [], 'env': {}}]}))
         initialize('--initialize-lifecycle', root / 'ledger', binary.resolve())
