@@ -24,10 +24,10 @@
   版本 `20261115T165812622765Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、
   Vela 已部署服务与前端、重启并健康，原有会话宿主保留。
 
-- [ ] Orion、Cetus 补发当前前端 `fb9f8249`（BUG-20261117-094310-1e6304，
-  版本 `20261117T100656751161Z`）：包含未匹配额度组直显、底栏简写和此前
-  Agent 用量标签/滚动保持。正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、Vela
-  已仅更新前端、重启并健康。联网后使用部署工具 `--web-only` 补发。
+- [ ] Orion、Cetus 补发当前前端 `c0a26bc2`（BUG-20261118-100229-92fa67，
+  版本 `20261118T101343540195Z`）。包含路径误判修复及 `fb9f8249` 的额度底栏更新。
+  正式 SSH 尝试均超时。Lyra、Cygnus、Pavo、Hub、Vela 的前端已更新、重启并健康。
+  联网后使用部署工具 `--web-only` 补发。
 
 - [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
   （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
