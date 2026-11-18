@@ -1507,7 +1507,14 @@ impl NativeSdks {
             }
             let raw = &snapshot["raw"];
             if row.state == "queued" {
+                let agy_fifo = source == "agy"
+                    && raw["running"] == true
+                    && row
+                        .input
+                        .as_ref()
+                        .is_some_and(|input| crate::agy_sdk::fifo_ready(raw, input));
                 let ready = source == "opencode"
+                    || agy_fifo
                     || (raw["running"] != true
                         && raw["requests"].as_array().is_none_or(Vec::is_empty));
                 if ready {
@@ -1530,8 +1537,9 @@ impl NativeSdks {
                         return;
                     };
                     input["request_id"] = json!(row.delivery_id);
+                    let method = if agy_fifo { "fifo_turn" } else { "turn" };
                     let result = self
-                        .provider_call(source, "turn", target.clone(), input)
+                        .provider_call(source, method, target.clone(), input)
                         .await;
                     let saved = self.input_queue.change(key, &row.id, |entry| {
                         if entry.state == "cancelled" {
@@ -1542,6 +1550,9 @@ impl NativeSdks {
                                 entry.result = Some(result);
                                 entry.state = "completed".into();
                                 entry.runtime_state = "observing".into();
+                            }
+                            Err(error) if agy_fifo && error == crate::agy_sdk::FIFO_DEFERRED => {
+                                entry.state = "queued".into();
                             }
                             Err(error) => {
                                 entry.state = if uncertain(&error) {
@@ -1605,6 +1616,7 @@ impl NativeSdks {
                             }))
                 } else {
                     raw["running"] != true
+                        || (source == "agy" && observed && raw["foreground_idle"] == true)
                 };
                 if done {
                     let error = raw

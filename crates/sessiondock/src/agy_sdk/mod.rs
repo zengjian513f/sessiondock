@@ -53,6 +53,9 @@ struct Data {
     steer_outcomes: HashMap<String, Result<Value, String>>,
     outstanding: usize,
     active: Option<String>,
+    active_launch: Option<LaunchSettings>,
+    foreground_idle: bool,
+    cancelling: bool,
     model: Option<String>,
     // Observed native state is presentation evidence, not a launch override.
     observed_model: Option<String>,
@@ -94,6 +97,59 @@ struct Steer {
     text: String,
     #[serde(default)]
     received_at: Option<String>,
+    #[serde(default)]
+    fifo: bool,
+}
+
+impl Steer {
+    fn item(&self) -> Value {
+        json!({"id":format!("agy:request:{}",self.id),"role":"user","content":self.text,
+            "request_id":self.id,"steered":!self.fifo,"fifo_control":self.fifo,"status":"queued",
+            "received_at":self.received_at})
+    }
+}
+
+fn is_control_input(item: &Value) -> bool {
+    item["steered"] == true || item["fifo_control"] == true
+}
+
+#[derive(PartialEq, serde::Serialize)]
+struct LaunchSettings {
+    model: Option<String>,
+    effort: Option<String>,
+    mode: Option<String>,
+}
+
+impl LaunchSettings {
+    fn for_turn(turn: &Turn) -> Self {
+        Self {
+            model: turn.model.clone(),
+            effort: turn.effort.clone(),
+            mode: turn.mode.clone(),
+        }
+    }
+
+    fn requested(data: &Data, input: &Value) -> Self {
+        Self {
+            model: choice(input, "model").or_else(|| data.model.clone()),
+            effort: choice(input, "effort").or_else(|| data.effort.clone()),
+            mode: choice(input, "mode").or_else(|| data.mode.clone()),
+        }
+    }
+}
+
+pub(crate) const FIFO_DEFERRED: &str = "agy_sdk_fifo_deferred";
+
+pub(crate) fn fifo_ready(raw: &Value, input: &Value) -> bool {
+    let launch = &raw["fifo_continuation"];
+    launch.is_object()
+        && ["model", "effort", "mode"].into_iter().all(|field| {
+            input[field]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .or_else(|| launch["defaults"][field].as_str())
+                == launch["active"][field].as_str()
+        })
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -137,7 +193,11 @@ fn log_step(live: &Live, turn: &Turn, native: &Native, step: &Value, idle: bool)
 
 enum Command {
     Turn(Turn),
-    Steer(Steer, oneshot::Sender<Result<Value, String>>),
+    Steer(
+        Steer,
+        Option<LaunchSettings>,
+        oneshot::Sender<Result<Value, String>>,
+    ),
     Interrupt(oneshot::Sender<Result<Value, String>>),
     Rename(String, oneshot::Sender<Result<Value, String>>),
     History(String, Value, oneshot::Sender<Result<Value, String>>),
@@ -351,10 +411,9 @@ impl Bridge {
                 let request = choice(&input, "request_id").unwrap_or_else(|| format!("local:{}", data.seq + 1));
                 if let Some(receipt) = data.receipts.get(&request) { return Ok(receipt.clone()); }
                 let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?.to_owned();
+                let launch = LaunchSettings::requested(&data, &input);
                 let turn = Turn { id: request.clone(), text: content.clone(),
-                    model: choice(&input,"model").or_else(|| data.model.clone()),
-                    effort: choice(&input,"effort").or_else(|| data.effort.clone()),
-                    mode: choice(&input,"mode").or_else(|| data.mode.clone()), recovering: false,
+                    model: launch.model, effort: launch.effort, mode: launch.mode, recovering: false,
                     persistent:true, runtime_id:request.clone(), stdout_offset:0, idle_checkpoint:false };
                 let mut turn = turn;
                 if let Some(runtime) = &data.runtime
@@ -382,7 +441,7 @@ impl Bridge {
                 if turn.runtime_id.is_empty() {
                     for item in &mut data.items {
                         if item["role"] == "user"
-                            && item["steered"] == true
+                            && is_control_input(item)
                             && item["native_id"].is_null()
                         {
                             item["status"] = json!("unknown");
@@ -401,9 +460,10 @@ impl Bridge {
                 live.publish(&mut data);
                 Ok(receipt)
             }
-            "steer" => {
+            "steer" | "fifo_turn" => {
                 let live = self.open(&target).await?;
                 let request = text(&input, "request_id")?;
+                let fifo = method == "fifo_turn";
                 {
                     let data = live.data.lock().unwrap();
                     if let Some(outcome) = data.steer_outcomes.get(&request) {
@@ -415,22 +475,29 @@ impl Bridge {
                 }
                 self.process.check_available(live.sid.clone()).await?;
                 let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?.to_owned();
-                if content.trim().is_empty() {
+                if !fifo && content.trim().is_empty() {
                     return Err("agy_sdk_empty_steer: 引导内容不能为空".into());
                 }
-                if live.data.lock().unwrap().outstanding == 0 {
-                    return Err(
-                        "agy_sdk_idle: 当前没有运行中的任务；请直接发送新回合。".into(),
-                    );
-                }
+                let launch = {
+                    let data = live.data.lock().unwrap();
+                    if fifo {
+                        Some(LaunchSettings::requested(&data, &input))
+                    } else {
+                        if data.outstanding == 0 {
+                            return Err("agy_sdk_idle: 当前没有运行中的任务；请直接发送新回合。".into());
+                        }
+                        None
+                    }
+                };
                 let steer = Steer {
                     id: request,
                     text: content,
                     received_at: Some(crate::sdk_message_time::now()),
+                    fifo,
                 };
                 let (sender, receiver) = oneshot::channel();
                 live.commands
-                    .send(Command::Steer(steer, sender))
+                    .send(Command::Steer(steer, launch, sender))
                     .map_err(|_| "agy_sdk_shutdown")?;
                 receiver.await.map_err(|_| "agy_sdk_shutdown".to_owned())?
             }
@@ -529,7 +596,7 @@ impl Bridge {
                 data.steers = binding.steers.clone();
                 for steer in binding.steers {
                     let receipt = json!({"accepted":true,"queued":true,"sdkhost":self.process.host_dir.is_some(),"request_id":steer.id,"session_id":live.sid,"consumption":"unverified","capabilities":capabilities()});
-                    data.items.push(json!({"id":format!("agy:request:{}",steer.id),"role":"user","content":steer.text,"request_id":steer.id,"steered":true,"status":"queued","received_at":steer.received_at}));
+                    data.items.push(steer.item());
                     data.receipts.insert(steer.id.clone(), receipt.clone());
                     data.steer_outcomes.insert(steer.id, Ok(receipt));
                 }
@@ -607,6 +674,9 @@ impl Bridge {
                 steer_outcomes: HashMap::new(),
                 outstanding: 0,
                 active: None,
+                active_launch: None,
+                foreground_idle: false,
+                cancelling: false,
                 model,
                 observed_model: None,
                 effort,
@@ -733,7 +803,14 @@ impl Live {
         } else {
             Vec::new()
         };
-        json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
+        let continuation = data.active_launch.as_ref().filter(|_| data.foreground_idle).map(|launch| {
+            json!({"active":launch,"defaults":{"model":data.model,"effort":data.effort,"mode":data.mode}})
+        });
+        let waiting = data.runtime.is_some()
+            && !data.foreground_idle
+            && data.steers.iter().any(|steer| steer.fifo);
+        json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
+            "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
             "items":data.items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
@@ -929,10 +1006,12 @@ async fn actor(
                 .await;
                 let _ = reply.send(result);
             }
-            Command::Steer(_, reply) => {
-                let _ = reply.send(Err(
-                    "agy_sdk_idle: 当前回合已结束，未发送引导；请重新发送。".into(),
-                ));
+            Command::Steer(steer, _, reply) => {
+                let _ = reply.send(Err(if steer.fifo {
+                    FIFO_DEFERRED.into()
+                } else {
+                    "agy_sdk_idle: 当前回合已结束，未发送引导；请重新发送。".into()
+                }));
             }
             Command::Interrupt(reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
@@ -941,6 +1020,9 @@ async fn actor(
                 {
                     let mut data = live.data.lock().unwrap();
                     data.active = Some(turn.id.clone());
+                    data.active_launch = Some(LaunchSettings::for_turn(&turn));
+                    data.foreground_idle = false;
+                    data.cancelling = false;
                     data.error = None;
                     data.error_kind = None;
                     data.model = turn.model.clone();
@@ -988,6 +1070,11 @@ async fn actor(
                     None
                 };
                 data.active = None;
+                data.active_launch = None;
+                if !retained || runtime.native.is_none() {
+                    data.foreground_idle = false;
+                }
+                data.cancelling = false;
                 data.outstanding = data.outstanding.saturating_sub(1);
                 if let Some(item) = data
                     .items
@@ -1005,7 +1092,7 @@ async fn actor(
                 if !retained || runtime.native.is_none() {
                     for item in &mut data.items {
                         if item["role"] == "user"
-                            && item["steered"] == true
+                            && is_control_input(item)
                             && item["native_id"].is_null()
                         {
                             item["status"] = json!("unknown");
@@ -1156,6 +1243,9 @@ async fn execute(
     if !turn.persistent { native.close_input().await?; }
     let mut result = None;
     let mut interrupted = native.cancelled(&turn.id);
+    if interrupted {
+        live.data.lock().unwrap().cancelling = true;
+    }
     let mut saw_assistant = false;
     loop {
         tokio::select! {
@@ -1167,27 +1257,39 @@ async fn execute(
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
-                Some(Command::Steer(steer,reply))=>{
+                Some(Command::Steer(steer,launch,reply))=>{
                     if let Some(existing)=live.data.lock().unwrap().steer_outcomes.get(&steer.id).cloned() {
                         let _=reply.send(existing);
                         continue;
                     }
-                    if interrupted {
+                    if let Some(launch)=launch {
+                        let ready=live.data.lock().unwrap().foreground_idle
+                            && launch==LaunchSettings::for_turn(turn) && !interrupted;
+                        if !ready || !native.foreground_idle().await {
+                            let mut data=live.data.lock().unwrap();
+                            if data.foreground_idle {
+                                data.foreground_idle=false;
+                                live.publish(&mut data);
+                            }
+                            let _=reply.send(Err(FIFO_DEFERRED.into()));
+                            continue;
+                        }
+                    } else if interrupted {
                         let _=reply.send(Err("agy_sdk_cancelling: 当前回合正在停止，无法发送引导。".into()));
                         continue;
                     }
                     let answer=native.steer(&steer.id,&steer.text).await;
                     log_turn(if answer.is_ok() {"info"} else {"warn"},"agy.sdk.steer",live,turn,json!({
                         "native_pid":native.pid(),"steer_id":steer.id,"method":"SendUserCascadeMessage",
-                        "sent":answer.is_ok(),"stdout_offset":native.stdout_offset,"input_bytes":steer.text.len()}));
+                        "sent":answer.is_ok(),"fifo":steer.fifo,"stdout_offset":native.stdout_offset,"input_bytes":steer.text.len()}));
                     let outcome=match answer {
                         Ok(())=>{
                             let receipt=json!({"accepted":true,"queued":true,"sdkhost":process.host_dir.is_some(),
                                 "request_id":steer.id,"session_id":live.sid,"consumption":"unverified","capabilities":capabilities()});
                             let steers_snapshot={
                                 let mut data=live.data.lock().unwrap();
-                                data.items.push(json!({"id":format!("agy:request:{}",steer.id),"role":"user","content":steer.text,
-                                    "request_id":steer.id,"steered":true,"status":"queued","received_at":steer.received_at}));
+                                data.foreground_idle=false;
+                                data.items.push(steer.item());
                                 data.steers.push(steer.clone());
                                 data.receipts.insert(steer.id.clone(),receipt.clone());
                                 data.steer_outcomes.insert(steer.id.clone(),Ok(receipt.clone()));
@@ -1225,6 +1327,11 @@ async fn execute(
                         "stdout_offset":native.stdout_offset}));
                     if answer.is_ok() {
                         interrupted=true;
+                        {
+                            let mut data=live.data.lock().unwrap();
+                            data.cancelling=true;
+                            data.foreground_idle=false;
+                        }
                         live.diagnostic("\n原生已接受当前回合取消；子代理和后台任务继续运行。Agy headless 的最终回执可能等待这些任务结束；等待期间不会发送终止信号。\n".into());
                     }
                     let _=reply.send(answer.map(|()|json!({"interrupted":true,"session_id":live.sid})));
@@ -1405,6 +1512,9 @@ fn write_binding(
 fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
     let time = crate::sdk_message_time::MessageTime::new(step, received);
     let mut data = live.data.lock().unwrap();
+    if data.active.is_some() {
+        data.foreground_idle = false;
+    }
     if step["usage"].is_object() {
         data.step_usage = step["usage"].clone();
     }
@@ -1443,12 +1553,18 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
             .iter()
             .position(|item| item["role"] == "user" && item["native_id"] == native_id)
             .or_else(|| {
-                data.items.iter().position(|item| {
+                let pending = data.items.iter().position(|item| {
                     item["role"] == "user"
                         && item["native_id"].is_null()
                         && item["status"] != "unknown"
                         && (step["client_message_id"].is_null()
                             || item["request_id"] == step["client_message_id"])
+                });
+                // Unkeyed NDJSON must not guess the identity of a FIFO
+                // continuation or skip over it to an explicit steer.
+                pending.filter(|&index| {
+                    step["client_message_id"].is_string()
+                        || data.items[index]["fifo_control"] != true
                 })
             });
         if let Some(index) = target {

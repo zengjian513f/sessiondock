@@ -121,6 +121,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.send_response(503);self.end_headers();return
             usage=json.loads((root/'context-usage.json').read_text()) if (root/'context-usage.json').exists() else None
             update={'conversationId':sid if mode!='wrong-sid' else 'unrelated','contextWindowUsage':usage}
+            foreground=root/'foreground-status'
+            if foreground.exists():
+                status='CASCADE_RUN_STATUS_'+foreground.read_text().strip()
+                update.update(status=status,executableStatus=status,executorLoopStatus=status)
             data=json.dumps({'update':update}).encode()
             framed=bytes([2 if mode=='end' else 0])+len(data).to_bytes(4,'big')+data
             self.send_response(200);self.send_header('Content-Type','application/connect+json');self.end_headers()
@@ -338,7 +342,7 @@ for line in sys.stdin:
         assert Path(token).name==token
         step('agent_response',state='ACTIVE',text_delta='Agy running '+token+' ')
         steered_seen=False
-        deadline=time.monotonic()+25
+        deadline=time.monotonic()+(55 if token=='foreground' else 25)
         while not (root/'release'/token).exists() and not cancelled.is_set():
             if not (root/'steer-echo-delay').exists() and delayed_steps:
                 for event in delayed_steps:emit(event)

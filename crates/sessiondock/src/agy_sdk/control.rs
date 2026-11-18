@@ -16,6 +16,13 @@ pub(super) struct Control {
     temporary: bool,
 }
 
+pub(super) fn foreground_idle(update: &serde_json::Value, sid: &str) -> bool {
+    update["conversationId"] == sid
+        && ["status", "executableStatus", "executorLoopStatus"]
+            .into_iter()
+            .all(|field| update[field] == "CASCADE_RUN_STATUS_IDLE")
+}
+
 impl Control {
     pub fn prepare(
         root: Option<&Path>,
@@ -116,13 +123,18 @@ impl Control {
         .map(|_| ())
     }
 
-    pub async fn context(&self, pid: u32, sid: &str) -> Result<serde_json::Value, String> {
+    pub async fn state(
+        &self,
+        pid: u32,
+        sid: &str,
+        subscriber: &str,
+    ) -> Result<serde_json::Value, String> {
         self.request(
             pid,
             "StreamAgentStateUpdates",
             json!({
                 "conversationId": sid, "disableRehydration": true,
-                "subscriberId": "sessiondock-context",
+                "subscriberId": subscriber,
                 // Nonzero empty slices avoid the native zero/default = full-history behavior.
                 "initialStepsPageBounds": {"startIndex":1,"endIndexExclusive":1},
                 "initialGeneratorMetadatasPageBounds": {"startIndex":1,"endIndexExclusive":1},

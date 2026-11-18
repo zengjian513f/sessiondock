@@ -676,6 +676,16 @@ impl Native {
         control.steer(self.pid, &self.sid, request_id, text).await
     }
 
+    pub(super) async fn foreground_idle(&mut self) -> bool {
+        let Some(control) = &self.control else {
+            return false;
+        };
+        control
+            .state(self.pid, &self.sid, "sessiondock-fifo")
+            .await
+            .is_ok_and(|value| super::control::foreground_idle(&value["update"], &self.sid))
+    }
+
     pub async fn terminate(&mut self) {
         crate::log::transition(
             "warn",

@@ -1,12 +1,12 @@
 //! Agy can persist steered input while headless output waits for an older tool.
 //! Join by the native clientMessageId, never by body text or step position.
-use super::{Live, Turn, project, transport::ProcessConfig};
+use super::{Live, Turn, is_control_input, project, transport::ProcessConfig};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 
 pub(super) fn pending(live: &Live) -> bool {
     live.data.lock().unwrap().items.iter().any(|item| {
-        item["steered"] == true && item["native_id"].is_null() && item["status"] != "unknown"
+        is_control_input(item) && item["native_id"].is_null() && item["status"] != "unknown"
     })
 }
 
@@ -59,7 +59,7 @@ pub(super) async fn refresh(process: &ProcessConfig, live: &Live, turn: &Turn) {
         .items
         .iter()
         .filter(|item| {
-            item["steered"] == true && item["native_id"].is_null() && item["status"] != "unknown"
+            is_control_input(item) && item["native_id"].is_null() && item["status"] != "unknown"
         })
         .filter_map(|item| item["request_id"].as_str().map(str::to_owned))
         .collect();

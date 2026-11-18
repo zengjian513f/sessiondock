@@ -35,6 +35,60 @@ def capture(page, shots: Path | None, name: str):
         pane.screenshot(path=str(shots / f'{name}-pane.png'))
 
 
+def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server):
+    root = fixture.root
+    status = root / 'foreground-status'
+    status.write_text('RUNNING')
+    (root / 'native-echo-store').touch()
+    send(page, 'hold:foreground')
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('native_echo') and item.get('content') == 'hold:foreground'
+        for item in raw['items']))
+    pid = fixture.inputs('hold:foreground')[0]['pid']
+    echo = root / 'steer-echo-delay'
+    echo.touch()
+    consume = root / 'steer-consume-delay'
+    consume.touch()
+    first = 'foreground FIFO first ' + label
+    second = 'foreground FIFO second ' + label
+    send(page, first)
+    send(page, second)
+    queued = page.locator('.sdk-queued').filter(has_text=second)
+    expect(queued).to_be_visible()
+    capture(page, shots, f'{label}-foreground-running-queue')
+    assert not fixture.steers(first) and not fixture.steers(second)
+
+    status.write_text('IDLE')
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('content') == first and item.get('fifo_control') and not item.get('native_echo')
+        for item in raw['items']))
+    assert not fixture.steers(second), 'a later FIFO input overtook the native echo'
+    assert not (root / 'release/foreground').exists()
+    if restart_server:
+        base = restart_server()
+        page.goto(base, wait_until='domcontentloaded')
+        open_sdk(page, fixture, expect, uid=uid)
+        expect(queued).to_be_visible()
+        assert len(fixture.steers(first)) == 1
+    consume.unlink()
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('content') == second and item.get('native_echo') and item.get('steered') is False
+        for item in raw['items']))
+    for text in (first, second):
+        deliveries = fixture.steers(text)
+        assert len(deliveries) == 1 and deliveries[0]['pid'] == pid
+        assert not fixture.inputs(text)
+    assert not (root / 'release/foreground').exists()
+    expect(queued).to_have_count(0)
+    capture(page, shots, f'{label}-foreground-fifo-delivered')
+    echo.unlink()
+    fixture.release('foreground')
+    wait_snapshot(page, uid, lambda raw: not raw['running'])
+    status.unlink()
+    (root / 'native-echo-store').unlink()
+    return base
+
+
 def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, restart_server=None):
     errors = []
     page.set_default_timeout(15000)
@@ -285,6 +339,8 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
     api_msgs = page.request.get(f"{base}/api/messages/{quote(uid, safe='')}").json()
     raw_history = json.dumps(api_msgs.get('messages', []), ensure_ascii=False)
     assert raw_history.index('hold:steer') < raw_history.index('converted steer ' + label) < raw_history.index('Agy steered: converted steer ' + label) < raw_history.index('finished steer') < raw_history.index('ordinary FIFO ' + label)
+
+    base = check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server)
 
     # Uncertain transport loss before response body is retained as unknown and never replayed.
     send(page, 'hold:uncertain')
