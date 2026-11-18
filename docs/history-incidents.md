@@ -1,5 +1,42 @@
 # 历史事故与验收记录
 
+## 2026-11-18：Agy 子代理后台任务状态
+
+BUG-20261118-043820-6e33ab：报告里的原生终端仍显示 S015 子代理 Generating，
+原生目录和镜像却为 IDLE。完整 transcript 第 394 步创建的十分钟定时器尚未唤醒，
+第 395 步的最终回复仅说明等待检查。首个错误在摘要把目录 IDLE 直接映射为
+`active: false`，忽略后台任务；此外普通对话／SDK 底栏把只读查看误写成未运行。
+修复按本 SID 的原生任务头和通知 sender 核销任务，最终回复不关闭后台任务；
+镜像升级、改写、回退及正文暂缺沿用读取合同。底栏复用列表的活跃状态和父进程
+存活证据，可用操作仍按既有能力判断。
+实现位于 [Agy 镜像](../crates/sessiondock/src/sessions/agy.rs)、
+[Agy 摘要](../crates/sessiondock/src/sessions/index/summary/agy.rs) 和
+[共用底栏](../web/app.js)；合同与回归分别见 [Agy](agy.md) 和
+[子代理浏览器](../tests/agy_nesting_browser.py)。
+
+隔离 Chromium 验证通过：agy_nesting_browser（目录 IDLE、命令完成、定时器唤醒、
+引用与异 SID 通知、重启停止、镜像升级、改写回退、父进程退出／恢复、搜索和分页、
+普通对话／SDK、宽窄明暗）；history_browser、history_pages_browser、kiro_subagents_browser；
+sdk_start_stop_browser 的 Codex/Agy 节点与 Hub、独立 Codex 子会话启停。
+完整页面已亲自看图，运行与结束时列表、菜单及底栏一致，沿用已有绿色状态样式。
+未运行真实 CLI 推理，未手工修改生产会话。
+
+agy_history_browser 的历史、增量、搜索和分页步骤通过，最后的原生目录删除／侧栏
+刷新在修复版和旧 release 都于第 1023 行超时，沿用 TODO 中已有未完成项。
+首轮部署测试门未上传：全包格式检查有既有差异，Clippy 发现 43 条既有告警及
+一条新增迭代器写法告警；新增告警已修正。测试夹具的 ptyhost 路径也已改为复用
+仓库测试二进制，修正后专项重新通过。本次修改文件的 Rust 格式、JavaScript 语法、
+文档链接、规则及差异空白检查通过；全包检查不计为通过。
+
+运行时提交 `7e7b622c` 已推送，版本 `20261118T045815532353Z`。发布使用已完成的
+范围化验证及 `--test none`，最终发布二进制、Web 与同快照测试另跑
+agy_nesting_browser 通过。Lyra 上原报告子会话的只读核验结果为目录 IDLE、
+未完成后台任务 1、API `active: true`。
+完整范围 Lyra、Cygnus、Pavo、Orion、Hub、Vela、Cetus 均已正式尝试；
+Lyra、Cygnus、Pavo、Hub、Vela 已部署、重启并健康，原会话宿主保留。
+Orion、Cetus SSH 超时，待联网补发。资源代理不在范围内；未替换 ptyhost/sdkhost，
+保留回滚。报告：`target/deploy/20261118-045815-7e7b622c/report-20261118-050227.json`。
+
 ## 2026-11-17：外部会话额度分组与底栏简写
 
 BUG-20261117-094310-1e6304：诊断显示 Droid 外部会话未连接 SDK；用户确认
