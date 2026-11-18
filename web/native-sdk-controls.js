@@ -19,6 +19,69 @@ const NativeSdkControls = {
     if (Number.isFinite(parsed)) return UsageUI.reset(Math.round(parsed / 1000));
     return str.startsWith('·') ? ` ${str}` : ` · ${str}${str.includes('重置') ? '' : ' 后重置'}`;
   },
+  timerDetails(timers, receipt, runtimeError) {
+    return {
+      layout: 'timers',
+      key: JSON.stringify([timers, receipt, runtimeError]),
+      render: menu => this.paintTimerDetails(menu, timers, receipt, runtimeError),
+    };
+  },
+  timerDelay(delay) {
+    const units = {ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000};
+    const input = delay.replace(/\s+/g, '');
+    const parts = [...input.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)];
+    if (!input || parts.map(part => part[0]).join('') !== input) return NaN;
+    return parts.reduce((total, [, amount, unit]) => total + Number(amount) * units[unit], 0);
+  },
+  pendingTimers(timers) {
+    const now = Date.now();
+    const deadline = timer => Number.isFinite(timer.due) ? timer.due : Number.MAX_VALUE;
+    return timers.map(timer => {
+      const delay = this.timerDelay(timer.delay);
+      const created = Date.parse(timer.created_at);
+      const due = new Date(created + delay).getTime();
+      return {...timer, created, due, delayMs: delay};
+    }).filter(timer => !Number.isFinite(timer.due) || timer.due > now)
+      .sort((left, right) => deadline(left) - deadline(right));
+  },
+  paintTimerDetails(menu, timers, receipt, runtimeError) {
+    const list = el('ul', 'sdk-timer-list');
+    const header = el('div', 'sdk-control-section sdk-timer-heading');
+    header.append(el('h3', '', '后台定时任务'), el('p', 'sdk-control-note', receipt));
+    if (runtimeError) header.append(el('p', 'sdk-control-note', runtimeError));
+
+    const time = (stamp, compact = false) => {
+      const formatted = ConversationUI.messageTimeFormatter.format(stamp);
+      const node = el('time', '', compact ? formatted.slice(5, 16) : formatted);
+      node.dateTime = new Date(stamp).toISOString();
+      node.title = formatted;
+      return node;
+    };
+    for (const timer of timers) {
+      const item = el('li', 'sdk-timer-item');
+      if (timer.prompt) item.append(el('p', 'sdk-timer-prompt', timer.prompt));
+      const timing = el('div', 'sdk-timer-timing');
+      if (Number.isFinite(timer.due)) {
+        const due = el('span', 'sdk-timer-due', '预计触发 ');
+        due.append(time(timer.due, true));
+        timing.append(due);
+      }
+      const delay = Number.isFinite(timer.delayMs) ? formatDuration(timer.delayMs) : timer.delay;
+      if (delay) timing.append(el('span', '', `延时 ${delay}`));
+      if (timing.childElementCount) item.append(timing);
+      if (Number.isFinite(timer.created)) {
+        const origin = el('div', 'sdk-timer-origin', '设置于 ');
+        origin.append(time(timer.created));
+        item.append(origin);
+      }
+      list.append(item);
+    }
+    const scrollTop = menu.querySelector('.sdk-timer-body')?.scrollTop || 0;
+    const body = el('div', 'sdk-timer-body');
+    body.append(list);
+    menu.replaceChildren(header, body);
+    body.scrollTop = scrollTop;
+  },
   mount(view) {
     view.settingChoices = new Map(); view.nativeSettingValues = new Map();
     view.usageRead=null;view.usageRetryTimer=0;view.usageRetryDelay=1000;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -47,20 +48,26 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
             'UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
             (SID, 'Training monitor', child))
 
-    def timer(index, delay, prompt):
+    def timer(index, delay, prompt, created_at=None):
         value = record(index, 'GENERIC',
                        'Created At: 2026-10-04T00:00:00Z\n'
                        f'Tool is running as a background task with task id: {child}/task-{index}\n'
                        f'Task Description: Timer: {delay}, Prompt: {prompt}\n'
                        'Task logs are available at: file:///private/timer.log')
         value['status'] = 'RUNNING'
+        if created_at:
+            value['created_at'] = created_at
         return value
 
     training = '核对训练进度，检查每个种子的最后一个分段，完成后导出预测并报告异常。'
     replay = '确认所有历史回放已运行完毕。'
-    tasks = [timer(2, '5m', 'already completed'), timer(3, '35m', training), timer(4, '1h 30m', replay),
+    now = datetime.now(timezone.utc).isoformat()
+    older = '旧巡检 8：核对上一次训练与导出日志。'
+    elapsed = [timer(index, '2m30s', f'旧巡检 {index}：核对上一次训练与导出日志。')
+               for index in range(8, 20)]
+    tasks = [timer(2, '5m', 'already completed'), timer(3, '35m', training, now), timer(4, '1h 30m', replay, now),
              system_record(5, 'Timer fired', sender=f'{child}/task-2')]
-    write_transcript(fixture.native, child, tasks)
+    write_transcript(fixture.native, child, [*tasks, *elapsed])
     send(page, 'hold:foreground')
     wait_snapshot(page, uid, lambda raw: any(
         item.get('native_echo') and item.get('content') == 'hold:foreground'
@@ -81,21 +88,43 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
             notice.press('Enter')
         expect(details).to_be_visible()
         expect(details).to_contain_text('Agy 前台已空闲')
-        expect(details).to_contain_text('35m')
+        expect(details).to_contain_text('35 分')
         expect(details).to_contain_text(training)
-        expect(details).to_contain_text('1h 30m')
+        expect(details).to_contain_text('1 小时 30 分')
         expect(details).to_contain_text(replay)
         expect(details).not_to_contain_text('already completed')
         expect(details).not_to_contain_text('file:///')
+        expect(details.locator('.sdk-timer-body > .sdk-timer-list > li')).to_have_count(2)
+        expect(details.get_by_text(older, exact=True)).to_have_count(0)
+        bounds = details.bounding_box()
+        assert bounds['x'] >= 7 and bounds['x'] + bounds['width'] <= width - 7, bounds
+        if width == 1280:
+            assert abs(bounds['x'] - notice.bounding_box()['x']) <= 2, bounds
         capture(page, shots, f'{label}-foreground-timers-{width}-{theme}')
         page.keyboard.press('Escape')
         expect(details).to_be_hidden()
+    expiring = '即将到期的巡检任务。'
+    many = [timer(20, '15s', expiring, datetime.now(timezone.utc).isoformat()),
+            *(timer(step, '2h10m', f'第 {step} 项巡检：核对训练节点与导出任务进度。', now)
+              for step in range(21, 30))]
+    notice.click()
+    write_transcript(fixture.native, child, [*tasks, *elapsed, *many])
+    expect(details.get_by_text(expiring, exact=True)).to_be_visible(timeout=12000)
+    assert details.bounding_box()['height'] <= 421
+    assert details.locator('.sdk-timer-body').evaluate('body => body.scrollHeight > body.clientHeight')
+    details.get_by_text('第 29 项巡检：核对训练节点与导出任务进度。', exact=True).scroll_into_view_if_needed()
+    expect(details.get_by_role('heading', name='后台定时任务')).to_be_in_viewport()
+    capture(page, shots, f'{label}-foreground-timers-scroll-390-dark')
+    expect(details.get_by_text(expiring, exact=True)).to_have_count(0, timeout=18000)
+    expect(details.get_by_text(older, exact=True)).to_have_count(0)
+    page.keyboard.press('Escape')
     page.emulate_media(color_scheme='light')
     resize_sdk(page, uid, 1280)
     notice.click()
-    write_transcript(fixture.native, child, [*tasks,
-        system_record(6, 'Timer fired', sender=f'{child}/task-3'),
-        system_record(7, 'Timer fired', sender=f'{child}/task-4')])
+    write_transcript(fixture.native, child, [*tasks, *elapsed, *many,
+        system_record(30, 'Timer fired', sender=f'{child}/task-3'),
+        system_record(31, 'Timer fired', sender=f'{child}/task-4'),
+        *(system_record(step + 12, 'Timer fired', sender=f'{child}/task-{step}') for step in range(21, 30))])
     expect(notice).to_have_text('等待回执', timeout=20000)
     expect(details).to_be_visible()
     expect(details).not_to_contain_text(training)

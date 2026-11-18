@@ -553,9 +553,9 @@ const SdkUI = {
     updateStatusDisclosure() {
       if (this.notice) ConversationUI.updateStatusDisclosure(this.notice, this.pane.querySelector('#sdk-status-menu'));
     },
-    setNotice(text, kind = '', sticky = false) {
+    setNotice(text, kind = '', sticky = false, detail = null) {
       if (!this.notice) return;
-      this.baseNotice = [text, kind, sticky];
+      this.baseNotice = [text, kind, sticky, detail];
       if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
       this.notice.querySelector('[role=status]').textContent = ConversationUI.statusSummary(text, kind);
       this.notice.title = text;
@@ -564,8 +564,17 @@ const SdkUI = {
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
       const details = this.pane.querySelector('#sdk-status-menu');
-      if (details.textContent !== text) {
-        details.textContent = text;
+      const changed = detail ? details._statusDetail?.key !== detail.key
+        : !!details._statusDetail || details.textContent !== text;
+      details._statusDetail = detail;
+      if (changed) {
+        if (detail) {
+          details.dataset.statusLayout = detail.layout;
+          detail.render(details);
+        } else {
+          delete details.dataset.statusLayout;
+          details.textContent = text;
+        }
         if (details.matches(':popover-open')) this.placeMenu(details, this.notice);
       }
       paintComposerRunControl(this.notice, this.uid, this.agent, 'sdk', this);
