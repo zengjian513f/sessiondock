@@ -25,10 +25,14 @@
   版本 `20261115T165812622765Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、
   Vela 已部署服务与前端、重启并健康，原有会话宿主保留。
 
-- [ ] Orion、Cetus 补发当前前端 `c0a26bc2`（BUG-20261118-100229-92fa67，
-  版本 `20261118T101343540195Z`）。包含路径误判修复及 `fb9f8249` 的额度底栏更新。
-  正式 SSH 尝试均超时。Lyra、Cygnus、Pavo、Hub、Vela 的前端已更新、重启并健康。
-  联网后使用部署工具 `--web-only` 补发。
+- [ ] Orion、Cetus 补发当前前端 `8d3f5359`（BUG-20261119-132544-b0cff9，
+  版本 `20261119T133441705090Z`），包含目录后退、路径误判 `c0a26bc2` 及
+  额度底栏 `fb9f8249` 修复。正式 SSH 尝试均超时。Lyra、Cygnus、Pavo、Hub、Vela
+  已更新前端、重启并通过健康检查。联网后用 `--web-only` 补发。
+
+- [ ] 核对目录后退验收中两套旧浏览器用例：`session_deep_link_browser.py` 的桌面
+  侧栏滚动检查和 `session_global_actions_browser.py` 的刷新后侧栏收起检查在修复前基线也失败。
+  节点／Hub 目录导航专项与深链的手机导航步骤已通过。
 
 - [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
   （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
