@@ -188,6 +188,7 @@ model=option('--model') or ((root/'init-model').read_text() if (root/'init-model
 if model:init['model']=model
 emit({'event':'init','conversation_id':init_sid,'init':init})
 malformed_error='Your previous response contained an improperly formatted function call: Malformed function call: Failed to parse function call: Function call is empty - no input to parse.\nPlease retry with a properly formatted function call\nRetries remaining: 3'
+stream_error='The stream was interrupted. Please continue the task you were working on.'
 first_input=True
 for line in sys.stdin:
     message=json.loads(line)
@@ -251,7 +252,7 @@ for line in sys.stdin:
         answer='本轮完整回复：历史错误未污染本轮。'
         native_record('PLANNER_RESPONSE',answer)
         step('agent_response',state='DONE');advance()
-        result('ERROR',answer+'\n','The stream was interrupted. Please continue the task you were working on.')
+        result('ERROR',answer+'\n',stream_error)
         continue
     if text in ('__RECOVERED_API_RETRY__', '__RECOVERED_API_MULTI_RETRY__',
                 '__HISTORICAL_AFTER_MULTI_RETRY__', '__UNRECOVERED_API_RETRY__',
@@ -277,7 +278,7 @@ for line in sys.stdin:
         result('ERROR','先前工具步骤\n'+answer+'\n',retry_err1)
         continue
     if text in ('__RECOVERED_STREAM__', '__UNRECOVERED_STREAM__') or text.startswith('好，请在独立工作区'):
-        error='The stream was interrupted. Please continue the task you were working on.'
+        error=stream_error
         native_record('PLANNER_RESPONSE','正在核对审计结果。')
         step('agent_response',state='DONE');advance()
         native_record('ERROR_MESSAGE','Error: '+error,error=error)
@@ -369,12 +370,21 @@ for line in sys.stdin:
             result('CANCELED',error='synthetic native cancellation')
             continue
         if steered_seen:
-            answer='finished '+token
-            native_record('PLANNER_RESPONSE',answer)
-            step('agent_response',state='DONE',text_delta=answer);advance()
+            if token=='foreground':
+                answer=steer_reply
+            else:
+                answer='finished '+token
+                native_record('PLANNER_RESPONSE',answer)
+                step('agent_response',state='DONE',text_delta=answer);advance()
             with sqlite3.connect(native/'conversation_summaries.db') as catalog:
                 catalog.execute('UPDATE conversation_summaries SET step_count=?,last_modified_time=? WHERE conversation_id=?',(index,'2026-10-18T00:00:01Z',sid))
-            result('SUCCESS',answer)
+            if token=='foreground':
+                for event in delayed_steps:emit(event)
+                delayed_steps.clear()
+                result('ERROR',answer,stream_error)
+                (root/'foreground-result-written').touch()
+            else:
+                result('SUCCESS',answer)
             continue
         step('agent_response',state='DONE',text_delta='finished '+token);advance()
         if token=='offline-times':

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
@@ -69,12 +70,14 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     tasks = [timer(2, '5m', 'already completed'), timer(3, '35m', training, now), timer(4, '1h 30m', replay, now),
              system_record(5, 'Timer fired', sender=f'{child}/task-2')]
     write_transcript(fixture.native, child, [*tasks, *elapsed])
+    notice = page.locator('#sdk-composer .sdk-status')
+    send(page, '__UNRECOVERED_STREAM__')
+    expect(notice).to_have_text('错误')
     send(page, 'hold:foreground')
     wait_snapshot(page, uid, lambda raw: any(
         item.get('native_echo') and item.get('content') == 'hold:foreground'
         for item in raw['items']))
     pid = fixture.inputs('hold:foreground')[0]['pid']
-    notice = page.locator('#sdk-composer .sdk-status')
     details = page.locator('#sdk-status-menu')
     expect(notice).to_have_text('处理中')
     status.write_text('IDLE')
@@ -169,9 +172,35 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     assert not (root / 'release/foreground').exists()
     expect(queued).to_have_count(0)
     capture(page, shots, f'{label}-foreground-fifo-delivered')
-    echo.unlink()
-    fixture.release('foreground')
-    wait_snapshot(page, uid, lambda raw: not raw['running'])
+
+    def finish_foreground():
+        fixture.release('foreground')
+        deadline = time.monotonic() + 5
+        while not (root / 'foreground-result-written').exists():
+            assert time.monotonic() < deadline, 'fake Agy did not emit the final receipt'
+            time.sleep(0.02)
+        echo.unlink()
+
+    if restart_server:
+        # Rebuild both FIFO echoes from a burst of unkeyed native output
+        # followed by the stale ERROR receipt after the service stopped.
+        base = restart_server(finish_foreground)
+        page.goto(base, wait_until='domcontentloaded')
+        open_sdk(page, fixture, expect, uid=uid)
+    else:
+        finish_foreground()
+    snapshot = wait_snapshot(page, uid, lambda raw:
+                             (raw.get('last_turn') or {}).get('status') in ('completed', 'failed')
+                             and any(item.get('content') == 'hold:foreground' for item in raw['items']))
+    raw = snapshot['raw']
+    assert raw['last_turn']['status'] == 'completed' and raw['error'] is None, raw['error']
+    assert 'prior turn; current native response completed' in raw['diagnostics']
+    expect(notice).to_have_text('就绪', timeout=20000)
+    messages = page.locator('.sdk-msgs')
+    expect(messages.get_by_text(second, exact=True)).to_have_count(1)
+    expect(messages).to_contain_text('Agy steered: '+second)
+    assert all(len(fixture.steers(text)) == 1 for text in (first, second))
+    capture(page, shots, f'{label}-foreground-fifo-completed')
     status.unlink()
     (root / 'native-echo-store').unlink()
     return base
@@ -555,8 +584,10 @@ def main():
                         stack.callback(hub.stop)
                         base = f'http://127.0.0.1:{hub.port}'
                     else:
-                        def restart_cb():
+                        def restart_cb(while_stopped=None):
                             stop_node()
+                            if while_stopped:
+                                while_stopped()
                             return start_node()
 
                     context = browser.new_context(viewport={'width': 1280, 'height': 900}, color_scheme='light', service_workers='block')

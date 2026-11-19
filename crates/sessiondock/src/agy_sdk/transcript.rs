@@ -1,6 +1,6 @@
 //! Metadata-only headless notifications refer to the selected SID's native
 //! transcript. Never render their transport fields as conversational content.
-use super::{Live, Turn, project, transport::ProcessConfig};
+use super::{Live, Turn, echo, project, transport::ProcessConfig};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -52,6 +52,10 @@ pub(super) async fn conflicting_result(
     if result["status"] != "ERROR" || error.trim().is_empty() {
         return json!({"conflict":false,"reason":"not_error"});
     }
+    // During replay a result can arrive before the periodic echo lookup.
+    // FIFO step notifications omit the client message ID; resolve it from
+    // native storage before deciding which inputs belong to this result.
+    echo::refresh(process, live, turn).await;
     let retry_error_target = is_api_retry_error(error);
     let (user_index, turn_user_steps) = {
         let data = live.data.lock().unwrap();
