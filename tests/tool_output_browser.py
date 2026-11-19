@@ -2,6 +2,7 @@
 """Droid tool arguments/output: wrapped defaults, scrollable tail and full expansion."""
 import argparse
 import json
+import re
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,33 +57,33 @@ def check(browser, base, label, shots):
         assert output.evaluate('(e) => e.scrollTop') == tail
         output.scroll_into_view_if_needed()
 
-        def swipe_down():
-            box = output.bounding_box()
+        def swipe(body, dx, dy):
+            box = body.bounding_box()
             cdp = context.new_cdp_session(page)
             x, y = box['x'] + box['width'] * .6, box['y'] + 25
             cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y}]})
             for step in range(1, 7):
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove',
-                    'touchPoints': [{'x': x, 'y': y + step * 12}]})
+                    'touchPoints': [{'x': x + step * dx, 'y': y + step * dy}]})
                 page.wait_for_timeout(20)
             cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
             page.wait_for_timeout(300)
             cdp.detach()
 
         outer_before = outer.evaluate('(e) => e.scrollTop')
-        swipe_down()
+        swipe(output, 0, 12)
         assert output.evaluate('(e) => e.scrollTop') == tail
         assert outer.evaluate('(e) => e.scrollTop') < outer_before
         output.scroll_into_view_if_needed()
         output.click(position={'x': 40, 'y': 40})
-        expect(tool).to_have_class(__import__('re').compile('text-scroll-active'))
+        expect(tool).to_have_class(re.compile('text-scroll-active'))
         assert tool.evaluate('(e) => getComputedStyle(e).outlineStyle') == 'none'
         assert output.evaluate('(e) => !e.isContentEditable && e.contains(getSelection().anchorNode)')
         before = output.inner_text()
         page.keyboard.type('do-not-edit')
         page.keyboard.press('Backspace')
         assert output.inner_text() == before
-        swipe_down()
+        swipe(output, 0, 12)
         assert output.evaluate('(e) => e.scrollTop') < tail
         output.hover()
         page.mouse.wheel(0, -100000)
@@ -92,7 +93,7 @@ def check(browser, base, label, shots):
         assert page.evaluate('getSelection().toString().length > 0')
         page.screenshot(path=str(shots / f'{label}-{width}-{theme}-selected.png'), full_page=True)
         page.locator('#sdk-input').click()
-        expect(tool).not_to_have_class(__import__('re').compile('text-scroll-active'))
+        expect(tool).not_to_have_class(re.compile('text-scroll-active'))
         output.scroll_into_view_if_needed()
         output.hover()
         page.mouse.wheel(0, 120)
@@ -111,10 +112,23 @@ def check(browser, base, label, shots):
         wrap.click()
         expect(wrap).to_have_attribute('aria-pressed', 'false')
         assert args.evaluate('(e) => e.scrollWidth > e.clientWidth')
+        expect(tool).not_to_have_class(re.compile('text-scroll-active'))
+        args.hover()
+        page.mouse.wheel(160, 0)
+        page.wait_for_function('e => e.scrollLeft > 0', arg=args.element_handle())
         wrap.click()
-        page.screenshot(path=str(shots / f'{label}-{width}-{theme}-final.png'), full_page=True)
+        tool.locator('.tool-wrap').nth(1).click()
+        output.scroll_into_view_if_needed()
+        expect(tool).not_to_have_class(re.compile('text-scroll-active'))
+        assert output.evaluate('e => e.scrollWidth > e.clientWidth')
+        before = (output.evaluate('e => e.scrollTop'), outer.evaluate('e => e.scrollTop'))
+        page.screenshot(path=str(shots / f'{label}-{width}-{theme}-horizontal-start.png'), full_page=True)
+        swipe(output, -12, 0)
+        assert output.evaluate('e => e.scrollLeft') > 0
+        assert (output.evaluate('e => e.scrollTop'), outer.evaluate('e => e.scrollTop')) == before
+        page.screenshot(path=str(shots / f'{label}-{width}-{theme}-horizontal-end.png'), full_page=True)
         context.close()
-        print(f'PASS {label} {width}/{theme}: wrapped arguments/output, tail, wheel, full expansion, collapse', flush=True)
+        print(f'PASS {label} {width}/{theme}: tool tail, selection, expansion, unselected horizontal wheel/swipe and vertical list scroll', flush=True)
 
 
 def main():

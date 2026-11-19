@@ -85,12 +85,13 @@ def main():
      diff=process.locator('.file-change-body').first
      card=process.locator('.file-change-card').first
      page.locator('.dtitle h2').first.click()
-     diff.hover();page.mouse.wheel(180,0);page.wait_for_timeout(100)
-     assert diff.evaluate('e=>e.scrollLeft')==0
+     expect(card).not_to_have_class(re.compile('text-scroll-active'))
+     diff.hover();page.mouse.wheel(180,0)
+     page.wait_for_function('e=>e.scrollLeft>0',arg=diff.element_handle())
      diff.locator('code').first.click(position={'x':30,'y':8})
      expect(card).to_have_class(re.compile('text-scroll-active'))
-     diff.hover();page.mouse.wheel(180,0)
-     page.wait_for_function('document.querySelector(".file-change-body").scrollLeft>0')
+     diff.hover();page.mouse.wheel(-100000,0)
+     page.wait_for_function('e=>e.scrollLeft===0',arg=diff.element_handle())
      wrap.click()
      done('sd.conversation.file-diff-wrap','Diff wrap control toggles aria state and restores original layout',width)
      link=msgs.locator('a[data-file-ref]').last

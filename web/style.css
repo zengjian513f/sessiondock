@@ -1747,16 +1747,16 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   border-left: 3px solid var(--border); color: var(--muted); white-space: pre-wrap;
 }
 
-/* Inactive bubbles pass wheel/touch scrolling to the conversation. Programmatic
-   tail positioning still works with hidden overflow; text stays selectable. */
+/* Inactive previews pass vertical scrolling to the conversation and still
+   allow programmatic tail positioning. Wide content keeps its horizontal scrollport. */
 .tool-entry:not(.text-scroll-active) > .tool-text-frame > pre,
 .file-change-card:not(.text-scroll-active) .file-change-body,
+.event-detail-body:not(.text-scroll-active),
+.event-detail-body:not(.text-scroll-active) .tool-text-frame > pre {
+  overflow-y: hidden;
+}
 .msg:not(.text-scroll-active) > .mb,
 .msg:not(.text-scroll-active) > .message-bubble > .mb,
-.msg:not(.text-scroll-active) > .mb :is(pre, .tw, .katex-display),
-.msg:not(.text-scroll-active) > .message-bubble > .mb :is(pre, .tw, .katex-display),
-.event-detail-body:not(.text-scroll-active),
-.event-detail-body:not(.text-scroll-active) .tool-text-frame > pre,
 .sdk-queued:not(.text-scroll-active) .mb {
   overflow: hidden;
 }

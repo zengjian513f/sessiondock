@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Scroll gutters through conversation/SDK history on node and Hub, without real CLIs."""
+"""Bubble scroll axes and gutters in conversation and SDK history on node and Hub."""
 import argparse
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 
@@ -14,18 +15,41 @@ from sdk_start_stop_fixtures import provider
 
 TEXT = '\n\n'.join(f'第 {i:02d} 行：检查气泡顶部与底部留白，保持原文和展开操作。' for i in range(32))
 OUTPUT = '\n'.join(f'output {i:02d}: synthetic result' for i in range(60))
+TABLE_HEADERS = ['Region', 'Request volume', 'Median latency', 'Slowest response',
+                 'Successful requests', 'Failed requests', 'Availability', 'Reporting interval']
+TABLE = '\n'.join('| ' + ' | '.join(row) + ' |' for row in (
+    TABLE_HEADERS, ['---'] * len(TABLE_HEADERS),
+    ['South East Asia', '31,240 req/min', '92 milliseconds', '1,420 milliseconds',
+     '31,239 req/min', '1 req/min', '99.99 percent', '2026-11-18 00:00 UTC']))
+DIFF_OUTPUT = '\n'.join(f'{line}; route = /api/synthetic/builds/{i}/' + 'segments/' * 20
+                        for i, line in enumerate(OUTPUT.splitlines()))
 HISTORY = [dict(role=role, text=f'{role} START\n\n{TEXT}\n\n{role} END')
            for role in ('user', 'assistant', 'thinking', 'system', 'command', 'answer')]
+HISTORY[1]['text'] += '\n\n' + TABLE
 HISTORY += [dict(role='tool', name='Bash', summary='$ synthetic-command', text='synthetic-command',
                  result=dict(role='tool_result', text=OUTPUT, exit_code=0)),
             dict(role='tool_result', text=OUTPUT),
             dict(role='tool', name='Edit', text='synthetic diff', changes=[dict(
                 path='synthetic.txt', operation='edit', added=60, removed=0,
-                patch='--- a/synthetic.txt\n+++ b/synthetic.txt\n@@ -0,0 +1,60 @@\n' + '\n'.join('+' + line for line in OUTPUT.splitlines()),
-                before='', after=OUTPUT, before_available=True, after_available=True,
+                patch='--- a/synthetic.txt\n+++ b/synthetic.txt\n@@ -0,0 +1,60 @@\n' + '\n'.join('+' + line for line in DIFF_OUTPUT.splitlines()),
+                before='', after=DIFF_OUTPUT, before_available=True, after_available=True,
                 before_complete=True, after_complete=True)]),
             dict(role='event', event_kind='task', event_status='completed', text='任务结果',
                  details=OUTPUT, details_plain=True)]
+
+
+def check_horizontal_wheel(page, body, shot):
+    body.hover()
+    assert body.evaluate('e => !e.closest(".text-scroll-active")')
+    assert body.evaluate('e => e.scrollWidth > e.clientWidth')
+    handle = body.element_handle()
+    initial = body.evaluate('e => e.scrollLeft')
+    before = body.evaluate('e => e.closest(".msgs").scrollTop')
+    page.screenshot(path=str(shot.with_name(shot.stem + '-start.png')))
+    page.mouse.wheel(160, 0)
+    page.wait_for_function('([e, initial]) => e.scrollLeft > initial', arg=[handle, initial])
+    assert body.evaluate('e => e.closest(".msgs").scrollTop') == before
+    page.screenshot(path=str(shot))
 
 
 def exercise(browser, base, label, shots):
@@ -62,6 +86,7 @@ def exercise(browser, base, label, shots):
                 if role != 'assistant':
                     page.wait_for_function('e => e.scrollTop > 0', arg=body.element_handle())
                     body.click(position={'x': 35, 'y': 35})
+                    expect(bubble).to_have_class(re.compile('text-scroll-active'))
                     before = body.evaluate('e => e.scrollTop')
                     body.hover(); page.mouse.wheel(0, -100)
                     page.wait_for_function('([e, before]) => e.scrollTop < before', arg=[body.element_handle(), before])
@@ -73,6 +98,8 @@ def exercise(browser, base, label, shots):
                     page.wait_for_function('e => e.scrollHeight - e.clientHeight - e.scrollTop < 2', arg=body.element_handle())
                 bubble.locator('.message-header').scroll_into_view_if_needed()
                 page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-{role}.png'))
+            check_horizontal_wheel(page, scope.locator('.mb .tw'),
+                                   shots / f'{label}-{width}-{theme}-{entry}-table-horizontal.png')
             for index, output in enumerate(scope.locator('.tool-out').all()):
                 output.scroll_into_view_if_needed()
                 check_scroll_inset(output)
@@ -82,9 +109,14 @@ def exercise(browser, base, label, shots):
             diff.scroll_into_view_if_needed()
             check_scroll_inset(diff)
             card = scope.locator('.file-change-card')
+            card.get_by_role('button', name='原行', exact=True).click()
             for view in ('并排', '统一'):
                 card.get_by_role('button', name=view, exact=True).click()
                 check_scroll_inset(diff)
+                check_horizontal_wheel(page, diff,
+                                       shots / f'{label}-{width}-{theme}-{entry}-diff-{view}.png')
+            card.get_by_role('button', name='换行', exact=True).click()
+            assert diff.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
             card.get_by_role('button', name='展开全部差异', exact=True).click()
             check_scroll_inset(diff)
             card.get_by_role('button', name='收起差异', exact=True).click()
@@ -95,12 +127,13 @@ def exercise(browser, base, label, shots):
             body.scroll_into_view_if_needed()
             check_scroll_inset(body)
             body.click(position={'x': 35, 'y': 35})
+            expect(body).to_have_class(re.compile('text-scroll-active'))
             body.hover(); page.mouse.wheel(0, 220)
             page.wait_for_function('e => e.scrollTop > 0', arg=body.element_handle())
             check_scroll_inset(body)
             page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-details.png'))
             event.locator('summary').click()
-            print(f'PASS {label} {width}/{theme} {entry}: six message roles, tools, diff, details', flush=True)
+            print(f'PASS {label} {width}/{theme} {entry}: messages, tools, diff and details insets; unselected table and diff horizontal wheel', flush=True)
         assert not errors, errors
         context.close()
 

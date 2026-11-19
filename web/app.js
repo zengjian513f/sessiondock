@@ -8838,7 +8838,7 @@ function toolWrapButton(pre) {
   return button;
 }
 
-// Only a real text caret/selection opts a bubble into nested scrolling.
+// Only a real text caret/selection opts a bubble into nested vertical scrolling.
 // Keep history read-only: never use contenteditable to manufacture a caret.
 let textScrollBubble = null;
 const textScrollOwner = node => (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)
