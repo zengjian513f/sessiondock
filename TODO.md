@@ -30,9 +30,8 @@
   额度底栏 `fb9f8249` 修复。正式 SSH 尝试均超时。Lyra、Cygnus、Pavo、Hub、Vela
   已更新前端、重启并通过健康检查。联网后用 `--web-only` 补发。
 
-- [ ] 核对目录后退验收中两套旧浏览器用例：`session_deep_link_browser.py` 的桌面
-  侧栏滚动检查和 `session_global_actions_browser.py` 的刷新后侧栏收起检查在修复前基线也失败。
-  节点／Hub 目录导航专项与深链的手机导航步骤已通过。
+- [ ] 核对 `session_global_actions_browser.py` 刷新后侧栏仍应收起的断言。
+  修复前基线与目录后退修复版均失败。
 
 - [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
   （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
