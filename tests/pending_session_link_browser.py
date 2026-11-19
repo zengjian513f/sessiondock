@@ -78,10 +78,18 @@ def check(browser, base, root, node_id, width):
     page.locator(f'#side .item[data-uid="{old_uid}"] .t').click()
     expect(page.locator('#msgs')).to_contain_text('Older conversation')
     page.go_back()
+    if width == 390:
+        expect(page.locator('#left')).to_be_visible()
+        expect(page.locator('#right')).to_be_hidden()
+        page.go_back()
     selected(page, uid)
     page.go_forward()
+    if width == 390:
+        expect(page.locator('#left')).to_be_visible()
+        expect(page.locator('#right')).to_be_hidden()
+        page.go_forward()
     expect(page.locator('#msgs')).to_contain_text('Older conversation')
-    # Clicking the pending row must also replace the previously selected SID.
+    # Clicking the pending row restores its original link.
     if width == 390:
         page.locator('#detail .mobile-back').click()
     page.locator(f'#side .item[data-uid="{uid}"] .t').click()

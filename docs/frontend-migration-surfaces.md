@@ -255,11 +255,12 @@ DELTA（BUG-20261031-074340-d55bcb）：第三段首项「停止会话树」只�
 
 同一 native id 有多行时，只有它们经同一机器、同一来源的 `continued_in` 收敛到一行才打开；独立副本、断链或环保持不确定，不随便挑。深链优先于上次 `sel`。`openSession` 用 `push` 或 `replace` 更新地址栏；子代理写成 `?sid=source:owner/agent:id`。Back/Forward 走 `popstate` → `routeSession`。其它查询参数和反代前缀保留。
 
-DELTA（BUG-20261020-112257-39500e）：手机返回列表时新增不含 `sid`/`node` 的列表历史项，
-保留其它查询参数、hash 和上次会话选择。列表刷新仍停在列表，浏览器返回可回到原详情，
-前进可回到列表；外部会话深链仍优先于保存的列表偏好。
+DELTA：从目录打开会话时保留目录的浏览器历史项。浏览器后退回到该项时，手机显示原目录，
+桌面重新展开已收起的侧栏。同页往返保留列表视图、筛选与折叠状态，前进可重新打开会话。
+手机用标题栏返回列表时新增不含 `sid`/`node` 的列表历史项，保留其它查询参数、hash 和上次会话选择。
+列表刷新仍停在列表；外部会话深链优先于保存的列表偏好。
 [`tests/session_link_reveal_browser.py`](../tests/session_link_reveal_browser.py) 覆盖节点与 Hub、
-普通会话和子代理、浏览器／应用刷新、Back/Forward 及明暗手机页面。
+普通会话和子代理、浏览器／应用刷新、Back/Forward 及宽窄屏明暗主题。
 
 Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/list` 再打开（`openPendingSession`），避免列表先回来把导航冲掉。
 

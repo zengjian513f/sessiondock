@@ -200,9 +200,17 @@ def main():
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['claude-compact'][-1])
        assert parse_qs(urlparse(page.url).query)['sid']==['claude:claude-compact']
        page.go_back()
+       if width==390:
+        expect(page.locator('#left')).to_be_visible()
+        expect(page.locator('#right')).to_be_hidden()
+        page.go_back()
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['codex-parent'][-1])
        expect(page.locator('#side .item.sel')).to_have_attribute('data-uid',owner)
        page.go_forward()
+       if width==390:
+        expect(page.locator('#left')).to_be_visible()
+        expect(page.locator('#right')).to_be_hidden()
+        page.go_forward()
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['claude-compact'][-1])
        page.reload()
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['claude-compact'][-1])

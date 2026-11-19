@@ -83,6 +83,10 @@ def check_links(browser, base, data, output, node=None):
                     page.locator(f'#side .item[data-uid="{other}"]').click()
                     expect(page.locator('#msgs')).to_contain_text('reply Standalone E')
                     page.go_back()
+                    if width == 390:
+                        expect(page.locator('#side')).to_be_visible()
+                        expect(page.locator('#right')).to_be_hidden()
+                        page.go_back()
                     expect(page.locator('#msgs')).to_contain_text(text)
                     if width == 390:
                         page.locator('#detail .mobile-back').click()
@@ -154,6 +158,68 @@ def check_mobile_list_reload(browser, base, data, output, node=None):
                 print(f'PASS {host} {width}px {theme} {sid}: list reload, app refresh, Back/Forward and explicit link', flush=True)
 
 
+def check_directory_back(browser, base, data, output, node=None):
+    prefix = 'sessiondock.hub./.' if node else 'sessiondock.'
+    host = 'hub' if node else 'node'
+    uid = data.uid('nest-root-a')
+    if node:
+        uid = scoped(node.nid, uid)
+    for width, theme in ((390, 'light'), (472, 'dark'), (1280, 'dark'), (1440, 'light')):
+        mobile = width <= 720
+        with browser.new_context(viewport={'width': width, 'height': 846},
+                                 service_workers='block') as context:
+            context.add_init_script(f"localStorage.setItem('{prefix}theme', JSON.stringify('{theme}'))")
+            page = context.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(base + '/?keep=directory#navigation')
+            directory_url = page.url
+            view = page.locator('#view [data-v="directory"]')
+            view.click()
+            page.locator('#q').fill('/proj')
+            groups = page.locator('#side .group')
+            other = groups.filter(has=page.locator('.gname', has_text='gamma'))
+            other.locator('.ghead').click()
+            expect(other.locator('.item')).to_have_count(0)
+            row = page.locator(f'#side .item[data-uid="{uid}"]')
+            label = f'{host}-{width}-{theme}'
+            page.screenshot(path=output / f'{label}-directory-before.png', full_page=True)
+            row.click()
+            expect(page.locator('#msgs')).to_contain_text('reply Root A')
+            if not mobile:
+                page.locator('#side-toggle').click()
+            expect(page.locator('#left')).to_be_hidden()
+            detail_url = page.url
+            page.screenshot(path=output / f'{label}-directory-detail.png', full_page=True)
+
+            page.go_back()
+            assert page.url == directory_url, (page.url, directory_url)
+            expect(page.locator('#left')).to_be_visible()
+            if mobile:
+                expect(page.locator('#right')).to_be_hidden()
+            expect(view).to_have_attribute('aria-pressed', 'true')
+            expect(page.locator('#q')).to_have_value('/proj')
+            expect(other.locator('.item')).to_have_count(0)
+            expect(row).to_be_in_viewport()
+            page.screenshot(path=output / f'{label}-directory-back.png', full_page=True)
+
+            page.go_forward()
+            assert page.url == detail_url, (page.url, detail_url)
+            expect(page.locator('#msgs')).to_contain_text('reply Root A')
+            page.go_back()
+            expect(row).to_be_visible()
+            row.click()
+            expect(page.locator('#msgs')).to_contain_text('reply Root A')
+            if mobile:
+                page.reload()
+                expect(page.locator('#msgs')).to_contain_text('reply Root A')
+            page.go_back()
+            assert page.url == directory_url, (page.url, directory_url)
+            expect(row).to_be_visible()
+            assert not errors, errors
+            print(f'PASS {label}: directory → detail → browser Back/Forward, filters and folds', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -176,6 +242,8 @@ def main():
         stack.callback(hub.stop)
         browser = pw.chromium.launch(headless=True)
         stack.callback(browser.close)
+        check_directory_back(browser, base, data, args.output)
+        check_directory_back(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)
         check_mobile_list_reload(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)
         check_mobile_list_reload(browser, base, data, args.output)
         check_links(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)

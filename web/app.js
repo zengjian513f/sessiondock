@@ -6020,8 +6020,9 @@ function scheduleOpenRetry(uid, agent, ac) {
     ? SdkView.history?.querySelector('.empty') : $('#detail .empty');
   const retry = () => {
     if (S.sel !== uid || S.agent !== agent || inflight !== ac) return;
+    if (MOBILE.matches && !document.body.classList.contains('mobile-detail')) return;
     openRetries.set(key, attempt);
-    openSession(uid, agent);
+    openSession(uid, agent, {historyMode:'none'});
   };
   if (box) {
     const button = document.createElement('button');
@@ -6082,7 +6083,7 @@ function sessionUrl(uid, agent = null) {
 function updateSessionUrl(uid, agent, mode) {
   const url = sessionUrl(uid, agent);
   if (!url || mode === 'none' || url.href === location.href) return;
-  const method = mode === 'replace' || !new URL(location.href).searchParams.has('sid') ? 'replaceState' : 'pushState';
+  const method = mode === 'replace' ? 'replaceState' : 'pushState';
   history[method](history.state, '', url);
 }
 function revealSessionInSidebar(uid, agent, catalog = null) {
@@ -12590,9 +12591,10 @@ async function openExternalSession(spec, historyMode = 'replace') {
 }
 addEventListener('popstate', () => {
   const sid = new URL(location.href).searchParams.get('sid') || '';
-  if (!sid && MOBILE.matches) {
+  if (!sid) {
     ++deepLinkSequence;
-    showMobileList();
+    if (MOBILE.matches) showMobileList();
+    else if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
   } else void openExternalSession(sid, 'none');
 });
 // index.html 在首帧前就按上次停留的页面进了手机会话页；列表回来前先占位，
@@ -12614,7 +12616,7 @@ loadSessions(!!DEEP_SID).then(async ok => {
   const savedAgent = store.get('agent', null);
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
-    openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
+    openSession(last, savedAgent?.uid === last ? savedAgent.id : null, {historyMode:'replace'});
   } else if (restoreDetail && /^(codex|claude|grok|opencode|agy|kiro):/.test(last || '')) {
     await waitForTermList();
     if (S.sel || store.get('sel', null) !== last) return;
@@ -12632,7 +12634,7 @@ loadSessions(!!DEEP_SID).then(async ok => {
     // pending opener follows that binding and migrates the saved draft.
     const pending = T.pending.find(row => pendingUid(row.name) === last)
       || pendingTmuxSessions().find(row => row.uid === last);
-    if (pending) await openPendingSession(pending);
+    if (pending) await openPendingSession(pending, {historyMode:'replace'});
     else leaveBootDetail();
   } else leaveBootDetail();
 });

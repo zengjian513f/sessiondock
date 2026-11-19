@@ -351,13 +351,12 @@ def main():
                         page.locator('.mobile-back').click()
                     worker.click()
                     expect(page.locator('#msgs')).to_contain_text('Needle worker body')
-                    if width == 390:
-                        page.locator('.mobile-back').click()
                     # History between visible results preserves the search.
                     page.go_back()
-                    expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
                     if width == 390:
-                        page.locator('.mobile-back').click()
+                        expect(page.locator('#right')).to_be_hidden()
+                    else:
+                        expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
                     expect(child).to_be_visible()
                     expect(page.locator('#q')).to_have_value('Needle')
                     # A changed sessions response must not replace the matched

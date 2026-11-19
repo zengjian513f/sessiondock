@@ -122,6 +122,8 @@ def verify_initial_reads(page, base, corpus, width):
     finally:
         page.unroute(main_route, hold_initial)
 
+    if width == 390:
+        page.clock.install()
     page.route(retry_route, fail_until_clicked)
     try:
         show_sidebar(page, width)
@@ -135,6 +137,15 @@ def verify_initial_reads(page, base, corpus, width):
         expect(retry).to_be_enabled()
         expect(page.locator("#migration-read-error")).to_have_count(0)
         assert failures, "initial history request did not receive the fixture 503"
+        if width == 390:
+            page.go_back()
+            expect(page.locator("#side")).to_be_visible()
+            directory_url = page.url
+            page.clock.fast_forward(1600)
+            assert page.url == directory_url, page.url
+            expect(page.locator("#right")).to_be_hidden()
+            page.go_forward()
+            expect(retry).to_be_visible()
         with page.expect_response(lambda response: response.ok
                                   and response.url == retry_route):
             retry.click()
@@ -266,6 +277,10 @@ def verify_restored(page, base, corpus, width):
     page.locator(f'#side .item[data-uid="{corpus.uid(OTHER_SID)}"]').click()
     expect(page.locator("#msgs")).to_contain_text(corpus.expected[OTHER_SID][-1])
     page.go_back(wait_until="domcontentloaded")
+    if width == 390:
+        expect(parent).to_be_visible()
+        expect(page.locator("#right")).to_be_hidden()
+        page.go_back(wait_until="domcontentloaded")
     expect(page.locator("#msgs")).to_contain_text(corpus.expected[MAIN_SID][-1])
     assert urlsplit(page.url).path == PREFIX
     assert page.url.startswith(base)
