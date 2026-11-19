@@ -39,6 +39,62 @@ def capture(page, shots: Path | None, name: str):
         pane.screenshot(path=str(shots / f'{name}-pane.png'))
 
 
+def check_pending_cancel(page, base, fixture, uid, shots, label, restart_server):
+    notice = page.locator('#sdk-composer .sdk-status')
+    stop = page.locator('#sdk-stop')
+    details = page.locator('#sdk-status-menu')
+    mode = fixture.root / 'interrupt-mode'
+    pid = fixture.inputs('hold:uncertain')[0]['pid']
+    mode.write_text('pending')
+
+    expect(notice).to_have_text('处理中')
+    capture(page, shots, f'{label}-before-cancel')
+    with page.expect_response('**/api/native-sdk/interrupt') as stopped:
+        stop.click()
+    assert stopped.value.ok, stopped.value.text()
+    for width, theme in ((1280, 'light'), (390, 'dark')):
+        page.emulate_media(color_scheme=theme)
+        resize_sdk(page, uid, width)
+        expect(notice).to_have_text('停止已受理')
+        expect(stop).to_be_disabled()
+        notice.click()
+        expect(details).to_be_visible()
+        expect(details).to_contain_text('子代理和后台任务会继续运行')
+        capture(page, shots, f'{label}-cancel-pending-{width}-{theme}')
+        page.keyboard.press('Escape')
+
+    resize_sdk(page, uid, 1280)
+    if restart_server:
+        base = restart_server()
+        page.goto(base, wait_until='domcontentloaded')
+    else:
+        page.reload(wait_until='domcontentloaded')
+    open_sdk(page, fixture, expect, uid=uid)
+    expect(notice).to_have_text('停止已受理')
+    expect(stop).to_be_disabled()
+
+    # An explicit rewind during the accepted cancellation is a conflict.
+    message = page.locator('.sdk-msgs .msg[data-role="user"]').filter(has_text='hold:uncertain')
+    message.locator('.sdk-bubble-menu').get_by_role('button', name='回退到此处之前', exact=True).click()
+    with page.expect_response('**/api/native-sdk/revert') as reverted:
+        page.locator('dialog.app-popup[open]').get_by_role('button', name='回退', exact=True).click()
+    assert reverted.value.status == 409, reverted.value.text()
+    error = reverted.value.json()
+    assert error['code'] == 'agy_sdk_history_busy' and '结束回执' in error['error'], error
+    expect(message).to_have_count(1)
+
+    fixture.release('uncertain')
+    raw = wait_snapshot(page, uid, lambda raw: not raw['running'])['raw']
+    assert raw['last_turn']['status'] == 'interrupted' and not raw['cancel_requested'], raw['last_turn']
+    expect(stop).to_be_hidden()
+    mode.unlink()
+    assert len(fixture.inputs('hold:uncertain')) == 1
+    cancels = [event for event in fixture.events() if event['kind'] == 'cancel' and event['pid'] == pid]
+    assert len(cancels) == 1
+    assert not any(event['kind'] == 'signal' for event in fixture.events())
+    return base
+
+
 def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server):
     root = fixture.root
     status = root / 'foreground-status'
@@ -514,8 +570,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
     expect(box).to_have_value('unknown steer')
     assert len(fixture.steers('unknown steer')) == 1
     capture(page, shots, f'{label}-unknown-wide-light')
-    page.locator('#sdk-stop').click()
-    wait_snapshot(page, uid, lambda raw: not raw['running'])
+    base = check_pending_cancel(page, base, fixture, uid, shots, label, restart_server)
     page.request.post(base + '/api/native-sdk/stop', data={'uid': uid})
     assert all(event['delivery_strategy'] == 'MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION' for event in fixture.steers())
     assert not errors, errors

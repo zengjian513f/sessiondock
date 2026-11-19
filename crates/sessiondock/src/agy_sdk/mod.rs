@@ -822,7 +822,7 @@ impl Live {
             })
             .collect();
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
-            "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
+            "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,"cancel_requested":data.cancelling,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
@@ -1256,7 +1256,9 @@ async fn execute(
     let mut result = None;
     let mut interrupted = native.cancelled(&turn.id);
     if interrupted {
-        live.data.lock().unwrap().cancelling = true;
+        let mut data = live.data.lock().unwrap();
+        data.cancelling = true;
+        live.publish(&mut data);
     }
     let mut saw_assistant = false;
     loop {
@@ -1321,7 +1323,7 @@ async fn execute(
                     let _=reply.send(outcome);
                 }
                 Some(Command::History(_,_,reply))=>{
-                    let _=reply.send(Err("agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into()));
+                    let _=reply.send(Err(actions::history_busy(&live.data.lock().unwrap())));
                 }
                 Some(Command::Rename(title,reply))=>{
                     let result=native.rename(&title).await.map(|()|json!({"renamed":true,"session_id":live.sid,"title":title}));

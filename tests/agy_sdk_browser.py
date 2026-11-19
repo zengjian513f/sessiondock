@@ -385,8 +385,12 @@ def exercise(browser, base, fixture, screenshots=None):
                 page.locator('#sdk-stop').click()
             if mode == 'reject':
                 assert not stopped.value.ok and '原生接口拒绝 CancelCascadeInvocation' in stopped.value.text()
+                expect(page.locator('#sdk-stop')).to_be_enabled()
+                assert page.evaluate('!NativeSdkView.raw.cancel_requested')
             else:
-                page.locator('#sdk-stop').click()
+                expect(page.locator('#sdk-composer .sdk-status')).to_have_text('停止已受理')
+                expect(page.locator('#sdk-stop')).to_be_disabled()
+                assert post(page, base, 'interrupt', {'uid': uid})['raw']['interrupted']
             # The former five-second SIGKILL deadline must no longer exist.
             page.wait_for_timeout(5500)
             assert page.evaluate('NativeSdkView.running')
@@ -395,6 +399,7 @@ def exercise(browser, base, fixture, screenshots=None):
                         if event['kind'] == 'cancel' and event['mode'] == mode]) == 1
             fixture.release(token)
             idle(page)
+            assert page.evaluate('NativeSdkView.raw.cancel_requested === false')
             (fixture.root / 'interrupt-mode').unlink()
             send(page, 'after interrupt-' + mode)
             expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after interrupt-' + mode)

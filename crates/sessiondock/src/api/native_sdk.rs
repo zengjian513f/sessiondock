@@ -17,7 +17,9 @@ use std::{convert::Infallible, time::Duration};
 use tokio::sync::broadcast;
 
 fn failure(message: String) -> ApiError {
-    let (status, code) = if message.contains("kiro_sdk_session_busy") {
+    let (status, code) = if message.starts_with("agy_sdk_history_busy:") {
+        (StatusCode::CONFLICT, "agy_sdk_history_busy")
+    } else if message.contains("kiro_sdk_session_busy") {
         (StatusCode::CONFLICT, "kiro_sdk_session_busy")
     } else if message.contains("session_busy") || message.contains("独立 OpenCode") {
         (StatusCode::CONFLICT, "native_sdk_session_busy")

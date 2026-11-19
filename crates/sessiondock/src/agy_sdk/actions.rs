@@ -1,6 +1,24 @@
 //! Native conversation mutations. The CLI owns all database and transcript writes.
 use super::*;
 
+pub(super) fn history_busy(data: &Data) -> String {
+    if data.cancelling {
+        "agy_sdk_history_busy: Agy 已接受中断请求。请等本回合的结束回执到达后再操作会话历史。".into()
+    } else {
+        "agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into()
+    }
+}
+
+impl Live {
+    fn check_history_idle(&self) -> Result<(), String> {
+        let data = self.data.lock().unwrap();
+        if data.outstanding > 0 {
+            return Err(history_busy(&data));
+        }
+        Ok(())
+    }
+}
+
 impl Bridge {
     pub(super) async fn history_action(
         self: &Arc<Self>,
@@ -43,9 +61,7 @@ impl Bridge {
         }
         let live = self.open(&target).await?;
         self.process.check_available(live.sid.clone()).await?;
-        if live.data.lock().unwrap().outstanding > 0 {
-            return Err("agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into());
-        }
+        live.check_history_idle()?;
         actions.insert(key.clone(), json!({"input":input}));
         if let Some(path) = &path {
             crate::sdk_common::save_atomic(path, &*actions)
@@ -108,9 +124,7 @@ pub(super) async fn execute(
     input: &Value,
     shutdown: CancellationToken,
 ) -> Result<Value, String> {
-    if live.data.lock().unwrap().outstanding > 0 {
-        return Err("agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into());
-    }
+    live.check_history_idle()?;
     let before = input
         .get(if method == "fork" {
             "before"
