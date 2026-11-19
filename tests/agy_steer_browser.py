@@ -82,10 +82,14 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     expect(notice).to_have_text('处理中')
     status.write_text('IDLE')
     expect(notice).to_have_text('后台定时任务等待中', timeout=20000)
+    raw = wait_snapshot(page, uid, lambda raw: raw['foreground_idle'])['raw']
+    assert all(item['content'].strip() for item in raw['items'] if item['role'] == 'assistant')
+    expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground')
     for width, theme in ((1280, 'light'), (390, 'dark')):
         page.emulate_media(color_scheme=theme)
         resize_sdk(page, uid, width)
         expect(notice).to_be_enabled()
+        capture(page, shots, f'{label}-foreground-waiting-{width}-{theme}')
         if width == 1280:
             notice.click()
         else:

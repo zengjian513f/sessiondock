@@ -809,9 +809,21 @@ impl Live {
         let waiting = data.runtime.is_some()
             && !data.foreground_idle
             && data.steers.iter().any(|steer| steer.fifo);
+        // Keep leading whitespace in the step accumulator for later deltas,
+        // but publish a reply only once the accumulated body has text.
+        let items: Vec<_> = data
+            .items
+            .iter()
+            .filter(|item| {
+                item["native_type"] != "agent_response"
+                    || item["content"]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty())
+            })
+            .collect();
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
             "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
-            "items":data.items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
+            "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
@@ -1354,8 +1366,7 @@ async fn execute(
                     Some("step_update")=>{
                         let step=&event["step_update"];
                         log_step(live,turn,native,step,false);
-                        saw_assistant |= step["step_type"]=="agent_response" && step["text_delta"].as_str().is_some_and(|s|!s.is_empty());
-                        project(live,turn,step,native.received_at.clone());
+                        saw_assistant |= project(live,turn,step,native.received_at.clone());
                         transcript.observe(step);
                         saw_assistant |= transcript.refresh(process,live,turn).await;
                     }
@@ -1363,7 +1374,7 @@ async fn execute(
                         saw_assistant |= transcript.refresh(process,live,turn).await;
                         let value=&event["result"];
                         if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
-                        if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.is_empty()) {
+                        if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.trim().is_empty()) {
                             let mut data=live.data.lock().unwrap();
                             insert_before_pending_users(&mut data.items,json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value,"received_at":native.received_at}));
                             live.publish(&mut data);
@@ -1509,7 +1520,7 @@ fn write_binding(
     result.map_err(|e| format!("agy_sdk_binding: {e}"))
 }
 
-fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
+fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) -> bool {
     let time = crate::sdk_message_time::MessageTime::new(step, received);
     let mut data = live.data.lock().unwrap();
     if data.active.is_some() {
@@ -1545,8 +1556,9 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
         && !data.items.iter().any(|item| item["id"] == native_id)
     {
         live.publish(&mut data);
-        return;
+        return false;
     }
+    let mut saw_assistant = false;
     if kind == "user_input" {
         let target = data
             .items
@@ -1606,6 +1618,9 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
         item["native"] = step.clone();
         item["status"] = step["state"].clone();
         if kind == "agent_response" {
+            saw_assistant = item["content"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty());
             item["phase"] = json!(if step["state"] == "DONE" {
                 "final"
             } else {
@@ -1646,6 +1661,7 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) {
         }
     }
     live.publish(&mut data);
+    saw_assistant
 }
 
 fn host_key(sid: &str, request: &str) -> String {

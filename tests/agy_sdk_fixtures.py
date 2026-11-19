@@ -337,11 +337,36 @@ for line in sys.stdin:
             threading.Event().wait(0.02)
         result('SUCCESS',answer)
         continue
+    if text=='__WHITESPACE_REPLY__':
+        streamed='分块回复保留 Markdown 缩进'
+        native_record('PLANNER_RESPONSE','\n\n    '+streamed)
+        step('agent_response',state='ACTIVE',text_delta='\n\n    ')
+        step('agent_response',state='DONE',text_delta=streamed);advance()
+        answer='从原生记录补齐正文。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE',text_delta='\n');advance()
+        result('SUCCESS',answer)
+        continue
+    if text=='__WHITESPACE_RESULT__':
+        native_record('PLANNER_RESPONSE','\n')
+        step('agent_response',state='ACTIVE',text_delta='\n')
+        step('agent_response',state='DONE',text_delta='\n');advance()
+        native_record('PLANNER_RESPONSE',' \t')
+        step('agent_response',state='DONE');advance()
+        result('SUCCESS','最终回执中的回复补齐正文。')
+        continue
     cancelled.clear()
     if text.startswith('hold:'):
         token=text.split(':',1)[1]
         assert Path(token).name==token
-        step('agent_response',state='ACTIVE',text_delta='Agy running '+token+' ')
+        progress='Agy running '+token+' '
+        step('agent_response',state='ACTIVE',text_delta=progress)
+        if token=='foreground':
+            native_record('PLANNER_RESPONSE',progress)
+            step('agent_response',state='DONE');advance()
+            native_record('PLANNER_RESPONSE','\n')
+            step('agent_response',state='ACTIVE',text_delta='\n')
+            step('agent_response',state='DONE',text_delta='\n');advance()
         steered_seen=False
         deadline=time.monotonic()+(55 if token=='foreground' else 25)
         while not (root/'release'/token).exists() and not cancelled.is_set():
@@ -349,10 +374,10 @@ for line in sys.stdin:
                 for event in delayed_steps:emit(event)
                 delayed_steps.clear()
             if not (root/'steer-consume-delay').exists() and not steered_queue.empty():
-                if not steered_seen:
-                    native_record('PLANNER_RESPONSE','Agy running '+token+' ')
+                if not steered_seen and token!='foreground':
+                    native_record('PLANNER_RESPONSE',progress)
                     step('agent_response',state='DONE',text_delta='');advance()
-                    steered_seen=True
+                steered_seen=True
                 while not steered_queue.empty() and not (root/'steer-consume-delay').exists():
                     steer_id,steer_text=steered_queue.get_nowait()
                     native_record('USER_INPUT','<USER_REQUEST>\n'+steer_text+'\n</USER_REQUEST>',client_message_id=steer_id)

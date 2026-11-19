@@ -360,7 +360,7 @@ impl Pending {
             && (step["step_type"] == "user_input"
                 || !step["text_delta"]
                     .as_str()
-                    .is_some_and(|text| !text.is_empty()))
+                    .is_some_and(|text| !text.trim().is_empty()))
             && let Some(index) = step["step_index"].as_u64()
         {
             self.steps.insert(index, step.clone());
@@ -443,12 +443,11 @@ impl Pending {
                         .unwrap_or_default();
                     step["text"] = process.redact(error_text).into();
                 } else {
-                    assistant |= !text.is_empty();
                     step["text"] = text.into();
                 }
                 step["timestamp"] = record["created_at"].clone();
                 step["transcript"] = record;
-                project(live, turn, &step, None);
+                assistant |= project(live, turn, &step, None);
             }
             if need_rescan && !rescanned {
                 rescanned = true;

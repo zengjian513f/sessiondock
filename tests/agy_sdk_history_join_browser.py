@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 from agy_history_browser import record, write_transcript
+from agy_sdk_browser import send as send_agy
 from agy_sdk_fixtures import SID
 from claude_sdk_browser import open_sdk, send, snapshot, wait_snapshot
 from history_fixtures import BINARY, encoded
@@ -245,6 +246,21 @@ def exercise_transport(browser, base, peer, screenshots):
     expect(page.locator('.sdk-msgs [data-role=user]').filter(has_text=repeated)).to_have_count(2)
     peer.release('delayed-echo-' + text.split()[-1])
     wait_snapshot(page, uid, lambda raw: not raw['running'])
+    # Whitespace-only chunks must preserve indentation for later text, allow
+    # transcript hydration, and leave room for a result-only native reply.
+    for prompt, expected in [
+        ('__WHITESPACE_REPLY__', ['\n\n    分块回复保留 Markdown 缩进', '从原生记录补齐正文。']),
+        ('__WHITESPACE_RESULT__', ['最终回执中的回复补齐正文。']),
+    ]:
+        request = send_agy(page, prompt)['request_id']
+        final = wait_snapshot(page, uid, lambda raw: (raw.get('last_turn') or {}).get('id') == request)
+        raw = final['raw']
+        assert raw['last_turn']['status'] == 'completed', raw['last_turn']
+        replies = [item['content'] for item in raw['items'] if item['role'] == 'assistant'
+                   and (item.get('request_id') == request or item['id'] == f'agy:result:{request}')]
+        assert replies == expected, replies
+        for reply in expected:
+            expect(page.locator('.sdk-msgs')).to_contain_text(reply.strip())
     if screenshots:
         for width, theme in [(1280, 'light'), (390, 'dark')]:
             page.set_viewport_size({'width': width, 'height': 900})
