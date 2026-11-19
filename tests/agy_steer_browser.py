@@ -73,7 +73,7 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     notice = page.locator('#sdk-composer .sdk-status')
     send(page, '__UNRECOVERED_STREAM__')
     expect(notice).to_have_text('错误')
-    send(page, 'hold:foreground')
+    foreground = send(page, 'hold:foreground')['request_id']
     wait_snapshot(page, uid, lambda raw: any(
         item.get('native_echo') and item.get('content') == 'hold:foreground'
         for item in raw['items']))
@@ -193,11 +193,9 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
         open_sdk(page, fixture, expect, uid=uid)
     else:
         finish_foreground()
-    snapshot = wait_snapshot(page, uid, lambda raw:
-                             (raw.get('last_turn') or {}).get('status') in ('completed', 'failed')
-                             and any(item.get('content') == 'hold:foreground' for item in raw['items']))
+    snapshot = wait_snapshot(page, uid, lambda raw: (raw.get('last_turn') or {}).get('id') == foreground)
     raw = snapshot['raw']
-    assert raw['last_turn']['status'] == 'completed' and raw['error'] is None, raw['error']
+    assert raw['last_turn']['status'] == 'completed' and raw['error'] is None, (raw['last_turn'], raw['error'])
     assert 'prior turn; current native response completed' in raw['diagnostics']
     expect(notice).to_have_text('就绪', timeout=20000)
     messages = page.locator('.sdk-msgs')
