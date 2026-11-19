@@ -23,6 +23,7 @@ from claude_sdk_browser import open_sdk, wait_snapshot
 from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN, free_port, node_env
+from sdk_selection_fixtures import snapshots
 from sdk_send_gesture_fixtures import exercise_idle_send_gestures, exercise_send_gestures
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
@@ -176,7 +177,8 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     return base
 
 
-def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, restart_server=None):
+def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
+          restart_server=None, stream_recovery_only=False):
     errors = []
     page.set_default_timeout(15000)
     page.on('pageerror', lambda error: (print('PAGEERROR', error, flush=True), errors.append(error.stack or str(error))))
@@ -199,16 +201,51 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str, 
         assert len(fixture.inputs(text)) == 1
         assert not fixture.steers(text)
 
-    exercise_idle_send_gestures(page, 'agy', label, idle_done)
+    if not stream_recovery_only:
+        exercise_idle_send_gestures(page, 'agy', label, idle_done)
 
     send(page, 'hold:steer')
     wait_snapshot(page, uid, lambda raw: raw['running'])
     expect(button).to_have_text('排队')
 
     # Recall-edit check on a queued message, then FIFO + queue_steer conversion preserving draft.
-    send(page, 'recall edit ' + label)
-    recalled = page.locator('.sdk-queued').filter(has_text='recall edit ' + label)
-    expect(recalled).to_be_visible()
+    recall_text = 'recall edit ' + label
+    recalled = page.locator('.sdk-queued').filter(has_text=recall_text)
+    with snapshots() as stalled:
+        # The browser receives an initial SDK snapshot, then the stream stays
+        # open but silent. The real node still journals the real SEND request.
+        stalled.packet = {'type': 'snapshot', 'seq': 1000000, 'raw': page.evaluate('NativeSdkView.raw')}
+        page.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=stalled.url), times=1)
+        page.locator('#side .item[data-uid^="claude:"]').click()
+        row.click()
+        page.wait_for_function('NativeSdkView.seq === 1000000')
+        calls = []
+
+        def record_call(request):
+            if request.url.endswith(('/api/native-sdk/open', '/api/native-sdk/turn')):
+                calls.append(request.url.rsplit('/', 1)[1])
+
+        page.on('request', record_call)
+        box.fill(recall_text)
+        with page.expect_response('**/api/native-sdk/turn') as sent:
+            button.click()
+        receipt = sent.value.json()['raw']
+        assert receipt['accepted'] and receipt['state'] == 'queued', receipt
+        expect(box).to_have_value('')
+        expect(recalled).to_be_visible(timeout=8000)
+        expect(recalled.locator('.queued-send-state')).to_have_text('排队中')
+        expect(messages.get_by_text(recall_text, exact=True)).to_have_count(1)
+        page.remove_listener('request', record_call)
+        assert calls == ['turn'], calls
+        assert not fixture.inputs(recall_text) and not fixture.steers(recall_text)
+        capture(page, shots, f'{label}-recovered-queue-wide-light')
+    if stream_recovery_only:
+        fixture.release('steer')
+        idle_done(recall_text)
+        expect(recalled).to_have_count(0)
+        expect(messages.get_by_text(recall_text, exact=True)).to_have_count(1)
+        assert not errors, errors
+        return
     recalled.get_by_role('button', name='撤回编辑', exact=True).click()
     expect(recalled).to_have_count(0)
     expect(box).to_have_value('recall edit ' + label)
@@ -459,6 +496,8 @@ def main():
     parser.add_argument('--ptyhost', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--frontend', type=Path)
     parser.add_argument('--screenshots', type=Path, default=Path('/tmp/sessiondock-agy-steer-browser'))
+    parser.add_argument('--stream-recovery-only', action='store_true',
+                        help='Exercise a silent browser SDK stream during ordinary FIFO submission')
     args = parser.parse_args()
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
     if args.frontend:
@@ -526,12 +565,13 @@ def main():
                         shots = (args.screenshots / label) if args.screenshots else None
                         if shots:
                             shots.mkdir(parents=True, exist_ok=True)
-                        check(context.new_page(), base, fixture, shots, label, restart_server=restart_cb)
+                        check(context.new_page(), base, fixture, shots, label, restart_server=restart_cb,
+                              stream_recovery_only=args.stream_recovery_only)
                     finally:
                         context.close()
         finally:
             browser.close()
-    print('PASS Agy steer Chromium Node + Hub', flush=True)
+    print(f"PASS Agy {'stalled SDK stream' if args.stream_recovery_only else 'steer'} Chromium Node + Hub", flush=True)
 
 
 if __name__ == '__main__':

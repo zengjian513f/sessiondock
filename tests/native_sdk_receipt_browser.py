@@ -21,6 +21,11 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         color_scheme=theme, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base+'/') else route.abort())
     page = context.new_page()
+    check_watchdog = source == 'agy' and width == 390
+    streams = []
+    if check_watchdog:
+        page.clock.install()
+        page.on('request', lambda request: streams.append(request.url) if '/api/native-sdk/events?' in request.url else None)
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     raw = {'running': True, 'items': [], 'input_queue': [], 'capabilities': {}}
@@ -36,7 +41,8 @@ def exercise(browser, base, source, events, width, theme, screenshots):
         data = route.request.post_data_json
         raw['input_queue'] = [{'id': 'bridge:sent', 'state': 'preparing', 'text': data['text'],
             'request_id': data['request_id'], 'delivery_id': data['request_id']}]
-        route.fulfill(json={'ok': True, 'accepted': True})
+        route.fulfill(json={'ok': True, 'raw': {'accepted': True, 'state': 'queued',
+            'queue_id': 'bridge:sent', 'request_id': data['request_id']}})
     context.route('**/api/native-sdk/turn', submit)
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
@@ -212,6 +218,20 @@ def exercise(browser, base, source, events, width, theme, screenshots):
             native.get_by_role('button', name='撤销', exact=True).click()
         publish()
         expect(native).to_have_count(0)
+    if check_watchdog:
+        assert len(streams) == 1, streams
+        # Change the reconnect baseline without notifying the original,
+        # silent EventSource. No SEND or session navigation should be needed.
+        raw['input_queue'] = [{'id': 'bridge:other-page', 'state': 'queued', 'text': '其他页面提交的排队消息'}]
+        queued = page.locator('.sdk-queue [data-queue-id="bridge:other-page"]')
+        expect(queued).to_have_count(0)
+        with page.expect_request('**/api/native-sdk/events?*', timeout=8000):
+            page.clock.fast_forward(31000)
+        expect(queued).to_contain_text('排队中')
+        expect(queued.locator('.mb')).to_have_text('其他页面提交的排队消息')
+        expect(page.locator('#network-status')).to_have_count(0)
+        if screenshots:
+            page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-recovered-queue.png'), full_page=True)
     assert not errors, errors
     context.close()
     print(f'PASS {source} {width} {theme}: user submission states, acceptance, failure recovery, explicit resend/cancel and draft preserved', flush=True)

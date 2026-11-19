@@ -11,6 +11,7 @@ const NATIVE_SDK_SOURCES = Object.freeze({
   codebuddy: {source: 'codebuddy', title: 'CodeBuddy', emptyTitle: '新建 CodeBuddy 会话', busyCode: 'native_sdk_session_busy'},
   droid: {source: 'droid', title: 'Droid', emptyTitle: '新建 Droid 会话', busyCode: 'native_sdk_session_busy'},
 });
+const NATIVE_SDK_STREAM_STALL_MS = 30000;
 
 // Copy JSON containers without copying immutable strings. UI-local queue or
 // setting updates must not mutate the wire baseline used by the next delta.
@@ -201,6 +202,8 @@ const NativeSdkView = {
     this.clearPendingSnapshot();
     this.cancelSnapshotBuild();
     clearTimeout(this.reconnectTimer); clearTimeout(this.historyTimer);
+    clearTimeout(this.streamWatchdog);
+    this.clearInputReceipt();
     clearTimeout(this.timerStatusRefresh);
     disposeMessageObservers(this.box);
     this.uid = ''; this.agent = null;
@@ -283,22 +286,35 @@ const NativeSdkView = {
   },
 
   connectEvents(generation) {
+    if (this.es || this.readOnly) return;
     const query = new URLSearchParams({uid:this.uid,agent:this.agent || ''});
     query.set('snapshot_delta', '1');
     const es = new EventSource(appUrl(`api/native-sdk/events?${query}`));
     let snapshotRaw, snapshotVersion;
     this.es = es;
+    const activity = () => {
+      if (!this.current(generation) || this.es !== es) return;
+      clearTimeout(this.streamWatchdog);
+      this.streamWatchdog = setTimeout(() => {
+        browserAuditEvent('sdk.stream.reconnect', {reason:'heartbeat_timeout'}, {uid:this.uid});
+        this.reconnect(true);
+      }, NATIVE_SDK_STREAM_STALL_MS);
+    };
+    activity();
+    es.addEventListener('heartbeat', activity);
     es.addEventListener('sdk', event => {
       if (!this.current(generation) || this.es !== es) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
+      activity();
       if (packet.method === 'bridge/stopped') {
         this.flushPendingSnapshot();
         SdkView.stopped(this.uid, this.agent);
         return;
       }
-      if (packet.method === 'bridge/reset') { this.reconnect(); return; }
+      if (packet.method === 'bridge/reset') { this.reconnect(true); return; }
       if (packet.type === 'input_queue') {
+        this.observeInputReceipt(packet.raw);
         this.flushPendingSnapshot();
         const stick = this.nearBottom();
         this.raw.input_queue = packet.raw?.input_queue || [];
@@ -319,7 +335,7 @@ const NativeSdkView = {
           packet.raw = nativeSdkIsolateRaw(snapshotRaw);
           packet.type = 'snapshot';
         } catch {
-          this.reconnect();
+          this.reconnect(true);
           return;
         }
       } else if (packet.type === 'snapshot') {
@@ -330,6 +346,7 @@ const NativeSdkView = {
       }
       if (packet.type === 'snapshot' || packet.method === 'snapshot') {
         const nextRaw = packet.raw || {};
+        this.observeInputReceipt(nextRaw);
         const now = performance.now();
         if (!nextRaw.running) {
           this.clearPendingSnapshot();
@@ -355,19 +372,51 @@ const NativeSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       this.cancelSnapshotBuild();
       this.setConnected(false); this.setNotice('载入中', 'connecting');
-      if (es.readyState === EventSource.CLOSED) this.reconnect();
+      if (es.readyState === EventSource.CLOSED) this.reconnect(true);
     };
   },
 
   retryOpen() { if (this.openFailed) { this.clearPendingSnapshot(); this.es?.close(); this.es = null; void this.start(this.generation); } },
-  reconnect() {
+  reconnect(observe = false) {
     this.flushPendingSnapshot();
     this.clearPendingSnapshot();
     this.cancelSnapshotBuild();
+    clearTimeout(this.streamWatchdog);
+    this.clearInputReceipt();
     this.es?.close(); this.es = null; this.seq = -1;
     clearTimeout(this.reconnectTimer);
     const generation = this.generation;
-    this.reconnectTimer = setTimeout(() => { if (this.current(generation)) void this.start(generation,true); }, 1000);
+    if (observe) {
+      this.setConnected(false);
+      this.setNotice('载入中', 'connecting');
+    }
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.current(generation)) return;
+      if (observe) this.connectEvents(generation);
+      else void this.start(generation, true);
+    }, 1000);
+  },
+
+  clearInputReceipt() {
+    clearTimeout(this.inputReceiptTimer);
+    this.pendingInputReceipt = null;
+  },
+
+  observeInputReceipt(raw) {
+    const requestId = this.pendingInputReceipt;
+    if (requestId && (raw?.input_queue?.some(row => row.request_id === requestId && row.state !== 'preparing')
+        || raw?.items?.some(item => item.role === 'user' && item.request_id === requestId))) this.clearInputReceipt();
+  },
+
+  followInputReceipt(receipt, requestId) {
+    if (this.pendingInputReceipt !== requestId) return;
+    if (receipt.state !== 'queued' || !receipt.queue_id) { this.clearInputReceipt(); return; }
+    // The HTTP receipt confirms durable admission. Recover a missing queue
+    // or live message from a fresh subscription without replaying the input.
+    this.inputReceiptTimer = setTimeout(() => {
+      browserAuditEvent('sdk.stream.reconnect', {reason:'missing_input'}, {uid:this.uid,requestId});
+      this.reconnect(true);
+    }, 1000);
   },
 
   async loadModels(generation) {
@@ -900,18 +949,23 @@ const NativeSdkView = {
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy','true');
-    let steerRequest;
+    let request_id;
     const auditUid=this.uid;
     try {
       if (!steer && await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
       if (steer && source==='kiro' && payload.attachments.length) throw new Error('Kiro 原生引导只支持文字；请移除附件或使用普通排队发送。');
-      const request_id = await CodexSdkCompose.submission(payload,null,null,this.agent,steer ? 'steer' : undefined);
-      if(steer)steerRequest=request_id;
+      request_id = await CodexSdkCompose.submission(payload,null,null,this.agent,steer ? 'steer' : undefined);
+      if (!this.current(generation)) return;
+      if (!steer) {
+        this.clearInputReceipt();
+        this.pendingInputReceipt = request_id;
+      }
       if(steer)browserAuditEvent('sdk.steer.requested',{source},{uid:payload.uid,requestId:request_id});
       const response = await this.request(`api/native-sdk/${operation}`,  {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
         request_id,draft_revision:payload.draft_revision});
+      if (!steer && this.current(generation)) this.followInputReceipt(response.raw || response, request_id);
       if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
       if ((response.accepted ?? response.raw?.accepted) === false)
         throw new Error(response.error || response.raw?.error || '这次提交未进入发送队列，请查看队列记录');
@@ -923,8 +977,11 @@ const NativeSdkView = {
       if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'native_queued'},{uid:auditUid,requestId:steerRequest});
       if(steer && this.current(generation))this.setNotice('原生已接收引导；尚未确认处理。');
     } catch (error) {
-      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'failed'},{uid:auditUid,requestId:steerRequest});
-      if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
+      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'failed'},{uid:auditUid,requestId:request_id});
+      if (this.current(generation)) {
+        if (!steer && this.pendingInputReceipt === request_id) this.clearInputReceipt();
+        this.setNotice(`发送失败：${error.message}`, 'blocked');
+      }
     }
     finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy');if(this.current(generation))sdkSyncSettings(this); }
   },
