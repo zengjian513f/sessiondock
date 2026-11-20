@@ -28,7 +28,9 @@ pub(crate) use views::{
 };
 mod providers;
 pub(crate) use providers::claude_active_records;
-pub(crate) use providers::droid::internal_reminder as droid_internal_reminder;
+pub(crate) use providers::droid::{
+    internal_reminder as droid_internal_reminder, message_role as droid_message_role,
+};
 mod records;
 pub(crate) use records::scanner as native_json;
 pub(crate) use records::string_reader::JsonStringReader;

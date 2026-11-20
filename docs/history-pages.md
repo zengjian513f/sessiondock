@@ -266,8 +266,9 @@ No frontend framework is introduced.
 fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`,
 an opaque `cursor` and `batch` (the opening window's default, currently 200).
 Initial windows target 200 latest visible events, extend
-backward to the start of the boundary turn when it has a `turn_id`, then add
-up to 5 earliest visible events within a separate 2 MiB estimated JSON target
+backward to the start of the boundary turn when it has a `turn_id`, then target
+5 earliest visible events. Droid can extend the head through its first user
+input. Both segments share a 2 MiB estimated JSON target
 (including the 64 KiB metadata reserve). Large text or media can reduce either
 segment. The latest event is always included intact, even above that soft target;
 all omitted events remain available through history pages. This intentionally
@@ -372,10 +373,17 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
 Opening windows count visible events rather than silent native queue records,
 then complete the turn crossing the visible-event target using existing turn
 identity and JSON/media budgets. Large turns can still span an explicit gap;
-older history remains pageable. Native projection, search and live checkpoints
-are unchanged. The [browser regression](../tests/history_pages_browser.py)
+older history remains pageable. The [browser regression](../tests/history_pages_browser.py)
 opens queue-heavy and long-turn histories, expands tools, fills gaps and checks
 exact reconstruction without advancing the live checkpoint.
+
+DELTA (BUG-20261120-103452-af158e). Droid opening windows include the first user
+input after its initial context blocks when the existing budget permits. Droid
+tool results retain the preceding user input's turn identity. Native
+`systemNotice: true` messages display as system messages in history and SDK
+replay, so they do not split turns or offer rewind actions. The
+[Droid rewind regression](../tests/droid_rewind_browser.py) follows the new
+branch, opens its retained process and fills the gap on a node and through the Hub.
 
 ### Page grouping targets
 

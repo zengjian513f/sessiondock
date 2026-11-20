@@ -13,6 +13,14 @@ pub(crate) fn internal_reminder(id: &Value, message: &Value) -> bool {
             .is_some_and(|id| id.starts_with("__internal__system-reminder__"))
 }
 
+pub(crate) fn message_role(message: &Value) -> &str {
+    if message["visibility"] == "llm_only" || message["systemNotice"] == true {
+        "system"
+    } else {
+        message["role"].as_str().unwrap_or("system")
+    }
+}
+
 pub(crate) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) -> Value {
     let head = records
         .iter()
@@ -59,11 +67,7 @@ impl Parser<'_> {
             if internal_reminder(&record["id"], message) {
                 return Ok(());
             }
-            let role = if message["visibility"] == "llm_only" {
-                "system"
-            } else {
-                message["role"].as_str().unwrap_or("system")
-            };
+            let role = message_role(message);
             let mut content = message["content"].clone();
             for block in content.as_array_mut().into_iter().flatten() {
                 if block["type"] == "tool_result" {
@@ -74,9 +78,6 @@ impl Parser<'_> {
                         block["is_error"] = error;
                     }
                 }
-            }
-            if role == "user" {
-                self.turn = format!("request:{}", string(&record["id"]));
             }
             let role = if matches!(role, "user" | "assistant" | "system") {
                 role
@@ -94,6 +95,15 @@ impl Parser<'_> {
                     "progress"
                 }),
             )?;
+            // Droid also stores tool results with message.role=user. Only a
+            // projected user input starts a turn in the history window.
+            let events = &mut self.events[first..];
+            if role == "user" && events.iter().any(|event| event.message["role"] == "user") {
+                self.turn = format!("request:{}", string(&record["id"]));
+                for event in events {
+                    event.message["turn_id"] = json!(self.turn);
+                }
+            }
         } else {
             // Unknown native metadata is visible without pretending it is an assistant/tool result.
             self.emit(

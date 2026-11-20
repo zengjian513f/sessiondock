@@ -42,6 +42,9 @@ def seed(f):
         rows.append({'type': 'message', 'id': mid, 'timestamp': '2026-11-09T01:00:01Z',
                      'message': {'role': 'user', 'visibility': visibility,
                                  'content': [{'type': 'text', 'text': text}]}})
+    rows.append({'type': 'message', 'id': 'droid-notice', 'timestamp': '2026-11-09T01:00:02Z',
+                 'message': {'role': 'user', 'systemNotice': True, 'visibility': 'user_only',
+                             'content': [{'type': 'text', 'text': 'Droid system notice'}]}})
     f.path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
     (f.root / 'replay-history').touch()
 
@@ -66,13 +69,18 @@ def check(browser, base, f, label, shots):
         for text in ('OrdinaryContextPreserved', 'LiteralReminderPreserved', 'VisibleIdentityPreserved'):
             expect(pane).to_contain_text(text)
         expect(pane).to_contain_text('UnknownRecordPreserved')
+        notice = pane.locator('.msg[data-role="system"]').filter(has_text='Droid system notice')
+        expect(notice).to_have_count(1)
+        expect(notice.get_by_role('button', name='回退对话与文件')).to_have_count(0)
         expect(pane.get_by_text('earlier Droid answer', exact=True)).to_have_count(1)
         expect(pane.get_by_text('earlier Droid answer', exact=True)).to_be_visible()
 
     assert_history()
     endpoint = '/api/messages/' + quote(uid, safe='')
     history = page.request.get(base + endpoint).json()
-    assert [m['role'] for m in history['messages']] == ['system', 'user', 'assistant', 'system', 'user', 'user'], history
+    assert [m['role'] for m in history['messages']] == [
+        'system', 'user', 'assistant', 'system', 'user', 'user', 'system',
+    ], history
     # Internal-only appends advance the physical cursor without new content.
     with f.path.open('a') as stream:
         stream.write(json.dumps({'type': 'agent_turn_outcome', 'turnId': 'turn-2',

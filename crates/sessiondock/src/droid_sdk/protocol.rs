@@ -60,11 +60,7 @@ fn message(live: &mut Live, n: &Value) {
     if m["content"].as_array().is_none_or(|a| a.is_empty()) {
         return;
     }
-    let role = if m["visibility"] == "llm_only" {
-        "system"
-    } else {
-        m["role"].as_str().unwrap_or("system")
-    };
+    let role = crate::sessions::droid_message_role(m);
     if role == "user"
         && !m["content"]
             .as_array()

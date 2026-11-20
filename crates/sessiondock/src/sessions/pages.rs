@@ -421,10 +421,19 @@ pub(super) fn window(
             stop -= 1;
         }
     }
+    // Droid can emit several visible context blocks before the first prompt.
+    // Include that prompt in the contiguous head when it fits the same budget.
+    let opening_prompt = if snapshot.view.meta["source"] == "droid" {
+        selected[..stop]
+            .iter()
+            .position(|row| row.event.message["role"] == "user")
+    } else {
+        None
+    };
     let mut start = 0;
     let mut head_visible = 0;
     while start < stop
-        && head_visible < WINDOW_HEAD_EVENTS
+        && (head_visible < WINDOW_HEAD_EVENTS || opening_prompt.is_some_and(|index| start <= index))
         && budget.take_at(
             snapshot,
             selected[start].index,

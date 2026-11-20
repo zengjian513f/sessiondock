@@ -4,8 +4,9 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright, expect
-from droid_sdk_fixtures import DroidFixture
+from droid_sdk_fixtures import DroidFixture, native_records
 from history_fixtures import BINARY
 from sdk_usage_fixtures import reveal
 from claude_sdk_browser import open_sdk, receipt
@@ -65,6 +66,101 @@ def check(f, base, screenshots):
         return response.value.request.post_data_json,result['uid']
 
 
+def seed_long_history(f):
+    rows = native_records(f.sid, f.cwd, [
+        ('First retained question', 'First retained answer'),
+        ('Earlier question', 'Earlier answer'),
+        ('Last retained question', 'Last retained progress'),
+        ('Rewind from this question', 'Removed answer'),
+    ])
+
+    def message(mid, role, content, **extra):
+        return {'type': 'message', 'id': mid, 'timestamp': rows[1]['timestamp'],
+                'message': {'role': role, 'content': content, **extra}}
+
+    rows.insert(1, message('initial-context', 'user', [
+        {'type': 'text', 'text': f'Initial context block {i}'} for i in range(6)
+    ], visibility='llm_only'))
+    boundary = next(i for i, row in enumerate(rows) if row['id'] == 'seed-user-3')
+    work = []
+    for i in range(120):
+        call = f'read-{i}'
+        if i == 30:
+            work.append(message('compact-notice', 'user', [
+                {'type': 'text', 'text': 'Droid compacted the context'},
+            ], systemNotice=True, visibility='user_only'))
+        work.extend([
+            message(f'call-{i}', 'assistant', [
+                {'type': 'tool_use', 'id': call, 'name': 'Read',
+                 'input': {'file_path': f'fixture-{i:03}.txt'}},
+            ]),
+            message(f'result-{i}', 'user', [
+                {'type': 'tool_result', 'toolUseId': call, 'content': f'Read output {i}'},
+            ]),
+        ])
+    rows[boundary:boundary] = work
+    f.path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+
+
+def check_long_history(f, base, screenshots, label):
+    original = f.path.read_text()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={'width': 1280, 'height': 900}, color_scheme='light')
+        page.goto(base, wait_until='networkidle')
+        uid = page.locator('#side .item[data-uid^="droid:"]').first.get_attribute('data-uid')
+        open_sdk(page, f, expect, uid=uid)
+        history = page.locator('.sdk-history')
+        target = history.locator('.msg[data-role="user"]').filter(has_text='Rewind from this question')
+        target.get_by_role('button', name='回退对话与文件', exact=True).click()
+        with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/rewind')) as response:
+            page.get_by_role('button', name='创建回退分支', exact=True).click()
+        assert response.value.ok, response.value.text()
+        branch = receipt(response.value.json())['uid']
+        assert branch != uid
+        page.wait_for_function('uid => NativeSdkView.uid === uid && NativeSdkView.connected', arg=branch)
+        expect(history.locator('.history-gap')).to_be_visible()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-long-rewind-wide.png'), full_page=True)
+        window = page.request.get(f'{base}/api/messages/{quote(branch, safe="")}?window=1').json()
+        assert window['partial']['omitted'] > 0
+        messages = window['messages']
+        expected = {'seed-user-0', 'seed-user-2', 'seed-assistant-2', 'result-119'}
+        assert expected <= {row.get('native_id') for row in messages}, expected - {
+            row.get('native_id') for row in messages
+        }
+        turn = next(row['turn_id'] for row in messages if row.get('native_id') == 'seed-user-2')
+        for mid, role in [('compact-notice', 'system'), ('result-119', 'tool_result')]:
+            row = next(row for row in messages if row.get('native_id') == mid)
+            assert row['role'] == role and row['turn_id'] == turn, row
+        for text in ('First retained question', 'Last retained question'):
+            expect(history.get_by_text(text, exact=True)).to_be_visible()
+        expect(history).not_to_contain_text('Rewind from this question')
+        expect(history).not_to_contain_text('Removed answer')
+        expect(page.locator('#sdk-input')).to_have_value('Rewind from this question')
+        progress = history.get_by_text('Last retained progress', exact=True)
+        if not progress.is_visible():
+            history.locator('.turn-process.folded > .turn-toolbar .fold-toggle').last.click()
+        expect(progress).to_be_visible()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-long-rewind-expanded.png'), full_page=True)
+        history.locator('.history-gap-load').click()
+        expect(history.locator('.history-gap')).to_have_count(0)
+        expect(history.get_by_text('Earlier answer', exact=True)).to_be_visible()
+        assert f.path.read_text() == original
+        page.reload(wait_until='domcontentloaded')
+        expect(history.get_by_text('First retained question', exact=True)).to_be_visible()
+        expect(history.get_by_text('Last retained question', exact=True)).to_be_visible()
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.emulate_media(color_scheme='dark')
+        page.locator(f'#side .item[data-uid="{branch}"]').click()
+        expect(history.get_by_text('First retained question', exact=True)).to_be_in_viewport()
+        expect(history.get_by_text('Last retained question', exact=True)).to_be_in_viewport()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-long-rewind-mobile.png'), full_page=True)
+        browser.close()
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--screenshots',type=Path);args=parser.parse_args()
     if args.screenshots:args.screenshots.mkdir(parents=True,exist_ok=True)
@@ -90,7 +186,27 @@ def main():
             hub.start()
             try:check(f,f'http://127.0.0.1:{hub.port}',None)
             finally:hub.stop()
-    print('Droid file rewind Chromium node/Hub: PASS')
+    with tempfile.TemporaryDirectory(prefix='sessiondock-droid-rewind-history-') as root:
+        for label in ('node', 'hub'):
+            path = Path(root) / label
+            path.mkdir()
+            f = DroidFixture(path)
+            seed_long_history(f)
+            port = free_port()
+            with f.server(BINARY, node_env(path, port, '127.0.0.0/8')) as base:
+                if label == 'node':
+                    check_long_history(f, base, args.screenshots, label)
+                else:
+                    hub_root = path / 'hub'
+                    hub_root.mkdir()
+                    hub = Hub(BINARY.with_name('sessiondock-hub'), hub_root,
+                              [SimpleNamespace(name='DroidNode', token=TOKEN, port=port)])
+                    hub.start()
+                    try:
+                        check_long_history(f, f'http://127.0.0.1:{hub.port}', args.screenshots, label)
+                    finally:
+                        hub.stop()
+    print('Droid file rewind and long branch history Chromium node/Hub: PASS')
 
 
 if __name__=='__main__':main()
