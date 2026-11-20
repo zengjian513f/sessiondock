@@ -76,10 +76,11 @@ def varint(value):
 def proto_field(number,value):
     return varint(number*8+2)+varint(len(value))+value
 def native_record(kind,content,**fields):
+    input_text=fields.pop('input_text',content)
     if (root/'native-echo-store').exists():
         connection.execute('CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB)')
-        payload=proto_field(19,proto_field(2,content.encode())+proto_field(19,fields.pop('client_message_id','').encode()))
-        connection.execute('INSERT OR REPLACE INTO steps VALUES (?,?,3,0,?)',(index,14 if kind=='USER_INPUT' else 1,payload));connection.commit()
+        payload=proto_field(19,proto_field(2,input_text.encode())+proto_field(19,fields.pop('client_message_id','').encode()))
+        connection.execute('INSERT OR REPLACE INTO steps VALUES (?,?,3,0,?)',(fields.get('step_index',index),14 if kind=='USER_INPUT' else 1,payload));connection.commit()
     with transcript.open('a') as output:
         output.write(json.dumps({'type':kind,'content':content,'step_index':index,
           'created_at':'2026-10-18T00:00:00Z','status':'DONE','source':'MODEL',**fields},ensure_ascii=False)+'\n')
@@ -104,6 +105,7 @@ signal.signal(signal.SIGINT,interrupted)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 cancelled=threading.Event()
 steered_queue=queue.Queue()
+rewound_index=None
 class ControlHandler(BaseHTTPRequestHandler):
     def log_message(self,*_): pass
     def do_POST(self):
@@ -113,7 +115,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             assert self.headers.get('Content-Type')=='application/connect+json'
             assert body[0]==0 and int.from_bytes(body[1:5],'big')==len(body)-5
             payload=json.loads(body[5:])
-            assert payload['conversationId']==sid and payload['disableRehydration'] is True
+            assert payload['conversationId']==sid
+            assert payload['disableRehydration'] is (payload['subscriberId']!='sessiondock-history')
             for key in ('initialStepsPageBounds','initialGeneratorMetadatasPageBounds','initialExecutorMetadatasPageBounds'):
                 assert payload[key]=={'startIndex':1,'endIndexExclusive':1}
             mode=(root/'context-mode').read_text().strip() if (root/'context-mode').exists() else ''
@@ -136,6 +139,15 @@ class ControlHandler(BaseHTTPRequestHandler):
             threading.Event().wait(6)
             return
         payload=json.loads(body)
+        if self.path.endswith('/RevertToCascadeStep'):
+            global index,rewound_index
+            assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
+            assert payload['cascadeId']==sid and payload['conversationOnly'] is True
+            index=rewound_index=payload['stepIndex']+1
+            connection.execute('DELETE FROM steps WHERE idx>=?',(index,))
+            connection.execute('UPDATE fixture_steps SET next_index=?',(index,));connection.commit()
+            record({'kind':'revert','sid':sid,'pid':os.getpid(),'first_removed':index})
+            self.send_response(200);self.end_headers();self.wfile.write(b'{}');return
         if self.path.endswith('/UpdateConversationAnnotations'):
             assert self.headers.get('x-codeium-csrf-token')==option('--csrf_token')
             assert payload['cascadeId']==sid and payload['mergeAnnotations'] is True
@@ -203,8 +215,12 @@ for line in sys.stdin:
     content='<USER_REQUEST>\n'+text+'\n</USER_REQUEST>'
     if (root/'model-notice').exists():
         content+='\n<USER_SETTINGS_CHANGE>\n'+(root/'model-notice').read_text()+'\n</USER_SETTINGS_CHANGE>'
-    native_record('USER_INPUT',content)
-    step('user_input',state='DONE');advance()
+    native_record('USER_INPUT',content,input_text=text)
+    # A reused index can be persisted without another headless notification.
+    if index!=rewound_index:
+        step('user_input',state='DONE')
+    rewound_index=None
+    advance()
     if first_input and resumed:
         native_record('SYSTEM_MESSAGE','<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-20T06:32:23Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] Native runtime restarted; background tasks have stopped.\n</SYSTEM_MESSAGE>')
         step('system_message',state='DONE');advance()

@@ -16,6 +16,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 from unittest.mock import patch
@@ -558,6 +559,82 @@ def exercise(browser, base, fixture, screenshots=None):
         context.close()
 
 
+def exercise_rewind_echo(browser, base, fixture, screenshots):
+    sid = 'a6400000-0000-4000-8000-000000000064'
+    title = 'Agy rewind echo'
+    fixture.seed(sid)
+    with sqlite3.connect(fixture.native / 'conversation_summaries.db') as db:
+        db.execute('UPDATE conversation_summaries SET title=? WHERE conversation_id=?', (title, sid))
+    with sqlite3.connect(fixture.native / 'conversations' / f'{sid}.db') as db:
+        db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB)')
+        db.executemany('INSERT INTO steps VALUES (?,?,3,0,NULL)', [(0, 14), (1, 1)])
+    (fixture.root / 'native-echo-store').touch()
+    fixture.release('rewind-echo')
+    prompt = 'hold:rewind-echo'
+    abandoned = '这条旧消息已回退'
+    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    try:
+        page = context.new_page()
+        page.goto(base, wait_until='domcontentloaded')
+        page.wait_for_function('T.listLoaded')
+        row = page.locator('#side .item[data-uid]').filter(has_text=title)
+        uid = row.get_attribute('data-uid', timeout=20000)
+        select_sdk(page, uid)
+        watch(page, uid)
+        history = page.locator('.sdk-history')
+        live = page.locator('.sdk-live')
+        composer = page.locator('#sdk-input')
+        send(page, prompt)
+        idle(page)
+        send(page, abandoned)
+        idle(page)
+        old = history.locator('.msg[data-role="user"]').filter(has_text=abandoned)
+        expect(old).to_be_visible(timeout=20000)
+        if screenshots:
+            page.screenshot(path=str(screenshots / 'agy-rewind-before.png'), full_page=True)
+        old.get_by_role('button', name='回退到此处之前', exact=True).click()
+        with page.expect_response('**/api/native-sdk/revert') as reverted:
+            page.locator('dialog.app-popup[open]').get_by_role('button', name='回退', exact=True).click()
+        assert reverted.value.ok, reverted.value.text()
+        expect(composer).to_have_value(abandoned)
+        expect(old).to_have_count(0)
+        expect(live).not_to_contain_text(abandoned)
+        # Repeat a message already present in retained history. The new
+        # delivery must use the reused index, even without a stream echo.
+        receipt = send(page, prompt)
+        idle(page)
+        expect(history.locator('.msg[data-role="user"]').filter(has_text=prompt)).to_have_count(2, timeout=20000)
+        if screenshots:
+            page.screenshot(path=str(screenshots / 'agy-rewind-after-wide.png'), full_page=True)
+        items = page.evaluate('''id => window.__agySnapshot.raw.items.filter(
+            item => item.request_id === id)''', receipt['request_id'])
+        item = next(item for item in items if item['role'] == 'user')
+        assert item.get('native_echo') is True, ('the bridge left the persisted input unbound', item)
+        assert [item['role'] for item in items] == ['user', 'assistant']
+        assert item['native']['step_index'] == next(
+            row['first_removed'] for row in fixture.events() if row['kind'] == 'revert' and row['sid'] == sid)
+        expect(live.locator('.msg[data-role="user"]')).to_have_count(0)
+        expect(page.locator('.sdk-msgs')).not_to_contain_text(abandoned)
+        expect(composer).to_have_value('')
+        with sqlite3.connect(fixture.root / 'state/native-sdk-inputs.sqlite') as db:
+            stored, = db.execute('SELECT row FROM inputs WHERE id=?', (receipt['queue_id'],)).fetchone()
+        assert json.loads(stored)['consumption'] == 'observed'
+        assert len({row['pid'] for row in fixture.inputs() if row['sid'] == sid}) == 1
+        assert len([row for row in fixture.inputs(prompt) if row['sid'] == sid]) == 2
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function('T.listLoaded')
+        select_sdk(page, uid)
+        resize_sdk(page, uid, 390)
+        page.emulate_media(color_scheme='dark')
+        expect(history.locator('.msg[data-role="user"]').filter(has_text=prompt)).to_have_count(2)
+        expect(live.locator('.msg[data-role="user"]')).to_have_count(0)
+        if screenshots:
+            page.screenshot(path=str(screenshots / 'agy-rewind-after-narrow.png'), full_page=True)
+        print('Agy: rewind, reused stdin step, history join and reload verified', flush=True)
+    finally:
+        context.close()
+
+
 def check_diagnostic_logs(fixture):
     """Read the real service's persisted trace after its normal shutdown flush."""
     records = [json.loads(line)
@@ -626,6 +703,8 @@ def main():
     parser.add_argument('--ptyhost', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--frontend', type=Path)
     parser.add_argument('--screenshots', type=Path)
+    parser.add_argument('--rewind-echo-only', action='store_true',
+                        help='Exercise Agy rewind and the next input without a headless echo')
     args = parser.parse_args()
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
     if args.frontend:
@@ -649,10 +728,15 @@ def main():
                     options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
                 browser = pw.chromium.launch(**options)
                 try:
-                    exercise(browser, base, fixture, args.screenshots)
+                    if args.screenshots:
+                        args.screenshots.mkdir(parents=True, exist_ok=True)
+                    if not args.rewind_echo_only:
+                        exercise(browser, base, fixture, args.screenshots)
+                    exercise_rewind_echo(browser, base, fixture, args.screenshots)
                 finally:
                     browser.close()
-        check_diagnostic_logs(fixture)
+        if not args.rewind_echo_only:
+            check_diagnostic_logs(fixture)
     print('PASS Agy native SDK browser', flush=True)
 
 

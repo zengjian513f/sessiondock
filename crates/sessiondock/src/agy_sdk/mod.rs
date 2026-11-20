@@ -89,6 +89,8 @@ struct Turn {
     stdout_offset: u64,
     #[serde(default)]
     idle_checkpoint: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first_native_step: Option<u64>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -414,7 +416,8 @@ impl Bridge {
                 let launch = LaunchSettings::requested(&data, &input);
                 let turn = Turn { id: request.clone(), text: content.clone(),
                     model: launch.model, effort: launch.effort, mode: launch.mode, recovering: false,
-                    persistent:true, runtime_id:request.clone(), stdout_offset:0, idle_checkpoint:false };
+                    persistent:true, runtime_id:request.clone(), stdout_offset:0, idle_checkpoint:false,
+                    first_native_step:None };
                 let mut turn = turn;
                 if let Some(runtime) = &data.runtime
                     && runtime.model == turn.model && runtime.effort == turn.effort && runtime.mode == turn.mode
@@ -891,6 +894,7 @@ async fn actor(
                                     runtime.transcript.observe(&event["step_update"]);
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                 } else if event["event"]=="result" {
+                                    echo::refresh(&process,&live,&turn).await;
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                     let value=&event["result"];
                                     let status=value["status"].as_str().unwrap_or("INVALID");
@@ -962,7 +966,7 @@ async fn actor(
                     }
                     continue;
                 },
-                _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !runtime.transcript.is_empty() || echo::pending(&live)=>{
+                _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !runtime.transcript.is_empty() || echo::pending(&live,None)=>{
                     let turn=live.data.lock().unwrap().runtime.clone();
                     if let Some(turn)=turn {
                         echo::refresh(&process,&live,&turn).await;
@@ -1028,7 +1032,7 @@ async fn actor(
             Command::Interrupt(reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
             }
-            Command::Turn(turn) => {
+            Command::Turn(mut turn) => {
                 {
                     let mut data = live.data.lock().unwrap();
                     data.active = Some(turn.id.clone());
@@ -1051,7 +1055,7 @@ async fn actor(
                 let outcome = execute(
                     &process,
                     &live,
-                    &turn,
+                    &mut turn,
                     &mut receiver,
                     &mut pending,
                     &mut runtime,
@@ -1176,7 +1180,7 @@ fn reusable_result(outcome: &Result<(), String>) -> bool {
 async fn execute(
     process: &Arc<ProcessConfig>,
     live: &Arc<Live>,
-    turn: &Turn,
+    turn: &mut Turn,
     receiver: &mut mpsc::UnboundedReceiver<Command>,
     pending: &mut std::collections::VecDeque<Turn>,
     runtime: &mut Runtime,
@@ -1242,6 +1246,30 @@ async fn execute(
     if turn.recovering && turn.idle_checkpoint {
         return Ok(());
     }
+    if !turn.recovering {
+        turn.first_native_step = echo::first_native_step(process, live).await;
+        if turn.first_native_step.is_some() {
+            let data = live.data.lock().unwrap();
+            // A newer admission may already own the durable binding.
+            if data.outstanding == 1
+                && let Err(error) = write_binding(
+                    process.adapter_dir.as_deref(),
+                    &live.sid,
+                    &live.cwd,
+                    turn,
+                    &data.steers,
+                )
+            {
+                log_turn(
+                    "warn",
+                    "agy.sdk.echo_binding_failed",
+                    live,
+                    turn,
+                    json!({"error":error}),
+                );
+            }
+        }
+    }
     let mut process_finished = false;
     let outcome=async {
     tokio::select! {
@@ -1263,7 +1291,7 @@ async fn execute(
     let mut saw_assistant = false;
     loop {
         tokio::select! {
-            _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty() || echo::pending(live)=>{
+            _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty() || echo::pending(live,Some(turn))=>{
                 echo::refresh(process,live,turn).await;
                 saw_assistant |= transcript.refresh(process,live,turn).await;
             }
@@ -1373,6 +1401,7 @@ async fn execute(
                         saw_assistant |= transcript.refresh(process,live,turn).await;
                     }
                     Some("result")=>{
+                        echo::refresh(process,live,turn).await;
                         saw_assistant |= transcript.refresh(process,live,turn).await;
                         let value=&event["result"];
                         if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
@@ -1473,7 +1502,7 @@ fn insert_before_pending_users(items: &mut Vec<Value>, item: Value) -> usize {
     while index > 0
         && items[index - 1]["role"] == "user"
         && items[index - 1]["native_id"].is_null()
-        && items[index - 1]["status"] != "unknown"
+        && items[index - 1]["status"] == "queued"
     {
         index -= 1;
     }
@@ -1571,8 +1600,11 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) -> 
                     item["role"] == "user"
                         && item["native_id"].is_null()
                         && item["status"] != "unknown"
-                        && (step["client_message_id"].is_null()
-                            || item["request_id"] == step["client_message_id"])
+                        && if step["client_message_id"].is_null() {
+                            item["request_id"] == turn.id || is_control_input(item)
+                        } else {
+                            item["request_id"] == step["client_message_id"]
+                        }
                 });
                 // Unkeyed NDJSON must not guess the identity of a FIFO
                 // continuation or skip over it to an explicit steer.
