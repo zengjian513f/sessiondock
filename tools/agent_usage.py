@@ -115,21 +115,34 @@ def agy_model_notice(text):
 
 
 def droid_record(raw):
-    # Native diagnostics contain text and credentials in unrelated entries.
-    # Parse only the completed request's scalar metering context.
-    marker = '] INFO: [Agent] Streaming result | Context: '
-    if marker not in raw or not raw.startswith('['):
+    when, _, entry = raw.partition('] INFO: ')
+    kind, _, body = entry.partition(' | Context: ')
+    if not when.startswith('[') or kind not in ('[Agent] Streaming result', '[Model-Router] Model transition'):
         return []
-    when, body = raw[1:].split(marker,1)
+    when = when[1:]
+    # Only retain the scalar fields needed for metering and pool attribution.
     row = json.loads(body); tags = row.get('tags') or {}
     sid, model = tags.get('sessionId'), tags.get('modelId')
+    process = row.get('factory.process.instance_id')
+    if kind == '[Model-Router] Model transition':
+        sid = row.get('sessionId') or sid
+        at = stamp(when)
+        if row.get('slot') != 'main' or not sid or not process or at is None:
+            return []
+        # Factory offers Kimi K3 in Droid Core. A normal model selection does
+        # not establish the billing pool; the 402 recovery switch does.
+        core_model = None
+        if (row.get('source') == 'detector_recovery' and row.get('reason') == 'overage_reactive_402'
+                and row.get('modelId') == 'kimi-k3'):
+            core_model = row['modelId']
+        return [{'kind':'droid_route', 'process':process, 'sid':sid, 'at':at, 'core_model':core_model}]
     identity = row.get('upstreamResponseId') or row.get('upstreamRequestId') or f"{sid}:{row.get('factory.process.instance_id')}:{when}"
     written = row.get('cachedTokensWritten',0)
     ttl = row.get('cacheWriteTtl')
     item = event(identity,when,model,{'input':row.get('inputTokens'), 'output':row.get('outputTokens'),
         'cache_read':row.get('cacheReadInputTokens',0), 'cache_write':written if ttl != '1h' else 0,
         'cache_write_long':written if ttl == '1h' else 0})
-    item.update(sid=sid, byok=tags.get('isByok') in (True,'true'), cache_ttl_unknown=bool(written and ttl not in ('5m','1h')),
+    item.update(sid=sid, process=process, byok=tags.get('isByok') in (True,'true'), cache_ttl_unknown=bool(written and ttl not in ('5m','1h')),
                 pool=row.get('usagePool'))
     return [item]
 
@@ -334,11 +347,17 @@ class Ledger:
             create table if not exists excluded_events(source text,id text,primary key(source,id));
             create table if not exists counter_sessions(source text,id text,primary key(source,id));
             create table if not exists parser_versions(source text primary key,version int);
+            create table if not exists droid_routes(process text,sid text,at real,core_model text,
+              primary key(process,sid,at));
         ''')
         self.bytes = 0
         self.changed = 0
 
     def put(self, source, item):
+        if item.get('kind') == 'droid_route':
+            self.db.execute('insert or replace into droid_routes values (?,?,?,?)',
+                            (item['process'], item['sid'], item['at'], item['core_model']))
+            return
         if item.get('kind') in ('excluded','counter_mode'):
             table = 'excluded_events' if item['kind'] == 'excluded' else 'counter_sessions'
             self.db.execute(f'insert or ignore into {table} values (?,?)', (source,item['id']))
@@ -346,6 +365,16 @@ class Ledger:
         table = 'quota_events' if item.get('kind') == 'quota' else 'events'
         self.db.execute(f'insert or replace into {table} values (?,?,?,?)',
                         (source, item['id'], item['at'], json.dumps(item)))
+
+    def droid_pool(self, item):
+        pool = item.get('pool')
+        if pool or item['model'] != 'kimi-k3' or not item.get('process') or not item.get('sid'):
+            return pool
+        # Requests and routing transitions can straddle a log rotation.
+        route = self.db.execute(
+            'select core_model from droid_routes where process=? and sid=? and at<=? order by at desc limit 1',
+            (item['process'], item['sid'], item['at'])).fetchone()
+        return 'core' if route and route[0] == item['model'] else None
 
     def file(self, source, path, kind='jsonl', rebuild=False, sid=None):
         stat = path.stat()
@@ -445,7 +474,7 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
         if source not in SOURCES or not root or agent not in ('all', source):
             continue
         try:
-            version = 2 if source in ('agy','droid') else 1
+            version = {'agy': 2, 'droid': 3}.get(source, 1)
             stored = ledger.db.execute('select version from parser_versions where source=?',(source,)).fetchone()
             refresh_parser = rebuild or (stored[0] if stored else 1) != version
             if source == 'droid' and refresh_parser:
@@ -642,6 +671,8 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                         continue
                     if source == 'droid' and item.get('byok'):
                         continue
+                    if source == 'droid' and not fallback:
+                        item['pool'] = ledger.droid_pool(item)
                     match = None if multiple else True if fallback else group_matches(source, bucket, model,item)
                     if match is False:
                         continue

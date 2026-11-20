@@ -117,7 +117,7 @@ python3 tools/agent_usage.py rebuild --config CONFIG --agent claude
 | CodeBuddy | providerData.rawUsage，按 messageId 与 stepSeq 去重 | message／function_call 中重复 usage 只计一次；缺价或缓存写入口径不明不估套餐 |
 | OpenCode | 只读 session_message 的已完成 assistant 记录 | 不叠加 session 累计；cache.write 缺 TTL 时不估完整费用 |
 | Kiro | 官方额度中的月度 Credits | 没有可定价请求明细，显示原因，不将 Credits 当成 API 美元 |
-| Droid | sessions 同级 logs/droid-log-single.log 及轮转日志的 Agent Streaming result | 按请求时间、tags.modelId 和 response/request ID 核算去重；不叠加 settings 总量、totalInputTokens 或 reasoningTokens；BYOK 排除；闭源模型归 Standard，其他模型缺明确池归属不猜；缓存写入 TTL 未知显示 5m–1h 价格范围，日志未覆盖周期起点时仅列已知下限 |
+| Droid | sessions 同级 logs/droid-log-single.log 及轮转日志的 Agent Streaming result、Model-Router Model transition | 按请求时间、tags.modelId 和 response/request ID 核算去重；不叠加 settings 总量、totalInputTokens 或 reasoningTokens；BYOK 排除；优先使用请求的额度组，闭源模型默认归 Standard；同一进程和会话在 402 后自动切换至 Kimi K3，后续匹配请求归 Core，直至下一次主模型切换；其余额度组缺失的记录仍标为不完整；缓存写入 TTL 未知显示 5m–1h 价格范围，日志未覆盖周期起点时仅列已知下限 |
 
 [周期用量 Chromium 回归](../tests/agent_usage_browser.py)实际打开节点与 Hub 页面、
 点击原表刷新、打开设置弹窗，覆盖八来源、历史检查点、迁移归属、自动压缩、

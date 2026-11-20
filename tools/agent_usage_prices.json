@@ -1,11 +1,12 @@
 {
-  "version": "2026-11-16-standard-context",
+  "version": "2026-11-20-standard-context",
   "currency": "USD",
   "sources": [
     "https://developers.openai.com/api/docs/pricing",
     "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://ai.google.dev/gemini-api/docs/pricing",
-    "https://docs.x.ai/developers/models/grok-4.6"
+    "https://docs.x.ai/developers/models/grok-4.6",
+    "https://platform.kimi.ai/docs/pricing/chat"
   ],
   "aliases": {
     "gemini-4-carbon-low": "gemini-4-carbon",
@@ -207,6 +208,13 @@
         "from": "2026-12-01T00:00:00Z"
       }
     ],
+    "kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write": 3,
+      "cache_write_long": 6
+    },
     "gemini-4-hydrogen": {
       "input": 1.5,
       "output": 7.5,

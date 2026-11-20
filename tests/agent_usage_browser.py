@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -222,6 +223,49 @@ def main():
             expect(droid_cell).to_contain_text('≥ ')
             assert '日志未覆盖周期起点' in droid_cell.get_attribute('title')
             expect(droid_cell).not_to_contain_text('整轮')
+            quotas(state,now,used=15)
+            # Factory logs Core recovery separately from request metering, including
+            # when rotation puts the transition and the request in different files.
+            droid_quota = state/'quotas/droid.json'
+            weekly = [
+                {'id':f'{group.lower()}:weekly','group':group,'window':'weekly',
+                 'remaining_percent':90,'resets_at':iso(now+7200)}
+                for group in ('Standard', 'Core')
+            ]
+            dump(droid_quota, {'source':'droid','captured_at':iso(now),'buckets':weekly})
+            recovery = {'sessionId':'droid-sid','factory.process.instance_id':'droid-process',
+                        'slot':'main','source':'detector_recovery','reason':'overage_reactive_402',
+                        'previousModelId':'claude-fable-5.2','modelId':'kimi-k3'}
+            transition = lambda row, at: f'[{iso(at)}] INFO: [Model-Router] Model transition | Context: '+json.dumps(row)+'\n'
+            (logs/'droid-log-single.log.2').write_text(
+                f'[{iso(now-7*86400)}] INFO: startup\n'+transition(recovery, now-90))
+            kimi = {**droid_row,'upstreamResponseId':'kimi-core','factory.process.instance_id':'droid-process',
+                    'inputTokens':100000,'outputTokens':10000,'cacheReadInputTokens':100000,'cachedTokensWritten':0,
+                    'tags':{**droid_row['tags'],'modelId':'kimi-k3'}}
+            with droid_log.open('a') as stream:
+                stream.write(log_line(kimi, now-80))
+                stream.write(log_line({**kimi,'upstreamResponseId':'kimi-extra','usagePool':'extra'}, now-70))
+                stream.write(log_line({**kimi,'upstreamResponseId':'kimi-byok','tags':{**kimi['tags'],'isByok':'true'}}, now-65))
+            refresh()
+            droid_weekly = page.locator('[data-source="droid"] tbody tr')
+            core = droid_weekly.filter(has_text='Core').locator('.quota-api')
+            standard = droid_weekly.filter(has_text='Standard').locator('.quota-api')
+            for url, mode in [(base,'node'),(f'http://127.0.0.1:{hub.port}','hub')]:
+                page.goto(url+'/quotas.html')
+                page.get_by_role('tab', name='Droid').click()
+                expect(core).to_have_text('$0.48整轮 ≈ $4.80')
+                expect(core).to_have_attribute('title', re.compile(r'kimi-k3：\$0\.48，1 次调用'))
+                expect(standard).not_to_have_attribute('title', re.compile('kimi-k3|无法确认'))
+                page.screenshot(path=str(args.output/f'{mode}-droid-weekly.png'),full_page=True)
+            page.goto(base+'/quotas.html')
+            with droid_log.open('a') as stream:
+                stream.write(log_line({**kimi,'upstreamResponseId':'kimi-other-process',
+                                       'factory.process.instance_id':'other-process'}, now-52))
+                stream.write(transition({**recovery,'source':'manual','reason':None}, now-48))
+                stream.write(log_line({**kimi,'upstreamResponseId':'kimi-manual'}, now-45))
+            refresh()
+            expect(core).to_have_text('≥ $0.48记录不完整')
+            expect(core).to_have_attribute('title', re.compile('无法确认请求所属额度组'))
             quotas(state,now,used=15)
             # Same request copies and unchanged files do not add charges.
             shutil.copyfile(cp,cp.with_name('rollout-copy.jsonl'));refresh()
