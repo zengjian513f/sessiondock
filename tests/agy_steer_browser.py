@@ -45,6 +45,7 @@ def check_pending_cancel(page, base, fixture, uid, shots, label, restart_server)
     details = page.locator('#sdk-status-menu')
     mode = fixture.root / 'interrupt-mode'
     pid = fixture.inputs('hold:uncertain')[0]['pid']
+    earlier_events = len(fixture.events())
     mode.write_text('pending')
 
     expect(notice).to_have_text('处理中')
@@ -89,7 +90,8 @@ def check_pending_cancel(page, base, fixture, uid, shots, label, restart_server)
     expect(stop).to_be_hidden()
     mode.unlink()
     assert len(fixture.inputs('hold:uncertain')) == 1
-    cancels = [event for event in fixture.events() if event['kind'] == 'cancel' and event['pid'] == pid]
+    cancels = [event for event in fixture.events()[earlier_events:]
+               if event['kind'] == 'cancel' and event['pid'] == pid]
     assert len(cancels) == 1
     assert not any(event['kind'] == 'signal' for event in fixture.events())
     return base
