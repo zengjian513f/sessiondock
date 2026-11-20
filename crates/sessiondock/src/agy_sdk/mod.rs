@@ -55,6 +55,8 @@ struct Data {
     active: Option<String>,
     active_launch: Option<LaunchSettings>,
     foreground_idle: bool,
+    cancel_pending: bool,
+    cancel_error: Option<String>,
     cancelling: bool,
     model: Option<String>,
     // Observed native state is presentation evidence, not a launch override.
@@ -70,6 +72,14 @@ struct Data {
     usage_errors: Value,
     mode: Option<String>,
     runtime: Option<Turn>,
+}
+
+impl Data {
+    fn consumed(&self, request: &str) -> bool {
+        self.items.iter().any(|item| {
+            item["role"] == "user" && item["request_id"] == request && item["native_echo"] == true
+        })
+    }
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -200,7 +210,7 @@ enum Command {
         Option<LaunchSettings>,
         oneshot::Sender<Result<Value, String>>,
     ),
-    Interrupt(oneshot::Sender<Result<Value, String>>),
+    Interrupt(String, oneshot::Sender<Result<Value, String>>),
     Rename(String, oneshot::Sender<Result<Value, String>>),
     History(String, Value, oneshot::Sender<Result<Value, String>>),
 }
@@ -516,7 +526,16 @@ impl Bridge {
             "interrupt" => {
                 let live = self.lookup(&key(&target)?)?;
                 let (sender, receiver) = oneshot::channel();
-                live.commands.send(Command::Interrupt(sender)).map_err(|_| "agy_sdk_shutdown")?;
+                {
+                    let data = live.data.lock().unwrap();
+                    let request = data.active.as_deref().or_else(|| {
+                        data.items.iter().find(|item| {
+                            item["role"] == "user" && item["status"] == "queued" && !is_control_input(item)
+                        }).and_then(|item| item["request_id"].as_str())
+                    }).ok_or("agy_sdk_idle")?;
+                    live.commands.send(Command::Interrupt(request.to_owned(), sender))
+                        .map_err(|_| "agy_sdk_shutdown")?;
+                }
                 receiver.await.map_err(|_| "agy_sdk_shutdown".to_owned())?
             }
             "respond" => Err("agy_sdk_respond_unsupported: Agy stream-json 不支持控制请求或审批/问题回答；原生 headless 按已配置策略软拒绝需要交互批准的工具。".into()),
@@ -679,6 +698,8 @@ impl Bridge {
                 active: None,
                 active_launch: None,
                 foreground_idle: false,
+                cancel_pending: false,
+                cancel_error: None,
                 cancelling: false,
                 model,
                 observed_model: None,
@@ -825,7 +846,8 @@ impl Live {
             })
             .collect();
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
-            "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,"cancel_requested":data.cancelling,
+            "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
+            "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling,"cancel_error":data.cancel_error,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
@@ -1029,7 +1051,7 @@ async fn actor(
                     "agy_sdk_idle: 当前回合已结束，未发送引导；请重新发送。".into()
                 }));
             }
-            Command::Interrupt(reply) => {
+            Command::Interrupt(_, reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
             }
             Command::Turn(mut turn) => {
@@ -1090,6 +1112,8 @@ async fn actor(
                 if !retained || runtime.native.is_none() {
                     data.foreground_idle = false;
                 }
+                data.cancel_pending = false;
+                data.cancel_error = None;
                 data.cancelling = false;
                 data.outstanding = data.outstanding.saturating_sub(1);
                 if let Some(item) = data
@@ -1271,6 +1295,7 @@ async fn execute(
         }
     }
     let mut process_finished = false;
+    let mut interrupt_reply: Option<oneshot::Sender<Result<Value, String>>> = None;
     let outcome=async {
     tokio::select! {
         _=shutdown.cancelled()=>{return Err("agy_sdk_shutdown".into());},
@@ -1290,6 +1315,33 @@ async fn execute(
     }
     let mut saw_assistant = false;
     loop {
+        // A successful pipe write can precede the native invocation. Connect
+        // can acknowledge CancelCascadeInvocation even in that gap.
+        let deferred_ready = {
+            let data = live.data.lock().unwrap();
+            data.cancel_pending && data.consumed(&turn.id)
+        };
+        if interrupt_reply.is_some() || deferred_ready {
+            let answer = native.interrupt(&turn.id).await;
+            log_turn("info","agy.sdk.interrupt",live,turn,json!({
+                "native_pid":native.pid(),"method":"CancelCascadeInvocation","kill_background_tasks":false,"sent":answer.is_ok(),
+                "stdout_offset":native.stdout_offset}));
+            interrupted = answer.is_ok();
+            {
+                let mut data = live.data.lock().unwrap();
+                data.cancel_pending = false;
+                data.cancel_error = answer.as_ref().err().cloned();
+                if interrupted {
+                    data.cancelling = true;
+                    data.foreground_idle = false;
+                    data.diagnostics.push_str("\n原生已接受当前回合取消；子代理和后台任务继续运行。Agy headless 的最终回执可能等待这些任务结束；等待期间不会发送终止信号。\n");
+                }
+                live.publish(&mut data);
+            }
+            if let Some(reply) = interrupt_reply.take() {
+                let _ = reply.send(answer.map(|()| json!({"interrupted":true,"session_id":live.sid})));
+            }
+        }
         tokio::select! {
             _=tokio::time::sleep(std::time::Duration::from_millis(350)), if !transcript.is_empty() || echo::pending(live,Some(turn))=>{
                 echo::refresh(process,live,turn).await;
@@ -1357,26 +1409,23 @@ async fn execute(
                     let result=native.rename(&title).await.map(|()|json!({"renamed":true,"session_id":live.sid,"title":title}));
                     let _=reply.send(result);
                 }
-                Some(Command::Interrupt(reply))=>{
-                    // An accepted cancellation is not a request to stop the runtime.
-                    if interrupted {
+                Some(Command::Interrupt(request,reply))=>{
+                    if request != turn.id {
+                        let _=reply.send(Err("agy_sdk_idle".into()));
+                    } else if interrupted {
                         let _=reply.send(Ok(json!({"interrupted":true,"session_id":live.sid})));
-                        continue;
-                    }
-                    let answer=native.interrupt(&turn.id).await;
-                    log_turn("info","agy.sdk.interrupt",live,turn,json!({
-                        "native_pid":native.pid(),"method":"CancelCascadeInvocation","kill_background_tasks":false,"sent":answer.is_ok(),
-                        "stdout_offset":native.stdout_offset}));
-                    if answer.is_ok() {
-                        interrupted=true;
-                        {
-                            let mut data=live.data.lock().unwrap();
-                            data.cancelling=true;
-                            data.foreground_idle=false;
+                    } else {
+                        let mut data=live.data.lock().unwrap();
+                        if data.consumed(&turn.id) {
+                            interrupt_reply=Some(reply);
+                        } else {
+                            if !data.cancel_pending {
+                                data.cancel_pending=true;
+                                live.publish(&mut data);
+                            }
+                            let _=reply.send(Ok(json!({"interrupted":false,"pending":true,"session_id":live.sid})));
                         }
-                        live.diagnostic("\n原生已接受当前回合取消；子代理和后台任务继续运行。Agy headless 的最终回执可能等待这些任务结束；等待期间不会发送终止信号。\n".into());
                     }
-                    let _=reply.send(answer.map(|()|json!({"interrupted":true,"session_id":live.sid})));
                 }
                 None=>{ native.terminate().await;return Err("agy_sdk_shutdown".into()); }
             },

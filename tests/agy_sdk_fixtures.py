@@ -207,6 +207,14 @@ for line in sys.stdin:
     assert message['event']=='user',message
     text=message['message']['content']
     record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'settings':option('--settings'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
+    if text=='hold:interrupt-before-input':
+        # The pipe has accepted the message, but Agy has not forwarded it
+        # to the conversation. An early cancel returns 200 without stopping it.
+        deadline=time.monotonic()+20
+        while not (root/'release'/'interrupt-input-ready').exists():
+            if time.monotonic()>deadline:sys.exit('fixture input hold timeout')
+            threading.Event().wait(0.02)
+    cancelled.clear()
     resumed=index>0
     while not steered_queue.empty():
         _,carry_text=steered_queue.get_nowait()
@@ -371,7 +379,6 @@ for line in sys.stdin:
         step('agent_response',state='DONE');advance()
         result('SUCCESS','最终回执中的回复补齐正文。')
         continue
-    cancelled.clear()
     if text.startswith('hold:'):
         token=text.split(':',1)[1]
         assert Path(token).name==token

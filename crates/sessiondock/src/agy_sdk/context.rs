@@ -38,16 +38,13 @@ pub(super) async fn refresh(process: &ProcessConfig, live: &Live) {
     if data.seq == sequence {
         let consumed = data.active.as_ref().map_or_else(
             || data.runtime.is_some() && data.steers.iter().any(|steer| steer.fifo),
-            |active| {
-                data.items
-                    .iter()
-                    .any(|item| item["request_id"] == *active && item["native_echo"] == true)
-            },
+            |active| data.consumed(active),
         );
         let pending = data.items.iter().any(|item| {
             is_control_input(item) && item["native_id"].is_null() && item["status"] != "unknown"
         });
-        let idle = foreground_idle && consumed && !pending && !data.cancelling;
+        let idle =
+            foreground_idle && consumed && !pending && !data.cancel_pending && !data.cancelling;
         changed = data.foreground_idle != idle;
         data.foreground_idle = idle;
     }

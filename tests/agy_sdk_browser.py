@@ -102,6 +102,59 @@ def resize_sdk(page, uid, width):
     expect(page.locator('.native-sdk-pane')).to_be_visible()
 
 
+def check_startup_interrupt(page, fixture, uid, screenshots=None, *, reject_first=False):
+    watch(page, uid)
+    cancel_count = sum(event['kind'] == 'cancel' for event in fixture.events())
+    start = 'hold:interrupt-before-input'
+    follow_up = 'after native interrupt'
+    mode = fixture.root / 'interrupt-mode'
+    if reject_first:
+        mode.write_text('reject')
+    send(page, start)
+    stop = page.locator('#sdk-stop')
+    notice = page.locator('#sdk-composer .sdk-status')
+    with page.expect_response('**/api/native-sdk/interrupt') as stopped:
+        stop.click()
+    receipt = stopped.value.json()
+    assert stopped.value.ok and receipt['pending'] and not receipt['interrupted'], receipt
+    expect(notice).to_have_text('等待接收输入')
+    expect(stop).to_be_disabled()
+    assert page.evaluate('NativeSdkView.raw.cancel_requested === false')
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancel_count
+    if screenshots:
+        expect(notice).to_be_enabled()
+        notice.press('Enter')
+        details = page.locator('#sdk-status-menu')
+        expect(details).to_be_visible()
+        expect(details).to_contain_text('Agy 接收本轮输入后，SessionDock 会发送停止请求。')
+        page.screenshot(path=str(screenshots / 'agy-interrupt-start.png'), full_page=True)
+        page.keyboard.press('Escape')
+        expect(details).to_be_hidden()
+    send(page, follow_up)
+    assert not fixture.inputs(follow_up)
+    fixture.release('interrupt-input-ready')
+    if reject_first:
+        expect(notice).to_have_text('中断失败')
+        expect(stop).to_be_enabled()
+        assert not page.evaluate('NativeSdkView.raw.cancel_pending || NativeSdkView.raw.cancel_requested')
+        mode.unlink()
+        with page.expect_response('**/api/native-sdk/interrupt') as retried:
+            stop.click()
+        assert retried.value.ok and retried.value.json()['interrupted'], retried.value.text()
+        cancel_count += 1
+    idle(page)
+    expect(page.locator('.native-sdk-pane .msgs')).to_contain_text('Synthetic Agy reply: ' + follow_up)
+    assert page.evaluate("window.__agySnapshots.some(({raw}) => raw.last_turn?.status === 'interrupted')")
+    assert page.evaluate('NativeSdkView.raw.cancel_pending === false')
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancel_count + 1
+    assert len(fixture.inputs(start)) == len(fixture.inputs(follow_up)) == 1
+    pid = fixture.inputs(start)[0]['pid']
+    assert fixture.inputs(follow_up)[0]['pid'] == pid
+    assert any(event['kind'] == 'turn_cancelled' and event['pid'] == pid for event in fixture.events())
+    assert not any(event['kind'] == 'signal' and event['pid'] == pid for event in fixture.events())
+    return pid
+
+
 def exercise(browser, base, fixture, screenshots=None):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
@@ -361,19 +414,7 @@ def exercise(browser, base, fixture, screenshots=None):
         assert all(row['sid'] == SID for row in fixture.inputs())
 
         print('Agy: native turn cancellation retains the same runtime', flush=True)
-        send(page, 'hold:interrupt')
-        expect(page.locator('.sdk-live')).to_contain_text('Agy running interrupt')
-        interrupted_pid = fixture.inputs('hold:interrupt')[0]['pid']
-        page.locator('#sdk-stop').click()
-        idle(page)
-        assert any(event['kind'] == 'turn_cancelled' and event['pid'] == interrupted_pid
-                   for event in fixture.events())
-        assert not any(event['kind'] == 'signal' for event in fixture.events())
-        assert page.evaluate('NativeSdkView.raw.last_turn.status') == 'interrupted'
-        send(page, 'after native interrupt')
-        expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after native interrupt')
-        idle(page)
-        assert fixture.inputs('after native interrupt')[0]['pid'] == interrupted_pid
+        interrupted_pid = check_startup_interrupt(page, fixture, uid, screenshots)
 
         # Cancellation failure or slow native completion never escalates to
         # process signals. A repeated click while pending is idempotent.
@@ -691,7 +732,12 @@ def check_diagnostic_logs(fixture):
     assert any(row['event'] == 'agy.sdk.interrupt' and row['sent']
                and row['method'] == 'CancelCascadeInvocation'
                and row['kill_background_tasks'] is False for row in events)
-    cancel_pid = fixture.inputs('hold:interrupt')[0]['pid']
+    cancel_pid = fixture.inputs('hold:interrupt-before-input')[0]['pid']
+    cancel = next(row for row in events if row['event'] == 'agy.sdk.interrupt'
+                  and row['native_pid'] == cancel_pid)
+    assert any(row['event'] == 'agy.sdk.step' and row['kind'] == 'user_input'
+               and row['delivery_id'] == cancel['delivery_id']
+               and row['stdout_offset'] <= cancel['stdout_offset'] for row in events)
     assert not any(row['event'] in ('agy.sdk.kill_requested', 'agy.sdk.kill_signal')
                    and row.get('native_pid') == cancel_pid for row in events), 'turn cancellation killed the runtime'
     print('Agy: persisted request/delivery/runtime/step/result/queue trace and metadata-only logging verified', flush=True)

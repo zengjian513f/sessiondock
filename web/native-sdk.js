@@ -749,7 +749,8 @@ const NativeSdkView = {
     this.requests = requests;
     const stop = this.pane.querySelector('#sdk-stop');
     stop.hidden = (!this.running && !this.raw?.retry?.delay_seconds) || this.capabilities.interrupt === false;
-    stop.disabled = this.uid.startsWith('agy:') && this.raw.cancel_requested === true;
+    stop.disabled = this.uid.startsWith('agy:')
+      && (this.raw.cancel_pending === true || this.raw.cancel_requested === true);
     this.paintStatus();
     NativeSdkControls.paint(this);
     if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
@@ -794,6 +795,8 @@ const NativeSdkView = {
       || (failed ? raw.last_turn?.error || observed.activity?.error || '上一回合失败' : null);
     const warning = uncertain || raw.error_kind === 'interrupted' || incomplete;
     const agy = this.uid.startsWith('agy:');
+    const cancelError = agy && this.running && raw.cancel_error;
+    const awaitingInput = agy && this.running && raw.cancel_pending === true;
     const awaitingCancel = agy && this.running && raw.cancel_requested === true;
     const awaitingResult = agy && this.running && raw.foreground_idle === true && !awaitingCancel;
     const timers = awaitingResult ? NativeSdkControls.pendingTimers(this.historyData?.backgroundTimers || []) : [];
@@ -801,8 +804,8 @@ const NativeSdkView = {
     const waitingText = timers.length
       ? '后台定时任务等待中'
       : `等待回执\n${receiptDetails}`;
-    const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : this.requests.size ? 'waiting' : compacting ? 'maintenance'
-      : raw.retry ? 'retrying' : awaitingCancel ? 'waiting' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
+    const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+      : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
       : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
     clearTimeout(this.timerStatusRefresh);
     if (kind === 'scheduled' && Number.isFinite(timers[0].due)) {
@@ -814,8 +817,10 @@ const NativeSdkView = {
     }
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
     let text = scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+      : cancelError ? `中断失败：${cancelError}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
+      : awaitingInput ? '等待接收输入\nAgy 接收本轮输入后，SessionDock 会发送停止请求。'
       : awaitingCancel ? '停止已受理\n等待 Agy 回传本回合的结束回执。子代理和后台任务会继续运行。收到回执前暂不能回退对话。'
       : awaitingResult ? waitingText
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'

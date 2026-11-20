@@ -18,7 +18,7 @@ from urllib.parse import quote
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
 from agy_history_browser import execute, record, system_record, write_transcript
-from agy_sdk_browser import resize_sdk, send
+from agy_sdk_browser import check_startup_interrupt, resize_sdk, send
 from agy_sdk_fixtures import AgyFixture, SID, TITLE
 from claude_sdk_browser import open_sdk, wait_snapshot
 from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
@@ -551,6 +551,16 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
     raw_history = json.dumps(api_msgs.get('messages', []), ensure_ascii=False)
     assert raw_history.index('hold:steer') < raw_history.index('converted steer ' + label) < raw_history.index('Agy steered: converted steer ' + label) < raw_history.index('finished steer') < raw_history.index('ordinary FIFO ' + label)
 
+    if label == 'hub':
+        page.emulate_media(color_scheme='dark')
+        resize_sdk(page, uid, 390)
+        page.wait_for_function('NativeSdkView.connected')
+    check_startup_interrupt(page, fixture, uid, shots, reject_first=label == 'hub')
+    page.evaluate('window.__agyEvents.close()')
+    if label == 'hub':
+        page.emulate_media(color_scheme='light')
+        resize_sdk(page, uid, 1280)
+        page.wait_for_function('NativeSdkView.connected')
     base = check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server)
 
     # Uncertain transport loss before response body is retained as unknown and never replayed.
