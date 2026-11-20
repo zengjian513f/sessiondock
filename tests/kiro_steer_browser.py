@@ -15,7 +15,7 @@ from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
 
-def exercise(browser, base, root, shots, label):
+def exercise(browser, base, root, shots, label, audit):
     context = browser.new_context(viewport={'width':1280,'height':900}, service_workers='block')
     page = context.new_page(); page.set_default_timeout(20000)
     errors=[]; page.on('pageerror',lambda e:errors.append(str(e)))
@@ -68,7 +68,20 @@ def exercise(browser, base, root, shots, label):
     # A second browser/stale click reuses the persisted receipt, never another RPC.
     response=page.request.post(base+'/api/native-sdk/queue_steer',data={'uid':uid,'id':queue_id,'request_id':'duplicate-steer'})
     assert response.ok,response.text()
-    box.fill('native steering '+label);box.press('Control+Enter');expect(box).to_have_value('')
+    box.fill('native steering '+label)
+    with page.expect_response('**/api/native-sdk/steer') as submitted:
+        box.press('Control+Enter')
+    expect(box).to_have_value('')
+    response = submitted.value
+    assert response.ok and response.json()['raw']['state'] == 'completed', response.text()
+    request_id = response.request.post_data_json['request_id']
+    expect(page.locator('#sdk-send')).not_to_have_attribute('aria-busy', 'true')
+    page.evaluate('flushBrowserAudit()')
+    page.wait_for_function('!browserAuditSending && browserAuditQueue.length === 0')
+    events = [json.loads(line) for path in audit.glob('browser-*.jsonl') for line in path.read_text().splitlines()]
+    steer_events = [(event['event'], event['data'].get('outcome')) for event in events
+                    if event.get('request_id') == request_id and event['event'].startswith('browser.sdk.steer.')]
+    assert steer_events == [('browser.sdk.steer.requested', None), ('browser.sdk.steer.finished', 'native_queued')], steer_events
     expect(page.locator('.sdk-live')).to_contain_text('native steering '+label)
     assert page.evaluate('NativeSdkView.running')
     rows=lambda:[json.loads(line) for line in (root/'kiro-acp-received.jsonl').read_text().splitlines()]
@@ -179,12 +192,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sd-kiro-steer-') as temp,sync_playwright() as p:
         root=Path(temp);port=free_port();browser=p.chromium.launch(headless=True)
         try:
-            with native('kiro',root,args.binary,node_env(root,port,'127.0.0.0/8')) as base:
-                exercise(browser,base,root,args.screenshots,'node')
+            audit = root/'audit'; audit.mkdir(mode=0o700)
+            extra = {**node_env(root,port,'127.0.0.0/8'), 'SESSIONDOCK_AUDIT_DIR':str(audit)}
+            with native('kiro',root,args.binary,extra) as base:
+                exercise(browser,base,root,args.screenshots,'node',audit)
                 hub_root=root/'hub';hub_root.mkdir()
                 hub=Hub(args.binary.with_name('sessiondock-hub').resolve(),hub_root,[SimpleNamespace(name='SteerNode',token=TOKEN,port=port)])
                 hub.start()
-                try:exercise(browser,f'http://127.0.0.1:{hub.port}',root,args.screenshots,'hub')
+                try:exercise(browser,f'http://127.0.0.1:{hub.port}',root,args.screenshots,'hub',audit)
                 finally:hub.stop()
         finally:stop_private_sdkhosts(root);browser.close()
 

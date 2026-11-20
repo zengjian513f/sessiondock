@@ -996,7 +996,7 @@ const NativeSdkView = {
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this,payload);
-      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'native_queued'},{uid:auditUid,requestId:steerRequest});
+      if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'native_queued'},{uid:auditUid,requestId:request_id});
       if(steer && this.current(generation))this.setNotice('原生已接收引导；尚未确认处理。');
     } catch (error) {
       if(steer)browserAuditEvent('sdk.steer.finished',{source,outcome:'failed'},{uid:auditUid,requestId:request_id});
