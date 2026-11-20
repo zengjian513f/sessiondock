@@ -5,6 +5,14 @@ import re
 from playwright.sync_api import expect
 
 
+def check_scroll_fade(body, edges=''):
+    if edges:
+        expect(body).to_have_attribute('data-scroll-fade', edges)
+        expect(body).to_have_css('mask-image', re.compile(r'^linear-gradient\('))
+    else:
+        expect(body).to_have_css('mask-image', 'none')
+
+
 def check_scroll_inset(body):
     """The clipping edge must remain inset even after the content scrolls away."""
     gap = body.evaluate("""e => {

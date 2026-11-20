@@ -6398,17 +6398,21 @@ function observeMessageLayout(box, onLayout = () => {}) {
   if (window.ResizeObserver) {
     disposeMessageObservers(box);
     const ro = new ResizeObserver(entries => measureBrowserWork('conversation.resize', () => {
-      for (const entry of entries) entry.target._refreshClip?.();
+      for (const {target} of entries) {
+        target._refreshClip?.();
+        queueScrollFade(target.closest(BUBBLE_SCROLL_PREVIEW));
+      }
       onLayout();
     }, {entries: entries.length}));
     ro.observe(box);
     // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
     // 位于很早的消息里，加载或窄屏重排也会改变总高度，必须额外观察。
     const rich = new Set(), ordinary = new Set();
+    const richSelector = `img, .katex, .tw, ${BUBBLE_SCROLL_PREVIEW}`;
     const observeRich = root => {
       const observe = node => { rich.add(node); ro.observe(node); };
-      if (root.matches?.('img, .katex, .tw, .content-preview')) observe(root);
-      root.querySelectorAll?.('img, .katex, .tw, .content-preview').forEach(observe);
+      if (root.matches?.(richSelector)) observe(root);
+      root.querySelectorAll?.(richSelector).forEach(observe);
     };
     const syncTail = () => {
       const tail = new Set();
@@ -6428,6 +6432,7 @@ function observeMessageLayout(box, onLayout = () => {}) {
     const mo = new MutationObserver(ms => measureBrowserWork('conversation.mutations', () => {
       let boxChildrenChanged = false, hadRemovedElements = false, containerElementsChanged = false;
       for (const m of ms) {
+        queueScrollFade(m.target.closest?.(BUBBLE_SCROLL_PREVIEW));
         let addedEl = false, removedEl = false;
         for (const n of m.addedNodes) {
           if (n.nodeType === 1) { addedEl = true; observeRich(n); }
@@ -8835,6 +8840,7 @@ function toolWrapButton(pre) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
     button.textContent = on ? '保持原行' : '自动换行';
+    if (pre.matches(BUBBLE_SCROLL_PREVIEW)) queueScrollFade(pre);
   };
   return button;
 }
@@ -8867,6 +8873,38 @@ document.addEventListener('focusin', event => {
   if (event.target.matches('input, textarea, [contenteditable="true"]')) setTextScrollBubble(null);
 });
 
+const BUBBLE_SCROLL_PREVIEW = '.content-preview, .tool-out, .event-detail-body, .sdk-queued > .mb';
+const pendingScrollFades = new Set();
+function queueScrollFade(body) {
+  if (!body) return;
+  if (!pendingScrollFades.size) requestAnimationFrame(() => {
+    // Read all scrollports before changing styles. Content can grow without
+    // resizing the scrollport, so also refresh on content and wrap changes.
+    const edges = [];
+    for (const preview of pendingScrollFades) {
+      if (!preview.isConnected) continue;
+      const height = preview.clientHeight;
+      const top = preview.scrollTop;
+      const bottom = preview.scrollHeight - height - top;
+      const startFade = height && top > 1;
+      const endFade = height && bottom > 1;
+      edges.push([preview, startFade ? (endFade ? 'top bottom' : 'top') : (endFade ? 'bottom' : '')]);
+    }
+    pendingScrollFades.clear();
+    for (const [preview, fade] of edges) {
+      if (fade) {
+        if (preview.dataset.scrollFade !== fade) preview.dataset.scrollFade = fade;
+      } else if (preview.hasAttribute('data-scroll-fade')) {
+        preview.removeAttribute('data-scroll-fade');
+      }
+    }
+  });
+  pendingScrollFades.add(body);
+}
+document.addEventListener('scroll', event => {
+  if (event.target.matches?.(BUBBLE_SCROLL_PREVIEW)) queueScrollFade(event.target);
+}, {capture: true, passive: true});
+
 let previewTailFrame = null, previewTailTimestamp = null;
 function schedulePreviewTails() {
   if (previewTailFrame !== null) return;
@@ -8888,6 +8926,7 @@ function scrollPreviewsToTail() {
     if (!pre.clientHeight) continue;
     pre.scrollTop = pre.scrollHeight;
     delete pre.dataset.tailPending;
+    queueScrollFade(pre);
   }
 }
 // A preview can first become visible when its enclosing tool/turn is opened.
@@ -9183,6 +9222,7 @@ function setInlineFileDiffWrap(card, on) {
   on = !!on;
   card.classList.toggle('diff-wrap', on);
   card.dataset.diffWrap = String(on);
+  queueScrollFade(card.querySelector('.file-change-body'));
   const button = card.querySelector('[data-diff-wrap]');
   if (!button) return;
   button.classList.toggle('on', on);

@@ -1761,6 +1761,19 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   overflow: hidden;
 }
 
+/* Fade only the clipped edge of the scrollport, over the bubble's own color. */
+[data-scroll-fade] {
+  --scroll-fade-top: 0px;
+  --scroll-fade-bottom: 0px;
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--scroll-fade-top),
+    #000 calc(100% - var(--scroll-fade-bottom)), transparent);
+  mask-origin: padding-box;
+  mask-clip: padding-box;
+  mask-repeat: no-repeat;
+}
+[data-scroll-fade~="top"] { --scroll-fade-top: 16px; }
+[data-scroll-fade~="bottom"] { --scroll-fade-bottom: 16px; }
+
 /* markdown 表格 */
 .mb .tw { overflow-x: auto; margin: 9px 0; }
 .mb table { border-collapse: collapse; font-size: 12.5px; line-height: 1.45; }

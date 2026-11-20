@@ -9,7 +9,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from sdk_start_stop_fixtures import provider
 from sdk_selection_fixtures import snapshots
-from bubble_scroll_fixtures import check_bubble_scroll
+from bubble_scroll_fixtures import check_bubble_scroll, check_scroll_fade
 
 
 def streaming_code(page, source, events, raw, publish, screenshots, width, theme):
@@ -260,6 +260,7 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     editor.press('End')
     editor.press('Enter') if width < 500 else editor.type('第二行')
     assert not held
+    editor.fill(editor.input_value() + '\n\n' + '\n'.join(f'第 {i:02d} 行排队正文' for i in range(24)))
     # Mouse SEND keeps editor focus; writing the next draft during admission
     # must survive the previous submission's response.
     editor.focus()
@@ -283,6 +284,17 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
     expect(queued.locator('.mb code')).to_have_text('shared')
     expect(editor).to_have_value('发送期间写下的下一条草稿')
     expect(queued.get_by_role('button', name='撤销', exact=True)).to_be_visible()
+    queued_body = queued.locator('.mb')
+    check_scroll_fade(queued_body, 'bottom')
+    queued_body.click(position={'x': 45, 'y': 36})
+    expect(queued).to_have_class(re.compile('text-scroll-active'))
+    queued_body.hover()
+    page.mouse.wheel(0, 140)
+    check_scroll_fade(queued_body, 'top bottom')
+    if screenshots:
+        page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}-long-queue.png'))
+    page.mouse.wheel(0, 100000)
+    check_scroll_fade(queued_body, 'top')
 
     # Keep streaming the current answer while the user submits another input.
     # Queue-only events must leave the live message and its later text intact.
@@ -312,6 +324,7 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
         publish()
     short_card = page.locator('.sdk-queue .msg').filter(has_text=short['text'])
     expect(short_card).to_be_visible()
+    check_scroll_fade(short_card.locator('.mb'))
     expect(live).to_have_text(answer['text'])
     answer['text'] += '话落盘结构与 `session/new` 完整返回输出完成。'
     events.packet = {'type': 'snapshot', 'raw': raw}

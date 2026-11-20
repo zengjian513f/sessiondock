@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bubble scroll axes and gutters in conversation and SDK history on node and Hub."""
+"""Bubble scroll axes, gutters and fades in conversation and SDK history on node and Hub."""
 import argparse
 from pathlib import Path
 import re
@@ -7,7 +7,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from bubble_scroll_fixtures import check_scroll_inset
+from bubble_scroll_fixtures import check_scroll_fade, check_scroll_inset
 from history_fixtures import BINARY
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
@@ -85,17 +85,29 @@ def exercise(browser, base, label, shots):
                     raise
                 if role != 'assistant':
                     page.wait_for_function('e => e.scrollTop > 0', arg=body.element_handle())
+                    check_scroll_fade(body, 'top')
                     body.click(position={'x': 35, 'y': 35})
                     expect(bubble).to_have_class(re.compile('text-scroll-active'))
                     before = body.evaluate('e => e.scrollTop')
                     body.hover(); page.mouse.wheel(0, -100)
                     page.wait_for_function('([e, before]) => e.scrollTop < before', arg=[body.element_handle(), before])
+                    check_scroll_fade(body, 'top bottom')
                     check_scroll_inset(body)
+                    if role == 'user':
+                        case = shots / f'{label}-{width}-{theme}-{entry}-{role}'
+                        page.screenshot(path=str(case.with_suffix('.middle.png')))
+                        page.mouse.wheel(0, -100000)
+                        check_scroll_fade(body, 'bottom')
+                        page.screenshot(path=str(case.with_suffix('.top.png')))
                     bubble.get_by_role('button', name='展开全文', exact=False).click()
                     assert body.evaluate('e => e.scrollHeight <= e.clientHeight + 1')
                     check_scroll_inset(body)
+                    check_scroll_fade(body)
                     bubble.get_by_role('button', name='收起', exact=True).click()
                     page.wait_for_function('e => e.scrollHeight - e.clientHeight - e.scrollTop < 2', arg=body.element_handle())
+                    check_scroll_fade(body, 'top')
+                else:
+                    check_scroll_fade(body)
                 bubble.locator('.message-header').scroll_into_view_if_needed()
                 page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-{role}.png'))
             check_horizontal_wheel(page, scope.locator('.mb .tw'),
@@ -103,11 +115,13 @@ def exercise(browser, base, label, shots):
             for index, output in enumerate(scope.locator('.tool-out').all()):
                 output.scroll_into_view_if_needed()
                 check_scroll_inset(output)
+                check_scroll_fade(output, 'top')
                 frame = output.locator('..')
                 frame.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-tool-{index}.png'))
             diff = scope.locator('.file-change-body')
             diff.scroll_into_view_if_needed()
             check_scroll_inset(diff)
+            check_scroll_fade(diff, 'top')
             card = scope.locator('.file-change-card')
             card.get_by_role('button', name='原行', exact=True).click()
             for view in ('并排', '统一'):
@@ -119,21 +133,25 @@ def exercise(browser, base, label, shots):
             assert diff.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
             card.get_by_role('button', name='展开全部差异', exact=True).click()
             check_scroll_inset(diff)
+            check_scroll_fade(diff)
             card.get_by_role('button', name='收起差异', exact=True).click()
+            check_scroll_fade(diff, 'top')
             card.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-diff.png'))
             event = scope.locator('.timeline-event')
             event.locator('summary').click()
             body = event.locator('.event-detail-body')
             body.scroll_into_view_if_needed()
             check_scroll_inset(body)
+            check_scroll_fade(body, 'bottom')
             body.click(position={'x': 35, 'y': 35})
             expect(body).to_have_class(re.compile('text-scroll-active'))
             body.hover(); page.mouse.wheel(0, 220)
             page.wait_for_function('e => e.scrollTop > 0', arg=body.element_handle())
             check_scroll_inset(body)
+            check_scroll_fade(body, 'top bottom')
             page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-details.png'))
             event.locator('summary').click()
-            print(f'PASS {label} {width}/{theme} {entry}: messages, tools, diff and details insets; unselected table and diff horizontal wheel', flush=True)
+            print(f'PASS {label} {width}/{theme} {entry}: bubble fades and insets; unselected table and diff horizontal wheel', flush=True)
         assert not errors, errors
         context.close()
 
