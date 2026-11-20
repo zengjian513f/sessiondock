@@ -7578,6 +7578,7 @@ function head(m, total) {
     const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
     turnMode.title = turnMode.ariaLabel = label;
     labelSessionAction(turnMode);
+    if (SessionContentView.kind === 'sdk') SdkView.applyHistoryFoldPreference?.();
     const boxes = SessionContentView.kind === 'sdk' ? [SdkView.history, SdkView.live] : [$('#msgs')];
     for (const box of boxes) {
       box?.querySelectorAll(':scope > .turn-process').forEach(

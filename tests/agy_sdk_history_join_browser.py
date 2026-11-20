@@ -23,6 +23,72 @@ def expand_turns(page):
         page.locator('.sdk-msgs .turn-process.folded > .turn-toolbar .fold-toggle').first.click()
 
 
+def exercise_idle_replay(browser, base, peer, label, screenshots):
+    reasoning = '已落盘的核对过程，原生回合只有工具结果。'
+    result = '已落盘的工具结果，实时快照只带工具通知。'
+    records = [record(0, 'USER_INPUT', '请核对处理结果。'),
+               record(1, 'PLANNER_RESPONSE', '', thinking=reasoning),
+               record(2, 'GENERIC', result)]
+    write_transcript(peer.native, SID, records)
+    items = [{'id': f'agy:{SID}:step:{index}', 'role': role, 'content': body,
+              'native': {'step_index': index}, 'status': 'DONE'}
+             for index, role, body in [(0, 'user', '请核对处理结果。'), (2, 'tool', '稀疏工具通知')]]
+    raw = {'running': False, 'items': items, 'requests': [], 'capabilities': {}}
+    for width, theme in [(1280, 'light'), (472, 'dark')]:
+        with snapshots(replay=False) as events:
+            events.packet = {'type': 'snapshot', 'seq': 0, 'raw': raw}
+            context = browser.new_context(viewport={'width': width, 'height': 588}, color_scheme=theme)
+            page = context.new_page()
+            context.route('**/api/native-sdk/open', lambda route: route.fulfill(json={'ok': True, 'raw': {}}))
+            context.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=events.url))
+            page.goto(base)
+            page.wait_for_function('T.listLoaded')
+            page.locator('#side .item[data-uid^="agy:"]').first.click()
+            page.locator('#a-sdk').click()
+            history = page.locator('.sdk-history')
+            persisted = history.get_by_text(reasoning, exact=True)
+            if page.evaluate('SdkView.readOnly'):
+                if not page.locator('#a-session-toggle').is_visible():
+                    page.locator('#a-more').click()
+                page.locator('#a-session-toggle').click()
+            expect(persisted).to_be_visible()
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-loading.png'))
+            page.wait_for_function('NativeSdkView.es?.readyState === EventSource.OPEN')
+            # The delayed stream stays empty until the first idle replay.
+            events.publish()
+            page.wait_for_function('NativeSdkView.connected')
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-loaded.png'))
+            expect(persisted).to_be_visible(timeout=2000)
+            expect(page.locator('.sdk-live')).not_to_contain_text('稀疏工具通知')
+            events.publish({'method': 'bridge/reset'})
+            page.wait_for_function('!NativeSdkView.connected')
+            expect(persisted).to_be_visible()
+            page.wait_for_function('NativeSdkView.es?.readyState === EventSource.OPEN')
+            events.publish()
+            page.wait_for_function('NativeSdkView.connected')
+            expect(persisted).to_be_visible()
+            process = history.locator('.turn-process')
+            if page.locator('#a-turns').is_visible():
+                page.locator('#a-turns').click()
+                expect(process).to_be_visible()
+                expect(persisted).to_be_visible()
+                page.locator('#a-turns').click()
+                expect(persisted).to_be_hidden()
+            # A genuinely observed running-to-idle transition may fold its tail.
+            events.publish({'type': 'snapshot', 'seq': 10, 'raw': {**raw, 'running': True}})
+            page.wait_for_function('NativeSdkView.running')
+            expect(persisted).to_be_visible()
+            events.publish()
+            page.wait_for_function('!NativeSdkView.running')
+            expect(history.locator('.turn-process.folded')).to_have_count(1)
+            process.locator('.fold-toggle').first.click()
+            expect(persisted).to_be_visible()
+            context.close()
+            print(f'PASS {label} {width} {theme}: idle replay keeps the history visible, observed completion folds', flush=True)
+
+
 def exercise(browser, base, peer, label, screenshots):
     for width, theme in [(1280, 'light'), (390, 'dark')]:
         records = [record(0, 'USER_INPUT', '首条输入：核对完整历史。')]
@@ -287,12 +353,15 @@ def main():
             browser = pw.chromium.launch(headless=True)
             try:
                 exercise(browser, base, peer, 'node', args.screenshots)
+                exercise_idle_replay(browser, base, peer, 'node', args.screenshots)
                 hub_root = root / 'hub'; hub_root.mkdir()
                 hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
                           [SimpleNamespace(name='JoinNode', token=TOKEN,
                            port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':', 1)[1]))])
                 hub.start()
-                try: exercise(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
+                try:
+                    exercise(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
+                    exercise_idle_replay(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
                 finally: hub.stop()
             finally: browser.close()
         transport_root = root / 'transport'; transport_root.mkdir()

@@ -152,6 +152,7 @@ const NativeSdkView = {
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
     this.historyNotices = null;
+    this.agyReplayTailComplete = null;
     this.nativeModel = this.nativeEffort = null;
     this.usageHistoryModel = undefined;
     const generation = ++this.generation;
@@ -615,7 +616,13 @@ const NativeSdkView = {
     }
     this.items = mappedItems;
     this.setConnected(true);
-    if (source === 'agy') this.agyJoinedHistory = this.historyData;
+    if (source === 'agy') {
+      this.agyJoinedHistory = this.historyData;
+      // An idle replay can confirm an old receipt without finishing a turn
+      // on screen. Keep the already displayed history tail expanded.
+      this.agyReplayTailComplete ??= this.historyTailComplete !== false;
+      if (completed) this.agyReplayTailComplete = true;
+    }
     this.paintHistory();
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
     const tailComplete = !this.running && !requests.size;
@@ -841,7 +848,10 @@ const NativeSdkView = {
     const fullMessages = this.historyData.messages || [];
     let messages = fullMessages;
     let cut = messages.length;
-    const join = this.connected && nativeSdkAgyHistoryJoin(this);
+    // During reconnect the last accepted snapshot still owns the Agy join
+    // and its disclosure state.
+    const hasSnapshot = this.connected || this.agyReplayTailComplete !== null;
+    const join = hasSnapshot && nativeSdkAgyHistoryJoin(this);
     const first = this.items?.find(item => item.role === 'user');
     if (join) {
       cut = join.cut; messages = messages.slice(0, cut);
@@ -865,7 +875,8 @@ const NativeSdkView = {
       || (observed ? ['working', 'waiting'].includes(observed.state)
         : S.live.has(this.uid) || S.liveSdk.has(this.uid) || S.liveExternalSdk.has(this.uid) || childLive);
     const tailComplete = cut < fullMessages.length
-      || (this.connected ? !this.running && !(this.requests?.size || this.raw?.requests?.length) : !livePending);
+      || (hasSnapshot ? !this.running && !(this.requests?.size || this.raw?.requests?.length)
+        && !(join && this.agyReplayTailComplete === false) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_before,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
     const notices = JSON.stringify(join ? [...join.notices.values()] : []);
     if (this.historyRenderedData === this.historyData && this.historyCut === cut
@@ -877,6 +888,12 @@ const NativeSdkView = {
     this.historyTailComplete = tailComplete;
     SdkUI.paintHistory(this, messages, {tailComplete, actions, partial: join ? join.partial : this.historyData.partial,
       decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
+  },
+
+  applyHistoryFoldPreference() {
+    if (this.agyReplayTailComplete !== false || this.running || this.raw.requests?.length) return;
+    this.agyReplayTailComplete = true;
+    this.paintHistory();
   },
 
   requestCard(request) {
