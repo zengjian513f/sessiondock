@@ -352,6 +352,8 @@ async fn run(
     let mut stderr_buffer = Vec::new();
     let mut write_error = None;
     let mut drained_exit = false;
+    let mut pending_projection = false;
+    let mut last_publish = std::time::Instant::now();
     let outcome: Result<(), String> = async {
         let mut status = client.status().await.map_err(error)?;
         let live_start = status.stdout_len;
@@ -423,40 +425,48 @@ async fn run(
             .map_err(error)?;
             read_offset = output.next_offset;
             buffer.extend_from_slice(&output.bytes);
+            let buffer_start = read_offset - buffer.len() as u64;
+            let mut consumed = 0;
             let mut offset_dirty = false;
-            while let Some(length) = buffer
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map(|position| position + 1)
-                .or_else(|| (output.eof && !buffer.is_empty()).then_some(buffer.len()))
-            {
-                let line: Vec<_> = buffer.drain(..length).collect();
-                let next = read_offset - buffer.len() as u64;
+            while consumed < buffer.len() {
+                let tail = &buffer[consumed..];
+                let Some(length) = tail
+                    .iter()
+                    .position(|byte| *byte == b'\n')
+                    .map(|position| position + 1)
+                    .or_else(|| output.eof.then_some(tail.len()))
+                else {
+                    break;
+                };
+                let line = &tail[..length];
+                consumed += length;
+                let next = buffer_start + consumed as u64;
                 if line.iter().all(u8::is_ascii_whitespace) {
                     lock(&session.live).stdout_offset = next;
                     offset_dirty = true;
                     continue;
                 }
-                let frame: Value = serde_json::from_slice(&line)
+                let frame: Value = serde_json::from_slice(line)
                     .map_err(|_| "codebuddy_sdk: invalid native stream-json output")?;
-                offset_dirty = protocol::observe_at(
-                    &session,
-                    frame,
-                    Some(next),
-                    crate::sdk_message_time::hosted(&client, next, live_start),
-                );
+                match protocol::observe_at(&session, frame, Some(next), || {
+                    crate::sdk_message_time::hosted(&client, next, live_start)
+                }) {
+                    protocol::Observation::OffsetOnly => offset_dirty = true,
+                    protocol::Observation::Projected => {
+                        offset_dirty = true;
+                        pending_projection = true;
+                    }
+                    protocol::Observation::Published => {
+                        offset_dirty = false;
+                        pending_projection = false;
+                        last_publish = std::time::Instant::now();
+                    }
+                }
                 if let Some(err) = lock(&session.live).last_checkpoint_error.clone() {
                     return Err(err);
                 }
             }
-            if offset_dirty {
-                let mut live = lock(&session.live);
-                if output.eof {
-                    live.save_checkpoint().map_err(error)?;
-                } else {
-                    live.save_checkpoint_throttled().map_err(error)?;
-                }
-            }
+            buffer.drain(..consumed);
             let diagnostic = crate::sdk_common::host::read_available(
                 &client,
                 &status,
@@ -488,11 +498,32 @@ async fn run(
                 }
             }
             status = client.status().await.map_err(error)?;
+            // Replay can contain hundreds of thousands of frames. Persist their
+            // cursor and projection together at the checkpoint cadence, and
+            // publish the recovered state once the attachment boundary is read.
+            if pending_projection
+                && read_offset >= live_start
+                && (caught_up.is_some()
+                    || read_offset >= status.stdout_len
+                    || last_publish.elapsed() >= Duration::from_millis(100))
+            {
+                let mut live = lock(&session.live);
+                session.publish_throttled(&mut live);
+                if let Some(err) = &live.last_checkpoint_error {
+                    return Err(err.clone());
+                }
+                pending_projection = false;
+                last_publish = std::time::Instant::now();
+            } else if offset_dirty {
+                lock(&session.live)
+                    .save_checkpoint_throttled()
+                    .map_err(error)?;
+            }
             if status.output_error.is_some() {
                 continue;
             }
-            if read_offset >= status.stdout_len
-                && !(status.stdout_eof && status.exit.is_some())
+            if read_offset >= live_start
+                && status.exit.is_none()
                 && write_error.is_none()
                 && let Some(reply) = caught_up.take()
             {

@@ -303,6 +303,39 @@ def restart_check(fixture, binary):
         browser.close()
 
 
+def buffered_recovery_check(fixture, binary):
+    from playwright.sync_api import sync_playwright, expect
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        with fixture.server(binary, preserve_sdkhosts=True) as base:
+            page = browser.new_page(service_workers="block")
+            page.goto(base, wait_until="networkidle")
+            open_sdk(page, fixture, expect)
+            send(page, "recover offline output")
+            expect(page.locator(".sdk-live")).to_contain_text("Ready to write offline output")
+            page.close()
+        (fixture.cwd / "write-offline-output").touch()
+        deadline = time.monotonic() + 10
+        while not (fixture.cwd / "offline-output-written").exists():
+            assert time.monotonic() < deadline, "fake CLI did not write its offline backlog"
+            time.sleep(0.02)
+        with fixture.server(binary) as base:
+            page = browser.new_page(service_workers="block")
+            page.goto(base, wait_until="networkidle")
+            started = time.monotonic()
+            page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
+            expect(page.locator(".native-sdk-pane .sdk-status")).to_have_text("就绪", timeout=10000)
+            print(f"PASS CodeBuddy offline output recovered to browser ready in {time.monotonic() - started:.2f}s")
+            expect(page.locator(".native-sdk-pane")).to_contain_text("CodeBuddy synthetic final recover offline output")
+            expect(page.locator("#sdk-send")).to_be_enabled()
+            raw = snapshot(page, fixture.uid)["raw"]
+            assert raw["last_turn"]["status"] == "completed" and not raw["running"], raw["last_turn"]
+            assert len(fixture.frames("spawn")) == 1
+            assert len(user_prompts(fixture, "recover offline output")) == 1
+        browser.close()
+
+
 def startup_recovery_check(fixture, binary, screenshots):
     from playwright.sync_api import sync_playwright, expect
 
@@ -395,6 +428,8 @@ def main():
             browser_check(fixture, base, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-restart-") as temporary:
         restart_check(CodebuddyFixture(Path(temporary)), args.binary)
+    with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-backlog-") as temporary:
+        buffered_recovery_check(CodebuddyFixture(Path(temporary)), args.binary)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-startup-") as temporary:
         startup_recovery_check(CodebuddyFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-direct-") as temporary:

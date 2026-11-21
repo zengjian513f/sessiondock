@@ -334,7 +334,9 @@ impl Session {
         } else {
             live.last_checkpoint_error = None;
         }
-        let _ = live.events.send(Arc::from(self.snapshot(live).to_string()));
+        if live.events.receiver_count() > 0 {
+            let _ = live.events.send(Arc::from(self.snapshot(live).to_string()));
+        }
     }
 
     fn receipt(&self) -> Value {

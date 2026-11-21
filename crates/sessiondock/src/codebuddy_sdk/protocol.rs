@@ -9,16 +9,31 @@ fn upsert(live: &mut Live, mut row: Value) {
 }
 
 pub(super) fn observe(session: &Session, frame: Value) {
-    observe_at(session, frame, None, Some(crate::sdk_message_time::now()));
+    if matches!(
+        observe_at(
+            session,
+            frame,
+            None,
+            || Some(crate::sdk_message_time::now())
+        ),
+        Observation::Projected
+    ) {
+        session.publish(&mut lock(&session.live));
+    }
 }
 
-/// Returns whether the new stdout offset still needs a final checkpoint.
+pub(super) enum Observation {
+    OffsetOnly,
+    Projected,
+    Published,
+}
+
 pub(super) fn observe_at(
     session: &Session,
     frame: Value,
     offset: Option<u64>,
-    received: Option<String>,
-) -> bool {
+    received: impl FnOnce() -> Option<String>,
+) -> Observation {
     let mut live = lock(&session.live);
     if let Some(offset) = offset {
         live.stdout_offset = offset;
@@ -33,7 +48,7 @@ pub(super) fn observe_at(
             Some("hook_started" | "hook_response")
         )
     {
-        return true;
+        return Observation::OffsetOnly;
     }
     let init = frame["type"] == "system" && frame["subtype"] == "init";
     // CodeBuddy replays the whole persisted conversation on stdout after
@@ -48,7 +63,7 @@ pub(super) fn observe_at(
             Some("control_response" | "control_request" | "control_cancel_request")
         );
         if !live_run && !control {
-            return true;
+            return Observation::OffsetOnly;
         }
     }
     // Agent subprocesses can emit their own SID on the parent's stdout.
@@ -60,7 +75,7 @@ pub(super) fn observe_at(
         // A legacy checkpoint can resume past the parent init. Its side
         // frames still cannot establish identity or change the projection.
         if live.parent_initialized != Some(false) {
-            return true;
+            return Observation::OffsetOnly;
         }
         live.error =
             Some("codebuddy_sdk: native stream session_id differs from selected session".into());
@@ -69,14 +84,12 @@ pub(super) fn observe_at(
             stop.cancel();
         }
         session.publish(&mut live);
-        return false;
+        return Observation::Published;
     }
     if init {
         live.replaying = false;
     }
-    let is_delta =
-        frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
-    live.message_time = crate::sdk_message_time::MessageTime::new(&frame, received);
+    live.message_time = crate::sdk_message_time::MessageTime::new(&frame, received());
     match frame["type"].as_str().unwrap_or("") {
         "control_response" => {
             let response = &frame["response"];
@@ -132,11 +145,11 @@ pub(super) fn observe_at(
             session.publish(&mut live);
             drop(live);
             restore_initial_requests(session);
-            return false;
+            return Observation::Published;
         }
         "control_request" => {
             let Some(key) = frame["request_id"].as_str() else {
-                return true;
+                return Observation::OffsetOnly;
             };
             let native = &frame["request"];
             if native["subtype"] == "can_use_tool" {
@@ -478,12 +491,7 @@ pub(super) fn observe_at(
         }
         _ => {}
     }
-    if is_delta {
-        session.publish_throttled(&mut live);
-    } else {
-        session.publish(&mut live);
-    }
-    is_delta
+    Observation::Projected
 }
 
 /// The caller answers one native card. CodeBuddy's `can_use_tool` reply is

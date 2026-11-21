@@ -318,6 +318,17 @@ def fake_cli():
             stream_text("streaming CodeBuddy progress", message_id)
             if content == "run subagents":
                 subagent_frames()
+            elif content == "recover offline output":
+                send({"type": "assistant", "uuid": str(uuid.uuid4()),
+                      "message": {"id": "recovery-reasoning", "content": [
+                          {"type": "thinking", "thinking": "synthetic recovery detail\n" * 40000}
+                      ]}})
+                stream_text("Ready to write offline output", "recovery-start")
+                deadline = time.monotonic() + 30
+                while not Path("write-offline-output").exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                for _ in range(1600):
+                    send({"type": "system", "subtype": "usage_update"})
             elif content in ("hold", "hold subagents"):
                 interrupted.wait(30)
                 if content == "hold subagents":
@@ -351,6 +362,8 @@ def fake_cli():
                   "modelUsage": {state["model"]: {"inputTokens": state["completed"] * 100, "outputTokens": state["completed"] * 20,
                                                   "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0, "costUSD": 0}},
                   "total_cost_usd": 0})
+            if content == "recover offline output":
+                Path("offline-output-written").touch()
 
     threading.Thread(target=turns, daemon=True).start()
     with log.open("a") as stream:
