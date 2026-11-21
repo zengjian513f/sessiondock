@@ -94,6 +94,7 @@ def serve(config,root):
                     else:raise TimeoutError('private node startup')
                 elif op=='stop':stop()
                 elif op=='read':result['bytes']=base64.b64encode(owned(request['path']).read_bytes()).decode()
+                elif op=='readlink':result['target']=os.readlink(owned(request['path']))
                 elif op=='append':
                     with owned(request['path']).open('ab') as out:out.write(base64.b64decode(request['bytes']))
                 elif op=='write':owned(request['path']).write_bytes(base64.b64decode(request['bytes']))

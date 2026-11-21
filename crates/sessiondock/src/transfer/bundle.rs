@@ -11,6 +11,8 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -230,7 +232,7 @@ impl TransferService {
             #[cfg(not(unix))]
             let executable = 0;
             let bytes = if file.symlink {
-                fs::read_link(&file.staging)?.to_string_lossy().len() as u64
+                fs::read_link(&file.staging)?.as_os_str().len() as u64
             } else {
                 meta.len()
             };
@@ -285,11 +287,13 @@ impl TransferService {
                 progress.set(i as u64);
                 let name = format!("files/{i}");
                 if file.symlink {
-                    let link = fs::read_link(&file.staging)?
-                        .to_string_lossy()
-                        .as_bytes()
-                        .to_vec();
-                    append(&mut archive, &name, wire.bytes, link.as_slice())?;
+                    let link = fs::read_link(&file.staging)?;
+                    append(
+                        &mut archive,
+                        &name,
+                        wire.bytes,
+                        link.as_os_str().as_encoded_bytes(),
+                    )?;
                 } else {
                     append(
                         &mut archive,
@@ -708,15 +712,13 @@ impl TransferService {
                 fs::create_dir_all(staged.parent().unwrap())?;
                 let slot = receiving.join(index.to_string());
                 if wire.symlink {
-                    let link = String::from_utf8(fs::read(&slot)?)
-                        .map_err(|_| invalid("链接目标不是 UTF-8"))?;
                     #[cfg(unix)]
-                    std::os::unix::fs::symlink(link, &staged)?;
+                    std::os::unix::fs::symlink(
+                        std::ffi::OsStr::from_bytes(&fs::read(&slot)?),
+                        &staged,
+                    )?;
                     #[cfg(not(unix))]
-                    {
-                        let _ = link;
-                        return Err(TransferError::new("move_platform", "迁移链接要求 Unix"));
-                    }
+                    return Err(TransferError::new("move_platform", "迁移链接要求 Unix"));
                 } else {
                     fs::rename(&slot, &staged)?;
                     #[cfg(unix)]

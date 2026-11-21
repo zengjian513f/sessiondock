@@ -133,9 +133,20 @@ pub struct TransferService {
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
+    hash_with_legacy_link(path, false)
+}
+pub(super) fn hash_with_legacy_link(
+    path: &Path,
+    legacy_link_digest: bool,
+) -> Result<String, TransferError> {
     let mut digest = Sha256::new();
     if fs::symlink_metadata(path)?.is_symlink() {
-        digest.update(fs::read_link(path)?.to_string_lossy().as_bytes());
+        let link = fs::read_link(path)?;
+        if legacy_link_digest {
+            digest.update(link.to_string_lossy().as_bytes());
+        } else {
+            digest.update(link.as_os_str().as_encoded_bytes());
+        }
     } else {
         use std::io::Read;
         let mut file = fs::File::open(path)?;
@@ -770,18 +781,24 @@ impl TransferService {
         }
         if let Some(files) = &op.file_plan {
             let now = files::Plan::build(files.group.clone(), false)?;
-            let before = files
-                .files
-                .iter()
-                .map(|f| (&f.source, &f.sha256))
-                .collect::<BTreeMap<_, _>>();
             let after = now
                 .files
                 .iter()
-                .map(|f| (&f.source, &f.sha256))
+                .map(|f| (&f.source, f))
                 .collect::<BTreeMap<_, _>>();
-            if before != after {
-                return Err(TransferError::new("move_plan_stale", "会话附属文件已变化"));
+            let changed = || TransferError::new("move_plan_stale", "会话附属文件已变化");
+            if files.files.len() != after.len() {
+                return Err(changed());
+            }
+            for before in &files.files {
+                let current = after.get(&before.source).ok_or_else(changed)?;
+                if before.sha256 != current.sha256
+                    && !(before.legacy_link_digest()
+                        && current.format == "symlink"
+                        && hash_with_legacy_link(&current.source, true)? == before.sha256)
+                {
+                    return Err(changed());
+                }
             }
         }
         if !op.plan.files.is_empty() && native::capture(&self.home, &op.plan)? != op.native {

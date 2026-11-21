@@ -2,8 +2,11 @@
 """Opt-in Chromium move of a complex mixed native family across private hosts."""
 # run_validation: skip
 import argparse
+import base64
 from contextlib import ExitStack
+import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -17,7 +20,7 @@ from session_bundle_browser import Peer, rejected_bundles
 from session_transfer_browser import ident
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
-from transfer_ui import select_target, seed_names
+from transfer_ui import select_target, seed_names, submit_transfer
 
 
 def main():
@@ -29,6 +32,16 @@ def main():
         root = Path(temporary)
         source = prepare(root/'source')
         roots, claude, side, agent = fixture(root/'files')
+        cwd = root/'files/cwd'
+        attachment = cwd/os.fsdecode(b'attachment-\xff.txt')
+        attachment_alias = cwd/os.fsdecode(b'attachment-\xfe.txt')
+        attachment_content = b'External attachment reached through the native symlink'
+        attachment.write_bytes(attachment_content)
+        attachment_alias.symlink_to(attachment.name)
+        native_link = claude[2].with_suffix('')/'tool-results/external-link.txt'
+        native_link.symlink_to(attachment_alias)
+        legacy_link = native_link.with_name('legacy-link.txt')
+        legacy_link.symlink_to(attachment_alias)
         roots['codex'] = str(source.root/'codex')
         title, _, _ = seed_names(source.root/'codex', ident(2))
         metadata = source.root/'state/session-metadata.json'
@@ -44,7 +57,12 @@ def main():
         (source.root/'trash').mkdir()
         peer = Peer(args.peer, root, source, roots, b, args.binary)
         stack.callback(peer.close)
-        peer.call('seed_cwd', path=str(root/'files/cwd'), entries=[{'relative':'','kind':'directory','mode':0o700}])
+        peer.call('seed_cwd', path=str(cwd), entries=[
+            {'relative': '', 'kind': 'directory', 'mode': 0o700},
+            {'relative': attachment.name, 'kind': 'file', 'mode': 0o600,
+             'bytes': base64.b64encode(attachment_content).decode()},
+            {'relative': attachment_alias.name, 'kind': 'symlink', 'target': attachment.name},
+        ])
         peer.call('start')
         env = node_env(source.root, a.port, '127.0.0.0/8')
         env.update({f'SESSIONDOCK_{kind.upper()}_ROOT':path for kind,path in roots.items()})
@@ -57,10 +75,21 @@ def main():
         hub.start(); stack.callback(hub.stop)
         browser = pw.chromium.launch(headless=True); stack.callback(browser.close)
         page = browser.new_page(); page.set_default_timeout(30000)
-        page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
-        anchor = scoped(a.nid, selected)
-        page.locator(f'#side .item[data-uid="{anchor}"]').click(button='right')
-        page.locator('#item-menu [data-act="clone"]').click()
+        base = f'http://127.0.0.1:{hub.port}'
+        page.goto(base,wait_until='networkidle')
+
+        def session_row(node, session):
+            row = page.locator(f'#side .item[data-uid="{scoped(node.nid, session)}"]')
+            if not row.is_visible():
+                page.locator('#nest-flat').click()
+            return row
+
+        session_row(a, selected).click()
+        expect(page.locator('#msgs')).to_contain_text('Branch A final')
+        transfer = page.locator('#a-clone-group')
+        if not transfer.is_visible():
+            page.locator('#a-more').click()
+        transfer.click()
         dialog = page.locator('#clone-group-dialog')
         expect(dialog.locator('.transfer-tree tbody tr')).to_have_count(14)
         with page.expect_response('**/api/session/clone/plan') as planned:
@@ -69,6 +98,14 @@ def main():
         plan = planned.value.json()
         assert plan['new_ids'] is False and plan['mode'] == 'move'
         assert {row['source'] for row in plan['sessions']} == {'codex','claude','grok'}
+        # A plan saved before the upgrade used a lossy link digest.
+        journal = source.root/'state/transfers'/plan['operation_id']/'operation.json'
+        saved_plan = json.loads(journal.read_text())
+        legacy = next(file for file in saved_plan['file_plan']['files'] if file['source'] == str(legacy_link))
+        legacy.pop('raw_link_digest', None)
+        old_bytes = os.fsencode(attachment_alias).decode('utf-8', errors='replace').encode('utf-8')
+        legacy.update(bytes=len(old_bytes), sha256=hashlib.sha256(old_bytes).hexdigest())
+        journal.write_text(json.dumps(saved_plan))
         shots = Path('target/mixed-move-review'); shots.mkdir(parents=True, exist_ok=True)
         for width, theme in ((1280, 'light'), (390, 'dark')):
             page.set_viewport_size({'width':width,'height':900}); page.emulate_media(color_scheme=theme)
@@ -81,14 +118,20 @@ def main():
         # files, then the very same confirmed operation can still complete.
         rejected_bundles(a,b,plan['operation_id'])
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
-        with page.expect_response('**/api/session/transfer/clone',timeout=90000) as completed:
-            dialog.locator('.clone-confirm').click()
-        assert completed.value.ok, completed.value.text()
-        result = completed.value.json()
-        assert result['phase']=='complete' and result['new_ids'] is False
+        completed = submit_transfer(page, dialog, base)
+        assert completed['phase'] == 'complete', completed
+        assert completed['result']['new_ids'] is False, completed
         expect(dialog).not_to_be_visible(timeout=30000)
         assert source.paths['unrelated'].exists()
         assert not source.paths['a'].exists() and not claude[2].exists()
+        assert attachment.read_bytes() == attachment_content
+        for link in (native_link, legacy_link):
+            assert not link.is_symlink()
+            assert peer.call('readlink', path=str(link))['target'] == str(attachment_alias)
+            assert peer.read(link) == attachment_content
+        internal_link = native_link.with_name('result-link.txt')
+        assert peer.call('readlink', path=str(internal_link))['target'] == str(internal_link.with_name('result.txt'))
+        assert peer.read(internal_link).startswith(b'opaque result ')
         assert json.loads(peer.read(source.paths['a']).splitlines()[0])['payload']['id'] == ident(2)
         assert json.loads(peer.read(root/'files/grok/project'/ident(10)/'summary.json'))
         assert peer.read(side)
@@ -116,7 +159,9 @@ def main():
         page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
         row = page.locator(f'#side .item[data-uid="{scoped(b.nid,source.uid("a"))}"]')
         expect(row).to_contain_text(title)
-        print('PASS mixed fixed-ID move: native Codex goals/realtime/attachments/names, Claude subagents/results, Grok dependencies; source cleanup, malformed bundle rejection, nesting and restart',flush=True)
+        session_row(b, selected).click()
+        expect(page.locator('#msgs')).to_contain_text('Branch A final')
+        print('PASS mixed fixed-ID move: native Codex goals/realtime/attachments/names, Claude subagents/results and non-UTF-8 external links, Grok dependencies; source cleanup, malformed bundle rejection, nesting and restart',flush=True)
 
 
 if __name__ == '__main__':

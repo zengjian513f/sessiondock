@@ -23,7 +23,7 @@ fn claude_task_output(path: &Path) -> bool {
         })
 }
 
-fn image(value: &Value, paths: &mut BTreeSet<String>) {
+fn image(value: &Value, paths: &mut BTreeSet<PathBuf>) {
     let typed = matches!(
         value["type"].as_str(),
         Some("image" | "input_image" | "image_url")
@@ -41,7 +41,7 @@ fn image(value: &Value, paths: &mut BTreeSet<String>) {
         paths.insert(path.into());
     }
 }
-fn output(value: &Value, paths: &mut BTreeSet<String>) {
+fn output(value: &Value, paths: &mut BTreeSet<PathBuf>) {
     if let Some(text) = value.as_str() {
         if text.starts_with("Full output saved to:") || text.contains("<persisted-output>") {
             for line in text.lines() {
@@ -72,7 +72,7 @@ fn output(value: &Value, paths: &mut BTreeSet<String>) {
         }
     }
 }
-fn references(value: &Value, paths: &mut BTreeSet<String>) {
+fn references(value: &Value, paths: &mut BTreeSet<PathBuf>) {
     if let Some(values) = value.as_array() {
         for value in values {
             references(value, paths);
@@ -162,7 +162,7 @@ pub(super) fn collect(
             } else {
                 file.target.parent().unwrap().join(link)
             };
-            paths.insert(resolved.to_string_lossy().into_owned());
+            paths.insert(resolved);
         } else {
             let format = native.map(|f| f.format.as_str()).unwrap_or("jsonl");
             if !matches!(format, "json" | "jsonl") {
@@ -181,9 +181,8 @@ pub(super) fn collect(
             }
         }
         for path in paths {
-            let path = Path::new(&path);
             let path = if path.is_absolute() {
-                path.to_owned()
+                path
             } else {
                 cwd.join(path)
             };

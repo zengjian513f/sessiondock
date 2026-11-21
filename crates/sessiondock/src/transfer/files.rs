@@ -5,6 +5,8 @@ use super::{TransferError, codex, group::Group};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::{
     collections::BTreeMap,
     fs,
@@ -21,6 +23,22 @@ pub struct File {
     pub bytes: u64,
     pub sha256: String,
     pub format: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    raw_link_digest: bool,
+}
+impl File {
+    pub(super) fn legacy_link_digest(&self) -> bool {
+        self.format == "symlink" && !self.raw_link_digest
+    }
+
+    fn matches_digest(&self, raw: &[u8]) -> bool {
+        if self.legacy_link_digest() {
+            // Existing plans recorded the digest after replacing invalid UTF-8.
+            digest(String::from_utf8_lossy(raw).as_bytes()) == self.sha256
+        } else {
+            digest(raw) == self.sha256
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
@@ -38,6 +56,13 @@ pub struct Plan {
 }
 fn digest(raw: &[u8]) -> String {
     format!("{:x}", Sha256::digest(raw))
+}
+fn read_contents(path: &Path, link: bool) -> Result<Vec<u8>, TransferError> {
+    Ok(if link {
+        fs::read_link(path)?.as_os_str().as_encoded_bytes().to_vec()
+    } else {
+        fs::read(path)?
+    })
 }
 fn key(source: &str, id: &str) -> String {
     format!("{source}:{id}")
@@ -645,11 +670,7 @@ impl Plan {
                 return Err(TransferError::new("move_path", "无效的会话相对路径"));
             }
             let link = fs::symlink_metadata(&path)?.is_symlink();
-            let raw = if link {
-                fs::read_link(&path)?.to_string_lossy().as_bytes().to_vec()
-            } else {
-                fs::read(&path)?
-            };
+            let raw = read_contents(&path, link)?;
             let format = if link {
                 "symlink"
             } else if plan.group.members.iter().any(|m| m.path == path) {
@@ -695,6 +716,7 @@ impl Plan {
                 bytes: raw.len() as u64,
                 sha256: digest(&raw),
                 format: format.into(),
+                raw_link_digest: link,
             });
         }
         // Checkpoint paths are session-relative and referenced by updates.jsonl.
@@ -717,19 +739,17 @@ impl Plan {
         Ok(plan)
     }
     pub fn rewrite(&self, file: &File, raw: &[u8]) -> Result<Vec<u8>, TransferError> {
-        if digest(raw) != file.sha256 {
+        if !file.matches_digest(raw) {
             return Err(TransferError::new(
                 "move_plan_stale",
                 "原生文件在计划后发生变化",
             ));
         }
+        #[cfg(unix)]
         if self.new_ids && file.format == "symlink" {
-            let link = PathBuf::from(
-                String::from_utf8(raw.to_vec())
-                    .map_err(|e| TransferError::new("move_path", e.to_string()))?,
-            );
+            let link = Path::new(std::ffi::OsStr::from_bytes(raw));
             let absolute = if link.is_absolute() {
-                link
+                link.to_owned()
             } else {
                 file.source.parent().unwrap().join(link)
             };
@@ -754,7 +774,7 @@ impl Plan {
                 if let Ok(relative) = normalized.strip_prefix(root) {
                     let mapped = root.join(mapped_path(relative, &file.provider, &self.sessions));
                     if mapped != normalized {
-                        return Ok(mapped.to_string_lossy().as_bytes().to_vec());
+                        return Ok(mapped.as_os_str().as_bytes().to_vec());
                     }
                 }
             }
@@ -954,14 +974,8 @@ impl Plan {
             super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
         for (index, file) in self.files.iter().enumerate() {
             progress.set(index as u64);
-            let raw = if file.format == "symlink" {
-                fs::read_link(&file.source)?
-                    .to_string_lossy()
-                    .as_bytes()
-                    .to_vec()
-            } else {
-                fs::read(&file.source)?
-            };
+            let link = file.format == "symlink";
+            let raw = read_contents(&file.source, link)?;
             if !matches!(file.provider.as_str(), "claude" | "grok" | "droid")
                 || !file
                     .target
@@ -974,13 +988,9 @@ impl Plan {
             fs::create_dir_all(target.parent().unwrap())?;
             super::coordination::check()?;
             let output = prepared.rewrite(file, &raw)?;
-            if file.format == "symlink" {
+            if link {
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(
-                    String::from_utf8(output)
-                        .map_err(|e| TransferError::new("move_path", e.to_string()))?,
-                    target,
-                )?;
+                std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(&output), target)?;
                 #[cfg(not(unix))]
                 return Err(TransferError::new(
                     "move_platform",
@@ -1005,15 +1015,8 @@ impl Plan {
             super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
         for (index, file) in self.files.iter().enumerate() {
             progress.set(index as u64);
-            let raw = if file.format == "symlink" {
-                fs::read_link(&file.source)?
-                    .to_string_lossy()
-                    .as_bytes()
-                    .to_vec()
-            } else {
-                fs::read(&file.source)?
-            };
-            if digest(&raw) != file.sha256 {
+            let raw = read_contents(&file.source, file.format == "symlink")?;
+            if !file.matches_digest(&raw) {
                 return Err(TransferError::new(
                     "move_plan_stale",
                     "暂存期间源文件发生变化",

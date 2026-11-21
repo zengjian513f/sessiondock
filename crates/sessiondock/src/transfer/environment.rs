@@ -1,6 +1,8 @@
 //! Cross-node evidence: compare contents, not Git status or machine-local inodes.
 //! Local stamps detect writes during a scan and between plan and confirmation.
 use super::{TransferError, codex};
+#[cfg(unix)]
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,14 +19,82 @@ pub(super) fn workspace_upload(path: &Path) -> bool {
         .any(|part| part.as_os_str() == "sessiondock_attachments")
 }
 
+// Keep UTF-8 paths in the original JSON format, including map keys. A leading
+// NUL is reserved for encoded Unix bytes because it cannot occur in a path.
+struct WirePath<'a>(&'a Path);
+
+impl Serialize for WirePath<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[cfg(unix)]
+        if self.0.to_str().is_none() {
+            return serializer.serialize_str(&format!(
+                "\0{}",
+                STANDARD.encode(self.0.as_os_str().as_encoded_bytes())
+            ));
+        }
+        self.0.serialize(serializer)
+    }
+}
+
+fn decode_path<E: serde::de::Error>(path: String) -> Result<PathBuf, E> {
+    if let Some(encoded) = path.strip_prefix('\0') {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let bytes = STANDARD.decode(encoded).map_err(E::custom)?;
+            return Ok(std::ffi::OsString::from_vec(bytes).into());
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = encoded;
+            return Err(E::custom("迁移路径字节要求 Unix"));
+        }
+    }
+    Ok(path.into())
+}
+
+fn serialize_paths<S, T>(entries: &BTreeMap<PathBuf, T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    T: Serialize,
+{
+    serializer.collect_map(entries.iter().map(|(path, value)| (WirePath(path), value)))
+}
+
 fn without_workspace_uploads<'de, D, T>(deserializer: D) -> Result<BTreeMap<PathBuf, T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
 {
-    let mut entries = BTreeMap::<PathBuf, T>::deserialize(deserializer)?;
-    entries.retain(|path, _| !workspace_upload(path));
+    let mut entries = BTreeMap::new();
+    for (path, value) in BTreeMap::<String, T>::deserialize(deserializer)? {
+        let path = decode_path(path)?;
+        if !workspace_upload(&path) {
+            entries.insert(path, value);
+        }
+    }
     Ok(entries)
+}
+
+mod link_path {
+    use super::{WirePath, decode_path};
+    use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
+
+    pub(super) fn serialize<S: serde::Serializer>(
+        link: &Option<PathBuf>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        link.as_deref().map(WirePath).serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<PathBuf>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(decode_path)
+            .transpose()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +103,7 @@ pub struct Content {
     pub bytes: u64,
     pub sha256: Option<String>,
     pub executable: u32,
+    #[serde(default, with = "link_path")]
     pub link: Option<PathBuf>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,12 +156,21 @@ fn stale() -> TransferError {
 pub struct Snapshot {
     pub cwd: PathBuf,
     /// Legacy wire field; new snapshots never enumerate the work tree.
-    #[serde(deserialize_with = "without_workspace_uploads")]
+    #[serde(
+        serialize_with = "serialize_paths",
+        deserialize_with = "without_workspace_uploads"
+    )]
     pub entries: BTreeMap<PathBuf, Content>,
     /// Absolute names reached through links or explicitly referenced attachments.
-    #[serde(deserialize_with = "without_workspace_uploads")]
+    #[serde(
+        serialize_with = "serialize_paths",
+        deserialize_with = "without_workspace_uploads"
+    )]
     pub dependencies: BTreeMap<PathBuf, Content>,
-    #[serde(deserialize_with = "without_workspace_uploads")]
+    #[serde(
+        serialize_with = "serialize_paths",
+        deserialize_with = "without_workspace_uploads"
+    )]
     pub stamps: BTreeMap<PathBuf, Stamp>,
 }
 impl Snapshot {

@@ -511,12 +511,12 @@ impl TransferService {
         op.phase = "retiring".into();
         self.save(&op)?;
         let roots = self.bundle_roots(&op)?;
-        let mut files = BTreeMap::<String, BTreeMap<PathBuf, String>>::new();
+        let mut files = BTreeMap::<String, BTreeMap<PathBuf, (&str, bool)>>::new();
         for file in &op.plan.files {
             files
                 .entry("codex".into())
                 .or_default()
-                .insert(file.source.clone(), file.sha256.clone());
+                .insert(file.source.clone(), (&file.sha256, false));
         }
         if let Some(plan) = &op.file_plan {
             for file in &plan.files {
@@ -525,10 +525,10 @@ impl TransferService {
                 {
                     continue;
                 }
-                files
-                    .entry(file.provider.clone())
-                    .or_default()
-                    .insert(file.source.clone(), file.sha256.clone());
+                files.entry(file.provider.clone()).or_default().insert(
+                    file.source.clone(),
+                    (&file.sha256, file.legacy_link_digest()),
+                );
             }
         }
         for (provider, expected) in files {
@@ -605,11 +605,14 @@ impl TransferService {
                 let held = directory.join("files").join(&file.name);
                 let source_exists = fs::symlink_metadata(&file.origin).is_ok();
                 let held_exists = fs::symlink_metadata(&held).is_ok();
-                if held_exists && super::service::hash(&held)? != expected[&file.origin] {
+                let (digest, legacy_link) = expected[&file.origin];
+                if held_exists
+                    && super::service::hash_with_legacy_link(&held, legacy_link)? != digest
+                {
                     return Err(changed());
                 }
                 if source_exists {
-                    if super::service::hash(&file.origin)? != expected[&file.origin] {
+                    if super::service::hash_with_legacy_link(&file.origin, legacy_link)? != digest {
                         return Err(changed());
                     }
                     if Stamp::capture(&file.origin).map_err(trash_error)? != file.stamp {
