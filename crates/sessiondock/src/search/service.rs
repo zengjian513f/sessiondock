@@ -11,8 +11,8 @@
 //! The query's prefilter runs on the cache's resident folded copy first, so
 //! a body that cannot match is never opened (its version is still taken
 //! from `stat`, the contract being that an append is visible to the next
-//! search). A body served without a folded copy yet (first search after a
-//! start) is read whole once to fold it.
+//! search). A cache hit can backfill a missing folded copy in bounded UTF-8
+//! chunks, then stream the original text for matching.
 
 use std::sync::{
     Arc,
@@ -21,13 +21,12 @@ use std::sync::{
 
 use super::{
     Outcome, PreparedSearch, Scanned, Scanner, SearchError, body,
-    cache::{Cached, Hit, Lookup, ParseSlots, SearchCache, TextReader},
+    cache::{CHUNK_BYTES, Cached, Hit, Lookup, ParseSlots, SearchCache, TextReader},
 };
 use crate::sessions::{SearchPool, SearchVersion, SessionError, SessionStore};
 use serde_json::json;
 
-/// Bytes of cached bodies that may be held in memory whole at once, for the
-/// queries that cannot be matched chunk by chunk.
+/// The in-flight budget shared by whole-body matching and folded backfills.
 pub const WHOLE_BODY_BUDGET: u64 = 64 * 1024 * 1024;
 const WHOLE_BODY_UNIT: u64 = 8 * 1024 * 1024;
 
@@ -215,24 +214,38 @@ impl SearchService {
         self.produced.load(Ordering::Relaxed)
     }
 
-    /// A cache hit as a source, folding its text first when no folded copy
-    /// of this version is resident yet (the body is read whole once for
-    /// that, and served from memory). `None` when the entry is unreadable:
-    /// it is dropped and the body produced again.
-    fn folded_hit(&self, uid: &str, version: &SearchVersion, hit: Hit) -> Option<Source> {
-        match hit {
-            Hit::Text(reader) if !self.cache.has_folded(uid, version) => match reader.read_all() {
-                Ok(text) => {
-                    self.cache.remember_folded(uid, version, &text);
-                    Some(Source::Text(TextReader::memory(text)))
-                }
-                Err(_) => {
-                    self.cache.remove(uid);
-                    None
-                }
-            },
-            hit => Some(hit.into()),
+    /// Backfill eligible cache hits under the same transient memory budget
+    /// as whole-body matching. Unreadable entries are dropped and rebuilt.
+    fn folded_hit(
+        &self,
+        uid: &str,
+        version: &SearchVersion,
+        hit: Hit,
+        cancelled: &AtomicBool,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<Source>, SessionError> {
+        let Hit::Text(mut reader) = hit else {
+            return Ok(Some(hit.into()));
+        };
+        if let Some(capacity) = self.cache.folded_capacity(reader.len())
+            && !self.cache.has_folded(uid, version)
+        {
+            let bytes = (capacity as u64).saturating_add(CHUNK_BYTES as u64);
+            let _budget = self
+                .whole_reads
+                .acquire(self.whole_reads.weight(bytes), cancelled)
+                .ok_or_else(cancelled_error)?;
+            if !self.cache.has_folded(uid, version)
+                && self
+                    .cache
+                    .backfill_folded(uid, version, &mut reader, buffer, capacity)
+                    .is_err()
+            {
+                self.cache.remove(uid);
+                return Ok(None);
+            }
         }
+        Ok(Some(Source::Text(reader)))
     }
 
     fn source_at(
@@ -241,9 +254,10 @@ impl SearchService {
         uid: &str,
         version: &SearchVersion,
         cancelled: &AtomicBool,
+        buffer: &mut Vec<u8>,
     ) -> Result<Source, SessionError> {
         if let Lookup::Hit(hit) = self.cache.get(uid, version)
-            && let Some(source) = self.folded_hit(uid, version, hit)
+            && let Some(source) = self.folded_hit(uid, version, hit, cancelled, buffer)?
         {
             return Ok(source);
         }
@@ -251,7 +265,7 @@ impl SearchService {
         if let Some(view) = self.store.search_view_cached(pool, uid)? {
             let text = body(&view);
             drop(view);
-            let cached = Cached::Text(text);
+            let cached = Cached::Text(Arc::new(text));
             if self.store.search_version(pool, uid)? == *version {
                 self.cache.put(uid, version, &cached);
             }
@@ -259,7 +273,7 @@ impl SearchService {
         }
         let _producer = self.cache.inflight(uid);
         if let Lookup::Hit(hit) = self.cache.get(uid, version)
-            && let Some(source) = self.folded_hit(uid, version, hit)
+            && let Some(source) = self.folded_hit(uid, version, hit, cancelled, buffer)?
         {
             return Ok(source);
         }
@@ -268,7 +282,7 @@ impl SearchService {
             return Err(cancelled_error());
         };
         let cached = match self.store.search_text_transient(pool, uid) {
-            Ok(text) => Cached::Text(text),
+            Ok(text) => Cached::Text(Arc::new(text)),
             Err(error) if Cached::cacheable_error(error.status) => Cached::Error {
                 status: error.status,
                 message: error.message,
@@ -315,7 +329,7 @@ impl SearchService {
         {
             return Scanned::Matched(None);
         }
-        let reader = match self.source_at(pool, uid, &version, cancelled) {
+        let reader = match self.source_at(pool, uid, &version, cancelled, buffer) {
             Ok(Source::Text(reader)) => reader,
             Ok(Source::Error { status, message }) => {
                 return Scanned::Error(SessionError { status, message });

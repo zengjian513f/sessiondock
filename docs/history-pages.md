@@ -337,6 +337,9 @@ byte/semantic checkpoint and an event range. Grants retain no native snapshot
 or message payload. Ordinary append can preserve an old grant; prefix rewrite,
 rewind, branch or inherited-prefix changes must pass the existing complete
 checkpoint validation or fail with 409. The initial event count is also checked.
+History and media continuations resolve validated positions through the view's
+existing message index. After an append, the original native offset still
+bounds the leaf messages available to the grant.
 
 The in-memory store admits 1024 grants, evicts oldest grants and expires grants
 after ten minutes. Reads do not consume or refresh a grant. Retrying a page

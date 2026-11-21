@@ -90,7 +90,6 @@ pub fn fold_char(c: char) -> char {
 
 /// Append the folded UTF-8 of `text` to `out`.
 pub fn fold_into(text: &str, out: &mut Vec<u8>) {
-    out.reserve(text.len());
     let bytes = text.as_bytes();
     let mut rest = 0;
     // ASCII runs are folded byte-wise; anything else goes through the table.
@@ -121,6 +120,21 @@ pub fn fold(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     fold_into(text, &mut out);
     out
+}
+
+/// Count folded bytes without building a copy, stopping at the cache limit.
+pub fn len_within(text: &str, limit: usize) -> Option<usize> {
+    if text.is_ascii() {
+        return (text.len() <= limit).then_some(text.len());
+    }
+    let mut bytes = 0;
+    for c in text.chars() {
+        bytes += fold_char(c).len_utf8();
+        if bytes > limit {
+            return None;
+        }
+    }
+    Some(bytes)
 }
 
 fn class_ranges(pattern: &str) -> Vec<(char, char)> {

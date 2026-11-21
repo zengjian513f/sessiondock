@@ -15,6 +15,81 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_message, codex_row, encoded, isolated_server
 
 
+def search(page, query, count):
+    old = page.locator('#stat').get_attribute('data-seq') or ''
+    page.locator('#q').fill(query)
+    started = time.monotonic()
+    page.locator('#q').press('Enter')
+    page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old",
+                           arg=old, timeout=30000)
+    elapsed = time.monotonic() - started
+    expect(page.locator('#search-progress')).to_be_hidden()
+    expect(page.locator('#side-search-count')).to_have_text(f'{count} 条')
+    expect(page.locator('#stat')).to_contain_text(f'全文命中 {count} 个会话')
+    expect(page.locator('#stat')).not_to_have_class('err')
+    result = page.evaluate('S.results')
+    assert len(result) == count, result
+    return elapsed, result
+
+
+def cache_backfill(binary, browser, root):
+    data = Corpus(root)
+    for source in ('claude', 'codex', 'grok'):
+        (root / source).mkdir(parents=True)
+    first = 'Kelvin ' * 210 + 'first record'
+    # The first byte of a Kelvin sign falls at the end of a 1 MiB read.
+    # Its simple case fold is one ASCII byte, so the raw 4 MiB body fits
+    # after folding into a 2 MiB tier.
+    boundary = 1024**2 - len(first.encode()) - 2
+    tail = 'x' * (boundary % 3) + 'K' * 1_400_000 + 'end'
+    data.put('fold-backfill', 'codex', [
+        codex_row('session_meta', {'id': 'fold-backfill', 'cwd': '/synthetic/fold-backfill'}),
+        codex_message('user', first),
+        codex_message('assistant', tail),
+    ], [])
+    cache = root / 'search-cache'
+    reference = None
+    for fold_bytes in (0, 64 * 1024, 1024**2, 2 * 1024**2):
+        # The first process seeds the persistent body. Later processes must
+        # match this exact entry with an empty in-memory folded tier.
+        with isolated_server(data, binary, extra_env={
+            'SESSIONDOCK_SEARCH_CACHE_DIR': str(cache),
+            'SESSIONDOCK_SEARCH_FOLD_BYTES': str(fold_bytes),
+        }) as (base, opener):
+            page = browser.new_page(service_workers='block')
+            try:
+                page.route('**/*', lambda route: route.continue_()
+                           if route.request.url.startswith(base + '/') else route.abort())
+                page.goto(base, wait_until='networkidle')
+                expect(page.locator('#side .item[data-uid]')).to_have_count(1)
+                proc_io = Path(f'/proc/{opener.sessiondock_pid}/io')
+
+                def bytes_read():
+                    if proc_io.exists():
+                        return int(dict(line.split(':', 1) for line in proc_io.read_text().splitlines())['rchar'])
+                    return 0
+
+                before = bytes_read()
+                _, result = search(page, 'kelvin', 1)
+                assert result[0]['hits'] == 200 and result[0]['hits_capped']
+                assert 'Kelvin' in result[0]['snippet']
+                if reference is None:
+                    reference = result
+                    # With folding disabled, a second search hits the cache.
+                    before = bytes_read()
+                    _, result = search(page, 'kelvin', 1)
+                assert result == reference
+                if fold_bytes <= 64 * 1024:
+                    assert bytes_read() - before < 2 * 1024**2, 'fold fallback read beyond the first matching chunk'
+                before = bytes_read()
+                search(page, 'AbsentNeedle', 0)
+                if fold_bytes == 2 * 1024**2:
+                    assert bytes_read() - before < 2 * 1024**2, 'shrinking Unicode body did not backfill the prefilter'
+            finally:
+                page.close()
+    print('PASS persistent fold backfill: disabled, oversized and shrinking Unicode bodies', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -59,33 +134,17 @@ def main():
                 expect(page.locator('#side .item[data-uid]')).to_have_count(4)
                 assert not list(cache.iterdir()), 'List opening prebuilt search text'
 
-                def search(query, count):
-                    old = page.locator('#stat').get_attribute('data-seq') or ''
-                    page.locator('#q').fill(query)
-                    started = time.monotonic()
-                    page.locator('#q').press('Enter')
-                    page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old",
-                                           arg=old, timeout=30000)
-                    elapsed = time.monotonic() - started
-                    expect(page.locator('#search-progress')).to_be_hidden()
-                    expect(page.locator('#side-search-count')).to_have_text(f'{count} 条')
-                    expect(page.locator('#stat')).to_contain_text(f'全文命中 {count} 个会话')
-                    expect(page.locator('#stat')).not_to_have_class('err')
-                    result = page.evaluate('S.results')
-                    assert len(result) == count, result
-                    return elapsed, result
-
-                cold, first = search('SemanticNeedle', 4)
+                cold, first = search(page, 'SemanticNeedle', 4)
                 cached = {p.name: p.stat().st_mtime_ns for p in cache.iterdir()}
-                hot, second = search('SemanticNeedle', 4)
+                hot, second = search(page, 'SemanticNeedle', 4)
                 assert first == second
                 assert cached == {p.name: p.stat().st_mtime_ns for p in cache.iterdir()}
                 for row in first:
                     assert row['hits'] == 1 and 'SemanticNeedle' in row['snippet'], row
-                search('ToolOnlyNeedle', 0)
+                search(page, 'ToolOnlyNeedle', 0)
                 with data.paths['cold-search-0'].open('ab') as stream:
                     stream.write(encoded(codex_message('assistant', 'AppendNeedle visible answer')))
-                search('AppendNeedle', 1)
+                search(page, 'AppendNeedle', 1)
                 page.locator(f'#side .item[data-uid="{data.uid("cold-search-0")}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('AppendNeedle visible answer', timeout=15000)
                 # Opening history after a search must construct its own complete
@@ -102,6 +161,7 @@ def main():
                 print(f'PASS cold search: {sum(len(v[1]) for v in native.values()) / 1024**2:.1f} MiB native; '
                       f'cold={cold:.3f}s hot={hot:.3f}s; hits, ignored tools, append, history and native preservation',
                       flush=True)
+                cache_backfill(args.binary, browser, data.root / 'backfill')
             finally:
                 browser.close()
 

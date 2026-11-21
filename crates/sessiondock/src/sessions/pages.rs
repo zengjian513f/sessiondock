@@ -536,12 +536,35 @@ impl ViewSnapshot {
         }
         Ok(())
     }
-    /// Non-status events fixed by `checkpoint`; indexes are stable positions.
-    fn checkpoint_events(&self, checkpoint: &MessageQuery) -> Vec<&Event> {
-        self.view
-            .events()
-            .filter(|event| event.message["role"] != "status" && event.end <= checkpoint.start)
-            .collect()
+    /// The authorized leaf prefix, with all inherited messages and the
+    /// optional synthetic rename (both have physical end zero).
+    fn checkpoint_message_count(&self, checkpoint: &MessageQuery) -> usize {
+        let view = &self.view;
+        let encoded = &view.parsed.encoded;
+        let leaf = if checkpoint.start == view.parsed.committed as u64 {
+            encoded.message_count()
+        } else {
+            encoded.message_count_through(checkpoint.start)
+        };
+        view.inherited_encoded.message_count() + leaf + usize::from(view.rename_at.is_some())
+    }
+
+    fn checkpoint_message(&self, index: usize, total: usize) -> Option<Selected<'_>> {
+        if index >= total {
+            return None;
+        }
+        // If the rename follows appended messages, filtering those messages
+        // puts it last in the checkpoint. Use its current position when
+        // looking up the event and its encoded bytes.
+        let position = if index + 1 == total {
+            self.view.rename_at.map_or(index, |at| index.max(at))
+        } else {
+            index
+        };
+        self.view.message_at(position).map(|event| Selected {
+            index: position,
+            event,
+        })
     }
 
     /// `history_page` as bytes: the messages spliced from the view's
@@ -556,11 +579,11 @@ impl ViewSnapshot {
         options: &HistoryPageOptions,
     ) -> Result<Vec<u8>, SessionError> {
         self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)?;
-        let events = self.checkpoint_events(&grant.checkpoint);
-        if events.len() != grant.total || grant.next >= grant.stop || grant.stop > events.len() {
+        let total = self.checkpoint_message_count(&grant.checkpoint);
+        if total != grant.total || grant.next >= grant.stop || grant.stop > total {
             return Err(SessionError::new(409, "历史页范围已变化，请重新载入会话"));
         }
-        let (selected, page) = self.page_selection(&grant, token, &events, pages, options)?;
+        let (selected, page) = self.page_selection(&grant, token, pages, options)?;
         let mut body = Vec::new();
         body.extend_from_slice(b"{\"messages\":");
         super::views::body::write_messages(self, &selected, media, files, pages, &mut body)?;
@@ -580,7 +603,6 @@ impl ViewSnapshot {
         &'a self,
         grant: &PageGrant,
         token: &str,
-        events: &[&'a Event],
         pages: &PageStore,
         options: &HistoryPageOptions,
     ) -> Result<(Vec<Selected<'a>>, Value), SessionError> {
@@ -592,26 +614,34 @@ impl ViewSnapshot {
         } else {
             (grant.next, grant.next)
         };
+        let select = |index| {
+            self.checkpoint_message(index, grant.total)
+                .expect("validated checkpoint message index")
+        };
+        let mut selected = Vec::new();
         if backward {
-            while start > grant.next && budget.take_at(self, start - 1, events[start - 1], limit)? {
+            while start > grant.next {
+                let item = select(start - 1);
+                if !budget.take_at(self, item.index, item.event, limit)? {
+                    break;
+                }
+                selected.push(item);
                 start -= 1;
             }
+            selected.reverse();
         } else {
-            while end < grant.stop && budget.take_at(self, end, events[end], limit)? {
+            while end < grant.stop {
+                let item = select(end);
+                if !budget.take_at(self, item.index, item.event, limit)? {
+                    break;
+                }
+                selected.push(item);
                 end += 1;
             }
         }
         if end == start {
             return Err(SessionError::new(413, "此历史页无法在读取预算内推进"));
         }
-        let selected = events[start..end]
-            .iter()
-            .enumerate()
-            .map(|(offset, event)| Selected {
-                index: start + offset,
-                event,
-            })
-            .collect::<Vec<_>>();
         let remaining = grant.stop - grant.next - (end - start);
         let next = if remaining > 0 {
             let mut next = grant.clone();
@@ -641,8 +671,8 @@ impl ViewSnapshot {
     ) -> Result<Value, SessionError> {
         self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)
             .map_err(|_| SessionError::new(409, "图片分页对应的时间线已变化，请重新载入会话"))?;
-        let events = self.checkpoint_events(&grant.checkpoint);
-        let Some(event) = events.get(grant.index) else {
+        let total = self.checkpoint_message_count(&grant.checkpoint);
+        let Some(Selected { event, .. }) = self.checkpoint_message(grant.index, total) else {
             return Err(SessionError::new(
                 409,
                 "图片分页对应的消息已不在时间线中，请重新载入会话",

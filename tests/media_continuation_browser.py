@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json, isolated_server
 from media_browser import GREEN, PNG, TOKEN, image, native_bytes, uid
+from media_fixtures import expand_media_tools
 
 # PNG decodes to 2x3, GREEN to 4x1: alternating data proves order and decoding.
 HEX32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -252,15 +253,17 @@ def browser(corpus, base, expected_native):
                 expect(page.locator("#a-term")).to_be_visible()
                 expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
 
-            def unfold():
-                for toggle in page.locator("#msgs .turn-process.folded .fold-toggle").all():
-                    toggle.click()
-
             def decoded(count):
-                unfold()
+                expand_media_tools(page)
                 images = page.locator("#msgs img")
                 expect(images).to_have_count(count)
-                images.last.scroll_into_view_if_needed()
+                # Jumping straight to the last image can skip lazy thumbnails
+                # in between as earlier loads expand the gallery.
+                pending = images.evaluate_all("items => items.flatMap((img, i) => img.naturalWidth ? [] : [i])")
+                for index in pending:
+                    item = images.nth(index)
+                    item.scroll_into_view_if_needed()
+                    expect(item).to_have_js_property("naturalWidth", 4 if index % 2 else 2)
                 page.wait_for_function("""count => {const items=[...document.querySelectorAll('#msgs img')];
                   return items.length===count && items.every((img,index)=>img.complete
                     && img.naturalWidth===(index%2?4:2) && img.naturalHeight===(index%2?1:3));}""", arg=count)
@@ -302,7 +305,7 @@ def browser(corpus, base, expected_native):
                 }"""), "media continuation replaced raw messages, existing descriptors or displayed nodes"
 
             def load_more(expected_text, count, remaining):
-                unfold()
+                expand_media_tools(page)
                 button = page.locator("#msgs .media-more")
                 expect(button).to_have_count(1)
                 expect(button).to_have_text(expected_text)
@@ -374,7 +377,7 @@ def browser(corpus, base, expected_native):
             saved = remember_identity()
             page.evaluate("S.lastSync=Date.now()")  # Keep the periodic fallback sync out of this short window.
             rewrite(corpus.paths["codex-rewrite"], b"REWRITE IMAGEZ", b"REWRITE IMAGEY", expected_native, corpus.root)
-            unfold()
+            expand_media_tools(page)
             button = page.locator("#msgs .media-more")
             expect(button).to_have_text("还有 24 张图片，加载下一批")
             button.click()

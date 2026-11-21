@@ -20,7 +20,7 @@
 //! Without a directory the cache lives in memory only, capped at 64 MiB.
 //!
 //! Next to the bodies, the cache keeps in memory a case-folded copy
-//! (`search::fold`) of every body it has served or produced, under its own
+//! (`search::fold`) of bodies it has served or produced, under its own
 //! byte budget with the same least-recently-used eviction: a query's
 //! prefilter (`search::prefilter`) decides on the folded copy whether a
 //! body can match at all, so a body that cannot is never opened or read.
@@ -65,7 +65,7 @@ pub const CHUNK_BYTES: usize = 1024 * 1024;
 /// One cached outcome of projecting a main view for search.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cached {
-    Text(String),
+    Text(Arc<String>),
     /// A deterministic open failure (501/413) of exactly these file versions.
     Error {
         status: u16,
@@ -100,11 +100,11 @@ pub struct TextReader {
 
 enum ReaderSource {
     File { file: fs::File, remaining: u64 },
-    Memory(String),
+    Memory(Arc<String>),
 }
 
 impl TextReader {
-    pub fn memory(text: String) -> Self {
+    pub fn memory(text: Arc<String>) -> Self {
         Self {
             source: ReaderSource::Memory(text),
         }
@@ -122,7 +122,7 @@ impl TextReader {
     }
 
     /// The whole body in memory (non-chunkable queries only).
-    pub fn read_all(self) -> io::Result<String> {
+    pub fn read_all(self) -> io::Result<Arc<String>> {
         match self.source {
             ReaderSource::Memory(text) => Ok(text),
             ReaderSource::File { file, remaining } => {
@@ -134,7 +134,7 @@ impl TextReader {
                         "short cache entry",
                     ));
                 }
-                String::from_utf8(data).map_err(|_| {
+                String::from_utf8(data).map(Arc::new).map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidData, "cache entry is not UTF-8")
                 })
             }
@@ -145,16 +145,85 @@ impl TextReader {
     /// ends with `\n`, the last is flagged. `buffer` is the caller's
     /// reusable read buffer. `f` returns whether to continue.
     pub fn for_each_chunk(
-        self,
+        mut self,
         buffer: &mut Vec<u8>,
+        f: impl FnMut(&str, bool) -> Result<bool, SearchError>,
+    ) -> Result<(), SearchError> {
+        self.chunks(buffer, true, f)
+    }
+
+    /// Fold on UTF-8 boundaries, including inside long lines. Restore the
+    /// reader so matching can still use the original body.
+    fn folded(
+        &mut self,
+        buffer: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<Option<Vec<u8>>, SearchError> {
+        // Folding maps to a representative of equal or smaller UTF-8 width.
+        // If the raw size exceeds the budget, count first to avoid building
+        // a large partial copy that cannot be retained.
+        let capacity = if self.len() <= limit as u64 {
+            self.len() as usize
+        } else {
+            let mut bytes = 0;
+            let mut fits = true;
+            self.fold_chunks(buffer, |chunk| {
+                if let Some(len) = fold::len_within(chunk, limit - bytes) {
+                    bytes += len;
+                } else {
+                    fits = false;
+                }
+                fits
+            })?;
+            if !fits {
+                return Ok(None);
+            }
+            bytes
+        };
+        let mut folded = Vec::with_capacity(capacity);
+        let mut fits = true;
+        self.fold_chunks(buffer, |chunk| {
+            let remaining = capacity - folded.len();
+            fits = chunk.len() <= remaining || fold::len_within(chunk, remaining).is_some();
+            if fits {
+                fold::fold_into(chunk, &mut folded);
+            }
+            fits
+        })?;
+        Ok(fits.then_some(folded))
+    }
+
+    fn fold_chunks(
+        &mut self,
+        buffer: &mut Vec<u8>,
+        mut f: impl FnMut(&str) -> bool,
+    ) -> Result<(), SearchError> {
+        let position = match &mut self.source {
+            ReaderSource::File { file, .. } => {
+                Some(file.stream_position().map_err(cache_read_error)?)
+            }
+            ReaderSource::Memory(_) => None,
+        };
+        let result = self.chunks(buffer, false, |chunk, _| Ok(f(chunk)));
+        if let (Some(position), ReaderSource::File { file, .. }) = (position, &mut self.source) {
+            file.seek(SeekFrom::Start(position))
+                .map_err(cache_read_error)?;
+        }
+        result
+    }
+
+    fn chunks(
+        &mut self,
+        buffer: &mut Vec<u8>,
+        line_aligned: bool,
         mut f: impl FnMut(&str, bool) -> Result<bool, SearchError>,
     ) -> Result<(), SearchError> {
-        let (mut file, mut remaining) = match self.source {
+        let (file, mut remaining) = match &mut self.source {
             ReaderSource::Memory(text) => {
-                f(&text, true)?;
+                f(text, true)?;
                 return Ok(());
             }
-            ReaderSource::File { file, remaining } => (file, remaining),
+            ReaderSource::File { file, remaining } => (file, *remaining),
         };
         let invalid = |_| SearchError::new(503, "session_error", "搜索文本缓存条目不是 UTF-8");
         buffer.clear();
@@ -168,7 +237,7 @@ impl TextReader {
                 0
             } else {
                 file.read(&mut buffer[filled..filled + want])
-                    .map_err(|error| SearchError::new(503, "session_error", error.to_string()))?
+                    .map_err(cache_read_error)?
             };
             if read == 0 {
                 if remaining != 0 {
@@ -182,6 +251,7 @@ impl TextReader {
                 f(chunk, true)?;
                 return Ok(());
             }
+            let read_start = filled;
             filled += read;
             remaining -= read as u64;
             if remaining == 0 {
@@ -189,18 +259,36 @@ impl TextReader {
                 f(chunk, true)?;
                 return Ok(());
             }
-            let Some(newline) = buffer[..filled].iter().rposition(|byte| *byte == b'\n') else {
-                // A line longer than the buffer: keep reading it.
-                continue;
+            let chunk = if line_aligned {
+                let Some(newline) = buffer[read_start..filled]
+                    .iter()
+                    .rposition(|byte| *byte == b'\n')
+                else {
+                    // A line longer than the buffer: keep reading it.
+                    continue;
+                };
+                std::str::from_utf8(&buffer[..read_start + newline + 1]).map_err(invalid)?
+            } else {
+                match std::str::from_utf8(&buffer[..filled]) {
+                    Ok(chunk) => chunk,
+                    Err(error) if error.error_len().is_none() => {
+                        std::str::from_utf8(&buffer[..error.valid_up_to()]).map_err(invalid)?
+                    }
+                    Err(error) => return Err(invalid(error)),
+                }
             };
-            let chunk = std::str::from_utf8(&buffer[..=newline]).map_err(invalid)?;
             if !f(chunk, false)? {
                 return Ok(());
             }
-            buffer.copy_within(newline + 1..filled, 0);
-            filled -= newline + 1;
+            let consumed = chunk.len();
+            buffer.copy_within(consumed..filled, 0);
+            filled -= consumed;
         }
     }
+}
+
+fn cache_read_error(error: io::Error) -> SearchError {
+    SearchError::new(503, "session_error", error.to_string())
 }
 
 /// A hit of the version-checked lookup.
@@ -451,16 +539,35 @@ impl SearchCache {
             .is_some_and(|entry| entry.folded.version == version.key)
     }
 
-    /// Keep the folded copy of `text`, the body of `uid` at `version`,
-    /// evicting the least recently used copies past the budget; a copy
-    /// larger than the whole budget is not kept.
-    pub fn remember_folded(&self, uid: &str, version: &SearchVersion, text: &str) {
-        let folded = fold::fold(text).into_boxed_slice();
-        let bytes = folded.len() as u64 + FOLD_ENTRY_BYTES;
-        if bytes > self.fold_limit {
-            self.forget_folded(uid);
-            return;
+    /// Maximum bytes needed for a potentially cacheable folded body. A
+    /// Unicode scalar occupies at most four input bytes and at least one
+    /// folded byte. Use the full limit for bodies that might shrink to fit.
+    pub fn folded_capacity(&self, len: u64) -> Option<usize> {
+        let limit = self.fold_limit.checked_sub(FOLD_ENTRY_BYTES)?;
+        (len.div_ceil(4) <= limit)
+            .then(|| usize::try_from(len.min(limit)).ok())
+            .flatten()
+    }
+
+    pub fn backfill_folded(
+        &self,
+        uid: &str,
+        version: &SearchVersion,
+        reader: &mut TextReader,
+        buffer: &mut Vec<u8>,
+        capacity: usize,
+    ) -> Result<(), SearchError> {
+        if let Some(folded) = reader.folded(buffer, capacity)? {
+            self.remember_folded(uid, version, folded);
         }
+        Ok(())
+    }
+
+    /// Keep the folded copy, evicting the least recently used copies past
+    /// the resident budget. Both producers bound their allocation first.
+    fn remember_folded(&self, uid: &str, version: &SearchVersion, folded: Vec<u8>) {
+        let folded = folded.into_boxed_slice();
+        let bytes = folded.len() as u64 + FOLD_ENTRY_BYTES;
         let mut tier = self.folded.lock().unwrap_or_else(|e| e.into_inner());
         tier.clock += 1;
         let clock = tier.clock;
@@ -662,9 +769,13 @@ impl SearchCache {
                 self.record(uid, bytes, Some((header, cached.clone())));
             }
         }
-        match cached {
-            Cached::Text(text) => self.remember_folded(uid, version, text),
-            Cached::Error { .. } => self.forget_folded(uid),
+        self.forget_folded(uid);
+        if let Cached::Text(text) = cached
+            && let Some(capacity) = self.folded_capacity(text.len() as u64)
+            && let Ok(Some(folded)) =
+                TextReader::memory(text.clone()).folded(&mut Vec::new(), capacity)
+        {
+            self.remember_folded(uid, version, folded);
         }
         self.evict(Some(uid));
     }

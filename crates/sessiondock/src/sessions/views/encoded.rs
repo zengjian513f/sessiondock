@@ -202,6 +202,13 @@ impl EncodedEvents {
         self.messages.len()
     }
 
+    /// Providers emit events in native record-offset order. Status filtering
+    /// preserves that order and all messages from a record share its end.
+    pub(crate) fn message_count_through(&self, end: u64) -> usize {
+        self.messages
+            .partition_point(|&index| self.entries[index].end <= end)
+    }
+
     /// The entry of non-status position `position`.
     pub(crate) fn message_entry(&self, position: usize) -> Option<&Entry> {
         self.entries.get(*self.messages.get(position)?)

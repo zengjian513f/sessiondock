@@ -240,6 +240,19 @@ impl View {
         }
     }
 
+    pub(crate) fn message_at(&self, position: usize) -> Option<&Event> {
+        match self.slot(position) {
+            Slot::Inherited(index) => self
+                .inherited
+                .get(self.inherited_encoded.event_index(index)?),
+            Slot::Leaf(index) => self
+                .parsed
+                .events
+                .get(self.parsed.encoded.event_index(index)?),
+            Slot::Rename => self.rename.as_ref(),
+        }
+    }
+
     /// The encoder's entry for `event` at non-status `position`, proven by
     /// identity: the event list the position maps to must hold this very
     /// event there (`None` for the rename event, or should a caller's
