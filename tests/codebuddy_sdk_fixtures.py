@@ -265,8 +265,22 @@ def fake_cli():
             return pending.pop(key)[1]
 
     def subagent_frames():
-        for _ in range(3):
+        subagents = path.with_suffix("") / "subagents"
+        subagents.mkdir(parents=True, exist_ok=True)
+        for number in range(1, 4):
             child_sid = str(uuid.uuid4())
+            # CodeBuddy's task/file id differs from its child stream SID.
+            child_path = subagents / f"agent-{uuid.uuid4()}.jsonl"
+            label = f"Synthetic experiment {number}"
+            rows = native_records(child_sid, cwd, [(label, f"{label} progress")])
+            rows[0]["providerData"]["agent"] = f"general-purpose-{number}"
+            rows.extend([
+                {"type": "function_call", "id": f"tool-{number}", "callId": f"call-{number}",
+                 "name": "Read", "arguments": json.dumps({"file_path": f"notes-{number}.md"})},
+                {"type": "function_call_result", "id": f"result-{number}", "callId": f"call-{number}",
+                 "status": "completed", "output": {"type": "text", "text": f"{label} tool output"}},
+            ])
+            child_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
             send({**init_frame("synthetic-child-model"), "uuid": child_sid, "session_id": child_sid,
                   "permissionMode": "synthetic-child-mode"})
             send({"type": "assistant", "session_id": child_sid, "uuid": str(uuid.uuid4()),

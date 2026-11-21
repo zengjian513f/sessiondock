@@ -7,8 +7,8 @@
 use serde_json::Value;
 
 use super::{
-    CLAUDE_HEAD_LINES, Input, Records, RowSummary, clip, committed_end, cursor_head, flatten_text,
-    is_injected, iso_seconds, latest_timestamp, native_identity, norm_ts, py_strip,
+    AgentMeta, CLAUDE_HEAD_LINES, Input, Records, RowSummary, clip, committed_end, cursor_head,
+    flatten_text, is_injected, iso_seconds, latest_timestamp, native_identity, norm_ts, py_strip,
     skipped_warnings, text_if_truthy, title_from_text,
 };
 use crate::sessions::text::is_timeline_protocol;
@@ -50,6 +50,14 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let mut agent = input.agent_id.map(|id| AgentMeta {
+        id: id.to_owned(),
+        parent_sid: None,
+        title: String::new(),
+        kind: String::new(),
+        open_turn: false,
+        turn_at: None,
+    });
     let Some(data) = &input.data else {
         let mut row = RowSummary::blank(
             stem.clone(),
@@ -60,6 +68,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             "(未知)".to_owned(),
             iso_seconds(0),
         );
+        row.agent = agent;
         row.unsupported = Some("会话文件暂时不可读取".to_owned());
         return row;
     };
@@ -116,10 +125,22 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             Some("ai-title") => text_if_truthy(&record.value["aiTitle"]),
             _ => None,
         });
-    let title = custom
-        .or(ai)
-        .or(first_user)
-        .unwrap_or_else(|| format!("(无标题) {}", stem.chars().take(8).collect::<String>()));
+    let title = clip(
+        &custom
+            .or(ai)
+            .or(first_user)
+            .unwrap_or_else(|| format!("(无标题) {}", stem.chars().take(8).collect::<String>())),
+        110,
+    );
+    if let Some(agent) = &mut agent {
+        agent.title = title.clone();
+        agent.kind = records
+            .head
+            .records
+            .iter()
+            .find_map(|record| text_if_truthy(&record.value["providerData"]["agent"]))
+            .unwrap_or_default();
+    }
     let model = records
         .tail
         .records
@@ -155,7 +176,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     RowSummary {
         forked_from_id: None,
         sid,
-        title: clip(&title, 110),
+        title,
         cwd,
         created,
         updated,
@@ -163,7 +184,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model,
         branch: Value::Null,
         codex: None,
-        agent: None,
+        agent,
         grok: None,
         continued_in_sid: None,
         native_id,

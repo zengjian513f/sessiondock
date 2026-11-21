@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use super::CandidateRef;
 use super::agent_stops::{Stops, claude_active};
-use super::summary::claude::owner_path;
+use super::summary::owner_path;
 use crate::sessions::{NativeScope, SessionError, path_text};
 
 /// What the index learned about a parent's fixed-prefix cut.
@@ -334,7 +334,7 @@ fn inherited_size(entry: &CandidateRef, chain: &[&CandidateRef]) -> u64 {
     total
 }
 
-/// Claude candidates grouped by transcript path.
+/// Candidates with filesystem-owned agents, grouped by source and transcript path.
 ///
 /// The key uses `Path`'s `Eq`, the same comparison as
 /// `candidate.path == owner_path`. That is lexical component equality,
@@ -342,12 +342,14 @@ fn inherited_size(entry: &CandidateRef, chain: &[&CandidateRef]) -> u64 {
 /// written. Every uid for a path is kept, in `entries` order (the order
 /// the per-agent scan collected). Callers still treat one uid as the
 /// owner, none as missing, and more than one as ambiguous.
-fn claude_path_index(entries: &BTreeMap<String, CandidateRef>) -> BTreeMap<&Path, Vec<&str>> {
-    let mut paths: BTreeMap<&Path, Vec<&str>> = BTreeMap::new();
+fn project_path_index(
+    entries: &BTreeMap<String, CandidateRef>,
+) -> BTreeMap<(&str, &Path), Vec<&str>> {
+    let mut paths: BTreeMap<_, Vec<&str>> = BTreeMap::new();
     for (uid, entry) in entries {
-        if entry.source == "claude" {
+        if matches!(entry.source, "claude" | "codebuddy") && !entry.is_agent() {
             paths
-                .entry(entry.path.as_path())
+                .entry((entry.source, entry.path.as_path()))
                 .or_default()
                 .push(uid.as_str());
         }
@@ -355,21 +357,30 @@ fn claude_path_index(entries: &BTreeMap<String, CandidateRef>) -> BTreeMap<&Path
     paths
 }
 
-/// Owner of one Claude sidecar: the indexed Claude row whose path equals
-/// `owner_path` of the sidecar. Codex ownership is not resolved here.
-fn claude_owner(paths: &BTreeMap<&Path, Vec<&str>>, sidecar: &Path) -> Result<String, Unowned> {
-    let expected = owner_path(sidecar);
-    let matches = expected
-        .as_ref()
-        .and_then(|owner| paths.get(owner.as_path()).map(|uids| uids.as_slice()));
+/// Match the sidecar to a main transcript of the same source.
+fn project_owner(
+    paths: &BTreeMap<(&str, &Path), Vec<&str>>,
+    entry: &CandidateRef,
+) -> Result<String, Unowned> {
+    let expected = owner_path(&entry.path);
+    let matches = expected.as_ref().and_then(|owner| {
+        paths
+            .get(&(entry.source, owner.as_path()))
+            .map(Vec::as_slice)
+    });
+    let source = if entry.source == "codebuddy" {
+        "CodeBuddy"
+    } else {
+        "Claude"
+    };
     match matches {
         Some([owner]) => Ok((*owner).to_owned()),
-        None | Some([]) => Err(Unowned::Missing(unsupported(
-            "Claude 子代理的主会话不在已配置索引中",
-        ))),
-        Some(_) => Err(Unowned::Broken(unsupported(
-            "Claude 子代理的主会话路径存在歧义",
-        ))),
+        None | Some([]) => Err(Unowned::Missing(unsupported(format!(
+            "{source} 子代理的主会话不在已配置索引中"
+        )))),
+        Some(_) => Err(Unowned::Broken(unsupported(format!(
+            "{source} 子代理的主会话路径存在歧义"
+        )))),
     }
 }
 
@@ -428,13 +439,13 @@ impl<'a> Graph<'a> {
                     .insert(entry.summary.sid.as_str(), entry.uid.as_str());
             }
         }
-        let claude_paths = claude_path_index(entries);
+        let project_paths = project_path_index(entries);
         for (uid, entry) in entries {
             let Some(agent) = &entry.summary.agent else {
                 continue;
             };
-            let owner = if entry.source == "claude" {
-                claude_owner(&claude_paths, &entry.path)
+            let owner = if matches!(entry.source, "claude" | "codebuddy") {
+                project_owner(&project_paths, entry)
             } else {
                 graph.agent_owner(entry)
             };

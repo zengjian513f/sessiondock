@@ -190,12 +190,10 @@ mod linux {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
-    ClaudeRoot,
-    ClaudeProject,
-    ClaudeSession,
-    ClaudeSubagents,
-    CodebuddyRoot,
-    CodebuddyProject,
+    ProjectRoot(&'static str),
+    Project(&'static str),
+    ProjectSession(&'static str),
+    ProjectSubagents(&'static str),
     DroidRoot,
     DroidProject,
     CodexDir,
@@ -426,8 +424,7 @@ fn list_files(dir: &Dir, path: &Path) -> (Vec<(String, Stamp)>, bool) {
 
 fn root_kind(source: &'static str) -> NodeKind {
     match source {
-        "claude" => NodeKind::ClaudeRoot,
-        "codebuddy" => NodeKind::CodebuddyRoot,
+        "claude" | "codebuddy" => NodeKind::ProjectRoot(source),
         "droid" => NodeKind::DroidRoot,
         "codex" => NodeKind::CodexDir,
         "grok" => NodeKind::GrokRoot,
@@ -728,19 +725,19 @@ fn refresh_node(
         let watched = ensure_watch(inotify, &node.path, inherited_recheck);
         let mut local_recheck = inherited_recheck || !watched;
         match node.kind {
-            NodeKind::ClaudeRoot => {
+            NodeKind::ProjectRoot(source) => {
                 let dir = preopened.expect("root dir");
                 let (subs, sym) = list_subdirs(dir, &node.path, true);
                 local_recheck |= sym;
                 node.items.clear();
                 let desired = subs
                     .into_iter()
-                    .map(|(n, is_sym)| (n, NodeKind::ClaudeProject, local_recheck || is_sym))
+                    .map(|(n, is_sym)| (n, NodeKind::Project(source), local_recheck || is_sym))
                     .collect();
                 sync_children(node, desired, inotify);
                 refresh_children(node, root, Some(dir), false, inotify, inherited_recheck)?;
             }
-            NodeKind::ClaudeProject => {
+            NodeKind::Project(source) => {
                 let dir = preopened.expect("project dir");
                 let (listed, file_alias) = list_files(dir, &node.path);
                 let (subs, dir_sym) = list_subdirs(dir, &node.path, true);
@@ -752,7 +749,7 @@ fn refresh_node(
                     }
                     let path = node.path.join(&name);
                     node.items.push(Discovered {
-                        source: "claude",
+                        source,
                         root: root.to_path_buf(),
                         data: path.clone(),
                         path,
@@ -765,12 +762,18 @@ fn refresh_node(
                 }
                 let desired = subs
                     .into_iter()
-                    .map(|(n, is_sym)| (n, NodeKind::ClaudeSession, inherited_recheck || is_sym))
+                    .map(|(n, is_sym)| {
+                        (
+                            n,
+                            NodeKind::ProjectSession(source),
+                            inherited_recheck || is_sym,
+                        )
+                    })
                     .collect();
                 sync_children(node, desired, inotify);
                 refresh_children(node, root, Some(dir), false, inotify, inherited_recheck)?;
             }
-            NodeKind::ClaudeSession => {
+            NodeKind::ProjectSession(source) => {
                 node.items.clear();
                 let sub_path = node.path.join("subagents");
                 let mut desired = Vec::new();
@@ -782,7 +785,7 @@ fn refresh_node(
                     {
                         desired.push((
                             "subagents".to_owned(),
-                            NodeKind::ClaudeSubagents,
+                            NodeKind::ProjectSubagents(source),
                             inherited_recheck || is_sym,
                         ));
                     }
@@ -790,14 +793,14 @@ fn refresh_node(
                 sync_children(node, desired, inotify);
                 refresh_children(node, root, preopened, false, inotify, inherited_recheck)?;
             }
-            NodeKind::ClaudeSubagents => {
+            NodeKind::ProjectSubagents(source) => {
                 let dir = preopened.expect("subagents dir");
                 let (listed, file_alias) = list_files(dir, &node.path);
                 local_recheck |= file_alias;
                 node.items.clear();
                 let sidecars: HashMap<&str, Stamp> = listed
                     .iter()
-                    .filter(|(name, _)| name.ends_with(".meta.json"))
+                    .filter(|(name, _)| source == "claude" && name.ends_with(".meta.json"))
                     .map(|(name, stamp)| (name.as_str(), *stamp))
                     .collect();
                 for (name, stamp) in &listed {
@@ -814,7 +817,7 @@ fn refresh_node(
                     let summary_stamp = sidecars.get(sidecar.as_str()).copied();
                     let path = node.path.join(name);
                     node.items.push(Discovered {
-                        source: "claude",
+                        source,
                         root: root.to_path_buf(),
                         data: path.clone(),
                         path,
@@ -823,44 +826,6 @@ fn refresh_node(
                         summary_stamp,
                         events_stamp: None,
                         agent_id: Some(id.to_owned()),
-                    });
-                }
-                node.children.clear();
-                node.has_dirty_child = false;
-                node.has_recheck_child = false;
-            }
-            NodeKind::CodebuddyRoot => {
-                let dir = preopened.expect("codebuddy root");
-                let (subs, sym) = list_subdirs(dir, &node.path, true);
-                local_recheck |= sym;
-                node.items.clear();
-                let desired = subs
-                    .into_iter()
-                    .map(|(n, is_sym)| (n, NodeKind::CodebuddyProject, inherited_recheck || is_sym))
-                    .collect();
-                sync_children(node, desired, inotify);
-                refresh_children(node, root, Some(dir), false, inotify, inherited_recheck)?;
-            }
-            NodeKind::CodebuddyProject => {
-                let dir = preopened.expect("codebuddy project");
-                let (listed, file_alias) = list_files(dir, &node.path);
-                local_recheck |= file_alias;
-                node.items.clear();
-                for (name, stamp) in listed {
-                    if !name.ends_with(".jsonl") || stamp.size == 0 {
-                        continue;
-                    }
-                    let path = node.path.join(name);
-                    node.items.push(Discovered {
-                        source: "codebuddy",
-                        root: root.to_path_buf(),
-                        data: path.clone(),
-                        path,
-                        summary_path: None,
-                        stamp: Some(stamp),
-                        summary_stamp: None,
-                        events_stamp: None,
-                        agent_id: None,
                     });
                 }
                 node.children.clear();

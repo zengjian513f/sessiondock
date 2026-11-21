@@ -12,10 +12,14 @@ CodeBuddy Code（腾讯，npm 包 `@tencent-ai/codebuddy-code`）与 Kiro 一样
 
 - 根：`SESSIONDOCK_CODEBUDDY_ROOT`，缺省 `$HOME/.codebuddy/projects`（规则同 Kiro：
   其他已配置根位于该 HOME 下，或都未配置）。空值关闭。
-- 路径：`<root>/<项目目录>/<sid>.jsonl`，一个会话一个文件，无子代理或旁路文件。
+- 主记录：`<root>/<项目目录>/<sid>.jsonl`。
   项目目录名＝工作目录绝对路径中的每个 `/` 换成 `-`，再去掉开头的 `-`
   （`/tmp/cb-probe/.hid/a.b` 为 `tmp-cb-probe-.hid-a.b`）；空格、点、下划线和非 ASCII
   原样保留。没有观察到长度截断。
+- DELTA：原生 `Agent` 工具把子代理记录追加到同级 `<sid>/subagents/agent-<id>.jsonl`。
+  文件名的任务 ID 与子代理记录里的 `sessionId` 是两种身份。索引按同一数据源内的主文件路径
+  确认归属，通过主会话侧栏或页首菜单打开子代理自己的只读记录，追加的进度、工具调用和输出
+  随历史同步更新。子代理与主会话分别搜索。记录内容用于展示进度，缺少确定的进程状态不显示运行标记。
 - 会话 ID 是 UUID，可在启动前用 `--session-id <uuid>` 指定（`new_assigned`），
   用 `--resume <sid>` 在原工作目录恢复。UID 为 `codebuddy:` 加路径哈希。
 - 登录凭据在 `~/.codebuddy/local_storage`，设置在 `~/.codebuddy/settings.json`。
@@ -46,7 +50,7 @@ DELTA（2.182.0）：原生分支/回退保持追加日志；出现回退标记�
 
 - 列表、历史、搜索和标题走通用文件管线（`sessions/index/summary/codebuddy.rs`、
   `sessions/providers/codebuddy.rs`）。摘要不推断回合状态（`turn` 不输出）。
-- 删除走文件回收站：只移动该会话的 jsonl，可恢复。
+- 删除走文件回收站：只移动主会话的 jsonl，可恢复。子代理文件留在原目录，恢复主会话后重新可见。
 - 不支持移动、克隆（混合组会列出阻碍项）和问题报告处理会话。
 - 进程识别：npm 包是 Node 脚本，`node …/codebuddy --session-id|--resume <sid>` 按脚本名
   归为 `codebuddy`，会话 ID 取命令行。

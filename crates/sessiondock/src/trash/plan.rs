@@ -114,7 +114,7 @@ impl Plan {
                 }
             }
             "codebuddy" => {
-                // One transcript file; CodeBuddy has no subagent or sidecar files.
+                // CodeBuddy trash moves the main transcript only.
                 push(origin.clone(), FileRole::Data)?;
             }
             "claude" | "codex" => {

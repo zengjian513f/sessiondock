@@ -37,6 +37,22 @@ pub use crate::sessions::text::{
     unquote,
 };
 
+/// `<project>/<sid>/subagents/agent-<id>.jsonl` → `<id>`.
+fn sidecar_agent_id(path: &Path) -> Option<&str> {
+    if path.parent()?.file_name()? != "subagents" {
+        return None;
+    }
+    path.file_stem()?.to_str()?.strip_prefix("agent-")
+}
+
+/// The main transcript a sidecar belongs to, matched by path in the index.
+pub(super) fn owner_path(path: &Path) -> Option<std::path::PathBuf> {
+    sidecar_agent_id(path)?;
+    let session_directory = path.parent()?.parent()?;
+    let stem = session_directory.file_name()?.to_str()?;
+    Some(session_directory.parent()?.join(format!("{stem}.jsonl")))
+}
+
 /// The metadata head read never exceeds this.
 pub const HEAD_BYTES: u64 = 96 * 1024;
 /// Rename/custom-title records are appended at the end.
@@ -77,6 +93,8 @@ pub struct Input<'a> {
     pub source: &'static str,
     /// Display path: the JSONL file (Claude/Codex) or the session directory (Grok).
     pub path: &'a Path,
+    /// Agent file identity provided by the discovery walk.
+    pub agent_id: Option<&'a str>,
     /// Absent only for a Grok session whose `chat_history.jsonl` does not exist.
     pub data: Option<DataFile<'a>>,
     pub sidecar: Option<SidecarBytes<'a>>,

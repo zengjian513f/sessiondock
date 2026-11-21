@@ -94,7 +94,7 @@ use sha1::{Digest, Sha1};
 use super::{NativeCatalogEntry, SessionError, SessionRoots, hash, uid_for};
 use agent_stops::{StopScan, Stops};
 use graph::CutCheck;
-use summary::claude::owner_path;
+use summary::owner_path;
 use summary::{DataFile, HEAD_BYTES, Input, RowSummary, SidecarBytes, TAIL_BYTES};
 
 /// Rows younger than this are reused by `refresh(false)`.
@@ -144,7 +144,7 @@ pub struct CandidateRef {
     /// Data file stamp; `None` only for a Grok session without a chat file.
     pub stamp: Option<Stamp>,
     pub summary_stamp: Option<Stamp>,
-    /// Agent id for Claude sidecar files and Codex subagent rollouts.
+    /// Agent id for sidecar transcripts and Codex subagent rollouts.
     pub agent_id: Option<String>,
     /// Root owner uid of a healthy agent (the main session it is listed under).
     pub owner: Option<String>,
@@ -166,7 +166,7 @@ impl CandidateRef {
         }
         codex_rollout_id(&self.data, &self.summary.sid)
     }
-    /// A Claude sidecar or Codex subagent rollout (owned or not).
+    /// A subagent transcript (owned or not).
     pub fn is_agent(&self) -> bool {
         self.agent_id.is_some()
     }
@@ -996,8 +996,7 @@ fn discover_walk(roots: &SessionRoots) -> Result<Vec<Discovered>, SessionError> 
             found: &mut found,
         };
         match source {
-            "claude" => walk.claude(&dir)?,
-            "codebuddy" => walk.codebuddy(&dir)?,
+            "claude" | "codebuddy" => walk.project_sessions(&dir, source)?,
             "droid" => walk.droid(&dir)?,
             "codex" => walk.codex(&dir, PathBuf::new())?,
             "opencode" | "agy" => walk.database_mirror(&dir, source)?,
@@ -1141,7 +1140,7 @@ fn files(dir: &Dir, path: &Path) -> Vec<(String, Stamp)> {
 
 impl Walk<'_> {
     /// `<root>/<project>/<sid>.jsonl` and `<root>/<project>/<sid>/subagents/agent-*.jsonl`.
-    fn claude(&mut self, root: &Dir) -> Result<(), SessionError> {
+    fn project_sessions(&mut self, root: &Dir, source: &'static str) -> Result<(), SessionError> {
         for project in subdirectories(root, self.root) {
             let project_path = self.root.join(&project);
             let Ok(project_dir) = Dir::open_ambient_dir(&project_path, ambient_authority()) else {
@@ -1153,7 +1152,7 @@ impl Walk<'_> {
                 }
                 let path = project_path.join(&name);
                 self.found.push(Discovered {
-                    source: "claude",
+                    source,
                     root: self.root.to_path_buf(),
                     data: path.clone(),
                     path,
@@ -1175,7 +1174,7 @@ impl Walk<'_> {
                 let listed = files(&agents_dir, &agents_path);
                 let sidecars: HashMap<&str, Stamp> = listed
                     .iter()
-                    .filter(|(name, _)| name.ends_with(".meta.json"))
+                    .filter(|(name, _)| source == "claude" && name.ends_with(".meta.json"))
                     .map(|(name, stamp)| (name.as_str(), *stamp))
                     .collect();
                 for (name, stamp) in listed.iter().map(|(name, stamp)| (name.clone(), *stamp)) {
@@ -1192,7 +1191,7 @@ impl Walk<'_> {
                     let summary_stamp = sidecars.get(sidecar.as_str()).copied();
                     let path = agents_path.join(&name);
                     self.found.push(Discovered {
-                        source: "claude",
+                        source,
                         root: self.root.to_path_buf(),
                         data: path.clone(),
                         path,
@@ -1203,34 +1202,6 @@ impl Walk<'_> {
                         agent_id: Some(id.to_owned()),
                     });
                 }
-            }
-        }
-        Ok(())
-    }
-
-    /// `<root>/<project>/<sid>.jsonl`; CodeBuddy has no subagent or sidecar files.
-    fn codebuddy(&mut self, root: &Dir) -> Result<(), SessionError> {
-        for project in subdirectories(root, self.root) {
-            let project_path = self.root.join(&project);
-            let Ok(project_dir) = Dir::open_ambient_dir(&project_path, ambient_authority()) else {
-                continue;
-            };
-            for (name, stamp) in files(&project_dir, &project_path) {
-                if !name.ends_with(".jsonl") || stamp.size == 0 {
-                    continue;
-                }
-                let path = project_path.join(&name);
-                self.found.push(Discovered {
-                    source: "codebuddy",
-                    root: self.root.to_path_buf(),
-                    data: path.clone(),
-                    path,
-                    summary_path: None,
-                    stamp: Some(stamp),
-                    summary_stamp: None,
-                    events_stamp: None,
-                    agent_id: None,
-                });
             }
         }
         Ok(())
@@ -1730,6 +1701,7 @@ fn read_candidate(
     let mut summary = summary::summarize(&Input {
         source: candidate.source,
         path: &candidate.path,
+        agent_id: candidate.agent_id.as_deref(),
         data: data_file,
         sidecar: sidecar_bytes,
     });
@@ -1837,6 +1809,7 @@ fn unreadable(candidate: &Discovered) -> RowSummary {
     let mut summary = summary::summarize(&Input {
         source: candidate.source,
         path: &candidate.path,
+        agent_id: candidate.agent_id.as_deref(),
         data: None,
         sidecar: None,
     });

@@ -38,7 +38,9 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   ([read-model.md](read-model.md)). `created`/`updated` are the sidecar's
   first/last record times (meta.json mtime, then `updated`, as fallbacks).
   The agent view's `meta` is the owner row with the item's fields applied;
-  it keeps the owner's `agent_items`.
+  it keeps the owner's `agent_items`. CodeBuddy Agent views use their own
+  `<sid>/subagents/agent-<id>.jsonl` and the ordinary CodeBuddy history
+  projector. They are read-only and follow appends to the selected file.
 - **Continuations.** A Claude main row whose tail holds a `continued-in`
   record carries `continued_in` = the uid of the listed Claude session with
   that sid (same source, this index; a self-reference or an unlisted sid

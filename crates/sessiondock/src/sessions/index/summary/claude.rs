@@ -13,28 +13,11 @@ use super::{
     AgentMeta, CLAUDE_AGENT_CREATED_LINES, CLAUDE_HEAD_LINES, Input, Records, RowSummary,
     SidecarBytes, claude_bash_input, claude_bash_output_matches, committed_end, cursor_head,
     flatten_text, is_injected, iso_seconds, latest_timestamp, native_identity, norm_ts, py_str,
-    py_strip, skipped_warnings, text_if_truthy, title_from_text, truthy,
+    py_strip, sidecar_agent_id, skipped_warnings, text_if_truthy, title_from_text, truthy,
 };
 
 /// Title of a transcript with no prompt or title record yet: the pending-session label.
 const UNTITLED_TITLE: &str = "新建 Claude 会话";
-
-/// `<project>/<sid>/subagents/agent-<id>.jsonl` → `<id>`.
-pub(crate) fn agent_id(path: &Path) -> Option<&str> {
-    let directory = path.parent()?;
-    if directory.file_name()? != "subagents" {
-        return None;
-    }
-    path.file_stem()?.to_str()?.strip_prefix("agent-")
-}
-
-/// The main transcript a sidecar belongs to (matched by exact path, never opened).
-pub(crate) fn owner_path(path: &Path) -> Option<std::path::PathBuf> {
-    agent_id(path)?;
-    let session_directory = path.parent()?.parent()?;
-    let stem = session_directory.file_name()?.to_str()?;
-    Some(session_directory.parent()?.join(format!("{stem}.jsonl")))
-}
 
 /// Turn state: the last user/assistant record
 /// closes the turn only when it is an assistant `end_turn`
@@ -234,7 +217,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let agent = agent_id(path).map(str::to_owned);
+    let agent = sidecar_agent_id(path).map(str::to_owned);
     let Some(data) = &input.data else {
         // Claude candidates always carry a data file; keep the row honest.
         let mut row = RowSummary::blank(

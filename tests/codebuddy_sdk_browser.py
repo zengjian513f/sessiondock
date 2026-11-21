@@ -124,6 +124,46 @@ def browser_check(fixture, base, screenshots):
         assert len(user_prompts(fixture, "run subagents")) == 1
         assert len(fixture.frames("spawn")) == spawned + 1
 
+        caret = row.locator(".nest-caret")
+        expect(caret).to_have_attribute("aria-expanded", "false")
+        caret.click()
+        side = page.locator(f'#side .item.agent[data-owner="{fixture.uid}"]')
+        expect(side).to_have_count(3, timeout=15000)
+        page.locator("#a-view-switch").click()
+        menu = page.locator("#session-view-menu")
+        expect(menu.locator('button[data-agent]:not([data-agent=""])')).to_have_count(3)
+        first = menu.get_by_role("menuitem").filter(has_text="Synthetic experiment 1")
+        agent = first.get_attribute("data-agent")
+        assert agent
+        first.click()
+        messages = page.locator("#msgs")
+        expect(messages.get_by_text("Synthetic experiment 1", exact=True)).to_be_visible()
+        expect(messages.get_by_text("Synthetic experiment 2 progress", exact=True)).to_have_count(0)
+        expect(page.locator("#sdk-input:visible, #composer textarea:visible")).to_have_count(0)
+        for selector in (".turn-toolbar", ".group-preview"):
+            toggle = messages.locator(f"{selector} .fold-toggle[aria-expanded=false]:visible")
+            if toggle.count():
+                toggle.first.click()
+        expect(messages.get_by_text("Synthetic experiment 1 progress", exact=True)).to_be_visible()
+        expect(messages.get_by_text("notes-1.md")).to_be_visible()
+        expect(messages.get_by_text("Synthetic experiment 1 tool output", exact=True)).to_be_visible()
+        capture(page, "codebuddy-subagent-wide-light.png")
+
+        child = fixture.path.with_suffix("") / "subagents" / f"agent-{agent}.jsonl"
+        with child.open("a") as stream:
+            stream.write(json.dumps({"type": "message", "role": "assistant", "id": "child-final",
+                                     "timestamp": int(time.time() * 1000),
+                                     "content": [{"type": "output_text", "text": "First experiment finished"}]}) + "\n")
+        expect(messages.get_by_text("First experiment finished", exact=True)).to_be_visible()
+        side.filter(has_text="Synthetic experiment 2").click()
+        expect(messages.get_by_text("Synthetic experiment 2", exact=True)).to_be_visible()
+        expect(messages.get_by_text("First experiment finished", exact=True)).to_have_count(0)
+        page.locator("#a-view-switch").click()
+        menu.locator('button[data-agent=""]').click()
+        expect(page.locator("#sdk-send")).to_be_enabled()
+        expect(page.locator(".native-sdk-pane").get_by_text("First experiment finished", exact=True)).to_have_count(0)
+        assert len(fixture.frames("spawn")) == spawned + 1
+
         reveal_mode = page.locator("#native-sdk-permission_mode")
         if not reveal_mode.is_visible():
             page.locator("#sdk-more, [data-sdk-more]").first.click()
@@ -180,6 +220,16 @@ def browser_check(fixture, base, screenshots):
         wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])
         assert any("Beta" in json.dumps(frame) for frame in fixture.frames("control_response"))
         capture(page, "codebuddy-sdk-mobile-dark.png")
+
+        page.locator("#a-view-switch").click()
+        menu = page.locator("#session-view-menu")
+        capture(page, "codebuddy-subagents-menu-mobile-dark.png")
+        menu.get_by_role("menuitem").filter(has_text="Synthetic experiment 1").click()
+        expect(page.locator("#msgs").get_by_text("First experiment finished", exact=True)).to_be_visible()
+        capture(page, "codebuddy-subagent-mobile-dark.png")
+        page.locator("#a-view-switch").click()
+        menu.locator('button[data-agent=""]').click()
+        expect(page.locator("#sdk-send")).to_be_enabled()
 
         send(page, "error")
         error = wait_snapshot(page, fixture.uid, lambda raw: bool(raw.get("error")))
@@ -349,7 +399,7 @@ def main():
         startup_recovery_check(CodebuddyFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-direct-") as temporary:
         direct_check(CodebuddyFixture(Path(temporary)), args.binary)
-    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, subagent stream isolation, approval/question answers, create naming, unsupported controls, writer conflict, startup error recovery, restart re-attach")
+    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, subagent navigation/live history/stream isolation, approval/question answers, create naming, unsupported controls, writer conflict, startup error recovery, restart re-attach")
 
 
 if __name__ == "__main__":
