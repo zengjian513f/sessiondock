@@ -3,9 +3,10 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
-- [ ] Orion、Cetus 补发 CodeBuddy 子代理启动修复 `6effa609` 和重开状态修复 `d0bb5fab`
-  （BUG-20261121-015748-3bae52，后端版本 `20261121T023557163850Z`）。两台正式部署均
-  SSH 超时。Lyra、Cygnus、Pavo、Vela 和 Hub 已更新服务二进制，重启并通过健康检查。
+- [ ] Orion、Cetus 补发 CodeBuddy 子代理历史 `6a01e975`（BUG-20261121-015748-3bae52，
+  后端版本 `20261121T025357027278Z`，包含子代理启动修复 `6effa609` 和重开状态修复
+  `d0bb5fab`）。两台正式部署均 SSH 超时。Lyra、Cygnus、Pavo、Vela 和 Hub 已更新
+  服务二进制，重启并通过健康检查。
 
 - [ ] Orion、Cetus 补发 Agy 启动取消修复 `226adf2a`（BUG-20261120-122309-518082，
   版本 `20261120T124544358967Z`）。两台正式部署均 SSH 超时；Lyra、Cygnus、Pavo、
