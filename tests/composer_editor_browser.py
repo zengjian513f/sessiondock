@@ -269,6 +269,7 @@ def exercise(browser, base, root, mobile=False, screenshots=None):
     context = browser.new_context(viewport={'width': 390 if mobile else 1280,
                                            'height': 844 if mobile else 900},
                                   color_scheme='dark' if mobile else 'light', service_workers='block')
+    context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.claude', JSON.stringify('cli'))")
     context.route('**/*', lambda route: route.continue_()
                   if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()

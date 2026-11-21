@@ -5,11 +5,6 @@
 
 - [ ] Orion、Cetus 补发七项组件审查后的节点服务和前端 `38d20736`。本次发布中两台均在 SSH 连接时超时。
 
-- [ ] 排查三项在审查前基线 `43d10a01` 也能复现的 Chromium 失败。`search_uuid_browser.py`
-  的 `reviewer` 快速筛选返回 0 行，预期 1 行。`session_cleanup_browser.py` 初始化时未达到
-  8 行会话、7 个活跃会话的预期。`cleanup_counts_browser.py` 在页面未打开的定时刷新后仍读到
-  1 个旧会话，预期 0 个。
-
 - [ ] Orion、Cetus 补发 CodeBuddy 输出恢复修复 `5c140eb2`（BUG-20261121-015748-3bae52，
   后端版本 `20261121T034709610086Z`，包含子代理启动、重开状态及子代理历史修复）。两台正式
   部署均 SSH 超时。Lyra、Cygnus、Pavo、Vela 和 Hub 已更新服务二进制，重启并通过健康检查。
