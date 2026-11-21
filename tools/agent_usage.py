@@ -20,6 +20,7 @@ import time
 SOURCES = ('codex', 'claude', 'grok', 'agy', 'kiro', 'droid', 'opencode', 'codebuddy')
 UTC = timezone.utc
 TOKEN_KEYS = ('input', 'output', 'cache_read', 'cache_write', 'cache_write_long')
+CODEX_COUNTER_KEYS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens')
 
 
 def stamp(value):
@@ -84,12 +85,25 @@ def event(identity, when, model, usage, *, included=False, native_cost=None, par
 
 
 def incomplete(state, when=None):
+    state.pop('counter_baseline', None)
     state['partial'] = True
     at = stamp(when)
     if at is None:
         state['partial_unknown'] = True
     else:
         state['partial_at'] = max(state.get('partial_at', at), at)
+
+
+def codex_counter(value):
+    if not isinstance(value, dict) or 'input_tokens' not in value or 'output_tokens' not in value:
+        return None
+    counts = [value.get(key, 0) for key in CODEX_COUNTER_KEYS]
+    return counts if all(number(count) for count in counts) else None
+
+
+def counter_key(counts):
+    # Store exact numbers without imposing SQLite's signed 64-bit integer limit.
+    return [str(int(count)) if count == int(count) else str(count) for count in counts]
 
 
 def agy_model_notice(text):
@@ -181,7 +195,10 @@ def parse_usage_record(source, row, state, path, offset):
                 if all(total.get(k, 0) == last.get(k, 0) for k in ('input_tokens','cached_input_tokens','output_tokens')):
                     previous = {}
                 else:
+                    already_partial = state.get('partial')
                     incomplete(state, row.get('timestamp'))
+                    if not already_partial and codex_counter(total) is not None:
+                        state['counter_baseline'] = codex_counter(total)
                     return []
             if any(total.get(k, 0) < v for k, v in previous.items() if number(v)):
                 incomplete(state, row.get('timestamp'))
@@ -251,6 +268,11 @@ def parse_record(source, row, state, path, offset):
             pending = state.get('pending_request')
             info = payload.get('info') or {}
             last = info.get('last_token_usage') or {}
+            total = codex_counter(info.get('total_token_usage'))
+            at = stamp(row.get('timestamp'))
+            if total is not None and at is not None:
+                items.append({'kind':'counter_checkpoint', 'sid':state.get('sid',path.stem),
+                              'at':at, 'counts':total})
             if last or info.get('total_token_usage'):
                 items.append({'kind':'counter_mode', 'id':state.get('sid',path.stem)})
             if pending:
@@ -346,6 +368,9 @@ class Ledger:
             create index if not exists quota_time on quota_events(source,at);
             create table if not exists excluded_events(source text,id text,primary key(source,id));
             create table if not exists counter_sessions(source text,id text,primary key(source,id));
+            create table if not exists counter_checkpoints(source text,sid text,at real,
+              input text,cache_read text,cache_write text,output text,
+              primary key(source,sid,input,cache_read,cache_write,output,at));
             create table if not exists parser_versions(source text primary key,version int);
             create table if not exists droid_routes(process text,sid text,at real,core_model text,
               primary key(process,sid,at));
@@ -354,6 +379,10 @@ class Ledger:
         self.changed = 0
 
     def put(self, source, item):
+        if item.get('kind') == 'counter_checkpoint':
+            self.db.execute('insert or ignore into counter_checkpoints values (?,?,?,?,?,?,?)',
+                            (source,item['sid'],item['at'],*counter_key(item['counts'])))
+            return
         if item.get('kind') == 'droid_route':
             self.db.execute('insert or replace into droid_routes values (?,?,?,?)',
                             (item['process'], item['sid'], item['at'], item['core_model']))
@@ -375,6 +404,17 @@ class Ledger:
             'select core_model from droid_routes where process=? and sid=? and at<=? order by at desc limit 1',
             (item['process'], item['sid'], item['at'])).fetchone()
         return 'core' if route and route[0] == item['model'] else None
+
+    def known_codex_baseline(self, state):
+        counts = state.get('counter_baseline')
+        if counts is None or state.get('partial_unknown') or state.get('partial_at') is None:
+            return False
+        # A resumed/rewound file may repeat a checkpoint already present in a
+        # retained file. The same SID and all billing counters must match an
+        # earlier observation; the new file's own first sample is not proof.
+        return self.db.execute('''select 1 from counter_checkpoints where source='codex'
+            and sid=? and input=? and cache_read=? and cache_write=? and output=? and at<? limit 1''',
+            (state.get('sid'),*counter_key(counts),state['partial_at'])).fetchone() is not None
 
     def file(self, source, path, kind='jsonl', rebuild=False, sid=None):
         stat = path.stat()
@@ -474,7 +514,7 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
         if source not in SOURCES or not root or agent not in ('all', source):
             continue
         try:
-            version = {'agy': 2, 'droid': 3}.get(source, 1)
+            version = {'codex': 2, 'agy': 2, 'droid': 3}.get(source, 1)
             stored = ledger.db.execute('select version from parser_versions where source=?',(source,)).fetchone()
             refresh_parser = rebuild or (stored[0] if stored else 1) != version
             if source == 'droid' and refresh_parser:
@@ -492,9 +532,9 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
                     ledger.file(source, item, 'droid_log' if source=='droid' else 'json' if source=='grok' else 'jsonl', refresh_parser)
                 if source == 'codex' and config.get('codex_archive'):
                     for item in Path(config['codex_archive']).glob('**/*.jsonl'):
-                        ledger.file(source, item, rebuild=rebuild)
+                        ledger.file(source, item, rebuild=refresh_parser)
                 for item in (ownership.files.get(source, []) if ownership else []):
-                    ledger.file(source, item, 'json' if source == 'grok' else 'jsonl', rebuild,
+                    ledger.file(source, item, 'json' if source == 'grok' else 'jsonl', refresh_parser,
                                 sid=ownership.identities.get((source,str(item))))
             ledger.db.execute('insert or replace into parser_versions values (?,?)',(source,version))
             ledger.db.commit()
@@ -651,7 +691,7 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                 if cutoff < until:
                     exhausted_at = iso(cutoff)
                 until = cutoff
-            partial_files = any(s.get('partial') and (s.get('partial_unknown') or
+            partial_files = any(s.get('partial') and not (source == 'codex' and ledger.known_codex_baseline(s)) and (s.get('partial_unknown') or
                 s.get('partial_at') is None or start is None or start <= s['partial_at'] <= until)
                 and ownership.contains(source, {'sid':s.get('sid'), 'at':s.get('partial_at')}) for s in file_states)
             estimate_until = stamp(point['at']) if point else until

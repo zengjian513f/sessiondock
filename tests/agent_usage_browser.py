@@ -144,6 +144,49 @@ def price_upgrade(browser, binary, output):
         page.get_by_role('link',name='Agent 用量 →').click()
         expect(cell).to_have_text('$15.51整轮 ≈ $63.31')
         page.screenshot(path=str(output/'price-upgrade-settings.png'),full_page=True)
+        page.locator('#quota-dialog .modal-close').click();page.goto(base+'/quotas.html')
+        def refresh():
+            before=page.evaluate("fetch('api/usage').then(r=>r.json()).then(r=>r.captured_at)")
+            page.locator('#quota-refresh').click()
+            deadline=time.monotonic()+45
+            while time.monotonic()<deadline:
+                report=page.evaluate("fetch('api/usage').then(r=>r.json())")
+                if not report.get('running') and report.get('captured_at')!=before:
+                    page.reload();return report
+                page.wait_for_timeout(200)
+            raise AssertionError(report)
+        # A rewind repeats a retained cumulative checkpoint, then switches to
+        # per-request records. It must not make the whole machine incomplete.
+        total={'input_tokens':800000,'cached_input_tokens':480000,
+               'cache_write_input_tokens':0,'output_tokens':400000}
+        checkpoint=lambda at: {'type':'event_msg','timestamp':iso(at),'payload':{
+            'type':'token_count','info':{'total_token_usage':total}}}
+        resumed=native/'resumed.jsonl'
+        append(resumed,{'type':'session_meta','payload':{'id':'price-upgrade'}},
+               checkpoint(now-12),*codex('continued',now-11,'gpt-6.2-sol'))
+        result=refresh();assert result['rows'][0]['partial']
+        expect(cell).not_to_contain_text('整轮')
+        append(path,checkpoint(now-15))
+        archive=root/'archived_sessions';archive.mkdir();path.rename(archive/'original.jsonl')
+        result=refresh();row=result['rows'][0]
+        assert not row['partial'] and row['reason'] is None,row
+        expect(cell).to_have_text('$32.23整轮 ≈ $131.55')
+        # Old indexes lack checkpoint evidence. Upgrade unchanged native and
+        # archived files once; later refreshes remain incremental.
+        with sqlite3.connect(directory/'ledger-v2.sqlite') as index:
+            index.execute("update parser_versions set version=1 where source='codex'")
+            index.execute('delete from counter_checkpoints')
+            for path_name,raw in index.execute("select path,state from files where source='codex'").fetchall():
+                state_value=json.loads(raw);state_value.pop('counter_baseline',None)
+                index.execute("update files set state=? where source='codex' and path=?",(json.dumps(state_value),path_name))
+        result=refresh();assert result['metrics']['bytes_read']>0
+        expect(cell).to_have_text('$32.23整轮 ≈ $131.55')
+        result=refresh();assert result['metrics']['bytes_read']==0
+        # Same counts under another SID are not evidence of complete history.
+        append(native/'unrelated.jsonl',{'type':'session_meta','payload':{'id':'unrelated'}},checkpoint(now-9))
+        result=refresh();assert result['rows'][0]['partial']
+        assert '历史记录不完整' in cell.get_attribute('title')
+        expect(cell).not_to_contain_text('整轮')
 
 
 def main():
