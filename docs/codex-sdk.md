@@ -621,6 +621,20 @@ behavior; they do not require other sources to expose unsupported controls.
   Otherwise it displays 就绪 when there is no active turn, waiting state or error.
   Status details, colors, animation, single-line layout and overflow follow
   [the shared UI contract](sdk-ui.md).
+  DELTA (BUG-20261121-111133-589aa4): active Codex SDK turns show 思考中,
+  执行工具 or 生成回复 when native items identify the current activity.
+  Approval, questions, compaction and errors take precedence. An active turn
+  with no identifiable phase shows 处理中. Status details show elapsed time
+  from the observed turn start, active tool names and counts, or received
+  response/visible summary characters as applicable. Wide footers show one
+  metric inline. The node retains turn start and item lifecycle evidence in
+  live snapshots so a browser reconnect can restore the display. Historical
+  records and older snapshots may lack this evidence.
+  Nonempty native reasoning summaries appear as one-line 思考摘要 disclosures
+  in the conversation. The full summary remains searchable and copyable; live
+  updates preserve the disclosure choice. Completed turns follow the existing
+  本轮过程 folding rules. Raw reasoning is not displayed or counted.
+  See [browser coverage](../tests/codex_sdk_bubbles_browser.py).
 - Model, effort, tier, mode, approval and sandbox use native system selects.
   Policy selection applies immediately and follows server-confirmed settings,
   including another client's changes; failures retain actual values and show

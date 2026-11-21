@@ -46,14 +46,19 @@ def exercise_idle_replay(browser, base, peer, label, screenshots):
             page.locator('#side .item[data-uid^="agy:"]').first.click()
             page.locator('#a-sdk').click()
             history = page.locator('.sdk-history')
-            persisted = history.get_by_text(reasoning, exact=True)
+            thought = history.locator('.msg[data-role="thinking"]')
+            persisted = thought.locator('.mb')
             if page.evaluate('SdkView.readOnly'):
                 if not page.locator('#a-session-toggle').is_visible():
                     page.locator('#a-more').click()
                 page.locator('#a-session-toggle').click()
-            expect(persisted).to_be_visible()
+            expect(thought.get_by_role('button', name='展开思考记录')).to_be_visible()
+            expect(persisted).to_be_hidden()
             if screenshots:
                 page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-loading.png'))
+            thought.get_by_role('button', name='展开思考记录').click()
+            expect(persisted).to_have_text(reasoning)
+            expect(persisted).to_be_visible()
             page.wait_for_function('NativeSdkView.es?.readyState === EventSource.OPEN')
             # The delayed stream stays empty until the first idle replay.
             events.publish()
@@ -73,18 +78,33 @@ def exercise_idle_replay(browser, base, peer, label, screenshots):
             if page.locator('#a-turns').is_visible():
                 page.locator('#a-turns').click()
                 expect(process).to_be_visible()
-                expect(persisted).to_be_visible()
+                expect(thought).to_be_visible()
+                expect(persisted).to_have_text(reasoning)
                 page.locator('#a-turns').click()
                 expect(persisted).to_be_hidden()
             # A genuinely observed running-to-idle transition may fold its tail.
             events.publish({'type': 'snapshot', 'seq': 10, 'raw': {**raw, 'running': True}})
             page.wait_for_function('NativeSdkView.running')
-            expect(persisted).to_be_visible()
+            expect(thought).to_be_visible()
             events.publish()
             page.wait_for_function('!NativeSdkView.running')
             expect(history.locator('.turn-process.folded')).to_have_count(1)
             process.locator('.fold-toggle').first.click()
+            if not persisted.is_visible():
+                thought.get_by_role('button', name='展开思考记录').click()
             expect(persisted).to_be_visible()
+            live_thought = {'id': f'agy:{SID}:step:3:thinking', 'role': 'thinking',
+                            'content': '实时思考记录先于回复到达。', 'native_type': 'PLANNER_RESPONSE'}
+            events.publish({'type': 'snapshot', 'seq': 11,
+                            'raw': {**raw, 'running': True, 'items': [*items, live_thought]}})
+            thought = page.locator('.sdk-live .msg[data-role="thinking"]')
+            expect(thought.get_by_role('button', name='展开思考记录')).to_be_visible()
+            expect(thought.locator('.mb')).to_be_hidden()
+            thought.get_by_role('button', name='展开思考记录').click()
+            expect(thought.locator('.mb')).to_be_visible()
+            expect(thought.locator('.mb')).to_have_text(live_thought['content'])
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-thinking.png'))
             context.close()
             print(f'PASS {label} {width} {theme}: idle replay keeps the history visible, observed completion folds', flush=True)
 

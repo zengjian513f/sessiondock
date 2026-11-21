@@ -189,14 +189,16 @@ const ConversationUI = {
   },
 
   toolState(node) {
-    return node ? ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'].map(selector =>
+    return node ? this.disclosureSelectors.map(selector =>
       [...node.querySelectorAll(selector)].map(control =>
         control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
   },
 
+  disclosureSelectors: ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap', '.thinking-disclosure'],
+
   restoreToolState(node, state) {
     if (!state) return;
-    ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'].forEach((selector, group) => {
+    this.disclosureSelectors.forEach((selector, group) => {
       node.querySelectorAll(selector).forEach((control, index) => {
         const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded';
         const previous = state[group][index];

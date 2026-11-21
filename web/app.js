@@ -5870,7 +5870,7 @@ function markMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement.closest('.msg');
-      return n.parentElement.closest('mark, .fold-preview, .katex')
+      return n.parentElement.closest('mark, .fold-preview, .thinking-preview, .katex')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -5908,7 +5908,7 @@ async function markRegexMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .katex')
+      return n.parentElement?.closest('mark, .fold-preview, .thinking-preview, .katex')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -7990,7 +7990,13 @@ function refreshComposerRunControls() {
   if (S.sel && $('#conversation-status'))
     renderActivity(cache.get(viewKey(S.sel, S.agent))?.activity);
   const view = SdkView.active;
-  if (view?.pane && view.baseNotice) view.setNotice(...view.baseNotice);
+  if (view?.pane && view.baseNotice) {
+    if (view.notice?.dataset.turnProgress) {
+      paintComposerRunControl(view.notice, view.uid, view.agent, 'sdk', view);
+    } else {
+      view.setNotice(...view.baseNotice);
+    }
+  }
 }
 async function runComposerSession(uid, agent, mode, takeoverExternal = false) {
   if (!uid || S.sel !== uid || S.agent !== agent || ConsoleUI.busy.has(uid)) return;
@@ -10096,7 +10102,11 @@ function messageBodyNode(m) {
   }
   // 命中的消息展开且不截断, 保证高亮可见; 但设上限, 否则搜 "a" 会把整个会话全量展开
   const collapsible = !['assistant', 'assistant·subagent'].includes(m.role);
-  let long = collapsible && m.text.length > CLIP;
+  const thinkingTitle = m.role === 'thinking'
+    ? m.native_type === 'PLANNER_RESPONSE' ? '思考记录'
+      : S.sel?.startsWith('codex:') ? '思考摘要' : ''
+    : '';
+  let long = Boolean(thinkingTitle) || (collapsible && m.text.length > CLIP);
   const found = SEARCH_ROLES.has(m.role) && hasTerm(m.text);
   const hit = found && S.autoOpen < AUTO_OPEN_MAX;
   if (hit && long) S.autoOpen++;
@@ -10139,26 +10149,50 @@ function messageBodyNode(m) {
   };
   n.appendChild(body);
   const setAction = addAction(n);
+  const thinkingAction = thinkingTitle ? n.lastElementChild : null;
+  const thinkingPreview = thinkingAction && el('span', 'thinking-preview');
+  if (thinkingAction) {
+    thinkingAction.classList.add('thinking-disclosure');
+    thinkingAction.append(el('span', 'thinking-label', thinkingTitle), thinkingPreview);
+    n.prepend(thinkingAction);
+  }
   let expanded = false, needsMore = long;
+  const paintThinking = () => {
+    const label = `${expanded ? '收起' : '展开'}${thinkingTitle}`;
+    thinkingAction.hidden = false;
+    thinkingAction.onclick = expanded ? clipped : full;
+    thinkingAction.setAttribute('aria-label', label);
+    thinkingAction.setAttribute('aria-expanded', String(expanded));
+    thinkingPreview.hidden = expanded;
+    const preview = expanded ? '' : m.text.trim().split(/\r?\n/, 1)[0];
+    if (thinkingPreview.textContent !== preview) thinkingPreview.textContent = preview;
+    body.hidden = !expanded;
+  };
   const full = () => {
     expanded = true;
     n.classList.remove('hashit');
     body.classList.remove('clip'); paint(true);
-    setAction(needsMore ? '收起' : '', needsMore ? clipped : null, needsMore ? true : null);
+    if (thinkingAction) paintThinking();
+    else setAction(needsMore ? '收起' : '', needsMore ? clipped : null, needsMore ? true : null);
     if (n.isConnected && S.term) { markMatches(n); updateMatchNav(); }
   };
   const clipped = () => {
     expanded = false;
-    body.classList.add('clip'); paint(true);
-    queuePreviewTail(body);
-    setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
+    if (thinkingAction) {
+      paint(true);
+      paintThinking();
+    } else {
+      body.classList.add('clip'); paint(true);
+      queuePreviewTail(body);
+      setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
+    }
   };
   if (!collapsible) full();
   else if (long) hit ? full() : clipped();
   else { body.classList.toggle('clip', !hit); expanded = hit; paint(true);
     if (!hit) queuePreviewTail(body); }
   body._refreshClip = () => {
-    if (!body.isConnected || expanded) return;
+    if (!body.isConnected || expanded || thinkingAction) return;
     const wasClipped = needsMore;
     needsMore = long || body.scrollHeight > body.clientHeight + 1;
     if (needsMore && !wasClipped) queuePreviewTail(body);
@@ -10175,9 +10209,10 @@ function messageBodyNode(m) {
       return;
     }
     m = next;
-    long = collapsible && m.text.length > CLIP;
+    long = Boolean(thinkingTitle) || (collapsible && m.text.length > CLIP);
     needsMore = collapsible && (needsMore || long);
     if (expanded) full();
+    else if (thinkingAction) clipped();
     else {
       const follow = body.scrollHeight - body.clientHeight - body.scrollTop < 2;
       const top = body.scrollTop;

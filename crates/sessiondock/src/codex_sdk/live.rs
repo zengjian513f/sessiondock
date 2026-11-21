@@ -283,12 +283,22 @@ impl LiveThread {
     pub fn apply(&self, method: &str, mut params: Value) {
         let received = crate::sdk_message_time::now();
         let mut state = self.state.lock().expect("live");
-        if matches!(method, "item/started" | "item/completed") && params["item"].is_object() {
+        if method == "turn/started" && params["turn"].is_object() {
+            let turn = &mut params["turn"];
+            let time = crate::sdk_message_time::MessageTime::new(turn, Some(received));
+            time.stamp(turn);
+        } else if matches!(method, "item/started" | "item/completed") && params["item"].is_object()
+        {
+            let turn_id = params["turnId"].clone();
             let item = &mut params["item"];
             if let Some(previous) = item["id"].as_str().and_then(|id| state.items.get(id)) {
                 crate::sdk_message_time::preserve(item, previous);
             }
             crate::sdk_message_time::MessageTime::new(item, Some(received)).stamp(item);
+            item["sdk_active"] = json!(method == "item/started");
+            if turn_id.is_string() {
+                item["sdk_turn_id"] = turn_id;
+            }
         }
         let previous = state.capacity.summary();
         state.reduce(method, &params);

@@ -15,9 +15,10 @@ from sdk_ui_fixtures import start_sdk
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--screenshots', type=Path, required=True)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
-    args.screenshots.mkdir(parents=True, exist_ok=True)
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-sdk-streaming-') as tmp, sync_playwright() as p:
         root = Path(tmp)
         corpus = build(root)
@@ -35,9 +36,10 @@ def main():
                 page.locator('#sdk-send').click()
                 expect(page.locator('.sdk-live')).to_contain_text('dense streaming ' + theme)
                 page.locator('#sdk-input').fill('unsent draft ' + theme)
+                turn_id = fake.turn
 
                 async def notify(method, raw):
-                    await fake.notify(method, {'threadId': THREAD, 'turnId': 'turn-1', **raw})
+                    await fake.notify(method, {'threadId': THREAD, 'turnId': turn_id, **raw})
 
                 def emit(method, raw):
                     asyncio.run_coroutine_threadsafe(notify(method, raw), fake.loop).result(5)
@@ -76,7 +78,10 @@ def main():
                 expect(page.locator('[data-sdk-item="dense-tool"]')).to_be_attached()
                 page.evaluate('''() => {
                     window.toolbarChanges = 0;
-                    window.toolbarObserver = new MutationObserver(records => toolbarChanges += records.length);
+                    window.toolbarObserver = new MutationObserver(records => {
+                        toolbarChanges += records.filter(record =>
+                            !record.target.closest('.sdk-status, #sdk-status-menu')).length;
+                    });
                     toolbarObserver.observe(document.querySelector('#sdk-composer'), {childList:true, subtree:true});
                     window.keptGroup = document.querySelector('[data-sdk-item="kept-tool-0"]').closest('.sdk-tool-group');
                     if (!keptGroup) throw Error('missing tool group');
@@ -110,7 +115,8 @@ def main():
                     expect(card).to_contain_text(chunks[-1].strip())
                 expect(page.locator('#sdk-input')).to_have_value('unsent draft ' + theme)
                 page.locator('#sdk-input').click()
-                page.screenshot(path=str(args.screenshots/f'{theme}-{width}.png'))
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots/f'{theme}-{width}.png'))
                 # Pending final text must be reconciled before the completion body.
                 emit('item/agentMessage/delta', {'itemId':'dense-answer', 'delta':'pending tail'})
                 emit('item/completed', {'item':{'id':'dense-answer','type':'agentMessage','text':'FINAL AUTHORITATIVE BODY'}})
