@@ -61,6 +61,10 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 输出按 1.5 倍计价；提示另列不含长上下文加价的金额。管理员可以修改私有目录的
 `prices.json`；服务更新 `default-prices.json`，合并新增型号及缺失价阶字段，保留本地
 已配置的同名字段。自定义价阶应与自定义基础单价一起维护。重新计价无需重读正文。
+内置价目随服务发布更新，不自动联网同步。GPT-6.2
+[Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol) 和
+[Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra) 使用官方 Standard
+输入、输出、缓存读写及超过 272K 的完整价阶；旧私有价目没有的新型号从内置表补齐。
 
 固定窗口以原生重置时间减去窗口时长求起点，费用不晚于官方采集时刻。
 月度缺少起点时通过私有 `settings.json` 或设置 API 配置带时区的起点并绑定当次

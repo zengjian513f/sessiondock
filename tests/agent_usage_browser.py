@@ -78,6 +78,74 @@ def batch(path, sid, when, model, totals):
 
 
 
+def price_upgrade(browser, binary, output):
+    """An existing private price file must gain new models from the release."""
+    with tempfile.TemporaryDirectory(prefix='sessiondock-price-upgrade-') as tmp, ExitStack() as stack:
+        root=Path(tmp);state=root/'state';directory=state/'agent-usage';now=time.time()
+        native=root/'codex';native.mkdir();path=native/'usage.jsonl'
+        append(path,{'type':'session_meta','payload':{'id':'price-upgrade'}},
+               quota_point(now-30,now+7200,0))
+        for model in ('gpt-6.2-sol','gpt-6.2-astra'):
+            for total in (100000,300000):
+                records=codex(f'{model}-{total}',now-20,model)
+                usage=records[1]['payload']['usage']
+                usage.update(input_tokens=total,cached_input_tokens=total*3//5,
+                             output_tokens=100000,reasoning_output_tokens=0)
+                append(path,*records)
+        append(path,quota_point(now-10,now+7200,25))
+        quotas(state,now)
+        prices=json.loads((REPO/'tools/agent_usage_prices.json').read_text())
+        for model in ('gpt-6.2-sol','gpt-6.2-astra'):prices['models'].pop(model)
+        prices['version']='old-private-catalog'
+        prices['models']['gpt-6.1-sol']['input']=7  # Preserve administrator overrides.
+        dump(directory/'prices.json',prices)
+        dump(directory/'settings.json',{'enabled':False,'interval_seconds':300,'sources':{}})
+        dump(directory/'config.json',{'directory':str(directory),'roots':{'codex':str(native)},
+             'quota_dir':str(state/'quotas'),'prices':str(directory/'prices.json')})
+        subprocess.run([sys.executable,str(REPO/'tools/agent_usage.py'),'collect','--config',
+                        str(directory/'config.json')],check=True,capture_output=True)
+        old=json.loads((directory/'snapshot.json').read_text())
+        assert old['rows'][0]['unpriced']==4 and old['rows'][0]['equivalent_usd'] is None
+        port=free_port();env=node_env(root,port,'127.0.0.0/8')
+        env.update(SESSIONDOCK_USAGE_PYTHON=sys.executable,SESSIONDOCK_CODEX_ROOT=str(native))
+        base,_=stack.enter_context(isolated_server(Corpus(root),binary,state_dir=state,extra_env=env))
+        hr=root/'hub';hr.mkdir()
+        hub=Hub(binary.with_name('sessiondock-hub'),hr,[SimpleNamespace(port=port,token=TOKEN,name='Price Node')])
+        hub.start();stack.callback(hub.stop)
+        context=browser.new_context(viewport={'width':1280,'height':950});stack.callback(context.close)
+        context.route('**/api/clients',lambda route:route.fulfill(json={'clients':[{'source':'codex','installed':True}]}))
+        page=context.new_page();page.goto(base+'/quotas.html')
+        cell=page.locator('[data-source="codex"] tbody .quota-api').first
+        expect(cell).to_contain_text('N/A')
+        page.locator('#quota-refresh').click()
+        deadline=time.monotonic()+45
+        while time.monotonic()<deadline:
+            result=page.evaluate("fetch('api/usage').then(r=>r.json())")
+            if not result.get('running') and result.get('captured_at')!=old['captured_at']:break
+            page.wait_for_timeout(200)
+        row=result['rows'][0]
+        assert row['unpriced']==0 and not row['partial'],row
+        assert abs(row['api_usd']-15.51)<1e-8,row
+        assert row['equivalent_usd'] is not None and abs(row['equivalent_usd']-15.51/.245)<1e-8,row
+        assert result['metrics']['bytes_read']==0,result['metrics']
+        assert json.loads((directory/'prices.json').read_text())==prices
+        for url,mode in ((base,'node'),(f'http://127.0.0.1:{hub.port}','hub')):
+            for width,theme in ((1280,'light'),(390,'dark')):
+                page.set_viewport_size({'width':width,'height':950});page.goto(url+'/quotas.html')
+                page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                expect(cell).to_have_text('$15.51整轮 ≈ $63.31')
+                assert 'gpt-6.2-sol' in cell.get_attribute('title')
+                assert 'gpt-6.2-astra' in cell.get_attribute('title')
+                if width==390:
+                    page.locator('.quota-scroll').evaluate_all("nodes=>nodes.forEach(n=>n.scrollLeft=100)")
+                page.screenshot(path=str(output/f'price-upgrade-{mode}-{width}.png'),full_page=True)
+        page.set_viewport_size({'width':1280,'height':950});page.goto(base)
+        page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click()
+        page.get_by_role('link',name='Agent 用量 →').click()
+        expect(cell).to_have_text('$15.51整轮 ≈ $63.31')
+        page.screenshot(path=str(output/'price-upgrade-settings.png'),full_page=True)
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,default=BINARY);parser.add_argument('--output',type=Path,default=REPO/'target/agent-usage/screenshots');parser.add_argument('--baseline',action='store_true');args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=True)
@@ -315,6 +383,7 @@ def main():
             wait_snapshot(lambda r:any(v['source']=='claude' and v['api_usd'] is not None and abs(v['api_usd']-8.35)<.001 for v in r['rows']))
             page.reload();expect(page.locator('[data-source="claude"] tbody .quota-api')).to_contain_text('$8.35')
             assert not errors,errors
+            price_upgrade(browser,args.binary.resolve(),args.output)
             print('PASS: original node/Hub tables, eight adapters, reference checkpoints, ownership, compaction, long context, exhaustion, duplicate/tail, partial/stale/zero, periodic refresh, wide/narrow light/dark')
 
 
