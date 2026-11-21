@@ -61,7 +61,7 @@ pub(super) fn derive_cached(
     selected: &str,
     cache: &super::references::Cache,
 ) -> Result<Group, TransferError> {
-    Inventory::default().group(snapshot, selected, cache)
+    Inventory::default().group(snapshot, selected, &[], cache)
 }
 
 /// Publication verifies the delivered graph, not a new migration of the target
@@ -404,11 +404,21 @@ struct Graph {
 }
 impl Graph {
     fn select(&self, selected: &str) -> Result<Group, TransferError> {
+        self.select_many(selected, &[])
+    }
+
+    fn select_many(&self, selected: &str, related: &[String]) -> Result<Group, TransferError> {
         if !self.members.contains_key(selected) {
             return Err(TransferError::new("not_found", "会话不在当前索引中"));
         }
         let mut seen = BTreeSet::new();
         let mut pending = vec![selected];
+        pending.extend(
+            related
+                .iter()
+                .map(String::as_str)
+                .filter(|uid| self.members.contains_key(*uid)),
+        );
         while let Some(uid) = pending.pop() {
             if seen.insert(uid) {
                 pending.extend(
@@ -484,6 +494,7 @@ impl Inventory {
         &mut self,
         snapshot: &SessionSnapshot,
         selected: &str,
+        related: &[String],
         cache: &super::references::Cache,
     ) -> Result<Group, TransferError> {
         let entries: BTreeMap<_, _> = snapshot
@@ -534,6 +545,6 @@ impl Inventory {
             self.signature = snapshot.list["sig"].clone();
             self.graph = Some(graph);
         }
-        self.graph.as_ref().unwrap().select(selected)
+        self.graph.as_ref().unwrap().select_many(selected, related)
     }
 }

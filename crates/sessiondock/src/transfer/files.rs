@@ -27,8 +27,12 @@ pub struct File {
     raw_link_digest: bool,
 }
 impl File {
+    pub(super) fn is_symlink(&self) -> bool {
+        self.format == "symlink"
+    }
+
     pub(super) fn legacy_link_digest(&self) -> bool {
-        self.format == "symlink" && !self.raw_link_digest
+        self.is_symlink() && !self.raw_link_digest
     }
 
     fn matches_digest(&self, raw: &[u8]) -> bool {
@@ -38,6 +42,17 @@ impl File {
         } else {
             digest(raw) == self.sha256
         }
+    }
+
+    fn read_source(&self) -> Result<Vec<u8>, TransferError> {
+        let link = self.is_symlink();
+        if !has_type(&fs::symlink_metadata(&self.source)?, link) {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "原生文件类型在计划后发生变化",
+            ));
+        }
+        read_contents(&self.source, link)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,6 +72,14 @@ pub struct Plan {
 fn digest(raw: &[u8]) -> String {
     format!("{:x}", Sha256::digest(raw))
 }
+pub(super) fn has_type(meta: &fs::Metadata, link: bool) -> bool {
+    if link {
+        meta.is_symlink()
+    } else {
+        meta.is_file()
+    }
+}
+
 fn read_contents(path: &Path, link: bool) -> Result<Vec<u8>, TransferError> {
     Ok(if link {
         fs::read_link(path)?.as_os_str().as_encoded_bytes().to_vec()
@@ -669,7 +692,14 @@ impl Plan {
             {
                 return Err(TransferError::new("move_path", "无效的会话相对路径"));
             }
-            let link = fs::symlink_metadata(&path)?.is_symlink();
+            let meta = fs::symlink_metadata(&path)?;
+            let link = meta.is_symlink();
+            if !has_type(&meta, link) {
+                return Err(TransferError::new(
+                    "move_path",
+                    "原生清单路径不是文件或符号链接",
+                ));
+            }
             let raw = read_contents(&path, link)?;
             let format = if link {
                 "symlink"
@@ -933,7 +963,7 @@ impl Plan {
                 .filter(|f| f.provider == "grok" && matches!(f.format.as_str(), "json" | "jsonl"))
             {
                 super::coordination::check()?;
-                let raw = fs::read(&file.source)?;
+                let raw = file.read_source()?;
                 if digest(&raw) != file.sha256 {
                     return Err(TransferError::new(
                         "move_plan_stale",
@@ -974,8 +1004,8 @@ impl Plan {
             super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
         for (index, file) in self.files.iter().enumerate() {
             progress.set(index as u64);
-            let link = file.format == "symlink";
-            let raw = read_contents(&file.source, link)?;
+            let link = file.is_symlink();
+            let raw = file.read_source()?;
             if !matches!(file.provider.as_str(), "claude" | "grok" | "droid")
                 || !file
                     .target
@@ -1015,7 +1045,7 @@ impl Plan {
             super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
         for (index, file) in self.files.iter().enumerate() {
             progress.set(index as u64);
-            let raw = read_contents(&file.source, file.format == "symlink")?;
+            let raw = file.read_source()?;
             if !file.matches_digest(&raw) {
                 return Err(TransferError::new(
                     "move_plan_stale",

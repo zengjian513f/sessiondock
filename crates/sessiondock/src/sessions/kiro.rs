@@ -56,6 +56,7 @@ struct PendingWrites {
     sync_manifest: bool,
     summaries: BTreeSet<String>,
     removals: BTreeSet<PathBuf>,
+    renamed_during_list: BTreeSet<String>,
 }
 
 pub(crate) struct Catalog {
@@ -410,14 +411,19 @@ impl Catalog {
         self.sync_manifest(writes)?;
         let manifest = self.manifest();
         let mut result = Ok(());
-        writes.summaries.retain(|sid| {
-            if let Err(error) = self.write_summary(&manifest.entries[sid]) {
-                result = Err(error);
-                true
-            } else {
-                false
-            }
-        });
+        writes
+            .summaries
+            .retain(|sid| match self.write_summary(&manifest.entries[sid]) {
+                Ok(()) => false,
+                Err(error) => {
+                    crate::log::transition(
+                        "warn",
+                        "kiro.summary_unavailable",
+                        json!({"sid":sid,"error":error}),
+                    );
+                    true
+                }
+            });
         writes.removals.retain(|path| {
             if let Err(error) = Self::remove_projection(path) {
                 result = Err(error);
@@ -502,7 +508,12 @@ impl Catalog {
             if old.is_some_and(|entry| entry.deleted) {
                 continue;
             }
-            let entry = self.merged_entry(old, sid, metadata, preferred_uid);
+            let mut entry = self.merged_entry(old, sid, metadata, preferred_uid);
+            if writes.renamed_during_list.contains(sid)
+                && let Some(title) = old.and_then(|entry| entry.metadata.get("title"))
+            {
+                entry.metadata["title"] = title.clone();
+            }
             if old != Some(&entry) {
                 changed.insert(sid.to_owned(), entry);
             }
@@ -527,10 +538,27 @@ impl Catalog {
         self: &Arc<Self>,
         sid: &str,
         metadata: Value,
-        preferred_uid: Option<&str>,
+    ) -> Result<Entry, String> {
+        self.remember(sid, metadata, None).await
+    }
+
+    pub async fn remember_rename(
+        self: &Arc<Self>,
+        sid: &str,
+        title: &str,
+        uid: &str,
+    ) -> Result<Entry, String> {
+        self.remember(sid, json!({"title":title}), Some(uid)).await
+    }
+
+    async fn remember(
+        self: &Arc<Self>,
+        sid: &str,
+        metadata: Value,
+        rename_uid: Option<&str>,
     ) -> Result<Entry, String> {
         let sid = sid.to_owned();
-        let preferred_uid = preferred_uid.map(str::to_owned);
+        let rename_uid = rename_uid.map(str::to_owned);
         let catalog = self.clone();
         tokio::task::spawn_blocking(move || {
             let mut writes = catalog.writes.lock().unwrap();
@@ -539,13 +567,21 @@ impl Catalog {
             if old.is_some_and(|e| e.deleted) {
                 return Err("Kiro 会话已删除".into());
             }
-            let entry = catalog.merged_entry(old, &sid, &metadata, preferred_uid.as_deref());
+            let entry = catalog.merged_entry(old, &sid, &metadata, rename_uid.as_deref());
+            let note_rename = |writes: &mut PendingWrites| {
+                if rename_uid.is_some() {
+                    writes.renamed_during_list.insert(sid.clone());
+                }
+            };
             if old != Some(&entry) {
                 let mut next = (*current).clone();
                 next.entries.insert(sid.clone(), entry.clone());
                 catalog.commit(&mut writes, next, |writes| {
                     writes.summaries.insert(sid.clone());
+                    note_rename(writes);
                 })?;
+            } else {
+                note_rename(&mut writes);
             }
             catalog.sync_manifest(&mut writes)?;
             catalog.flush_summary(&mut writes, &entry)?;
@@ -676,9 +712,34 @@ impl Catalog {
         save(&summary, &value)
     }
     async fn refresh(self: &Arc<Self>) -> Result<(), String> {
-        let host_state = self.host_state.clone();
+        let batch = self.fetch_list().await;
+        let catalog = self.clone();
+        tokio::task::spawn_blocking(move || match batch {
+            Ok((rows, caps)) => catalog.merge_batch(
+                rows.iter()
+                    .filter_map(|row| row["sessionId"].as_str().map(|sid| (sid, row, None))),
+                Some(caps),
+            ),
+            Err(error) => {
+                // Retry committed projections even while ACP is unavailable.
+                let mut writes = catalog.writes.lock().unwrap();
+                if let Err(error) = catalog.flush_projections(&mut writes) {
+                    crate::log::warn("kiro.projection_retry_failed", json!({"error":error}));
+                }
+                Err(error)
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn fetch_list(self: &Arc<Self>) -> Result<(Vec<Value>, Value), String> {
+        let catalog = self.clone();
         let cwd = tokio::task::spawn_blocking(move || {
-            crate::sdk_common::private_dir(&host_state)?;
+            // There is one list worker. Only renames published after this point
+            // can be newer than a row in the next batch.
+            catalog.writes.lock().unwrap().renamed_during_list.clear();
+            crate::sdk_common::private_dir(&catalog.host_state)?;
             std::env::current_dir()
         })
         .await
@@ -698,15 +759,7 @@ impl Catalog {
             let Some(cursor) = cursor else { break caps };
             params["cursor"] = cursor.clone();
         };
-        let catalog = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let rows = batch
-                .iter()
-                .filter_map(|row| row["sessionId"].as_str().map(|sid| (sid, row, None)));
-            catalog.merge_batch(rows, Some(capabilities))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        Ok((batch, capabilities))
     }
     /// A short-lived protocol connection; it never calls session/new or load.
     async fn request_list_page(

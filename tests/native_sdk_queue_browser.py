@@ -549,16 +549,25 @@ def restart_approval(browser, fixture):
         try:
             page.wait_for_function('key => NativeSdkView.raw?.requests?.[0]?.key === key', arg=key)
             assert fixture.native_pid() == pid
-            if fixture.source == 'grok':
-                page.get_by_role('button', name='Reject', exact=True).click()
-                final = 'Grok final answer'
-            else:
-                page.locator('[data-sdk-request]').get_by_role('button', name='拒绝', exact=True).click()
-                final = 'Claude synthetic final approval'
+            grok = fixture.source == 'grok'
+            if grok:
+                rpc_id = page.evaluate('NativeSdkView.raw.requests[0].rpc_id')
+            reject = page.locator('[data-sdk-request]').get_by_role('button', name='Reject' if grok else '拒绝', exact=True)
+            with page.expect_response('**/api/native-sdk/respond') as decision:
+                reject.click()
+            assert decision.value.ok, decision.value.text()
+            final = 'Grok final answer' if grok else 'Claude synthetic final approval'
             expect(page.locator('.sdk-live')).to_contain_text(final)
+            # A prior turn can already contain the fixture's fixed final text.
+            page.wait_for_function('NativeSdkView.raw?.running === false && !NativeSdkView.raw.requests?.length')
             gone(page, first['request_id'])
+            settled(page, fixture, first['request_id'])
             assert len(fixture.inputs('approval')) == before
             assert fixture.entry(first['request_id'])['state'] == 'completed'
+            if grok:
+                replies = [frame['result']['outcome'] for frame in fixture.peer.received()
+                           if frame.get('id') == rpc_id and 'result' in frame]
+                assert replies == [{'outcome': 'selected', 'optionId': 'reject'}], replies
             print(f'{fixture.source}: same pending approval and PID restored, real UI decision reaches native request once', flush=True)
         finally:
             context.close()
@@ -790,7 +799,9 @@ def main():
             stop_inherited_pipes(browser, fixtures['agy'])
             stop_inherited_pipes(browser, fixtures['agy'], own_group=True)
             restart_idle_registry(browser, fixtures['claude'])
-            restart_idle_registry(browser, fixtures['grok'])
+            # Grok's fixed answer from prior scenarios must not satisfy this turn.
+            fixtures['idle-grok'] = NativeQueueFixture(root / 'idle-grok', 'grok', args.binary, args.host_binary)
+            restart_idle_registry(browser, fixtures['idle-grok'])
             restart_idle_registry(browser, fixtures['agy'])
             for persisted_state, mismatch in (('completed', False), ('unknown', False),
                                               ('failed', False), ('unknown', True)):

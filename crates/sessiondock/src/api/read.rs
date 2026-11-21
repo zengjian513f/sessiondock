@@ -368,14 +368,13 @@ pub async fn media_page(
         let grant = resources
             .pages
             .lookup_media(&query.cursor, &uid, &query.agent)?;
-        let value = store.snapshot(&uid, &query.agent)?.media_page(
+        store.snapshot(&uid, &query.agent)?.media_page_body(
             grant,
             &query.cursor,
             &resources.media,
             resources.files.as_deref(),
             &resources.pages,
-        )?;
-        Ok(JsonBytes::new(&value).0.to_vec())
+        )
     })
     .await
 }

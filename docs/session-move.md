@@ -114,7 +114,9 @@ DELTA：Droid 的 `.factory/snapshots` 使用会话专属 manifest 和共享内�
 - 父会话回迁时，本机现有子会话重新指回本机；仍在其他机器的子会话保留跨机父关系。
 
 其他节点保存的父身份由 Hub 按已完成的移动记录解析当前位置，列表、搜索、详情及实时
-元数据使用同一规则。离线子节点回归和 Hub 重启仍能恢复结构；不能仅按相同 SID 合并机器。
+元数据使用同一规则。新附属关系只回放保存后完成的迁移。节点已改写父位置的关系，从该次迁移之后继续回放。
+Hub 按持久化终态序号排序，旧记录保留原有顺序，旧附属关系继续读取完整历史。
+离线子节点回归和 Hub 重启仍能恢复结构；不能仅按相同 SID 合并机器。
 手动解除关系不被迁移补成新关系。用户工作关系、草稿和运行绑定不自动变成新的原生亲属。
 
 ### 当前移动交接与清理
@@ -139,6 +141,8 @@ DELTA：Droid 的 `.factory/snapshots` 使用会话专属 manifest 和共享内�
 保留既有 URL 名称以恢复已有账本；名称中的 `clone` 不再表示允许新建复制操作。
 
 - `POST /api/session/transfer/tree {uid}`：读取树、可选状态、原生联动 UID；不创建迁移事务。
+  Hub 沿显示关系发现源端候选后，使用认证节点通道批量读取尚缺的原生组。
+  节点在同一库存上补齐各组实际依赖。旧节点继续走原有单会话入口。
 - `POST /api/session/clone/plan {uid, target_node, selected_uids, mode:"move", new_ids:false}`：
   固定实际选择并预检。省略选择时默认源端支持成员；空选择报错。新建复制或新身份请求被拒绝。
 - `POST /api/session/transfer/start {uid, target_node, operation_id, mode:"move", new_ids:false}`：

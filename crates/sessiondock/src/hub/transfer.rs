@@ -37,6 +37,8 @@ struct Journal {
     frozen_ready: bool,
     #[serde(default)]
     created_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_seq: Option<u64>,
     request: Request,
     phase: String,
     result: Option<Value>,
@@ -58,6 +60,9 @@ pub struct Transfers {
     directory: PathBuf,
     work: crate::transfer::progress::Registry,
     links: Arc<std::sync::Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>,
+    // Allocate and publish successful move positions in the same order, even
+    // when independent transfers finish on different nodes at the same time.
+    completed_moves: Arc<std::sync::Mutex<u64>>,
     gates: crate::transfer::coordination::Locks,
     unfinished: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Journal>>>,
     // Move the guard into the blocking write: cancelling its async waiter must
@@ -110,7 +115,13 @@ impl Transfers {
                 unfinished.insert(journal.request.operation_id.clone(), journal);
             }
         }
+        let move_seq = links
+            .values()
+            .filter_map(|record| record.move_seq)
+            .max()
+            .unwrap_or_default();
         Ok(Self {
+            completed_moves: Arc::new(std::sync::Mutex::new(move_seq)),
             policy: Default::default(),
             directory,
             work: Default::default(),
@@ -187,6 +198,7 @@ impl Transfers {
         let mut journal = journal.clone();
         let unfinished = self.unfinished.clone();
         let links = self.links.clone();
+        let completed_moves = self.completed_moves.clone();
         let save_guard = self
             .saves
             .acquire(vec![journal.request.operation_id.clone()])
@@ -201,9 +213,28 @@ impl Transfers {
         {
             journal.cancel_requested |= previous.cancel_requested;
         }
-        let raw = serde_json::to_vec(&journal)?;
         tokio::task::spawn_blocking(move || {
             let _save_guard = save_guard;
+            let mut completion = None;
+            if journal.phase == "complete"
+                && journal.result.as_ref().is_some_and(|v| v["mode"] == "move")
+            {
+                let mut position = completed_moves.lock().unwrap_or_else(|e| e.into_inner());
+                let links = links.lock().unwrap_or_else(|e| e.into_inner());
+                journal.move_seq = match links
+                    .get(&journal.request.operation_id)
+                    .filter(|record| record.phase == "complete")
+                {
+                    // Keep a legacy receipt in its original order when hydrated.
+                    Some(record) => record.move_seq,
+                    None => {
+                        *position += 1;
+                        Some(*position)
+                    }
+                };
+                completion = Some(position);
+            }
+            let raw = serde_json::to_vec(&journal)?;
             let temp = path.with_extension("tmp");
             let mut options = fs::OpenOptions::new();
             options.create(true).truncate(true).write(true);
@@ -233,6 +264,7 @@ impl Transfers {
                 }
             }
             fs::File::open(path.parent().unwrap())?.sync_all()?;
+            drop(completion);
             Ok::<_, TransferError>(())
         })
         .await
@@ -247,6 +279,7 @@ impl Transfers {
         let mut record = crate::session_links::Record {
             id: journal.request.operation_id.clone(),
             created_ms: journal.created_ms,
+            move_seq: journal.move_seq,
             mode: result["mode"]
                 .as_str()
                 .or(preview["mode"].as_str())
@@ -820,6 +853,7 @@ impl Transfers {
                 cancel_requested: false,
                 frozen_ready: false,
                 created_ms: crate::session_links::now_ms(),
+                move_seq: None,
                 request,
                 phase: "planned".into(),
                 result: None,
@@ -996,6 +1030,7 @@ impl Transfers {
                 cancel_requested: false,
                 frozen_ready: false,
                 created_ms: crate::session_links::now_ms(),
+                move_seq: None,
                 request: request.clone(),
                 phase: "planned".into(),
                 result: None,

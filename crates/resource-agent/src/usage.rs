@@ -1,5 +1,5 @@
 //! Durable, sampled accounting. No browser request advances counters.
-use im::{OrdMap, Vector};
+use im::{OrdMap, Vector, ordmap::DiffItem};
 use process_links::{Process, Report, Session, agent::Resources};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize, Serializer};
@@ -15,7 +15,7 @@ use std::{
 fn identity(s: &Session) -> String {
     serde_json::to_string(&(&s.node_id, &s.source, &s.sid)).unwrap()
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Row {
     session: Session,
     scope: String,
@@ -117,10 +117,12 @@ struct Prior {
     cpu: f64,
     write_bytes: Option<u64>,
 }
-pub struct Ledger {
+pub struct Store {
     db: Connection,
-    dirty: BTreeSet<String>,
+    rows: OrdMap<String, Arc<Row>>,
     persisted_gaps: usize,
+}
+pub struct Ledger {
     saved: Saved,
     boot: String,
     at: f64,
@@ -130,7 +132,7 @@ pub struct Ledger {
     devices: BTreeMap<String, BTreeSet<String>>,
 }
 impl Ledger {
-    pub fn open(path: &Path, node: &str, at: f64) -> io::Result<Self> {
+    pub fn open(path: &Path, node: &str, at: f64) -> io::Result<(Self, Store)> {
         let database = path.with_extension("sqlite3");
         fs::OpenOptions::new()
             .write(true)
@@ -197,16 +199,16 @@ impl Ledger {
         if saved.node_id != node || saved.version != 1 {
             return Err(io::Error::other("usage ledger identity/version mismatch"));
         }
-        let dirty = if imported {
-            saved.rows.keys().cloned().collect()
-        } else {
-            BTreeSet::new()
-        };
-        let persisted_gaps = if imported { 0 } else { saved.gaps.len() };
-        let mut ledger = Self {
+        let mut store = Store {
             db,
-            dirty,
-            persisted_gaps,
+            rows: if imported {
+                OrdMap::new()
+            } else {
+                saved.rows.clone()
+            },
+            persisted_gaps: if imported { 0 } else { saved.gaps.len() },
+        };
+        let ledger = Self {
             saved,
             boot: String::new(),
             at: 0.,
@@ -216,9 +218,15 @@ impl Ledger {
             devices: BTreeMap::new(),
         };
         if imported {
-            ledger.save()?;
+            store.save(&ledger.snapshot())?;
         }
-        Ok(ledger)
+        store
+            .db
+            .busy_handler(Some(|attempt| {
+                crate::persistence::wait_for_database(attempt, 200)
+            }))
+            .map_err(io::Error::other)?;
+        Ok((ledger, store))
     }
     pub fn observe(&mut self, resources: &Resources, report: &Report) {
         let at = resources.sampled_at;
@@ -354,7 +362,6 @@ impl Ledger {
                     let end = at.min((day + 1) as f64 * 86400. - 28800.);
                     let fraction = (end - start) / dt;
                     let row_key = format!("{day}:{key}");
-                    self.dirty.insert(row_key.clone());
                     let row = self.saved.rows.entry(row_key).or_insert_with(|| {
                         Arc::new(Row {
                             session: session.clone(),
@@ -422,26 +429,44 @@ impl Ledger {
         self.boot = resources.boot_id.clone();
         self.saved.updated_at = at;
     }
-    pub fn snapshot(&self, persistence_error: Option<String>) -> Snapshot {
+    pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             saved: self.saved.clone(),
-            persistence_error,
+            persistence_error: None,
         }
     }
-    pub fn save(&mut self) -> io::Result<()> {
+}
+impl Snapshot {
+    pub fn set_persistence_error(&mut self, error: &io::Error) {
+        self.persistence_error = Some(error.to_string());
+    }
+}
+impl Store {
+    pub fn prepare_final_save(&self) -> io::Result<()> {
+        self.db
+            .busy_timeout(std::time::Duration::from_secs(2))
+            .map_err(io::Error::other)
+    }
+
+    pub fn save(&mut self, snapshot: &Snapshot) -> io::Result<()> {
+        let saved = &snapshot.saved;
         let tx = self.db.transaction().map_err(io::Error::other)?;
-        let meta = json!({"version":self.saved.version,"node_id":self.saved.node_id,
-            "started_at":self.saved.started_at,"updated_at":self.saved.updated_at,
-            "gap_seconds":self.saved.gap_seconds,"device_models":self.saved.device_models});
+        let meta = json!({"version":saved.version,"node_id":saved.node_id,
+            "started_at":saved.started_at,"updated_at":saved.updated_at,
+            "gap_seconds":saved.gap_seconds,"device_models":saved.device_models});
         tx.execute(
             "INSERT INTO usage_meta VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
             [meta.to_string()],
         )
         .map_err(io::Error::other)?;
         {
-            let mut insert=tx.prepare_cached("INSERT INTO usage_rows VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET data=excluded.data").map_err(io::Error::other)?;
-            for key in &self.dirty {
-                if let Some(row) = self.saved.rows.get(key) {
+            let mut insert = tx.prepare_cached("INSERT INTO usage_rows VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET data=excluded.data").map_err(io::Error::other)?;
+            for change in self.rows.diff(&saved.rows) {
+                if let DiffItem::Add(key, row)
+                | DiffItem::Update {
+                    new: (key, row), ..
+                } = change
+                {
                     insert
                         .execute(params![
                             key,
@@ -451,8 +476,8 @@ impl Ledger {
                 }
             }
         }
-        for id in self.persisted_gaps..self.saved.gaps.len() {
-            let gap = self.saved.gaps[id];
+        for id in self.persisted_gaps..saved.gaps.len() {
+            let gap = saved.gaps[id];
             tx.execute(
                 "INSERT INTO usage_gaps VALUES(?1,?2,?3)",
                 params![id, gap[0], gap[1]],
@@ -460,8 +485,8 @@ impl Ledger {
             .map_err(io::Error::other)?;
         }
         tx.commit().map_err(io::Error::other)?;
-        self.dirty.clear();
-        self.persisted_gaps = self.saved.gaps.len();
+        self.rows = saved.rows.clone();
+        self.persisted_gaps = saved.gaps.len();
         Ok(())
     }
 }

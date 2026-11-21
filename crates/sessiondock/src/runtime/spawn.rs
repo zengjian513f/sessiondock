@@ -137,6 +137,7 @@ pub fn spawn_parents(
             found.insert(
                 uid.clone(),
                 NestParent {
+                    binding: None,
                     node_id: None,
                     source: parent.source.clone(),
                     sid: parent.sid.clone(),
@@ -152,6 +153,7 @@ pub fn spawn_parents(
             found.insert(
                 child.uid.clone(),
                 NestParent {
+                    binding: None,
                     node_id: None,
                     source: parent.source.clone(),
                     sid: parent.sid.clone(),

@@ -1,5 +1,5 @@
 //! Atomic comparison and restoration of display rows during history imports.
-use super::{MetadataSnapshot, Row, validate_uid};
+use super::{MetadataSnapshot, ParentBinding, Row, validate_uid};
 use crate::metadata::{MetadataError, MetadataStore};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
@@ -10,6 +10,7 @@ impl MetadataStore {
         source: &str,
         target: &str,
         local_node: &str,
+        operation: &str,
         moved: &std::collections::BTreeSet<(String, String)>,
         excluded: &std::collections::BTreeSet<String>,
     ) -> Result<(), MetadataError> {
@@ -24,6 +25,9 @@ impl MetadataStore {
                         && moved.contains(&(parent.source.clone(), parent.sid.clone()))
                     {
                         parent.node_id = (target != local_node).then(|| target.to_owned());
+                        parent.binding = Some(ParentBinding::Move {
+                            operation: operation.to_owned(),
+                        });
                         row.nest_initialized = Some(true);
                     }
                 }

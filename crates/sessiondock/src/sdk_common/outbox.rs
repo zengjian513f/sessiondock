@@ -27,6 +27,14 @@ pub(crate) struct Entry {
     pub(crate) frame: Value,
 }
 impl Sender {
+    pub(super) fn len(&self) -> usize {
+        lock(&self.entries).len()
+    }
+
+    pub(super) fn entry(&self, index: usize) -> Option<Entry> {
+        lock(&self.entries).get(index).cloned()
+    }
+
     pub fn send(&self, frame: Value) -> Result<(), String> {
         if self.closed.load(Ordering::Acquire) {
             return Err(format!("{}_sdk_disconnected", self.source));

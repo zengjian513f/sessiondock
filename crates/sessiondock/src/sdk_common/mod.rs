@@ -2,6 +2,7 @@
 
 pub(crate) mod commands;
 pub(crate) mod host;
+pub(crate) mod hosted;
 pub(crate) mod outbox;
 pub(crate) mod projection;
 pub(crate) mod usage;

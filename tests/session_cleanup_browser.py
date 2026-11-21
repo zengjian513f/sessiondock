@@ -113,6 +113,8 @@ def main():
                 context.route('**/api/live*', running)
                 context.route('**/api/session/stop', stop)
                 page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='networkidle')
+                # The first set of chip counts uses the complete sidebar catalog.
+                page.locator('#nest-flat').click()
                 page.wait_for_function('S.sessions.length === 8 && S.live.size === 7')
                 summary = page.request.get(f'http://127.0.0.1:{hub.port}/api/sessions/cleanup-counts').json()
                 assert summary['interval_seconds'] == 10800, summary

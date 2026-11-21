@@ -1472,7 +1472,9 @@ impl Registry {
                 }
             }
             Some(mut records) => {
-                records.sort_by(|a, b| (a.created_ms, &a.id).cmp(&(b.created_ms, &b.id)));
+                records.sort_by(|a, b| {
+                    (a.move_seq, a.created_ms, &a.id).cmp(&(b.move_seq, b.created_ms, &b.id))
+                });
                 if !same_move_records(&state.1, &records) {
                     state.0 += 1;
                     state.1 = Arc::from(records);
@@ -1493,7 +1495,7 @@ impl Registry {
         let Some(records) = records else {
             return;
         };
-        if needs_nesting_relocation(payload, node, records) {
+        if super::nest::needs_relocation(payload, node, records) {
             super::nest::relocate_payload(Arc::make_mut(payload), node, records);
         }
     }
@@ -1696,109 +1698,13 @@ fn same_move_records(
         && left.iter().zip(right.iter()).all(|(a, b)| {
             a.id == b.id
                 && a.created_ms == b.created_ms
+                && a.move_seq == b.move_seq
                 && a.mode == b.mode
                 && a.phase == b.phase
                 && a.source_node == b.source_node
                 && a.target_node == b.target_node
                 && a.mappings == b.mappings
         })
-}
-
-fn needs_nesting_relocation(
-    value: &Value,
-    node: &str,
-    records: &[crate::session_links::Record],
-) -> bool {
-    match value {
-        Value::Array(rows) => rows
-            .iter()
-            .any(|row| needs_nesting_relocation(row, node, records)),
-        Value::Object(row) => {
-            let owner = row.get("node_id").and_then(Value::as_str).unwrap_or(node);
-            if let Some(counts) = row.get("child_counts").and_then(Value::as_array) {
-                for count in counts {
-                    let Some(obj) = count.as_object() else {
-                        return true;
-                    };
-                    let orig_node = obj.get("node_id").and_then(Value::as_str);
-                    let start_loc = orig_node.unwrap_or(node);
-                    if records.is_empty() {
-                        if orig_node != Some(start_loc) {
-                            return true;
-                        }
-                    } else {
-                        let mut location = start_loc;
-                        let identity = format!(
-                            "{}:{}",
-                            obj.get("source").and_then(Value::as_str).unwrap_or(""),
-                            obj.get("sid").and_then(Value::as_str).unwrap_or("")
-                        );
-                        for record in records {
-                            if record.source_node == location
-                                && record.mappings.contains_key(&identity)
-                            {
-                                location = record.target_node.as_str();
-                            }
-                        }
-                        if orig_node != Some(location) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            if let Some(parent) = row.get("nest_parent").and_then(Value::as_object) {
-                let orig_node = parent.get("node_id").and_then(Value::as_str);
-                let orig_source = parent.get("source").and_then(Value::as_str);
-                let orig_sid = parent.get("sid").and_then(Value::as_str);
-                let start_loc = orig_node.unwrap_or(owner);
-                if records.is_empty() {
-                    if orig_source.is_none_or(|s| s.contains(':')) || orig_sid.is_none() {
-                        return true;
-                    }
-                    if start_loc == owner {
-                        if parent.contains_key("node_id") {
-                            return true;
-                        }
-                    } else if orig_node != Some(start_loc) {
-                        return true;
-                    }
-                } else {
-                    let mut location = start_loc;
-                    let mut identity =
-                        format!("{}:{}", orig_source.unwrap_or(""), orig_sid.unwrap_or(""));
-                    for record in records {
-                        if record.source_node == location
-                            && let Some(next) = record.mappings.get(&identity)
-                        {
-                            location = record.target_node.as_str();
-                            identity = next.clone();
-                        }
-                    }
-                    if let Some((source, sid)) = identity.split_once(':') {
-                        if orig_source != Some(source) || orig_sid != Some(sid) {
-                            return true;
-                        }
-                        if location == owner {
-                            if parent.contains_key("node_id") {
-                                return true;
-                            }
-                        } else if orig_node != Some(location) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            for key in ["sessions", "results", "session", "meta"] {
-                if let Some(child) = row.get(key)
-                    && needs_nesting_relocation(child, owner, records)
-                {
-                    return true;
-                }
-            }
-            false
-        }
-        _ => false,
-    }
 }
 
 /// Deep copy of the last good answer `(stamp, data)` with rows marked stale;

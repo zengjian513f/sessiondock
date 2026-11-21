@@ -10,6 +10,12 @@ class BlockedNode:
         self.blocked = True
         self.block_cancel = False
         self.hits = 0
+        self.freeze_requested = threading.Event()
+        self.freeze_release = threading.Event()
+        self.freeze_release.set()
+        self.freeze_operation = None
+        self.tree_requests = []
+        self.legacy_tree = False
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -18,6 +24,15 @@ class BlockedNode:
             def do_POST(self): self.forward()
             def forward(self):
                 body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                if self.path.endswith('/transfer/tree'):
+                    request = json.loads(body)
+                    owner.tree_requests.append(request.copy())
+                    if owner.legacy_tree and request.pop('related_uids', None) is not None:
+                        body = json.dumps(request).encode()
+                if self.path.endswith('/transfer/freeze') and not owner.freeze_release.is_set():
+                    owner.freeze_operation = json.loads(body)['operation_id']
+                    owner.freeze_requested.set()
+                    assert owner.freeze_release.wait(45)
                 if (owner.blocked and self.path.endswith(('/transfer/manifest', '/transfer/check'))
                         or owner.block_cancel and (self.path.endswith('/transfer/abort')
                             or self.path.endswith('/transfer/freeze') and json.loads(body).get('release'))):
@@ -31,7 +46,7 @@ class BlockedNode:
                     return
                 connection = http.client.HTTPConnection('127.0.0.1', port, timeout=90)
                 try:
-                    connection.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() not in ('host', 'connection')})
+                    connection.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() not in ('host', 'connection', 'content-length')})
                     response = connection.getresponse()
                     raw = response.read()
                     self.send_response(response.status)

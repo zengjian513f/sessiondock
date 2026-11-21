@@ -8,7 +8,7 @@ import argparse
 import json
 import shutil
 from contextlib import ExitStack
-import os
+from datetime import datetime, timedelta, timezone
 import re
 from pathlib import Path
 import tempfile
@@ -16,21 +16,39 @@ import time
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
+from history_fixtures import BINARY, Corpus, codex_row, codex_message, encoded, isolated_server
 from hub_fixtures import Hub
 from machine_controls_browser import launch_chromium
 from node_auth_fixtures import node_env, TOKEN, free_port
 from spawned_by_fixtures import proc_pid
 
 
+def wait_for_summary(request, url, changed_at):
+    deadline = time.monotonic() + 15
+    while True:
+        summary = request.get(url + '/api/sessions/cleanup-counts').json()
+        if (summary or {}).get('checked_at', 0) > changed_at:
+            return summary
+        assert time.monotonic() < deadline, (url, changed_at, summary)
+        time.sleep(0.1)
+
+
 def main(binary):
     with tempfile.TemporaryDirectory(prefix='sessiondock-cleanup-counts-') as temporary, ExitStack() as stack:
         root = Path(temporary)
         corpus = Corpus(root / 'node')
-        corpus.put('old', 'codex', [codex_row('session_meta', {'id': 'old', 'cwd': '/synthetic/work'}),
-                                  codex_message('user', 'Synthetic cleanup counter')], [])
-        old = time.time() - 3 * 86400
-        os.utime(corpus.paths['old'], (old, old))
+        old = datetime.now(timezone.utc) - timedelta(days=3)
+        meta = codex_row('session_meta', {'id': 'old', 'cwd': '/synthetic/work'})
+        message = {**codex_message('user', 'Synthetic cleanup counter'), 'timestamp': old.isoformat()}
+        transcript = corpus.put('old', 'codex', [meta, message], [])
+        replacement = transcript.with_suffix('.tmp')
+
+        def set_activity(timestamp):
+            row = {**message, 'timestamp': timestamp.isoformat()}
+            replacement.write_bytes(encoded(meta) + encoded(row))
+            replacement.replace(transcript)
+            return time.time_ns() // 1_000_000
+
         proc = corpus.root / 'proc'
         proc.mkdir()
         (proc / 'stat').write_text('btime 1700000000\n')
@@ -93,24 +111,28 @@ def main(binary):
                 context.close()
 
             # Both services keep checking after all browser pages have closed.
-            os.utime(corpus.paths['old'], None)
-            time.sleep(5)
-            before_open = time.time() * 1000
+            changed_at = set_activity(datetime.now(timezone.utc))
+            request = pw.request.new_context()
+            try:
+                for url in urls:
+                    summary = wait_for_summary(request, url, changed_at)
+                    assert sum(summary['days'].values()) == 0, summary
+                    assert changed_at < summary['checked_at'] <= time.time() * 1000, summary
+            finally:
+                request.dispose()
+
             for url in urls:
                 context = browser.new_context(viewport={'width': 1800, 'height': 900}, service_workers='block')
                 page = context.new_page()
                 page.on('pageerror', lambda e: errors.append(str(e)))
-                summary = page.request.get(url + '/api/sessions/cleanup-counts').json()
-                assert sum(summary['days'].values()) == 0, summary
-                assert before_open - 5000 <= summary['checked_at'] <= time.time() * 1000, summary
                 page.goto(url, wait_until='networkidle')
-                expect(page.locator('#session-cleanup-count')).to_have_text('0')
+                expect(page.locator('#session-cleanup-count')).to_have_text('0', timeout=15000)
                 summary = page.request.get(url + '/api/sessions/cleanup-counts').json()
                 assert sum(summary['days'].values()) == 0, summary
                 # An open page picks up the next numeric summary without opening the dialog.
-                os.utime(corpus.paths['old'], (old, old))
+                set_activity(old)
                 expect(page.locator('#session-cleanup-count')).to_have_text('1', timeout=15000)
-                os.utime(corpus.paths['old'], None)
+                set_activity(datetime.now(timezone.utc))
                 expect(page.locator('#session-cleanup-count')).to_have_text('0', timeout=15000)
                 context.close()
 

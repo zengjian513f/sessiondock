@@ -6,6 +6,7 @@ publish.workspace = true
 description = "Read-only process identities and direct SSH lineage protocol"
 
 [dependencies]
+im = "15.1"
 serde.workspace = true
 libc = "0.2"
 serde_json.workspace = true

@@ -1,5 +1,5 @@
 use super::*;
-pub(super) use crate::sdk_common::{diagnostic_secrets, redact};
+pub(super) use crate::sdk_common::diagnostic_secrets;
 
 #[derive(Clone)]
 pub(super) enum Outbound {

@@ -167,6 +167,17 @@ pub struct NestParent {
     pub sid: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<ParentBinding>,
+}
+
+/// The saved address is current at one point in the move history.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParentBinding {
+    Local,
+    Hub { through: u64 },
+    Move { operation: String },
 }
 
 /// Final path of an uploaded file, recorded once per path per session.
@@ -628,6 +639,7 @@ impl MetadataSnapshot {
         let parent = if let Some(parent) = parent {
             let parent = NestParent {
                 node_id: parent.node_id,
+                binding: parent.binding,
                 source: parent.source.trim().to_owned(),
                 sid: parent.sid.trim().to_owned(),
             };

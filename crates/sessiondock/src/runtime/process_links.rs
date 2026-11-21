@@ -648,6 +648,7 @@ async fn remember_agent_parents(
                     .get(&(child.source.clone(), child.sid.clone()))?
                     .to_string(),
                 crate::metadata::NestParent {
+                    binding: None,
                     source: parent.source.clone(),
                     sid: parent.sid.clone(),
                     node_id: (parent.node_id != child.node_id).then(|| parent.node_id.clone()),

@@ -133,14 +133,15 @@ pub struct TransferService {
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
-    hash_with_legacy_link(path, false)
+    hash_contents(path, fs::symlink_metadata(path)?.is_symlink(), false)
 }
-pub(super) fn hash_with_legacy_link(
+pub(super) fn hash_contents(
     path: &Path,
+    symlink: bool,
     legacy_link_digest: bool,
 ) -> Result<String, TransferError> {
     let mut digest = Sha256::new();
-    if fs::symlink_metadata(path)?.is_symlink() {
+    if symlink {
         let link = fs::read_link(path)?;
         if legacy_link_digest {
             digest.update(link.to_string_lossy().as_bytes());
@@ -439,6 +440,15 @@ impl TransferService {
         selected: &str,
         snapshot: &SessionSnapshot,
     ) -> Result<group::Group, TransferError> {
+        self.groups_in(selected, &[], snapshot)
+    }
+
+    pub(crate) fn groups_in(
+        &self,
+        selected: &str,
+        related: &[String],
+        snapshot: &SessionSnapshot,
+    ) -> Result<group::Group, TransferError> {
         // Query the reverse index after refreshing changed native inputs.
         // The first request builds it on demand; unchanged histories are reused.
         // Only the relationship inventory is serialized; page, composer and
@@ -448,7 +458,7 @@ impl TransferService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
-        let result = inventory.group(snapshot, selected, &self.references);
+        let result = inventory.group(snapshot, selected, related, &self.references);
         crate::log::info(
             "transfer.relationships",
             serde_json::json!({"ms": started.elapsed().as_millis()}),
@@ -646,6 +656,11 @@ impl TransferService {
                         } else {
                             relation["node_id"] = node.to_owned().into();
                         }
+                        if moved || relation["binding"]["kind"] == "local" {
+                            relation["binding"] = json!(crate::metadata::ParentBinding::Move {
+                                operation: op.id.clone(),
+                            });
+                        }
                     }
                     if relation["node_id"].is_null()
                         && let Some(mapped) = relation["sid"].as_str().and_then(|id| {
@@ -703,7 +718,7 @@ impl TransferService {
                     source: file.source.clone(),
                     target: files.roots[&file.provider].join(&file.target),
                     sha256: hash(&stage)?,
-                    symlink: file.format == "symlink",
+                    symlink: file.is_symlink(),
                     staging: stage,
                 });
             }
@@ -761,7 +776,9 @@ impl TransferService {
             ));
         }
         for f in &op.plan.files {
-            if hash(&f.source)? != f.sha256 {
+            if !fs::symlink_metadata(&f.source)?.is_file()
+                || hash_contents(&f.source, false, false)? != f.sha256
+            {
                 return Err(TransferError::new(
                     "move_plan_stale",
                     "会话历史已变化，请重新查看迁移清单",
@@ -792,10 +809,10 @@ impl TransferService {
             }
             for before in &files.files {
                 let current = after.get(&before.source).ok_or_else(changed)?;
-                if before.sha256 != current.sha256
-                    && !(before.legacy_link_digest()
-                        && current.format == "symlink"
-                        && hash_with_legacy_link(&current.source, true)? == before.sha256)
+                if before.is_symlink() != current.is_symlink()
+                    || (before.sha256 != current.sha256
+                        && !(before.legacy_link_digest()
+                            && hash_contents(&current.source, true, true)? == before.sha256))
                 {
                     return Err(changed());
                 }
@@ -1076,6 +1093,20 @@ impl TransferService {
             ];
             for (uid, row) in &mut op.metadata_after {
                 let before = current.row(uid);
+                if let Some(parent) = row.get_mut("nest_parent").and_then(Value::as_object_mut)
+                    && let Some(existing) = before["nest_parent"].as_object()
+                    && ["source", "sid", "node_id"]
+                        .iter()
+                        .all(|key| parent.get(*key) == existing.get(*key))
+                {
+                    // Same saved address: keep the destination's binding and
+                    // let the existing reuse/conflict rules compare the row.
+                    if let Some(binding) = existing.get("binding") {
+                        parent.insert("binding".into(), binding.clone());
+                    } else {
+                        parent.remove("binding");
+                    }
+                }
                 let mut merged = before.as_object().cloned().unwrap_or_default();
                 merged.remove("clone_operation");
                 for key in portable {

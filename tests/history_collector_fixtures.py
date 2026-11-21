@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import sqlite3
+import struct
 import resource
 from threading import Thread
 import subprocess
@@ -25,17 +26,21 @@ def real_collector(root, binary, node, count):
     database = path.with_suffix('.sqlite3')
     scope = json.dumps([node, 'private-boot'], separators=(',', ':'))
     old_scope = json.dumps([node, 'previous-boot'], separators=(',', ':'))
+    now = time.time()
+    restored = dict(record, process=process(104), opened_at=1., closed_at=None)
+    restored['connection'] = dict(restored['connection'], client_port=50001)
+    restored_key = [restored['process'], restored['connection'], struct.unpack('Q', struct.pack('d', 1.))[0]]
+    last_seen = now - 10
     metadata = dict(node_id=node, boot_id='private-boot', catalog=dict(node_id=node,
         boot_id='private-boot', owners=[], sessions=[]), links=[], bindings=[],
-        last_seen=[])
-    now = time.time()
+        last_seen=[[restored_key, last_seen]])
     with sqlite3.connect(database) as db:
         db.executescript('CREATE TABLE snapshots(scope TEXT PRIMARY KEY,data TEXT NOT NULL);'
             'CREATE TABLE evidence(scope TEXT,section TEXT,key TEXT,data TEXT NOT NULL,PRIMARY KEY(scope,section,key)) WITHOUT ROWID;')
         db.execute('INSERT INTO snapshots VALUES(?,?)', (scope,json.dumps(metadata)))
         db.execute('INSERT INTO snapshots VALUES(?,?)', (old_scope,json.dumps(dict(metadata,boot_id='previous-boot'))))
         def rows():
-            import struct
+            yield (scope, 'records', json.dumps(restored_key, separators=(',', ':')), json.dumps(restored))
             for i in range(count+9):
                 row = dict(record, opened_at=i+1., closed_at=i+2.)
                 if i >= count:
@@ -113,7 +118,13 @@ def real_collector(root, binary, node, count):
                 with sqlite3.connect(database) as db:
                     remaining = db.execute("SELECT count(*) FROM evidence WHERE section='records'").fetchone()[0]
                     old = db.execute('SELECT count(*) FROM snapshots WHERE scope=?',(old_scope,)).fetchone()[0]
-                if remaining == 8 and old == 0: break
+                    migrated_seen = db.execute("SELECT json_extract(data,'$.last_seen') FROM evidence "
+                        "WHERE scope=? AND section='records' AND key=?", (scope, json.dumps(restored_key, separators=(',', ':')))).fetchone()
+                    legacy_seen = db.execute("SELECT json_type(data,'$.last_seen') FROM snapshots "
+                        "WHERE scope=?", (scope,)).fetchone()[0]
+                if remaining == 9 and old == 0 and legacy_seen is None:
+                    assert migrated_seen and abs(migrated_seen[0]-last_seen)<.001, migrated_seen
+                    break
                 assert time.monotonic() < deadline, (remaining, old)
                 t = time.monotonic()
                 with socket.socket(socket.AF_UNIX) as client:
@@ -121,7 +132,12 @@ def real_collector(root, binary, node, count):
                     client.sendall(b'{"op":"health"}\n');assert json.loads(client.makefile('rb').readline())['ok']
                 health_times.append((time.monotonic()-t)*1000)
                 time.sleep(.1)
-            child.terminate();child.wait(timeout=30)
+            child.terminate()
+            assert child.wait(timeout=30) == 0
+            with sqlite3.connect(database) as db:
+                metadata = json.loads(db.execute('SELECT data FROM snapshots WHERE scope=?', (scope,)).fetchone()[0])
+                rollback_seen = next(at for key, at in metadata['last_seen'] if key == restored_key)
+                assert abs(rollback_seen-last_seen)<.001, rollback_seen
             child = subprocess.Popen(command,stdout=log,stderr=log)
             deadline = time.monotonic()+20
             while True:
@@ -129,13 +145,15 @@ def real_collector(root, binary, node, count):
                     with socket.socket(socket.AF_UNIX) as client:
                         client.settimeout(1);client.connect(str(root/'collector.sock'))
                         client.sendall(b'{"op":"report"}\n');rows=json.loads(client.makefile('rb').readline())['result']['connections']
-                    assert len(rows)==8, len(rows)
+                    assert len(rows)==9, len(rows)
+                    restored_reply = next(row for row in rows if row['process']['pid']==104)
+                    assert restored_reply['closed_at'] is None and 'last_seen' not in restored_reply, restored_reply
                     break
                 except (OSError,ValueError):
                     assert time.monotonic()<deadline
                     time.sleep(.1)
             peak = next(line for line in Path(f'/proc/{child.pid}/status').read_text().splitlines() if line.startswith('VmHWM:'))
-            print(f'Processed {count} old rows durably; restart retained 8 including supersession evidence; cleanup health max {max(health_times):.2f} ms; {peak}',flush=True)
+            print(f'Processed {count} old rows durably; restart retained 9 including supersession and migrated last-live evidence; cleanup health max {max(health_times):.2f} ms; {peak}',flush=True)
         finally:
             child.terminate()
             try:

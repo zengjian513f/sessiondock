@@ -66,9 +66,13 @@ def main():
                         page.wait_for_timeout(3500)
                         assert not list(cache_dir.iterdir()), list(cache_dir.iterdir())
                         assert not searches, searches
-                    # Flat mode makes the actual matches distinguishable from parent navigation rows.
-                    if page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
-                        page.locator('#nest-flat').click()
+                    # Quick filtering uses the loaded list. Flat mode includes the sidecar metadata.
+                    flat = page.locator('#nest-flat')
+                    flat.click()
+                    expect(flat).to_have_attribute('aria-pressed', 'true')
+                    page.wait_for_function(
+                        'id => S.sessions.some(row => row.agent_items?.some(agent => agent.id === id))',
+                        arg=AGENT_ID)
 
                     def clear():
                         if width < 600 and page.locator('.mobile-back').is_visible():

@@ -367,10 +367,6 @@ impl Write for Counter {
         Ok(())
     }
 }
-pub(super) fn validate_response(value: &Value) -> Result<(), SessionError> {
-    serde_json::to_writer(Counter(0), value)
-        .map_err(|_| SessionError::new(500, "历史页响应序列化失败"))
-}
 
 pub(super) fn window(
     snapshot: &ViewSnapshot,
@@ -661,14 +657,14 @@ impl ViewSnapshot {
     /// One further batch of a single message's typed images. Descriptors are
     /// registered exactly as the inline projection registers them; the live
     /// cursor and the message list are never touched.
-    pub(crate) fn media_page(
+    pub(crate) fn media_page_body(
         &self,
         grant: MediaGrant,
         token: &str,
         media: &MediaStore,
         files: Option<&FileService>,
         pages: &PageStore,
-    ) -> Result<Value, SessionError> {
+    ) -> Result<Vec<u8>, SessionError> {
         self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)
             .map_err(|_| SessionError::new(409, "图片分页对应的时间线已变化，请重新载入会话"))?;
         let total = self.checkpoint_message_count(&grant.checkpoint);
@@ -723,8 +719,6 @@ impl ViewSnapshot {
             None
         };
         let response = json!({"media":items,"page":{"cursor":token,"next":next,"start":grant.offset,"end":end,"total":grant.total,"remaining":grant.total-end}});
-        validate_response(&response)
-            .map_err(|_| SessionError::new(413, "图片分页响应超过 8 MiB 预算"))?;
-        Ok(response)
+        serde_json::to_vec(&response).map_err(|_| SessionError::new(500, "图片分页响应序列化失败"))
     }
 }

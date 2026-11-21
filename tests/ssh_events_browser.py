@@ -14,6 +14,7 @@ from pathlib import Path
 import pwd
 import shlex
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -29,11 +30,11 @@ from process_links_browser import wait_for
 from spawned_by_fixtures import proc_pid, START
 
 
-def request(path, op, data=None):
+def request(path, op, data=None, **projection):
     with socket.socket(socket.AF_UNIX) as stream:
         stream.settimeout(5)
         stream.connect(str(path))
-        stream.sendall(json.dumps({'op':op, **({'data':data} if data is not None else {})}).encode()+b'\n')
+        stream.sendall(json.dumps({'op':op, **({'data':data} if data is not None else {}), **projection}).encode()+b'\n')
         response = json.loads(stream.makefile('rb').readline())
         assert response['ok'], response
         return response['result']
@@ -214,6 +215,59 @@ def synthetic(fixture,pw):
     finish_readers()
     assert len(reads) >= 3
     print('PASS browser resources remain fresh with 30000 retained SSH spans and concurrent report readers', flush=True)
+    # Exercise the next periodic attribution write against a real writer lock.
+    # The large unchanged evidence set must survive while lightweight reads and
+    # drawer refreshes keep seeing new samples.
+    primary = fixture.corpora[0]
+    socket_path = primary.root / 'agent.sock'
+    database = primary.root / 'agent-state.sqlite3'
+
+    def persisted_records():
+        with sqlite3.connect(database) as db:
+            return db.execute("SELECT count(*) FROM evidence WHERE section='records'").fetchone()[0]
+
+    wait_for(lambda: persisted_records() == len(records))
+    pid = 700
+    START[pid] = pid * 100
+    def binding_saved(db):
+        return db.execute("""SELECT EXISTS(SELECT 1 FROM snapshots, json_each(snapshots.data,'$.bindings')
+            WHERE json_extract(json_each.value,'$.process.pid')=?)""", (pid,)).fetchone()[0]
+
+    with sqlite3.connect(database) as writer:
+        writer.executescript("""CREATE TABLE changed_history(n INTEGER);
+            CREATE TRIGGER audit_history_update AFTER UPDATE ON evidence
+            WHEN old.section='records' AND json_extract(old.data,'$.process.pid')>=10000
+            BEGIN INSERT INTO changed_history VALUES(1); END;
+            CREATE TRIGGER audit_history_delete AFTER DELETE ON evidence
+            WHEN old.section='records' AND json_extract(old.data,'$.process.pid')>=10000
+            BEGIN INSERT INTO changed_history VALUES(1); END;""")
+        writer.execute('BEGIN IMMEDIATE')
+        proc_pid(fixture.procs[0], pid, 'codex', ['codex'], 1,
+                 fds={3: str(primary.paths['other'])})
+        observed = []
+        end = time.monotonic() + 33
+        while time.monotonic() < end:
+            page.get_by_role('button', name='刷新资源', exact=True).click()
+            report = request(socket_path, 'report', bindings_only=True)
+            assert 'connections' not in report
+            observed.append(report['sampled_at'])
+            page.wait_for_timeout(500)
+        assert any(b['process']['pid'] == pid for b in report['bindings'])
+        assert not binding_saved(writer)
+        writer.rollback()
+
+    def observed_on_disk():
+        with sqlite3.connect(database) as db:
+            return binding_saved(db)
+
+    wait_for(observed_on_disk)
+    with sqlite3.connect(database) as db:
+        assert db.execute('SELECT count(*) FROM changed_history').fetchone()[0] == 0
+    stamps = sorted(set(observed))
+    intervals = [b - a for a,b in zip(stamps, stamps[1:])]
+    assert len(intervals) >= 12 and max(intervals) < 6, intervals
+    assert persisted_records() == len(records)
+    print(f'PASS 30000 unchanged records across locked periodic save and {len(stamps)} lightweight samples', flush=True)
     page.locator('#a-resources').click()
     fixture.hub.stop()
     fixture.restart_agents()

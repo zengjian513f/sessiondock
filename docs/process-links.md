@@ -347,12 +347,13 @@ The large-report Chromium regression is [`history_collector_browser.py`](../test
 [`process_links_browser.py`](../tests/process_links_browser.py) suite with
 `--with-agent` verifies projected report/catalog/publish replies alongside browser
 attribution, liveness and resource interactions.
-Report reads clone the last completed immutable sample through a separate
-publication lock. Recomputing attribution or copying retained evidence for
-persistence cannot block these reads; `sampled_at` still identifies the actual
-sample, with no extra TTL or invented fresh observation. Publication swaps only
-an Arc, and old reports are released outside that short-held lock. Catalog and
-publish requests still complete their mutation before returning its report.
+Report reads acquire the last completed immutable sample through a separate
+publication lock. The collector shares unchanged connection history across
+samples and visits evidence whose expiry, socket coverage or attribution inputs
+changed. Bindings-only reads use the live projection and full reads stream the
+shared connection records. `sampled_at` identifies the actual sample.
+Publication swaps an Arc, and old reports are released outside that short-held
+lock. Catalog and publish requests return a report after completing their mutation.
 Resource reads capture immutable snapshots under the attribution lock, then
 serialize and aggregate outside it. The real-collector variant of
 `history_collector_browser.py --agent-binary target/release/resource-agent`
@@ -624,10 +625,13 @@ SM utilization; missing values remain unknown, and concurrent per-card sums cap
 at one card. This is an estimate, not exclusive GPU billing. No whole-device
 utilization is charged to sessions. Reboots, restart gaps and intervals over ten
 seconds are not extrapolated. Every thirty seconds the collector attempts an
-atomic save and publishes the completed usage snapshot. If the save fails, the
-new snapshot includes `persistence_error` and the next save retries pending
-changes. Readers keep a consistent snapshot while sampling continues. A final
-flush runs on orderly shutdown; abrupt termination can lose the unflushed tail.
+atomic save and publishes the completed usage snapshot. A background writer
+takes the latest pending snapshot and attempts attribution before usage. SQLite
+lock waits leave sampling and reads running. If a usage save fails, the new
+snapshot includes `persistence_error`. The next attempt compares with the last
+committed state so it includes changes left pending or skipped after a failure.
+Orderly shutdown interrupts any waiting periodic write and attempts a final
+flush of the latest state. Abrupt termination can lose the unflushed tail.
 Historical usage starts at deployment, not session birth.
 
 Browser acceptance lives in Node Status `tests/usage_browser.py`: private real

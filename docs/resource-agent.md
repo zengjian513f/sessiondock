@@ -145,7 +145,12 @@ graceful shutdown. An abrupt crash can lose the last uncommitted interval.
 Startup streams current records without constructing a whole JSON tree, and
 serves requests while the persistence worker reconciles expired rows in batches
 of 2,048. Previous boot scopes are deleted: they cannot explain a current process
-incarnation. Cumulative usage history is a separate ledger and is unchanged.
+incarnation. The background writer compares shared evidence snapshots and writes
+only changed records. Last live observations of unfinished connections are stored
+with their records. Older SQLite metadata is migrated with the first successful
+save. The final orderly flush also writes those timestamps in the previous
+metadata layout for rollback to an older SQLite collector.
+Cumulative usage history is a separate ledger.
 Rolling back to a JSON-only binary needs an explicit SQLite export; the backup
 cannot recover later changes. Total configured CPU and task budgets do not increase; the memory setting
 is unchanged. Four persistent request workers share a bounded pending queue;

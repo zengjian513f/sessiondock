@@ -16,7 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, isolated_server
 from session_clone_browser import prepare
 from session_files_browser import fixture, uid
-from session_bundle_browser import Peer, rejected_bundles
+from session_bundle_browser import Peer, node_call, rejected_bundles
 from session_transfer_browser import ident
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
@@ -33,15 +33,22 @@ def main():
         source = prepare(root/'source')
         roots, claude, side, agent = fixture(root/'files')
         cwd = root/'files/cwd'
-        attachment = cwd/os.fsdecode(b'attachment-\xff.txt')
-        attachment_alias = cwd/os.fsdecode(b'attachment-\xfe.txt')
+        (cwd/'actual/nested').mkdir(parents=True)
+        (cwd/'attachment-hop').symlink_to('actual/nested', target_is_directory=True)
+        attachment = cwd/'actual'/os.fsdecode(b'attachment-\xff.txt')
+        attachment_alias = cwd/'actual'/os.fsdecode(b'attachment-\xfe.txt')
         attachment_content = b'External attachment reached through the native symlink'
         attachment.write_bytes(attachment_content)
         attachment_alias.symlink_to(attachment.name)
         native_link = claude[2].with_suffix('')/'tool-results/external-link.txt'
-        native_link.symlink_to(attachment_alias)
+        relative_target = os.path.join(os.path.relpath(cwd, native_link.parent),
+                                       'attachment-hop', '..', attachment_alias.name)
+        native_link.symlink_to(relative_target)
         legacy_link = native_link.with_name('legacy-link.txt')
         legacy_link.symlink_to(attachment_alias)
+        internal_link = native_link.with_name('result-link.txt')
+        internal_link.unlink()
+        internal_link.symlink_to('result.txt')
         roots['codex'] = str(source.root/'codex')
         title, _, _ = seed_names(source.root/'codex', ident(2))
         metadata = source.root/'state/session-metadata.json'
@@ -59,9 +66,11 @@ def main():
         stack.callback(peer.close)
         peer.call('seed_cwd', path=str(cwd), entries=[
             {'relative': '', 'kind': 'directory', 'mode': 0o700},
-            {'relative': attachment.name, 'kind': 'file', 'mode': 0o600,
+            {'relative': 'actual/nested', 'kind': 'directory', 'mode': 0o700},
+            {'relative': 'attachment-hop', 'kind': 'symlink', 'target': 'actual/nested'},
+            {'relative': str(attachment.relative_to(cwd)), 'kind': 'file', 'mode': 0o600,
              'bytes': base64.b64encode(attachment_content).decode()},
-            {'relative': attachment_alias.name, 'kind': 'symlink', 'target': attachment.name},
+            {'relative': str(attachment_alias.relative_to(cwd)), 'kind': 'symlink', 'target': attachment.name},
         ])
         peer.call('start')
         env = node_env(source.root, a.port, '127.0.0.0/8')
@@ -106,6 +115,22 @@ def main():
         old_bytes = os.fsencode(attachment_alias).decode('utf-8', errors='replace').encode('utf-8')
         legacy.update(bytes=len(old_bytes), sha256=hashlib.sha256(old_bytes).hexdigest())
         journal.write_text(json.dumps(saved_plan))
+        # After preparing the real browser plan, replace a link with a file
+        # whose contents are exactly the bytes the link used for its digest.
+        operation = {'operation_id': plan['operation_id']}
+        status, raw = node_call(a, '/api/session/transfer/manifest', {**operation, 'reserve': True})
+        assert status == 200, raw
+        held_link = root/'held-link'
+        internal_link.rename(held_link)
+        internal_link.write_bytes(b'result.txt')
+        status, raw = node_call(a, '/api/session/transfer/switch', operation)
+        assert status == 409 and json.loads(raw)['code'] == 'move_plan_stale', (status, raw)
+        assert not internal_link.is_symlink() and internal_link.read_bytes() == b'result.txt'
+        internal_link.unlink()
+        held_link.rename(internal_link)
+        status, raw = node_call(a, '/api/session/transfer/release', {**operation, 'completed': False})
+        assert status == 200, raw
+        print('PASS source switch rejects a regular file replacing a planned symlink with the same digest', flush=True)
         shots = Path('target/mixed-move-review'); shots.mkdir(parents=True, exist_ok=True)
         for width, theme in ((1280, 'light'), (390, 'dark')):
             page.set_viewport_size({'width':width,'height':900}); page.emulate_media(color_scheme=theme)
@@ -125,12 +150,11 @@ def main():
         assert source.paths['unrelated'].exists()
         assert not source.paths['a'].exists() and not claude[2].exists()
         assert attachment.read_bytes() == attachment_content
-        for link in (native_link, legacy_link):
+        for link, target in ((native_link, relative_target), (legacy_link, str(attachment_alias))):
             assert not link.is_symlink()
-            assert peer.call('readlink', path=str(link))['target'] == str(attachment_alias)
+            assert peer.call('readlink', path=str(link))['target'] == target
             assert peer.read(link) == attachment_content
-        internal_link = native_link.with_name('result-link.txt')
-        assert peer.call('readlink', path=str(internal_link))['target'] == str(internal_link.with_name('result.txt'))
+        assert peer.call('readlink', path=str(internal_link))['target'] == 'result.txt'
         assert peer.read(internal_link).startswith(b'opaque result ')
         assert json.loads(peer.read(source.paths['a']).splitlines()[0])['payload']['id'] == ident(2)
         assert json.loads(peer.read(root/'files/grok/project'/ident(10)/'summary.json'))
@@ -138,8 +162,9 @@ def main():
         target_metadata = json.loads(peer.read(root/'destination/state/session-metadata.json'))['sessions']
         assert target_metadata[source.uid('a')]['group'] == '待办'
         assert target_metadata[source.uid('a')]['starred'] is True
-        assert target_metadata[selected]['nest_parent'] == {'source':'codex','sid':ident(2)}
-        assert target_metadata[grok_uid]['nest_parent'] == {'source':'claude','sid':ident(2)}
+        binding = {'kind': 'move', 'operation': plan['operation_id']}
+        assert target_metadata[selected]['nest_parent'] == {'source':'codex','sid':ident(2), 'binding':binding}
+        assert target_metadata[grok_uid]['nest_parent'] == {'source':'claude','sid':ident(2), 'binding':binding}
         audit = root/'audit'; audit.mkdir()
         for name in ('state_5.sqlite','thread_history_1.sqlite','goals_1.sqlite'):
             (audit/name).write_bytes(peer.read(source.root/'codex'/name))

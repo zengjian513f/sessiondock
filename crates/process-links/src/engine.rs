@@ -19,6 +19,12 @@ pub struct Saved {
     #[serde(default)]
     pub connections: crate::connections::Saved,
 }
+#[derive(Clone, Default)]
+pub struct SaveSnapshot {
+    pub state: Saved,
+    pub connections: crate::connections::Evidence,
+}
+
 pub struct Engine {
     pub node_id: String,
     pub boot_id: String,
@@ -32,10 +38,14 @@ pub struct Engine {
     incoming: BTreeMap<Process, crate::Connection>,
 }
 impl Engine {
-    pub fn new(node_id: String, boot_id: String, saved: Option<Saved>) -> Self {
+    pub fn new(node_id: String, boot_id: String, saved: Option<SaveSnapshot>) -> Self {
         let saved = saved
-            .filter(|s| s.node_id == node_id && s.boot_id == boot_id)
+            .filter(|s| s.state.node_id == node_id && s.state.boot_id == boot_id)
             .unwrap_or_default();
+        let SaveSnapshot {
+            state: saved,
+            connections,
+        } = saved;
         Self {
             node_id,
             boot_id,
@@ -51,7 +61,7 @@ impl Engine {
                 .map(|l| (l.process.clone(), l))
                 .collect(),
             forked_from: saved.forked_from.into_iter().collect(),
-            connections: crate::connections::Tracker::restore(saved.connections),
+            connections: crate::connections::Tracker::restore(connections),
             incoming: BTreeMap::new(),
         }
     }
@@ -62,19 +72,22 @@ impl Engine {
         self.catalog = catalog;
         true
     }
-    pub fn saved(&self) -> Saved {
-        Saved {
-            node_id: self.node_id.clone(),
-            boot_id: self.boot_id.clone(),
-            catalog: self.catalog.clone(),
-            connections: self.connections.saved(),
-            links: self.links.values().cloned().collect(),
-            bindings: self.bindings.values().cloned().collect(),
-            forked_from: self
-                .forked_from
-                .iter()
-                .map(|(p, s)| (p.clone(), s.clone()))
-                .collect(),
+    pub fn saved(&self) -> SaveSnapshot {
+        SaveSnapshot {
+            state: Saved {
+                node_id: self.node_id.clone(),
+                boot_id: self.boot_id.clone(),
+                catalog: self.catalog.clone(),
+                links: self.links.values().cloned().collect(),
+                bindings: self.bindings.values().cloned().collect(),
+                forked_from: self
+                    .forked_from
+                    .iter()
+                    .map(|(p, s)| (p.clone(), s.clone()))
+                    .collect(),
+                connections: Default::default(),
+            },
+            connections: self.connections.evidence(),
         }
     }
     pub fn fork(&mut self, parent: &Process, child: Process, at: f64) {
@@ -317,7 +330,7 @@ impl Engine {
             bindings: self.bindings.values().cloned().collect(),
             outgoing,
             incoming,
-            connections: self.connections.records(),
+            connections: Vec::new(),
             collector: Some(status),
         }
     }

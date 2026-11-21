@@ -6,7 +6,10 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Selection {
@@ -22,22 +25,40 @@ pub fn supported(member: &Member) -> bool {
     )
 }
 
-pub fn required(group: &Group, uid: &str) -> BTreeSet<String> {
-    let mut uids = BTreeSet::from([uid.to_owned()]);
-    loop {
-        let before = uids.len();
-        for edge in &group.edges {
-            if !matches!(edge.kind.as_str(), "nest_parent" | "fork" | "continuation")
-                && (uids.contains(&edge.from) || uids.contains(&edge.to))
-            {
-                uids.insert(edge.from.clone());
-                uids.insert(edge.to.clone());
+fn history_units(group: &Group) -> HashMap<&str, Arc<[&str]>> {
+    let mut adjacent = HashMap::<&str, Vec<&str>>::new();
+    for edge in group
+        .edges
+        .iter()
+        .filter(|edge| !matches!(edge.kind.as_str(), "nest_parent" | "fork" | "continuation"))
+    {
+        adjacent.entry(&edge.from).or_default().push(&edge.to);
+        adjacent.entry(&edge.to).or_default().push(&edge.from);
+    }
+    let mut visited = HashSet::new();
+    let mut units = HashMap::new();
+    for member in &group.members {
+        let uid = member.uid.as_str();
+        if !visited.insert(uid) {
+            continue;
+        }
+        let mut pending = vec![uid];
+        let mut unit = Vec::new();
+        while let Some(uid) = pending.pop() {
+            unit.push(uid);
+            for &neighbor in adjacent.get(uid).into_iter().flatten() {
+                if visited.insert(neighbor) {
+                    pending.push(neighbor);
+                }
             }
         }
-        if before == uids.len() {
-            return uids;
+        unit.sort_unstable();
+        let unit = Arc::<[&str]>::from(unit);
+        for &uid in unit.iter() {
+            units.insert(uid, unit.clone());
         }
     }
+    units
 }
 
 pub fn subset(group: &Group, requested: &BTreeSet<String>) -> Result<Group, TransferError> {
@@ -47,12 +68,16 @@ pub fn subset(group: &Group, requested: &BTreeSet<String>) -> Result<Group, Tran
             "请至少选择一个会话",
         ));
     }
+    let units = history_units(group);
+    let members: HashMap<_, _> = group
+        .members
+        .iter()
+        .map(|member| (member.uid.as_str(), member))
+        .collect();
     let mut uids = BTreeSet::new();
     for uid in requested {
-        let member = group
-            .members
-            .iter()
-            .find(|member| member.uid == *uid)
+        let member = members
+            .get(uid.as_str())
             .ok_or_else(|| TransferError::new("move_plan_stale", "所选会话不在当前迁移树中"))?;
         if !supported(member) {
             return Err(TransferError::new(
@@ -60,12 +85,14 @@ pub fn subset(group: &Group, requested: &BTreeSet<String>) -> Result<Group, Tran
                 "所选会话来源尚不支持迁移",
             ));
         }
-        uids.extend(required(group, uid));
+        if !uids.contains(uid.as_str()) {
+            uids.extend(units[uid.as_str()].iter().copied());
+        }
     }
     let members: Vec<_> = group
         .members
         .iter()
-        .filter(|member| uids.contains(&member.uid))
+        .filter(|member| uids.contains(member.uid.as_str()))
         .cloned()
         .collect();
     if members.iter().any(|member| !supported(member)) {
@@ -75,7 +102,7 @@ pub fn subset(group: &Group, requested: &BTreeSet<String>) -> Result<Group, Tran
         ));
     }
     Ok(Group {
-        selected: if uids.contains(&group.selected) {
+        selected: if uids.contains(group.selected.as_str()) {
             group.selected.clone()
         } else {
             members[0].uid.clone()
@@ -84,13 +111,13 @@ pub fn subset(group: &Group, requested: &BTreeSet<String>) -> Result<Group, Tran
         edges: group
             .edges
             .iter()
-            .filter(|edge| uids.contains(&edge.from) && uids.contains(&edge.to))
+            .filter(|edge| uids.contains(edge.from.as_str()) && uids.contains(edge.to.as_str()))
             .cloned()
             .collect(),
         blockers: group
             .blockers
             .iter()
-            .filter(|blocker| uids.contains(&blocker.uid) && !display_blocker(blocker))
+            .filter(|blocker| uids.contains(blocker.uid.as_str()) && !display_blocker(blocker))
             .cloned()
             .collect(),
     })
@@ -136,20 +163,38 @@ impl TransferService {
         group: &Group,
         snapshot: &crate::sessions::SessionSnapshot,
     ) -> Value {
-        let rows = snapshot.list["sessions"].as_array();
+        let mut rows = HashMap::new();
+        for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
+            if let Some(uid) = row["uid"].as_str() {
+                rows.entry(uid).or_insert(row);
+            }
+        }
+        let mut identities = HashMap::new();
+        for member in &group.members {
+            identities
+                .entry((member.source.as_str(), member.sid.as_str()))
+                .or_insert(member.uid.as_str());
+        }
+        let units = history_units(group);
         let index = snapshot.index();
-        let entries: std::collections::BTreeMap<_, _> = index
+        let entries: HashMap<_, _> = index
             .candidates()
             .map(|entry| (entry.uid.as_str(), entry))
             .collect();
-        json!({"selection":true,"uid":group.selected,"sessions":group.members.iter().map(|member| {
-            let row = rows.and_then(|rows| rows.iter().find(|row| row["uid"] == member.uid));
-            let nest = row.and_then(|row| row.get("nest_parent"));
-            let resolve = |source: &str, sid: &str| group.members.iter()
-                .find(|candidate| candidate.source == source && candidate.sid == sid && !sid.is_empty())
-                .map(|parent| parent.uid.clone());
+        let resolve = |source: &str, sid: &str| {
+            if sid.is_empty() {
+                return None;
+            }
+            identities.get(&(source, sid)).map(|uid| (*uid).to_owned())
+        };
+        let sessions: Vec<_> = group.members.iter().map(|member| {
+            let nest = rows.get(member.uid.as_str()).and_then(|row| row.get("nest_parent"));
             let parent = if let Some(parent) = nest.filter(|parent| parent.is_object()) {
-                if parent["node_id"].is_null() {resolve(parent["source"].as_str().unwrap_or(""),parent["sid"].as_str().unwrap_or(""))} else {None}
+                if parent["node_id"].is_null() {
+                    resolve(parent["source"].as_str().unwrap_or(""), parent["sid"].as_str().unwrap_or(""))
+                } else {
+                    None
+                }
             } else {
                 entries.get(member.uid.as_str()).and_then(|entry| {
                     entry.owner.clone().or_else(|| entry.summary.codex.as_ref().and_then(|codex|
@@ -160,7 +205,8 @@ impl TransferService {
             json!({"uid":member.uid,"sid":member.sid,"title":member.title,"source":member.source,
                 "cwd":member.cwd,"agent":member.agent,"parent_uid":parent,"nest_parent":nest,
                 "selectable":supported(member),"disabled_reason":if supported(member){""}else{"此来源尚不支持迁移"},
-                "required_uids":required(group,&member.uid)})
-        }).collect::<Vec<_>>()})
+                "required_uids":units[member.uid.as_str()].as_ref()})
+        }).collect();
+        json!({"selection":true,"uid":group.selected,"sessions":sessions})
     }
 }

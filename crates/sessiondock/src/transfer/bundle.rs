@@ -343,11 +343,24 @@ impl TransferService {
                 return Ok(saved);
             }
         }
+        let mut planned_directories = BTreeSet::new();
+        for file in &manifest.files {
+            let target = manifest.roots[&file.provider].join(&file.relative);
+            for directory in target.ancestors().skip(1) {
+                if !planned_directories.insert(directory.to_owned()) {
+                    break;
+                }
+            }
+        }
         let mut snapshots = Vec::new();
         for snapshot in &manifest.environment {
             super::coordination::check()?;
             let dependencies = snapshot.dependencies.keys().cloned().collect::<Vec<_>>();
-            let target = Snapshot::capture(&snapshot.cwd, &dependencies)?;
+            let target = Snapshot::capture_with_directories(
+                &snapshot.cwd,
+                &dependencies,
+                &planned_directories,
+            )?;
             snapshot.compare(&target)?;
             snapshots.push(target);
         }

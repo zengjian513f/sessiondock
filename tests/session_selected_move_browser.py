@@ -12,6 +12,7 @@ from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
 from opencode_sdk_fixtures import FakeOpenCode, SID
+from session_background_fixtures import BlockedNode
 from session_bundle_browser import Peer
 from session_transfer_browser import ident
 from transfer_ui import select_target, submit_transfer, wait_transfer
@@ -23,10 +24,11 @@ def corpus_at(root, count=5):
         (root/name).mkdir(parents=True, exist_ok=True)
     for number in range(1, count + 1):
         meta = {'id': ident(number), 'cwd': str(root/'workspace'), 'timestamp': '2026-11-01T00:00:00Z'}
-        if number == 4:
-            meta['parent_thread_id'] = ident(2)
-            meta['source'] = {'subagent': {'thread_spawn': {'parent_thread_id': ident(2)}}}
-        if number == 5:
+        if count > 5 and number in (4, 9):
+            parent = ident(2 if number == 4 else 8)
+            meta['parent_thread_id'] = parent
+            meta['source'] = {'subagent': {'thread_spawn': {'parent_thread_id': parent}}}
+        if count > 5 and number == 5:
             meta['forked_from_id'] = ident(1)
         corpus.put(str(number), 'codex', [codex_row('session_meta', meta),
             codex_message('user', f'研究会话 {number}：保留父子归属与跨机器历史'),
@@ -48,23 +50,37 @@ def main():
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-selected-move-') as temporary, sync_playwright() as pw, ExitStack() as stack:
         root = Path(temporary)
-        source = corpus_at(root/'source')
-        third = corpus_at(root/'third', 3)
+        source = corpus_at(root/'source', 11)
+        third = corpus_at(root/'third', 5)
         nodes = [SimpleNamespace(name=name, nid=letter*32, port=free_port(), token=TOKEN)
                  for name, letter in (('源机器', 'a'), ('目标机器', 'b'), ('第三节点', 'c'))]
         for corpus, node in ((source, nodes[0]), (third, nodes[2])):
             (corpus.root/'ids/node-id').write_text(node.nid+'\n')
+        source_proxy = BlockedNode(nodes[0].port)
+        source_proxy.blocked = False
+        stack.callback(source_proxy.close)
+        hub_source = SimpleNamespace(**{**vars(nodes[0]), 'port': source_proxy.port})
         metadata = source.root/'state/session-metadata.json'
         metadata.write_text(json.dumps({'schema_version': 1, 'revision': 1, 'sessions': {
             source.uid('1'): {'fork_parent_visible': True},
             source.uid('2'): {'nest_parent': {'source': 'codex', 'sid': ident(1)}, 'nest_initialized': True},
-            source.uid('3'): {'nest_parent': {'source': 'codex', 'sid': ident(2)}, 'nest_initialized': True}}}))
+            source.uid('3'): {'nest_parent': {'source': 'codex', 'sid': ident(2)}, 'nest_initialized': True},
+            source.uid('7'): {'nest_parent': {'source': 'codex', 'sid': ident(4), 'node_id': nodes[2].nid},
+                              'nest_initialized': True},
+            source.uid('8'): {'nest_parent': {'source': 'codex', 'sid': ident(5), 'node_id': nodes[2].nid},
+                              'nest_initialized': True},
+            source.uid('11'): {'nest_parent': {'source': 'codex', 'sid': ident(10)}, 'nest_initialized': True},
+        }}))
         (third.root/'state/session-metadata.json').write_text(json.dumps({'schema_version': 1, 'revision': 1,
             'sessions': {
                 third.uid('1'): {'nest_parent': {'source': 'codex', 'sid': ident(1), 'node_id': nodes[0].nid},
                                  'nest_initialized': True},
                 third.uid('2'): {'nest_parent': {'source': 'codex', 'sid': ident(1)}, 'nest_initialized': True},
                 third.uid('3'): {'nest_parent': {'source': 'codex', 'sid': ident(2), 'node_id': nodes[1].nid},
+                                 'nest_initialized': True},
+                third.uid('4'): {'nest_parent': {'source': 'codex', 'sid': ident(6), 'node_id': nodes[0].nid},
+                                 'nest_initialized': True},
+                third.uid('5'): {'nest_parent': {'source': 'codex', 'sid': ident(7), 'node_id': nodes[0].nid},
                                  'nest_initialized': True},
             }}))
         remote = Peer(args.peer, root, source,
@@ -83,7 +99,7 @@ def main():
             trash_dir=third.root/'trash', extra_env=node_env(third.root, nodes[2].port, '127.0.0.0/8')))
         hubroot = root/'hub'
         hubroot.mkdir()
-        hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, nodes)
+        hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [hub_source, *nodes[1:]])
         hub.start()
         stack.callback(hub.stop)
         browser = pw.chromium.launch(headless=True)
@@ -172,6 +188,69 @@ def main():
         expect(checkbox(dialog, selected)).to_be_disabled()
         dialog.locator('.clone-cancel').click()
 
+        # An alternating display chain reaches two disconnected native roots
+        # on the source. The second root also owns a hidden native agent.
+        chain = {number: scoped(nodes[0].nid, source.uid(number)) for number in ('6', '7', '8', '9')}
+        chain.update({f'c{number}': scoped(nodes[2].nid, third.uid(number)) for number in ('4', '5')})
+        for legacy in (False, True):
+            source_proxy.legacy_tree = legacy
+            start = len(source_proxy.tree_requests)
+            dialog, tree = read_tree(chain['6'])
+            requests = source_proxy.tree_requests[start:]
+            assert len(requests) == (4 if legacy else 2), (requests, tree)
+            assert requests[0]['uid'] == source.uid('6'), requests
+            assert set(requests[1]['related_uids']) == {source.uid('7'), source.uid('8')}, requests
+            members = {row['uid']: row for row in tree}
+            assert set(members) == set(chain.values()), tree
+            for child, parent in (('c4', '6'), ('7', 'c4'), ('c5', '7'), ('8', 'c5'), ('9', '8')):
+                assert members[chain[child]]['parent_uid'] == chain[parent], tree
+            assert set(members[chain['8']]['required_uids']) == {chain['8'], chain['9']}
+            expect(checkbox(dialog, chain['c4'])).to_be_disabled()
+            checkbox(dialog, chain['8']).uncheck()
+            expect(checkbox(dialog, chain['9'])).not_to_be_checked()
+            expect(checkbox(dialog, chain['7'])).to_be_checked()
+            if not legacy:
+                checkbox(dialog, chain['8']).scroll_into_view_if_needed()
+                page.screenshot(path=str(args.screenshots/'tree-batched.png'), full_page=True)
+            dialog.locator('.clone-cancel').click()
+        source_proxy.legacy_tree = False
+        print('PASS alternating display chain uses one native batch and legacy fallback preserves selection', flush=True)
+
+        def attach_before_frozen(dialog):
+            source_proxy.freeze_release.clear()
+            try:
+                with page.expect_response('**/api/session/transfer/start') as accepted:
+                    dialog.locator('.clone-confirm').click()
+                    assert source_proxy.freeze_requested.wait(12)
+                    operation = source_proxy.freeze_operation
+                    journal = hubroot/'transfers'/f'{operation}.json'
+                    pending = json.loads(journal.read_text())
+                    assert pending['execution_requested'] and pending['phase'] == 'planned'
+                    assert 'move_seq' not in pending
+                    other = context.new_page()
+                    try:
+                        other.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
+                        child = other.locator(f'#side .item[data-uid="{third_child}"]')
+                        if not child.is_visible():
+                            other.locator('#nest-flat').click()
+                        child.scroll_into_view_if_needed()
+                        child.click(button='right')
+                        other.locator('#item-menu [data-act="attach"]').click()
+                        with other.expect_response('**/api/session/nest') as attached:
+                            other.locator(f'#side .item[data-uid="{selected}"]').click()
+                        assert attached.value.ok, attached.value.text()
+                        binding = attached.value.json()['nest_parent']['binding']
+                        assert binding == {'kind': 'hub', 'through': 0}, binding
+                    finally:
+                        other.close()
+                    source_proxy.freeze_release.set()
+            finally:
+                source_proxy.freeze_release.set()
+            assert accepted.value.status == 202, accepted.value.text()
+            completed = wait_transfer(page, f'http://127.0.0.1:{hub.port}', accepted.value.json()['request'])
+            assert json.loads(journal.read_text())['move_seq'] == 1
+            return completed
+
         def move(anchor, owner, selected_uid, destination, *, stale=False, lose_reply=False):
             dialog = choose(anchor)
             dialog.locator('#transfer-select-all').uncheck()
@@ -204,7 +283,11 @@ def main():
             if stale:
                 with source.paths['1'].open('ab') as stream:
                     stream.write((json.dumps(codex_message('assistant', '预览之后追加的原生历史'))+'\n').encode())
-                refused = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+                with page.expect_response('**/api/session/transfer/start') as accepted:
+                    dialog.locator('.clone-confirm').click()
+                assert accepted.value.status == 202, accepted.value.text()
+                refused = wait_transfer(page, f'http://127.0.0.1:{hub.port}', accepted.value.json()['request'],
+                                        phases=('aborted',))
                 assert refused['phase'] == 'aborted', refused
                 assert source.paths['1'].exists()
                 saved = json.loads(metadata.read_text())['sessions']
@@ -226,7 +309,8 @@ def main():
                 result = wait_transfer(page, f'http://127.0.0.1:{hub.port}', results[0]['request'])['result']
                 print('PASS lost completion reply resolves through the same durable operation without another move', flush=True)
             else:
-                completed = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+                completed = (attach_before_frozen(dialog) if stale else
+                             submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}'))
                 assert completed['phase'] == 'complete', completed
                 result = completed['result']
             assert result['mode'] == 'move' and result['new_ids'] is False, result
@@ -256,6 +340,7 @@ def main():
             detail = page.request.get(f'http://127.0.0.1:{hub.port}/api/messages/'+row['uid']).json()
             assert detail['meta']['nest_parent']['node_id'] == nodes[1].nid, detail
         verify_third()
+        print('PASS attach after the Hub saves a move but before freeze follows that move on completion', flush=True)
         hub.stop(); hub.start()
         remote.call('stop'); remote.call('start')
         page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
@@ -287,6 +372,26 @@ def main():
             rejected = page.request.post(base+'/api/session/clone/plan', data={
                 'uid': source.uid('1'), 'target_node': nodes[1].nid, **options})
             assert rejected.status == 409 and rejected.json()['code'] == 'move_format', rejected.text()
+        # Existing identical target history may be reused. Its independently
+        # chosen parent has the same address but a different binding marker.
+        for number in ('10', '11'):
+            remote.write(source.paths[number], source.paths[number].read_bytes())
+        target_metadata = root/'destination/state/session-metadata.json'
+        existing = json.loads(remote.read(target_metadata))
+        parent = {'source': 'codex', 'sid': ident(10), 'binding': {'kind': 'local'}}
+        existing['sessions'][source.uid('11')] = {'nest_parent': parent, 'nest_initialized': True}
+        remote.write(target_metadata, json.dumps(existing).encode())
+        dialog = choose(scoped(nodes[0].nid, source.uid('10')))
+        for number in ('10', '11'):
+            expect(checkbox(dialog, scoped(nodes[0].nid, source.uid(number)))).to_be_checked()
+        select_target(dialog, nodes[1].nid)
+        expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
+        reused = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+        assert reused['phase'] == 'complete', reused
+        assert not any(source.paths[number].exists() for number in ('10', '11'))
+        saved = json.loads(remote.read(target_metadata))['sessions']
+        assert saved[source.uid('11')]['nest_parent'] == parent, saved
+        print('PASS fixed-ID history reuse preserves the destination parent binding', flush=True)
         assert not errors, errors
     print('PASS selected cross-host migration with fixed identities and durable cross-node nesting')
 

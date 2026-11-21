@@ -3,13 +3,14 @@
 use super::{
     TransferError,
     environment::StorageProbe,
-    service::{Operation, TransferService},
+    files::has_type,
+    service::{Operation, TransferService, hash_contents},
 };
 use crate::sessions::SessionSnapshot;
 use crate::trash::manifest::{EntryState, FileRecord, FileRole, Manifest, RunStateNote, Stamp};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -22,6 +23,34 @@ fn changed() -> TransferError {
         "源端内容或剩余引用已变化，保留文件等待清理",
     )
 }
+
+struct SourceFile<'a> {
+    sha256: &'a str,
+    symlink: bool,
+    legacy_link_digest: bool,
+}
+
+impl SourceFile<'_> {
+    fn metadata(&self, path: &Path) -> Result<Option<fs::Metadata>, TransferError> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if has_type(&metadata, self.symlink) => Ok(Some(metadata)),
+            Ok(_) => Err(changed()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn exists_unchanged(&self, path: &Path) -> Result<bool, TransferError> {
+        if self.metadata(path)?.is_none() {
+            return Ok(false);
+        }
+        if hash_contents(path, self.symlink, self.legacy_link_digest)? != self.sha256 {
+            return Err(changed());
+        }
+        Ok(true)
+    }
+}
+
 fn private_dir(path: &Path) -> Result<(), TransferError> {
     fs::create_dir_all(path)?;
     #[cfg(unix)]
@@ -254,6 +283,7 @@ impl TransferService {
                     &selection.source_node,
                     &selection.target_node,
                     &selection.target_node,
+                    &op.id,
                     &identities,
                     &BTreeSet::new(),
                 )
@@ -502,6 +532,7 @@ impl TransferService {
                     &selection.source_node,
                     &selection.target_node,
                     &selection.source_node,
+                    &op.id,
                     &identities,
                     &selection.uids,
                 )
@@ -511,12 +542,16 @@ impl TransferService {
         op.phase = "retiring".into();
         self.save(&op)?;
         let roots = self.bundle_roots(&op)?;
-        let mut files = BTreeMap::<String, BTreeMap<PathBuf, (&str, bool)>>::new();
+        let mut files = BTreeMap::<String, BTreeMap<PathBuf, SourceFile<'_>>>::new();
         for file in &op.plan.files {
-            files
-                .entry("codex".into())
-                .or_default()
-                .insert(file.source.clone(), (&file.sha256, false));
+            files.entry("codex".into()).or_default().insert(
+                file.source.clone(),
+                SourceFile {
+                    sha256: &file.sha256,
+                    symlink: false,
+                    legacy_link_digest: false,
+                },
+            );
         }
         if let Some(plan) = &op.file_plan {
             for file in &plan.files {
@@ -527,7 +562,11 @@ impl TransferService {
                 }
                 files.entry(file.provider.clone()).or_default().insert(
                     file.source.clone(),
-                    (&file.sha256, file.legacy_link_digest()),
+                    SourceFile {
+                        sha256: &file.sha256,
+                        symlink: file.is_symlink(),
+                        legacy_link_digest: file.legacy_link_digest(),
+                    },
                 );
             }
         }
@@ -571,14 +610,15 @@ impl TransferService {
                     },
                     bytes: 0,
                     files: expected
-                        .keys()
+                        .iter()
                         .enumerate()
-                        .map(|(i, path)| {
+                        .map(|(i, (path, file))| {
+                            let metadata = file.metadata(path)?.ok_or_else(changed)?;
                             Ok(FileRecord {
                                 name: i.to_string(),
                                 origin: path.clone(),
                                 role: FileRole::Data,
-                                stamp: Stamp::capture(path).map_err(trash_error)?,
+                                stamp: Stamp::from_metadata(&metadata),
                                 in_trash: false,
                             })
                         })
@@ -603,18 +643,9 @@ impl TransferService {
                 progress.set(index as u64);
                 let file = &manifest.files[index];
                 let held = directory.join("files").join(&file.name);
-                let source_exists = fs::symlink_metadata(&file.origin).is_ok();
-                let held_exists = fs::symlink_metadata(&held).is_ok();
-                let (digest, legacy_link) = expected[&file.origin];
-                if held_exists
-                    && super::service::hash_with_legacy_link(&held, legacy_link)? != digest
-                {
-                    return Err(changed());
-                }
-                if source_exists {
-                    if super::service::hash_with_legacy_link(&file.origin, legacy_link)? != digest {
-                        return Err(changed());
-                    }
+                let expected = &expected[&file.origin];
+                let held_exists = expected.exists_unchanged(&held)?;
+                if expected.exists_unchanged(&file.origin)? {
                     if Stamp::capture(&file.origin).map_err(trash_error)? != file.stamp {
                         return Err(changed());
                     }

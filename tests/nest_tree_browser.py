@@ -21,6 +21,7 @@ import tempfile
 
 from playwright.sync_api import sync_playwright, expect
 
+from browser_runtime import choose_toolbar_option
 from history_fixtures import (BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json,
                             isolated_server)
 
@@ -52,6 +53,11 @@ def pin_grandchild(data):
     # A Codex row's `updated` is the file mtime: pin it between D (08:30) and A (10:00).
     when = datetime(2026, 9, 11, 9, 0, tzinfo=timezone.utc).timestamp()
     os.utime(data.paths["nest-grandchild-c"], (when, when))
+
+
+def rename_grandchild(data, title):
+    with (data.root / "session_index.jsonl").open("ab") as index:
+        index.write(encoded({"id": "nest-grandchild-c", "thread_name": title, "updated_at": stamp("09:00")}))
 
 
 def grok_uid(directory: Path) -> str:
@@ -336,14 +342,18 @@ def check_page(page, uid, data, server, width):
     assert page.evaluate("[...S.nestClosed]") == [A]
     # Selecting a folded parent opens the conversation without opening its
     # children. Repeat through the cache, then reload the selected URL.
-    for _ in range(2):
+    for attempt in range(2):
         page.locator(f'#side .item[data-uid="{A}"] .t').click()
         opened(page, A)
         page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Root A")')
-        to_list(page)
         assert caret.get_attribute('aria-expanded') == 'false'
         assert page.locator(f'#side .item[data-uid="{B}"]').count() == 0
         assert page.evaluate('[...S.nestClosed]') == [A]
+        if attempt == 0:
+            to_list(page)
+    # On mobile, returning to the list clears the session link. Reload while
+    # the detail is open so this still exercises restoring the selected URL.
+    page.wait_for_function("new URL(location.href).searchParams.get('sid') === 'claude:nest-root-a'")
     page.reload()
     page.wait_for_function("S.sessions.length === 5")
     opened(page, A)
@@ -354,16 +364,14 @@ def check_page(page, uid, data, server, width):
 
     # A list refresh that keeps the tree shape patches nodes in place.
     page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark = 1")
-    data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C renamed"), [])
-    pin_grandchild(data)
+    rename_grandchild(data, "Grandchild C renamed")
     poll(page, server, 'S.sessions.some(s => s.title === "Grandchild C renamed")')
     assert page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark") == 1
     assert [(r["key"], r["depth"]) for r in rows()] == [
         (A, 0), (B, 1), (C, 2), (A + "#y", 1), (A + "#x", 1), (D, 0), (E, 0)]
     # Refresh while the branch is folded, then reveal the latest metadata.
     page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
-    data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C"), [])
-    pin_grandchild(data)
+    rename_grandchild(data, "Grandchild C")
     poll(page, server, 'S.sessions.some(s => s.title === "Grandchild C")')
     assert page.locator(f'#side .item[data-uid="{C}"]').count() == 0
     page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
@@ -484,8 +492,8 @@ def check_hidden_spawner(browser, binary, root, width):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(base, wait_until="networkidle")
+        choose_toolbar_option(page, "nest", "nested")
         page.wait_for_function("S.sessions.length === 2")
-        page.locator("#nest-toggle").click()
         assert session_depth(page, worker) == 1
         # Real list refresh after new native files appear; no invented browser row fields.
         fork = put("rewind-one", "spawner")
@@ -525,7 +533,10 @@ def check_hidden_spawner(browser, binary, root, width):
         assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
         # Filtering an ordinary visible parent must still leave a root; node/source identity is scoped.
         assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", leaf) == 0
-        assert json.loads(document.read_text())["sessions"][worker] == {"nest_parent": {"source": "codex", "sid": "rewind-two"}, "nest_initialized": True}
+        assert json.loads(document.read_text())["sessions"][worker] == {
+            "nest_parent": {"source": "codex", "sid": "rewind-two", "binding": {"kind": "local"}},
+            "nest_initialized": True,
+        }
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="detach"]').click()
         page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
@@ -542,8 +553,8 @@ def check_hidden_spawner(browser, binary, root, width):
         context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
         page = context.new_page()
         page.goto(base, wait_until="networkidle")
+        choose_toolbar_option(page, "nest", "nested")
         page.wait_for_function("S.sessions.length === 4")
-        page.locator('#nest-toggle').click()
         assert session_depth(page, worker) == 0
         context.close()
 
@@ -674,6 +685,10 @@ def main():
                     page.on("requestfailed", lambda request: failed.append((request.url, request.failure))
                             if "/api/watch?" not in request.url and request.failure != "net::ERR_ABORTED" else None)
                     page.goto(base, wait_until="networkidle")
+                    # These checks start with the full inventory grouped by
+                    # project. Fresh profiles start in the collapsed timeline.
+                    choose_toolbar_option(page, "view", "tree")
+                    choose_toolbar_option(page, "nest", "flat")
                     page.wait_for_function("S.sessions.length === 5")
                     check_page(page, uid, data, server, width)
                     assert not errors, errors

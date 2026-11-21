@@ -5,7 +5,7 @@ import argparse
 import sqlite3
 from contextlib import ExitStack, contextmanager
 import json
-from threading import Thread
+from threading import Event, Thread
 from pathlib import Path
 import shutil
 import socket
@@ -150,30 +150,43 @@ def thread_write_counter_browser(page, corpus, proc):
 def usage_snapshots_browser(page, corpus, proc):
     """Refresh resources through Chromium while usage saves fail and recover."""
     database = corpus.root / 'agent-state.usage.sqlite3'
+    sampled = []
+    stop_reader = Event()
+
+    def read_samples():
+        while not stop_reader.is_set():
+            sampled.append(collector_result(corpus, 'health')['sampled_at'])
+            stop_reader.wait(.15)
+
     with sqlite3.connect(database) as db:
-        db.execute("""CREATE TRIGGER fixture_fail_usage BEFORE UPDATE ON usage_meta
-            BEGIN SELECT RAISE(ABORT, 'fixture usage save failure'); END""")
+        db.execute('BEGIN IMMEDIATE')
         durable_at = json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at']
+        reader = Thread(target=read_samples)
+        reader.start()
+        try:
+            thread_write_counter_browser(page, corpus, proc)
 
-    try:
-        thread_write_counter_browser(page, corpus, proc)
+            def failed_snapshot():
+                page.get_by_role('button', name='刷新资源').click()
+                view = collector_result(corpus, 'usage')
+                return view if 'persistence_error' in view else None
 
-        def failed_snapshot():
-            view = collector_result(corpus, 'usage')
-            return view if 'persistence_error' in view else None
-
-        failed = wait_for(failed_snapshot, timeout=40)
-        assert 'fixture usage save failure' in failed['persistence_error'], failed
-        assert failed['updated_at'] > durable_at, failed
-        assert any(row['storage_write_v2_bytes'] > 0 for row in failed['rows']), failed
-        page.get_by_role('button', name='刷新资源').click()
-        wait_for(lambda: collector_result(corpus, 'health')['sampled_at'] > failed['updated_at'])
-        assert collector_result(corpus, 'usage') == failed
-        with sqlite3.connect(database) as db:
+            failed = wait_for(failed_snapshot, timeout=43)
+            assert 'database is locked' in failed['persistence_error'], failed
+            assert failed['updated_at'] > durable_at, failed
+            assert any(row['storage_write_v2_bytes'] > 0 for row in failed['rows']), failed
+            wait_for(lambda: collector_result(corpus, 'health')['sampled_at'] > failed['updated_at'] + 8)
+            assert collector_result(corpus, 'usage') == failed
             assert json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at'] == durable_at
-    finally:
-        with sqlite3.connect(database) as db:
-            db.execute('DROP TRIGGER fixture_fail_usage')
+        finally:
+            stop_reader.set()
+            reader.join(timeout=6)
+            db.rollback()
+    assert not reader.is_alive()
+    sample_times = sorted(set(sampled))
+    assert sample_times[-1] > failed['updated_at'] + 6, sample_times
+    intervals = [b - a for a, b in zip(sample_times, sample_times[1:])]
+    assert len(intervals) >= 5 and max(intervals) < 6, intervals
 
     def recovered_snapshot():
         view = collector_result(corpus, 'usage')
@@ -183,7 +196,8 @@ def usage_snapshots_browser(page, corpus, proc):
     with sqlite3.connect(database) as db:
         assert json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at'] == recovered['updated_at']
         assert [json.loads(row[0]) for row in db.execute('SELECT data FROM usage_rows ORDER BY key')] == recovered['rows']
-    print('PASS failed and recovered usage snapshots, retained dirty rows and independent resource sampling', flush=True)
+        assert db.execute('SELECT max(end-start) FROM usage_gaps').fetchone()[0] < 10
+    print(f'PASS SQLite writer contention, failed/recovered usage snapshots, max sample interval {max(intervals):.3f}s', flush=True)
 
 
 def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=None):
@@ -387,7 +401,22 @@ def main():
             for restarted in (False, True):
                 if restarted and args.with_agent:
                     for index,(agent,command,mtime) in enumerate(agent_processes):
-                        agent.terminate();agent.wait(timeout=20)
+                        if index == 0:
+                            corpus = corpora[index]
+                            before_stop = collector_result(corpus, 'health')['sampled_at']
+                            usage_db = corpus.root / 'agent-state.usage.sqlite3'
+                            with sqlite3.connect(usage_db) as writer:
+                                writer.execute('BEGIN IMMEDIATE')
+                                agent.terminate()
+                                # Release during the final write's lock-wait window.
+                                time.sleep(.4)
+                                writer.rollback()
+                            assert agent.wait(timeout=10) == 0
+                            with sqlite3.connect(usage_db) as db:
+                                stopped_at = json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at']
+                                assert stopped_at >= before_stop, (stopped_at, before_stop)
+                        else:
+                            agent.terminate();agent.wait(timeout=20)
                         dbpath=corpora[index].root/'agent-state.sqlite3'
                         with sqlite3.connect(dbpath) as db:
                             assert db.execute("SELECT count(*) FROM evidence WHERE section='parents' AND json_extract(key,'$.pid')>=800000").fetchone()[0]==0
@@ -441,6 +470,9 @@ def main():
                     rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
                     child = next(r for r in rows if r['sid'] == 'child')
                     expected = {'source': 'codex', 'sid': 'parent', 'node_id': nodes[0].nid}
+                    if restarted:
+                        # The first pass explicitly reattaches this child through the Hub.
+                        expected['binding'] = {'kind': 'hub', 'through': 0}
                     assert 'spawned_by' not in child and child.get('nest_parent') == expected, child
                     assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'older')
                     stale = next(b for b in bindings if b['process']['pid'] == 701)

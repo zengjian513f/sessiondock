@@ -69,6 +69,9 @@ impl Client {
     pub async fn status(&self) -> io::Result<Status> {
         unsupported()
     }
+    pub async fn status_with_connection(&self) -> io::Result<(Status, bool)> {
+        unsupported()
+    }
     pub async fn write(&self, _: &str, _: &[u8]) -> io::Result<Receipt> {
         unsupported()
     }

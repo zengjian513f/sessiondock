@@ -1,5 +1,5 @@
 //! Common process ownership. Adapters build commands; only sdkhost starts them.
-use sdkhost_client::{Client, ReadResult, Status, Stream};
+use sdkhost_client::{Client, Stream};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -43,30 +43,6 @@ pub(crate) async fn read_all(client: &Client, stream: Stream) -> io::Result<Vec<
         if chunk.eof {
             return Ok(bytes);
         }
-    }
-}
-
-/// A read at the live edge can wait 250 ms. Use the host's stream lengths to
-/// give each stream a turn without making available output wait on a quiet pipe.
-pub(crate) async fn read_available(
-    client: &Client,
-    status: &Status,
-    stream: Stream,
-    offset: u64,
-    wait: bool,
-) -> io::Result<ReadResult> {
-    let (len, eof) = match stream {
-        Stream::Stdout => (status.stdout_len, status.stdout_eof),
-        Stream::Stderr => (status.stderr_len, status.stderr_eof),
-    };
-    if offset < len || eof || wait || status.output_error.is_some() {
-        client.read(stream, offset).await
-    } else {
-        Ok(ReadResult {
-            bytes: Vec::new(),
-            next_offset: offset,
-            eof: false,
-        })
     }
 }
 
