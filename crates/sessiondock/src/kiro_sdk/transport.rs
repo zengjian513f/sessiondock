@@ -94,8 +94,8 @@ impl Session {
         st.publish();
         Ok(())
     }
-    pub(super) fn set_projection(
-        &self,
+    pub(super) async fn set_projection(
+        self: &Arc<Self>,
         catalog: Arc<crate::sessions::kiro::Catalog>,
     ) -> Result<(), String> {
         // Projecting the full transcript to disk is only needed the first time a
@@ -106,15 +106,20 @@ impl Session {
         // whole history for a warm session that had not changed — the dominant
         // cost of switching back to a Kiro session. Do it once; later opens just
         // keep the catalog reference.
-        let already = self.projection.lock().unwrap().is_some();
-        let mut st = self.state.lock().unwrap();
-        if !already && !st.uid.is_empty() && !st.loading {
-            checkpoint::prepare_projection(&mut st)?;
-            catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])?;
-            checkpoint::projected(&mut st);
-        }
-        *self.projection.lock().unwrap() = Some(catalog);
-        Ok(())
+        let session = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut st = session.state.lock().unwrap();
+            let mut projection = session.projection.lock().unwrap();
+            if projection.is_none() && !st.uid.is_empty() && !st.loading {
+                checkpoint::prepare_projection(&mut st)?;
+                catalog.project(&st.uid, &st.snapshot(&st.uid, &st.cwd, false)["raw"])?;
+                checkpoint::projected(&mut st);
+            }
+            *projection = Some(catalog);
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     pub(super) fn project(&self, st: &mut LiveState) {
         if st.loading {
@@ -344,20 +349,18 @@ impl Session {
             if flush && let Some(end) = out_buffer.iter().rposition(|b| *b == b'\n') {
                 let bytes: Vec<u8> = out_buffer.drain(..=end).collect();
                 let committed = out_pos - out_buffer.len() as u64;
-                self.observe_line(
-                    &String::from_utf8_lossy(&bytes),
-                    Some(committed),
-                    Some((client, live_start)),
-                )?;
+                self.observe_line(bytes, committed, client.clone(), live_start)
+                    .await?;
                 batch_started = Instant::now();
             }
             if out.eof && !out_buffer.is_empty() {
                 self.observe_line(
-                    &String::from_utf8_lossy(&out_buffer),
-                    Some(out_pos),
-                    Some((client, live_start)),
-                )?;
-                out_buffer.clear();
+                    std::mem::take(&mut out_buffer),
+                    out_pos,
+                    client.clone(),
+                    live_start,
+                )
+                .await?;
             }
             // Empty host reads long-poll for 250 ms. Do not put that wait after
             // every stdout chunk while replaying history; stderr is independent.
@@ -389,13 +392,14 @@ impl Session {
                     && err_pos >= status.stderr_len
                 {
                     self.dead.store(true, Ordering::Release);
-                    live::mark_exit(
-                        self,
-                        &self.exit_error(&format!(
-                            "kiro process exited (code={:?}, signal={:?})",
-                            exit.code, exit.signal
-                        )),
-                    );
+                    let session = self.clone();
+                    let reason = self.exit_error(&format!(
+                        "kiro process exited (code={:?}, signal={:?})",
+                        exit.code, exit.signal
+                    ));
+                    tokio::task::spawn_blocking(move || live::mark_exit(&session, &reason))
+                        .await
+                        .map_err(|e| e.to_string())?;
                     if let Some(tx) = caught.take() {
                         let _ = tx.send(Ok(()));
                     }
@@ -432,24 +436,42 @@ impl Session {
         Ok(())
     }
 
-    fn observe_line(
+    async fn observe_line(
+        self: &Arc<Self>,
+        bytes: Vec<u8>,
+        cursor: u64,
+        client: Client,
+        live_start: u64,
+    ) -> Result<(), String> {
+        let session = self.clone();
+        tokio::task::spawn_blocking(move || {
+            session.commit_output(
+                &String::from_utf8_lossy(&bytes),
+                cursor,
+                &client,
+                live_start,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    fn commit_output(
         self: &Arc<Self>,
         line: &str,
-        cursor: Option<u64>,
-        host: Option<(&Client, u64)>,
+        cursor: u64,
+        client: &Client,
+        live_start: u64,
     ) -> Result<(), String> {
         let mut auto = Vec::new();
         let mut sid = None;
         {
             let mut st = self.state.lock().unwrap();
             st.observing = true;
-            let mut end = cursor.unwrap_or_default().saturating_sub(line.len() as u64);
+            let mut end = cursor.saturating_sub(line.len() as u64);
             for line in line.split_inclusive('\n') {
                 end += line.len() as u64;
-                let received = host.map_or_else(
-                    || Some(crate::sdk_message_time::now()),
-                    |(client, start)| crate::sdk_message_time::hosted(client, end, start),
-                );
+                let received = crate::sdk_message_time::hosted(client, end, live_start);
                 if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
                     if value.get("method").is_none() {
                         if let Some(id) = value["id"].as_u64() {
@@ -542,9 +564,7 @@ impl Session {
                     }
                 }
             }
-            if let Some(cursor) = cursor {
-                st.stdout_offset = cursor;
-            }
+            st.stdout_offset = cursor;
             st.observing = false;
             st.seq += 1;
             st.persist()?;

@@ -63,6 +63,9 @@ SessionDock 的 CLI 与 ACP SDK 沿用 launcher profile 的环境和会话 cwd�
 
 发现只使用广告的 ACP `session/list`，完整分页后保留可信 SID/cwd/标题/时间。
 目录失败保留已知数据；普通列表、查看和搜索不调用 `session/load`。
+每 30 秒的刷新完整取回各页，再合并到最新目录；任一页失败则保留上次目录，
+合并保留并发宿主绑定和删除墓碑。仅提交变化的目录和摘要；目录先原子提交，
+派生摘要写入失败后在后续刷新或重启时补齐。
 
 外部脚本也必须显式选择 V3：`kiro-cli acp --agent-engine=v3 --auth-method=cli`。
 Kiro CLI 2.24.1 的 `acp` 默认使用 V2；仅传 `--model`、`--trust-all-tools`

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -28,7 +28,7 @@ pub(crate) fn account_home(native_root: &Path) -> Option<&Path> {
         .and_then(Path::parent)
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Entry {
     pub uid: String,
     pub sid: String,
@@ -51,14 +51,22 @@ struct Manifest {
     capabilities: Value,
 }
 
+#[derive(Default)]
+struct PendingWrites {
+    sync_manifest: bool,
+    summaries: BTreeSet<String>,
+    removals: BTreeSet<PathBuf>,
+}
+
 pub(crate) struct Catalog {
     pub root: PathBuf,
     pub scope: String,
     pub profile: CliProfile,
     pub native_root: PathBuf,
     host_state: PathBuf,
-    manifest: Mutex<Manifest>,
-    rpc_gate: tokio::sync::Mutex<()>,
+    manifest: Mutex<Arc<Manifest>>,
+    // Serialize all projection writers while keeping identity reads independent of file I/O.
+    writes: Mutex<PendingWrites>,
     native_observed: Mutex<BTreeMap<PathBuf, native::Version>>,
 }
 
@@ -88,12 +96,16 @@ pub(crate) fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
 }
 
 pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::fs::OpenOptions;
-    let parent = path.parent().ok_or("Kiro projection parent missing")?;
-    private_dir(parent).map_err(|e| e.to_string())?;
     if std::fs::read(path).ok().as_deref() == Some(bytes) {
         return Ok(());
     }
+    replace(path, bytes, || {})
+}
+
+fn replace(path: &Path, bytes: &[u8], installed: impl FnOnce()) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    let parent = path.parent().ok_or("Kiro projection parent missing")?;
+    private_dir(parent).map_err(|e| e.to_string())?;
     let temporary = parent.join(format!(".publish-{}", random_key()?));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -103,12 +115,15 @@ pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
         options.mode(0o600);
     }
     let result = (|| -> io::Result<()> {
+        #[cfg(unix)]
+        let directory = std::fs::File::open(parent)?;
         let mut file = options.open(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         std::fs::rename(&temporary, path)?;
+        installed();
         #[cfg(unix)]
-        std::fs::File::open(parent)?.sync_all()?;
+        directory.sync_all()?;
         Ok(())
     })();
     if result.is_err() {
@@ -177,31 +192,29 @@ impl Catalog {
             profile,
             native_root: native_root.clone(),
             host_state: crate::sdk_common::host::state_dir(config.state_dir.as_deref()),
-            manifest: Mutex::new(manifest),
-            rpc_gate: tokio::sync::Mutex::new(()),
+            manifest: Mutex::new(Arc::new(manifest)),
+            writes: Mutex::default(),
             native_observed: Mutex::new(BTreeMap::new()),
         });
-        // Recover the catalog-commit -> projection-removal crash window. Derive
-        // the only permitted cleanup path from this scope and SID, never native metadata.
-        for entry in catalog
-            .manifest
-            .lock()
-            .unwrap()
-            .entries
-            .values()
-            .filter(|entry| entry.deleted)
+        // Repair any projection changes interrupted after catalog publication.
+        // Derive tombstone cleanup paths from this scope and SID.
         {
-            let hash = digest(&format!("{}\0{}", catalog.scope, entry.sid));
-            let path = catalog.root.join("sessions").join(hash);
-            match std::fs::remove_dir_all(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+            let mut writes = catalog.writes.lock().unwrap();
+            for entry in catalog.manifest().entries.values() {
+                if entry.deleted {
+                    writes.removals.insert(catalog.projection_path(&entry.sid));
+                } else if !Self::summary_matches(entry) {
+                    writes.summaries.insert(entry.sid.clone());
+                }
             }
+            catalog
+                .flush_projections(&mut writes)
+                .map_err(io::Error::other)?;
         }
         // Import only explicit identities already owned by SessionDock. No native
         // path hashing, recency matching or reading private Kiro session files.
         if legacy["scope"] == catalog.scope && legacy["imported"] != true {
+            let mut identities = Vec::new();
             if let Some(state) = &config.state_dir {
                 for name in [
                     "native-sdk-bindings.json",
@@ -222,24 +235,20 @@ impl Catalog {
                             }
                             let sid = row["sid"].as_str().or_else(|| row["session_id"].as_str());
                             if let (Some(sid), Some(uid)) = (sid, row["uid"].as_str()) {
-                                if catalog
-                                    .manifest
-                                    .lock()
-                                    .unwrap()
-                                    .entries
-                                    .get(sid)
-                                    .is_some_and(|entry| entry.deleted)
-                                {
-                                    continue;
-                                }
-                                catalog
-                                    .remember_native(sid, row, Some(uid))
-                                    .map_err(io::Error::other)?;
+                                identities.push((sid.to_owned(), row.clone(), uid.to_owned()));
                             }
                         }
                     }
                 }
             }
+            catalog
+                .merge_batch(
+                    identities
+                        .iter()
+                        .map(|(sid, row, uid)| (sid.as_str(), row, Some(uid.as_str()))),
+                    None,
+                )
+                .map_err(io::Error::other)?;
             legacy["imported"] = json!(true);
             save(&legacy_marker, &legacy).map_err(io::Error::other)?;
         }
@@ -291,9 +300,7 @@ impl Catalog {
     }
 
     pub fn resolve_uid(&self, uid: &str) -> Result<Entry, String> {
-        self.manifest
-            .lock()
-            .unwrap()
+        self.manifest()
             .entries
             .values()
             .find(|entry| {
@@ -304,27 +311,82 @@ impl Catalog {
             .ok_or_else(|| "Kiro 会话身份尚未通过官方目录确认".into())
     }
     pub fn resolve_sid(&self, sid: &str) -> Option<Entry> {
-        self.manifest
-            .lock()
-            .unwrap()
+        self.manifest()
             .entries
             .get(sid)
             .filter(|e| !e.deleted)
             .cloned()
     }
-    fn persist(&self, manifest: &Manifest) -> Result<(), String> {
-        save(&self.root.join("catalog.json"), manifest)
+    fn manifest(&self) -> Arc<Manifest> {
+        self.manifest.lock().unwrap().clone()
+    }
+
+    fn commit(
+        &self,
+        writes: &mut PendingWrites,
+        next: Manifest,
+        installed: impl FnOnce(&mut PendingWrites),
+    ) -> Result<(), String> {
+        let bytes = serde_json::to_vec(&next).map_err(|e| e.to_string())?;
+        replace(&self.root.join("catalog.json"), &bytes, || {
+            *self.manifest.lock().unwrap() = Arc::new(next);
+            writes.sync_manifest = true;
+            installed(writes);
+        })?;
+        writes.sync_manifest = false;
+        Ok(())
+    }
+
+    fn sync_manifest(&self, writes: &mut PendingWrites) -> Result<(), String> {
+        // Rename makes the new file visible even if the following directory
+        // sync fails. Keep memory on the installed version and retry the sync
+        // before publishing or removing any dependent projections.
+        #[cfg(unix)]
+        if writes.sync_manifest {
+            std::fs::File::open(&self.root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|e| e.to_string())?;
+        }
+        writes.sync_manifest = false;
+        Ok(())
+    }
+
+    fn projection_path(&self, sid: &str) -> PathBuf {
+        self.root
+            .join("sessions")
+            .join(digest(&format!("{}\0{sid}", self.scope)))
+    }
+
+    fn read_summary(entry: &Entry) -> Value {
+        std::fs::read(entry.path.join("summary.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    fn summary_matches(entry: &Entry) -> bool {
+        let summary = Self::read_summary(entry);
+        summary["format"] == FORMAT
+            && summary["uid"] == entry.uid
+            && (summary["aliases"] == json!(entry.aliases)
+                || (summary["aliases"].is_null() && entry.aliases.is_empty()))
+            && summary["scope"] == entry.scope
+            && summary["session"]["id"] == entry.sid
+            && summary["session"]["cwd"] == entry.cwd
+            && (entry.metadata.is_null() || summary["native"] == entry.metadata)
     }
     fn write_summary(&self, entry: &Entry) -> Result<(), String> {
         let path = entry.path.join("summary.json");
-        let previous: Value = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or(Value::Null);
-        let meta = &entry.metadata;
+        let previous = Self::read_summary(entry);
+        let meta = if entry.metadata.is_null() {
+            &previous["native"]
+        } else {
+            &entry.metadata
+        };
         let native = &meta["_meta"]["kiro"];
         let title = meta["title"]
             .as_str()
+            .or_else(|| previous["session"]["title"].as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or("新建 Kiro 会话");
         let created = native["createdAt"]
@@ -335,113 +397,221 @@ impl Catalog {
             .as_str()
             .or_else(|| meta["updated"].as_str())
             .or(created);
-        save(
-            &path,
-            &json!({"format":FORMAT,"uid":entry.uid,"aliases":entry.aliases,"scope":entry.scope,
+        let value = json!({"format":FORMAT,"uid":entry.uid,"aliases":entry.aliases,"scope":entry.scope,
             "session":{"id":entry.sid,"cwd":entry.cwd,"title":title,"created":created,"updated":updated,
             "model":native["modelId"].as_str().or_else(|| meta["modelId"].as_str()).or_else(|| previous["session"]["model"].as_str())},
             "history_synced":previous["history_synced"].as_bool().unwrap_or(false),
-            "native_observed":previous["native_observed"],"native_status":previous["native_status"],"native":meta}),
-        )
+            "native_observed":previous["native_observed"],"native_status":previous["native_status"],"native":meta});
+        let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+        replace(&path, &bytes, || {})
     }
-    pub fn remember_native(
-        &self,
-        sid: &str,
-        metadata: &Value,
-        preferred_uid: Option<&str>,
-    ) -> Result<Entry, String> {
-        let mut guard = self.manifest.lock().unwrap();
-        let mut next = guard.clone();
-        let old = next.entries.get(sid).cloned();
-        // A confirmed native deletion must not be undone by an old list response.
-        if old.as_ref().is_some_and(|e| e.deleted) {
-            return Err("Kiro 会话已删除".into());
-        }
-        let hash = digest(&format!("{}\0{sid}", self.scope));
-        let uid = old
-            .as_ref()
-            .map(|e| e.uid.clone())
-            .or_else(|| preferred_uid.map(str::to_owned))
-            .unwrap_or_else(|| format!("kiro:{}", &hash[..16]));
-        let mut merged = old
-            .as_ref()
-            .map(|e| e.metadata.clone())
-            .unwrap_or_else(|| json!({}));
-        if let (Some(target), Some(source)) = (merged.as_object_mut(), metadata.as_object()) {
-            target.extend(source.clone());
-        }
-        let cwd = merged["cwd"]
-            .as_str()
-            .or_else(|| old.as_ref().map(|e| e.cwd.as_str()))
-            .unwrap_or("")
-            .to_owned();
-        let mut aliases = old.as_ref().map(|e| e.aliases.clone()).unwrap_or_default();
-        if let Some(preferred) =
-            preferred_uid.filter(|value| *value != uid && !aliases.iter().any(|a| a == value))
-        {
-            aliases.push(preferred.to_owned());
-        }
-        let entry = Entry {
-            uid,
-            sid: sid.into(),
-            cwd,
-            scope: self.scope.clone(),
-            path: self.root.join("sessions").join(&hash),
-            metadata: merged,
-            aliases,
-            deleted: false,
-            host_key: old.and_then(|e| e.host_key),
-        };
-        next.entries.insert(sid.into(), entry.clone());
-        self.persist(&next)?;
-        *guard = next;
-        self.write_summary(&entry)?;
-        Ok(entry)
+
+    fn flush_projections(&self, writes: &mut PendingWrites) -> Result<(), String> {
+        self.sync_manifest(writes)?;
+        let manifest = self.manifest();
+        let mut result = Ok(());
+        writes.summaries.retain(|sid| {
+            if let Err(error) = self.write_summary(&manifest.entries[sid]) {
+                result = Err(error);
+                true
+            } else {
+                false
+            }
+        });
+        writes.removals.retain(|path| {
+            if let Err(error) = Self::remove_projection(path) {
+                result = Err(error);
+                true
+            } else {
+                false
+            }
+        });
+        result
     }
-    pub fn bind_host(&self, uid: &str, host_key: Option<String>) -> Result<(), String> {
-        let mut guard = self.manifest.lock().unwrap();
-        let mut next = guard.clone();
-        let entry = next
-            .entries
-            .values_mut()
-            .find(|e| e.uid == uid)
-            .ok_or("Kiro identity unavailable")?;
-        entry.host_key = host_key;
-        self.native_observed.lock().unwrap().clear();
-        self.persist(&next)?;
-        *guard = next;
+
+    fn flush_summary(&self, writes: &mut PendingWrites, entry: &Entry) -> Result<(), String> {
+        if writes.summaries.contains(&entry.sid) {
+            self.write_summary(entry)?;
+            writes.summaries.remove(&entry.sid);
+        }
         Ok(())
     }
-    pub fn mark_deleted(&self, uid: &str) -> Result<(), String> {
-        let mut guard = self.manifest.lock().unwrap();
-        let mut next = guard.clone();
-        let entry = next
-            .entries
-            .values_mut()
-            .find(|e| e.uid == uid)
-            .ok_or("Kiro identity unavailable")?;
-        entry.deleted = true;
-        entry.host_key = None;
-        let path = entry.path.clone();
-        self.persist(&next)?;
-        *guard = next;
+
+    fn remove_projection(path: &Path) -> Result<(), String> {
         match std::fs::remove_dir_all(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.to_string()),
         }
     }
+
+    fn merged_entry(
+        &self,
+        old: Option<&Entry>,
+        sid: &str,
+        metadata: &Value,
+        preferred_uid: Option<&str>,
+    ) -> Entry {
+        let hash = digest(&format!("{}\0{sid}", self.scope));
+        let uid = old
+            .map(|e| e.uid.clone())
+            .or_else(|| preferred_uid.map(str::to_owned))
+            .unwrap_or_else(|| format!("kiro:{}", &hash[..16]));
+        let mut merged = old
+            .and_then(|e| e.metadata.as_object())
+            .map(|meta| Value::Object(meta.clone()))
+            .unwrap_or_else(|| json!({}));
+        if let (Some(target), Some(source)) = (merged.as_object_mut(), metadata.as_object()) {
+            target.extend(source.clone());
+        }
+        let cwd = merged["cwd"]
+            .as_str()
+            .or_else(|| old.map(|e| e.cwd.as_str()))
+            .unwrap_or("")
+            .to_owned();
+        let mut aliases = old.map(|e| e.aliases.clone()).unwrap_or_default();
+        if let Some(preferred) =
+            preferred_uid.filter(|value| *value != uid && !aliases.iter().any(|a| a == value))
+        {
+            aliases.push(preferred.to_owned());
+        }
+        Entry {
+            uid,
+            sid: sid.into(),
+            cwd,
+            scope: self.scope.clone(),
+            path: self.root.join("sessions").join(hash),
+            metadata: merged,
+            aliases,
+            deleted: false,
+            host_key: old.and_then(|e| e.host_key.clone()),
+        }
+    }
+
+    fn merge_batch<'a>(
+        &self,
+        rows: impl Iterator<Item = (&'a str, &'a Value, Option<&'a str>)>,
+        capabilities: Option<Value>,
+    ) -> Result<(), String> {
+        let mut writes = self.writes.lock().unwrap();
+        let current = self.manifest();
+        let mut changed = BTreeMap::new();
+        for (sid, metadata, preferred_uid) in rows {
+            let old = changed.get(sid).or_else(|| current.entries.get(sid));
+            // A confirmed deletion stays authoritative over in-flight pages.
+            if old.is_some_and(|entry| entry.deleted) {
+                continue;
+            }
+            let entry = self.merged_entry(old, sid, metadata, preferred_uid);
+            if old != Some(&entry) {
+                changed.insert(sid.to_owned(), entry);
+            }
+        }
+        changed.retain(|sid, entry| current.entries.get(sid) != Some(entry));
+        let capabilities = capabilities.filter(|caps| *caps != current.capabilities);
+        if !changed.is_empty() || capabilities.is_some() {
+            let mut next = (*current).clone();
+            let summaries: Vec<_> = changed.keys().cloned().collect();
+            next.entries.extend(changed);
+            if let Some(capabilities) = capabilities {
+                next.capabilities = capabilities;
+            }
+            self.commit(&mut writes, next, |writes| {
+                writes.summaries.extend(summaries)
+            })?;
+        }
+        self.flush_projections(&mut writes)
+    }
+
+    pub async fn remember_native(
+        self: &Arc<Self>,
+        sid: &str,
+        metadata: Value,
+        preferred_uid: Option<&str>,
+    ) -> Result<Entry, String> {
+        let sid = sid.to_owned();
+        let preferred_uid = preferred_uid.map(str::to_owned);
+        let catalog = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut writes = catalog.writes.lock().unwrap();
+            let current = catalog.manifest();
+            let old = current.entries.get(&sid);
+            if old.is_some_and(|e| e.deleted) {
+                return Err("Kiro 会话已删除".into());
+            }
+            let entry = catalog.merged_entry(old, &sid, &metadata, preferred_uid.as_deref());
+            if old != Some(&entry) {
+                let mut next = (*current).clone();
+                next.entries.insert(sid.clone(), entry.clone());
+                catalog.commit(&mut writes, next, |writes| {
+                    writes.summaries.insert(sid.clone());
+                })?;
+            }
+            catalog.sync_manifest(&mut writes)?;
+            catalog.flush_summary(&mut writes, &entry)?;
+            Ok(entry)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn bind_host(
+        self: &Arc<Self>,
+        uid: &str,
+        host_key: Option<String>,
+    ) -> Result<(), String> {
+        let uid = uid.to_owned();
+        let catalog = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut writes = catalog.writes.lock().unwrap();
+            let entry = catalog.resolve_uid(&uid)?;
+            if entry.host_key == host_key {
+                return catalog.sync_manifest(&mut writes);
+            }
+            let mut next = (*catalog.manifest()).clone();
+            next.entries.get_mut(&entry.sid).unwrap().host_key = host_key;
+            catalog.commit(&mut writes, next, |_| {
+                catalog.native_observed.lock().unwrap().clear();
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn mark_deleted(self: &Arc<Self>, uid: &str) -> Result<(), String> {
+        let uid = uid.to_owned();
+        let catalog = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut writes = catalog.writes.lock().unwrap();
+            let entry = catalog.resolve_uid(&uid)?;
+            let mut next = (*catalog.manifest()).clone();
+            let deleted = next.entries.get_mut(&entry.sid).unwrap();
+            deleted.deleted = true;
+            deleted.host_key = None;
+            catalog.commit(&mut writes, next, |writes| {
+                writes.summaries.remove(&entry.sid);
+                writes.removals.insert(entry.path.clone());
+            })?;
+            Self::remove_projection(&entry.path)?;
+            writes.removals.remove(&entry.path);
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
     pub fn project(&self, uid: &str, snapshot: &Value) -> Result<(), String> {
         if snapshot["loading"] == true {
             return Ok(());
         }
-        let guard = self.manifest.lock().unwrap();
-        let entry = guard
+        let mut writes = self.writes.lock().unwrap();
+        self.sync_manifest(&mut writes)?;
+        let manifest = self.manifest();
+        let entry = manifest
             .entries
             .values()
             .find(|entry| !entry.deleted && entry.uid == uid)
-            .cloned()
             .ok_or("Kiro projection identity unavailable")?;
+        self.flush_summary(&mut writes, entry)?;
         let mut bytes = Vec::new();
         if let Some(items) = snapshot["items"].as_array() {
             for item in items {
@@ -505,52 +675,49 @@ impl Catalog {
         }
         save(&summary, &value)
     }
-    pub async fn refresh(&self) -> Result<(), String> {
-        let mut cursor = None;
-        loop {
-            let mut params = json!({});
-            if let Some(value) = cursor {
-                params["cursor"] = value;
-            }
-            let result = self.request("session/list", &params).await?;
-            let rows = result["sessions"]
-                .as_array()
-                .ok_or("Kiro session/list 未返回 sessions")?;
-            for row in rows {
-                if let Some(sid) = row["sessionId"].as_str() {
-                    if self
-                        .manifest
-                        .lock()
-                        .unwrap()
-                        .entries
-                        .get(sid)
-                        .is_some_and(|e| e.deleted)
-                    {
-                        continue;
-                    }
-                    self.remember_native(sid, row, None)?;
-                }
-            }
-            cursor = result
+    async fn refresh(self: &Arc<Self>) -> Result<(), String> {
+        let host_state = self.host_state.clone();
+        let cwd = tokio::task::spawn_blocking(move || {
+            crate::sdk_common::private_dir(&host_state)?;
+            std::env::current_dir()
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        let mut params = json!({});
+        let mut batch = Vec::new();
+        let capabilities = loop {
+            let (caps, mut result) = self.request_list_page(&cwd, &params).await?;
+            let Some(Value::Array(mut rows)) = result.get_mut("sessions").map(Value::take) else {
+                return Err("Kiro session/list 未返回 sessions".into());
+            };
+            batch.append(&mut rows);
+            let cursor = result
                 .get("nextCursor")
-                .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
-                .cloned();
-            if cursor.is_none() {
-                break;
-            }
-        }
-        Ok(())
+                .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()));
+            let Some(cursor) = cursor else { break caps };
+            params["cursor"] = cursor.clone();
+        };
+        let catalog = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let rows = batch
+                .iter()
+                .filter_map(|row| row["sessionId"].as_str().map(|sid| (sid, row, None)));
+            catalog.merge_batch(rows, Some(capabilities))
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     /// A short-lived protocol connection; it never calls session/new or load.
-    /// Mutation callers must supply an explicit user action and advertised method.
-    pub async fn request(&self, method: &str, params: &Value) -> Result<Value, String> {
-        let _gate = self.rpc_gate.lock().await;
-        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    async fn request_list_page(
+        &self,
+        cwd: &Path,
+        params: &Value,
+    ) -> Result<(Value, Value), String> {
         let command = self.command(&cwd.to_string_lossy());
         let mut spec = sdkhost_client::LaunchSpec::from_command(&command);
         spec.lifetime_ms = Some(30_000);
         let key = format!("kiro-catalog-{}", random_key()?);
-        crate::sdk_common::private_dir(&self.host_state).map_err(|e| e.to_string())?;
         let client =
             sdkhost_client::Client::launch_spec(&self.host_state.join("sdkhost"), &key, spec)
                 .await
@@ -602,25 +769,12 @@ impl Catalog {
                 )
             }
             let init = rpc(&mut stdout, 1, "initialize", &json!({"protocolVersion":1,"clientInfo":{"name":"sessiondock-catalog","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}})).await?;
-            let caps = &init["agentCapabilities"];
-            let advertised = if let Some(name) = method.strip_prefix("session/") {
-                caps["sessionCapabilities"][name].is_object()
-            } else {
-                caps["_meta"]["kiro"]["extensionMethods"]
-                    .as_array()
-                    .is_some_and(|methods| methods.iter().any(|m| m == method))
-            };
-            {
-                let mut guard = self.manifest.lock().unwrap();
-                let mut next = guard.clone();
-                next.capabilities = caps.clone();
-                self.persist(&next)?;
-                *guard = next;
+            let caps = init["agentCapabilities"].clone();
+            if !caps["sessionCapabilities"]["list"].is_object() {
+                return Err("Kiro 未广告 session/list 能力".into());
             }
-            if !advertised {
-                return Err(format!("Kiro 未广告 {method} 能力"));
-            }
-            rpc(&mut stdout, 2, method, params).await
+            let page = rpc(&mut stdout, 2, "session/list", params).await?;
+            Ok((caps, page))
         };
         let result = tokio::time::timeout(Duration::from_secs(30), operation)
             .await

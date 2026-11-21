@@ -14,15 +14,18 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import threading
+import time
 from urllib.parse import quote
 
 from playwright.sync_api import expect, sync_playwright
 
+from browser_runtime import wait_for_async
 from codex_sdk_browser import server
 from history_fixtures import BINARY
 from hub_fixtures import FakeNode, Hub
 from kiro_sdk_fixtures import KiroFixture
 from kiro_sdk_browser import select_sdk
+from runtime_layers_browser import rows as runtime_rows
 from sdk_ui_fixtures import start_sdk
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
@@ -45,6 +48,124 @@ def remove(page, uid):
     popup.get_by_role('button', name='确定', exact=True).click()
     page.wait_for_function('uid => !S.sessions.some(row=>row.uid===uid)', arg=uid)
 
+
+def wait_for(condition, description, timeout=15):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(.05)
+    raise AssertionError(description)
+
+
+def exercise_refresh(account, peer, root, uid, deleted_uid, projection):
+    catalog = projection.parents[1] / 'catalog.json'
+    hold = peer.sessions / 'list-hold-second'
+    waiting = peer.sessions / 'list-second-waiting'
+    fail = peer.sessions / 'list-fail-second'
+
+    def change_title(path, title):
+        file = path / 'session.json'
+        data = json.loads(file.read_text())
+        file.write_text(json.dumps({**data, 'title':title}))
+
+    def file_stamp(path):
+        stat = path.stat()
+        return stat.st_ino, stat.st_mtime_ns
+
+    def entries():
+        return json.loads(catalog.read_text())['entries']
+
+    def refresh_errors():
+        return sum(row.get('event') == 'kiro.catalog_unavailable'
+                   for row in runtime_rows(root / 'state/runtime-logs'))
+
+    # Older catalog.json files can omit the defaulted fields.
+    legacy = json.loads(catalog.read_text())
+    legacy.pop('capabilities')
+    for key in ('metadata', 'aliases', 'deleted', 'host_key'):
+        legacy['entries'][peer.empty_sid].pop(key)
+    catalog.write_text(json.dumps(legacy))
+    primary = projection / 'summary.json'
+    old_title = entries()[peer.sid]['metadata']['title']
+    new_title = 'Synthetic Kiro refreshed first page'
+    change_title(peer.v3_dir, new_title)
+    hold.touch()
+    fail.touch()
+    try:
+        with account(peer) as page:
+            wait_for(waiting.exists, 'Kiro did not request the second page')
+            assert entries()[peer.sid]['metadata']['title'] == old_title
+            expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_contain_text(old_title)
+            errors = refresh_errors()
+            hold.unlink()
+            wait_for(lambda: refresh_errors() > errors, 'Failed list request did not finish')
+            assert entries()[peer.sid]['metadata']['title'] == old_title
+            expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_contain_text(old_title)
+    finally:
+        hold.unlink(missing_ok=True)
+        fail.unlink()
+        waiting.unlink(missing_ok=True)
+
+    # The peer captures the second page before the browser binds and deletes.
+    # Force one derived summary publication to fail after the catalog commit.
+    empty_title = 'Synthetic Kiro recovered second page'
+    change_title(peer.empty_dir, empty_title)
+    empty_summary = Path(entries()[peer.empty_sid]['path']) / 'summary.json'
+    deleted_sid = next(sid for sid, entry in entries().items() if entry['uid'] == deleted_uid)
+    hold.touch()
+    try:
+        with account(peer) as page:
+            wait_for(waiting.exists, 'Kiro did not pause the stale second page')
+            api(page, 'open', {'uid':uid})
+            bound_key = entries()[peer.sid]['host_key']
+            assert bound_key
+            remove(page, deleted_uid)
+            assert entries()[deleted_sid]['deleted']
+            backup = empty_summary.with_suffix('.backup')
+            empty_summary.rename(backup)
+            empty_summary.mkdir()
+            errors = refresh_errors()
+            hold.unlink()
+            wait_for(lambda: (entries()[peer.empty_sid]['metadata'] or {}).get('title') == empty_title,
+                     'Complete list did not commit both pages')
+            wait_for_async(page, """async ({uid,title})=>{
+              await loadSessions(true);
+              return S.sessions.some(row=>row.uid===uid && row.title===title);
+            }""", arg={'uid':uid, 'title':new_title})
+            expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_contain_text(new_title)
+            latest = entries()
+            assert latest[peer.sid]['host_key'] == bound_key
+            assert latest[deleted_sid]['deleted'] and latest[deleted_sid]['host_key'] is None
+            assert not Path(latest[deleted_sid]['path']).exists()
+            assert not page.locator(f'#side .item[data-uid="{deleted_uid}"]').count()
+            wait_for(lambda: refresh_errors() > errors, 'Summary publication did not report its failure')
+            assert empty_summary.is_dir()
+            manifest_stamp, primary_stamp = file_stamp(catalog), file_stamp(primary)
+            empty_summary.rmdir()
+            backup.rename(empty_summary)
+            wait_for_async(page, """async ({sid,title})=>{
+              await loadSessions(true);
+              return S.sessions.some(row=>row.sid===sid && row.title===title);
+            }""", arg={'sid':peer.empty_sid, 'title':empty_title}, timeout=45000, polling=300)
+            assert file_stamp(catalog) == manifest_stamp
+            assert file_stamp(primary) == primary_stamp
+            api(page, 'stop', {'uid':uid})
+    finally:
+        hold.unlink(missing_ok=True)
+        waiting.unlink(missing_ok=True)
+
+    # Simulate an interrupted summary write with the committed catalog intact.
+    stale = json.loads(primary.read_text())
+    stale['session']['title'] = stale['native']['title'] = old_title
+    primary.write_text(json.dumps(stale))
+    fail.touch()
+    try:
+        with account(peer) as page:
+            expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_contain_text(new_title)
+            assert entries()[deleted_sid]['deleted']
+    finally:
+        fail.unlink()
 
 
 def hub_aliases(browser, binary, root, alias):
@@ -118,7 +239,7 @@ def main():
                     page.set_default_timeout(15000)
                     page.goto(base, wait_until='domcontentloaded')
                     page.wait_for_function('T.listLoaded')
-                    page.wait_for_function("async sid=>{await loadSessions(true);return S.sessions.some(r=>r.sid===sid)}", arg=peer.empty_sid, polling=300)
+                    wait_for_async(page, "async sid=>{await loadSessions(true);return S.sessions.some(r=>r.sid===sid)}", arg=peer.empty_sid, polling=300)
                     try:
                         yield page
                     finally:
@@ -136,7 +257,7 @@ def main():
                     assert opened.value.ok, opened.value.text()
                     page.locator('#sdk-input').fill('ACCOUNT_A_CACHED_MARKER')
                     page.locator('#sdk-send').click()
-                    expect(page.locator('#msgs')).to_contain_text('Kiro ACP V3 final answer for: ACCOUNT_A_CACHED_MARKER')
+                    expect(page.locator('.sdk-msgs')).to_contain_text('Kiro ACP V3 final answer for: ACCOUNT_A_CACHED_MARKER')
                     loads = len(a.received('session/load'))
                     assert loads == 1, 'The first send did not load exactly one native session'
                     alias_open = api(page, 'open', {'uid':alias})
@@ -184,7 +305,7 @@ def main():
                         messages.write_bytes(original)
                     page.goto(page.url.split('?')[0] + '?sid=' + quote(alias), wait_until='domcontentloaded')
                     expect(page.locator(f'.dhead[data-uid="{legacy_uid}"]')).to_be_visible()
-                    expect(page.locator('#msgs')).to_contain_text('ACCOUNT_A_CACHED_MARKER')
+                    expect(page.locator('.sdk-msgs')).to_contain_text('ACCOUNT_A_CACHED_MARKER')
                     first = api(page, 'create', create)
                     api(page, 'stop', {'uid':first['uid']})
                     for changed in ({'mode':'autopilot'}, {'autopilot':True}):
@@ -204,7 +325,7 @@ def main():
                     assert b_uid != legacy_uid, row
                     assert not any(r['uid'] == first['uid'] for r in page.evaluate('S.sessions'))
                     page.locator(f'#side .item[data-uid="{b_uid}"]').click()
-                    expect(page.locator('#msgs')).not_to_contain_text('ACCOUNT_A_CACHED_MARKER')
+                    expect(page.locator('.sdk-msgs')).not_to_contain_text('ACCOUNT_A_CACHED_MARKER')
                     assert not b.received('session/load'), 'Listing another scope loaded a native session'
                     second = api(page, 'create', create)
                     assert second['uid'] != first['uid'], (first, second)
@@ -213,12 +334,14 @@ def main():
                     if args.screenshots:
                         page.screenshot(path=str(args.screenshots/'account-b-isolated.png'), full_page=True)
 
+                exercise_refresh(account, b, root, b_uid, second['uid'], Path(row['path']))
+
                 # Returning to the first account preserves UID, history and the original creation receipt.
                 with account(a) as page:
                     row = page.evaluate('sid=>S.sessions.find(r=>r.sid===sid)', a.sid)
                     assert row['uid'] == legacy_uid
                     page.locator(f'#side .item[data-uid="{legacy_uid}"]').click()
-                    expect(page.locator('#msgs')).to_contain_text('ACCOUNT_A_CACHED_MARKER')
+                    expect(page.locator('.sdk-msgs')).to_contain_text('ACCOUNT_A_CACHED_MARKER')
                     repeated = api(page, 'create', create)
                     assert repeated['uid'] == first['uid'], (first, repeated)
                     assert len(a.received('session/new')) == 1
@@ -239,7 +362,7 @@ def main():
                     assert json.loads((root/'state/kiro-legacy-identities.json').read_text()) == legacy
                     assert len(a.received('session/new')) == 1
                 hub_aliases(browser, binary, root, alias)
-                print('PASS Kiro catalog browser: same SID isolated by account, legacy UID retained, cached history scoped, creation receipt replay scoped, delete tombstone survives restart', flush=True)
+                print('PASS Kiro catalog browser: account isolation, legacy identity and receipts, atomic paginated refresh, concurrent binding and tombstone, summary retry without unchanged rewrites', flush=True)
             finally:
                 browser.close()
                 stop_private_sdkhosts(root)

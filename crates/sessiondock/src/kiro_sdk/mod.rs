@@ -152,7 +152,7 @@ impl Bridge {
             Session::attach_existing(dir, &key, uid, "", "", self.shutdown.clone()).await?
         };
         session.kill().await?;
-        self.catalog.bind_host(uid, None)?;
+        self.catalog.bind_host(uid, None).await?;
         self.sessions.lock().unwrap().remove(uid);
         let st = session.state.lock().unwrap();
         let _ = st
@@ -244,7 +244,7 @@ impl Bridge {
                     let session =
                         Session::attach_existing(dir, &key, uid, &sid, &cwd, self.shutdown.clone())
                             .await?;
-                    session.set_projection(self.catalog.clone())?;
+                    session.set_projection(self.catalog.clone()).await?;
                     self.sessions
                         .lock()
                         .unwrap()
@@ -573,10 +573,13 @@ impl Bridge {
             .filter(|s| !s.is_empty())
             .ok_or("Kiro session/new did not return sessionId")?;
         let metadata = json!({"sessionId":sid,"cwd":cwd,"title":result["_meta"]["title"].as_str().unwrap_or("新建 Kiro 会话"),"_meta":{"kiro":{"modelId":settings["modelId"],"createdAt":result["_meta"]["createdAt"]}}});
-        let entry = self.catalog.remember_native(sid, &metadata, None)?;
-        self.catalog.bind_host(&entry.uid, Some(host_key))?;
+        let entry = self
+            .catalog
+            .remember_native(sid, metadata.clone(), None)
+            .await?;
+        self.catalog.bind_host(&entry.uid, Some(host_key)).await?;
         session.bind_identity(&entry.uid, sid)?;
-        session.set_projection(self.catalog.clone())?;
+        session.set_projection(self.catalog.clone()).await?;
         self.sessions
             .lock()
             .unwrap()
@@ -633,7 +636,7 @@ impl Bridge {
         session.kill().await?;
         if is_current {
             self.sessions.lock().unwrap().remove(uid);
-            self.catalog.bind_host(uid, None)?;
+            self.catalog.bind_host(uid, None).await?;
         }
         intent["phase"] = json!("released");
         save(&path, &intent)?;
@@ -773,7 +776,7 @@ impl Bridge {
             session.request_once(&key, "session/load", params).await?;
         }
         session.bind_identity(uid, sid)?;
-        session.set_projection(self.catalog.clone())?;
+        session.set_projection(self.catalog.clone()).await?;
         self.apply_startup_autopilot(session, payload).await?;
         Ok(())
     }
@@ -823,10 +826,10 @@ impl Bridge {
                     .await?;
                 return Ok(session);
             }
-            self.catalog.bind_host(uid, None)?;
+            self.catalog.bind_host(uid, None).await?;
         }
         let key = format!("kiro_open_{}", random_key()?);
-        self.catalog.bind_host(uid, Some(key.clone()))?;
+        self.catalog.bind_host(uid, Some(key.clone())).await?;
         let session = match Session::spawn_or_attach(
             self.host.as_deref(),
             Some(&key),

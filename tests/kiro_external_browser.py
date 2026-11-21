@@ -9,6 +9,7 @@ import shutil
 import tempfile
 
 from playwright.sync_api import sync_playwright, expect
+from browser_runtime import wait_for_async
 from codex_sdk_browser import server
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
@@ -77,11 +78,11 @@ def main():
             page.set_default_timeout(20000)
             page.goto(url,wait_until='domcontentloaded')
             page.wait_for_function('T.listLoaded')
-            page.wait_for_function('''async sid=>{await loadSessions(true);return S.sessions.some(r=>r.sid===sid)}''',arg=fixture.sid)
+            wait_for_async(page, '''async sid=>{await loadSessions(true);return S.sessions.some(r=>r.sid===sid)}''',arg=fixture.sid)
             uid = page.evaluate('sid=>S.sessions.find(r=>r.sid===sid).uid',fixture.sid)
             page.locator(f'#side .item[data-uid="{uid}"]').click()
-            expect(page.locator('#msgs')).to_contain_text('已读取外部会话内容。')
-            expect(page.locator('#msgs')).to_contain_text('正在检查审查材料和相关证据。')
+            expect(page.locator('.sdk-msgs')).to_contain_text('已读取外部会话内容。')
+            expect(page.locator('.sdk-msgs')).to_contain_text('正在检查审查材料和相关证据。')
             page.wait_for_function('uid=>S.live?.has(uid)',arg=uid)
             expect(page.locator(f'#side .item[data-uid="{uid}"] .item-status')).to_have_class(__import__('re').compile(r'.*visible.*'))
             assert not fixture.received('session/load'), 'Observation loaded the native session'
@@ -104,10 +105,9 @@ def main():
                 page.set_viewport_size({'width':width,'height':900});page.emulate_media(color_scheme=theme)
                 if width == 390: page.evaluate('showMobileDetail()')
                 if args.screenshots: page.screenshot(path=str(args.screenshots/f'kiro-external-{kind}-{width}-{theme}.png'),full_page=True)
-            page.locator('.sdk-history .turn-process .fold-toggle').first.click()
-            expect(page.locator('.sdk-history .turn-process')).not_to_have_class(__import__('re').compile(r'.*folded.*'))
-            page.locator('.sdk-history .grp .fold-toggle').first.click()
-            expect(page.get_by_text('原生工具输出：证据完整。',exact=True)).to_be_visible()
+            tool = page.locator('.sdk-history .grp').filter(has_text='read_file')
+            tool.get_by_role('button', name='展开工具调用组').click()
+            expect(tool).to_contain_text('原生工具输出：证据完整。')
             if args.screenshots: page.screenshot(path=str(args.screenshots/f'kiro-external-{kind}-expanded.png'),full_page=True)
             page.close()
         # Same open browser follows new native messages without loading ACP.
@@ -117,10 +117,10 @@ def main():
         uid = page.evaluate('sid=>S.sessions.find(r=>r.sid===sid).uid',fixture.sid)
         page.locator(f'#side .item[data-uid="{uid}"]').click()
         with messages.open('a') as f: f.write(record('a3','assistant',content='外部追加内容已同步。'))
-        expect(page.locator('#msgs')).to_contain_text('外部追加内容已同步。',timeout=20000)
+        expect(page.locator('.sdk-msgs')).to_contain_text('外部追加内容已同步。',timeout=20000)
         shutil.rmtree(fixture.proc/'700')
         page.wait_for_function('uid=>!S.live?.has(uid)',arg=uid,timeout=20000)
-        expect(page.locator('#msgs')).to_contain_text('外部追加内容已同步。')
+        expect(page.locator('.sdk-msgs')).to_contain_text('外部追加内容已同步。')
         expect(page.locator('#sdk-input')).to_be_enabled()
         # PID reuse with old log content does not resurrect liveness.
         START[700] = 999999999999
@@ -136,7 +136,7 @@ def main():
         page.wait_for_function('SdkView.connected && !SdkView.readOnly')
         page.locator('#sdk-input').fill('Managed SDK after external exit')
         page.locator('#sdk-send').click()
-        expect(page.locator('#msgs')).to_contain_text('Kiro ACP V3 final answer for: Managed SDK after external exit')
+        expect(page.locator('.sdk-msgs')).to_contain_text('Kiro ACP V3 final answer for: Managed SDK after external exit')
         assert len(fixture.received('session/load')) == 1
         page.evaluate('''async uid=>fetch('/api/native-sdk/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid})})''',uid)
         print('Kiro external ACP node/Hub history, live, append, exit, conflict, explicit SDK handoff: PASS',flush=True)

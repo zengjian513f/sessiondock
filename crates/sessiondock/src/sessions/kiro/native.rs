@@ -24,8 +24,10 @@ impl Catalog {
             };
             for dir in dirs.flatten() {
                 let sid = dir.file_name().to_string_lossy().into_owned();
-                let guard = self.manifest.lock().unwrap();
-                let Some(entry) = guard
+                let mut writes = self.writes.lock().unwrap();
+                self.sync_manifest(&mut writes)?;
+                let manifest = self.manifest();
+                let Some(entry) = manifest
                     .entries
                     .get(&sid)
                     .filter(|e| !e.deleted && e.host_key.is_none())
@@ -71,7 +73,8 @@ impl Catalog {
                         .map_err(|e| e.to_string())?;
                     out.push(b'\n');
                 }
-                // The catalog lock also excludes SDK binding/projection publication.
+                // The writer lock also excludes SDK binding and projection publication.
+                self.flush_summary(&mut writes, entry)?;
                 publish(&entry.path.join("messages.jsonl"), &out)?;
                 let path = entry.path.join("summary.json");
                 let mut summary: Value =

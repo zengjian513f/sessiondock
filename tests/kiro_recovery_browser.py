@@ -90,6 +90,7 @@ def fake_main():
 
 def run(args):
     from playwright.sync_api import expect, sync_playwright
+    from browser_runtime import wait_for_async
     from codex_sdk_browser import server
     from kiro_sdk_browser import watch, api_raw
     from sdk_ui_fixtures import start_sdk
@@ -128,7 +129,7 @@ def run(args):
                     base = stack.enter_context(server(SimpleNamespace(root=root), args.binary, "off", env))
                     page.goto(base, wait_until="domcontentloaded")
                     page.wait_for_function("T.listLoaded")
-                    page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(r => r.sid === sid); }", arg=fixture.sid, polling=250)
+                    wait_for_async(page, "async sid => { await loadSessions(true); return S.sessions.some(r => r.sid === sid); }", arg=fixture.sid, polling=250)
                     if uid is None:
                         uid = page.evaluate("sid => S.sessions.find(r => r.sid === sid).uid", fixture.sid)
                     page.locator(f'#side .item[data-uid="{uid}"]').click()

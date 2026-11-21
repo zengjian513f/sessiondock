@@ -323,6 +323,14 @@ class FakeKiroAcp:
                 result["nextCursor"] = "fixture-second-page"
             if offset:
                 result["sessions"] = rows[offset:]
+                hold = self.sessions_root / "list-hold-second"
+                if hold.exists():
+                    (self.sessions_root / "list-second-waiting").touch()
+                    while hold.exists():
+                        time.sleep(0.02)
+                if (self.sessions_root / "list-fail-second").exists():
+                    self.error(message, -32000, "Synthetic second page failure")
+                    return
             self.reply(message, result)
         elif method == "session/new":
             self.cwd = params.get("cwd") or os.getcwd()

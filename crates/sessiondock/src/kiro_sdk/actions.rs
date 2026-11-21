@@ -1000,17 +1000,25 @@ impl Bridge {
         if result["success"] != true {
             return Err("kiro_sdk_rename_failed: 原生未确认改名".into());
         }
-        let mut state = session.state.lock().unwrap();
         // The native notification precedes the response and contains the
         // canonical title (Kiro may shorten it). Never project the input over it.
-        let title = state
+        let title = session
+            .state
+            .lock()
+            .unwrap()
             .title
             .clone()
             .ok_or("kiro_sdk_rename_pending: 原生已接受改名，但尚未返回标题，请刷新核对。")?;
         self.catalog
-            .remember_native(&sid, &json!({"title":title}), Some(uid))?;
-        session.project(&mut state);
-        state.publish();
+            .remember_native(&sid, json!({"title":title}), Some(uid))
+            .await?;
+        tokio::task::spawn_blocking(move || {
+            let mut state = session.state.lock().unwrap();
+            session.project(&mut state);
+            state.publish();
+        })
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(json!({"renamed":true,"session_id":sid,"title":title}))
     }
 
@@ -1067,7 +1075,7 @@ impl Bridge {
         let mut metadata = result.clone();
         metadata["cwd"] = json!(cwd);
         metadata["forked_from_id"] = json!(source.sid);
-        let entry = self.catalog.remember_native(sid, &metadata, None)?;
+        let entry = self.catalog.remember_native(sid, metadata, None).await?;
         Ok(
             json!({"uid":entry.uid,"session_id":entry.sid,"cwd":entry.cwd,
             "session":{"uid":entry.uid,"sid":entry.sid,"session_id":entry.sid,
@@ -1076,6 +1084,9 @@ impl Bridge {
     }
 
     pub(super) async fn delete_session(&self, uid: &str) -> Result<Value, String> {
+        let canonical = self.catalog.resolve_uid(uid)?.uid;
+        let lock = self.lock_for(&canonical);
+        let _guard = lock.lock().await;
         let entry = self.catalog.resolve_uid(uid)?;
         if self
             .loaded_uids()
@@ -1092,7 +1103,7 @@ impl Bridge {
             json!({"sessionId":entry.sid}),
         )
         .await?;
-        self.catalog.mark_deleted(uid)?;
+        self.catalog.mark_deleted(uid).await?;
         Ok(json!({"uid":uid,"discarded":true,"native_deleted":true}))
     }
 }
