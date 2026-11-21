@@ -1282,7 +1282,8 @@ async fn handle(
         let mut tree: Value = serde_json::from_slice(&bytes).map_err(|_| Reply::Upstream)?;
         let inventory =
             aggregate::sessions(registry, client, &[("force".into(), "1".into())]).await?;
-        crate::hub::nest::transfer_tree(&mut tree, &inventory);
+        let nesting = crate::hub::nest::TransferTree::new(&inventory);
+        nesting.extend(&mut tree);
         loop {
             let extra = tree["sessions"]
                 .as_array()
@@ -1324,7 +1325,7 @@ async fn handle(
                 member["native_missing"] = false.into();
                 member["disabled_reason"] = "原生记录当前不可迁移".into();
             }
-            crate::hub::nest::transfer_tree(&mut tree, &inventory);
+            nesting.extend(&mut tree);
         }
         return ok(&tree);
     }

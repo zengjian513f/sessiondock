@@ -162,6 +162,89 @@ def check_trash_order(browser, hub, nodes):
             node.pop("trash_items")
 
 
+def seed_search_moves(root):
+    transfers = root / "transfers"
+    transfers.mkdir(mode=0o700)
+    # The saved relation still points to A. Replay A → B → C by timestamp,
+    # independently of the journal filenames and operation IDs.
+    for operation, stamp, source, target in (
+        ("move-z", 2, "a", "b"),
+        ("move-a", 3, "b", "c"),
+    ):
+        path = transfers / f"{operation}.json"
+        path.write_text(json.dumps({
+            "created_ms": stamp, "phase": "complete", "bytes_sent": 0, "bytes_total": 0,
+            "request": {"uid": scoped(NID[source], "claude:same-file-hash"),
+                        "target_node": NID[target], "operation_id": operation},
+            "result": {"mode": "move", "link_map": {"claude:same-native-id": "claude:same-native-id"}},
+        }))
+        path.chmod(0o600)
+
+
+def check_moved_search(browser, hub, node):
+    original = node.state()["row"]
+    local_parent = {"source": "claude", "sid": "same-native-id"}
+    expected = {**local_parent, "node_id": NID["c"]}
+    node.set(row={**original, "sid": "search-child", "title": "Moved parent's child",
+                  "nest_parent": local_parent}, search_matches=True)
+    child_uid = scoped(node.nid, original["uid"])
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    try:
+        page = context.new_page()
+        page.add_init_script("""(() => {
+          const originalFetch = window.fetch;
+          window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            if (response.headers.get('Content-Type')?.includes('application/x-ndjson')) {
+              window.movedSearchBody = response.clone().text();
+            }
+            return response;
+          };
+        })()""")
+        page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+        page.wait_for_function("T.listLoaded && Nodes.list.length === 3")
+        field = page.locator("#q")
+        field.fill("needle")
+        for partial in (False, True):
+            node.set(search_error=partial)
+            seq = page.locator("#stat").get_attribute("data-seq")
+            with page.expect_response(lambda r: "/api/search?" in r.url and "progress=1" in r.url) as response:
+                field.press("Enter")
+            page.wait_for_function("(seq) => document.querySelector('#stat').getAttribute('data-seq') !== seq",
+                                   arg=seq)
+            stream = response.value
+            assert stream.ok, stream.status
+            events = [json.loads(line) for line in page.evaluate("window.movedSearchBody").splitlines()]
+            assert events[-1]["type"] == "result", events
+            result = events[-1]["data"]
+            batches = [row for event in events if event["type"] == "matches"
+                       for row in event["results"] if row["uid"] == child_uid]
+            assert [row["nest_parent"] for row in batches] == [expected, expected], events
+            ordinary = page.evaluate("(url) => fetch(url).then(r => r.json())",
+                                     stream.url.replace("&progress=1", ""))
+            assert result["partial"] == ordinary["partial"] == partial
+            assert result["results"] == ordinary["results"], (result, ordinary)
+            assert next(row for row in result["results"] if row["uid"] == child_uid)["nest_parent"] == expected
+            assert page.evaluate("(uid) => S.results.find(row => row.uid === uid).nest_parent",
+                                 child_uid) == expected
+            child = page.locator(f'#side .item[data-uid="{child_uid}"]')
+            expect(child).to_be_visible()
+            expect(child).to_have_attribute("data-depth", "1")
+            parent_uid = scoped(NID["c"], original["uid"])
+            assert child.evaluate("row => row.previousElementSibling?.dataset.uid") == parent_uid
+            shots = os.environ.get("SESSIONDOCK_TEST_SHOTS")
+            if shots:
+                Path(shots).mkdir(parents=True, exist_ok=True)
+                state = "partial" if partial else "complete"
+                page.screenshot(path=str(Path(shots) / f"hub-moved-search-{state}.png"))
+        print("PASS moved parent agrees in JSON, both NDJSON matches and final result, including partial search",
+              flush=True)
+    finally:
+        context.close()
+        node.set(row=original)
+        node.pop("search_matches", "search_error")
+
+
 def check_page(page, nodes, hub):
     a, b, vega = nodes
     page.wait_for_function(('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]'))
@@ -438,6 +521,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="sessiondock-hub-browser-") as temp:
             hub = Hub(hub_binary, Path(temp), nodes)
+            seed_search_moves(hub.root)
             # Exercise the Hub's default web/ path unless testing a separate artifact.
             if Path(hub.env["SESSIONDOCK_WEB_DIR"]).resolve() == (REPO / "web").resolve():
                 hub.env.pop("SESSIONDOCK_WEB_DIR")
@@ -449,6 +533,7 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    check_moved_search(browser, hub, nodes[0])
                     check_directory_view(browser, hub)
                     check_trash_order(browser, hub, nodes)
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")

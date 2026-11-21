@@ -25,6 +25,7 @@ use tokio::sync::{Semaphore, mpsc};
 use super::{
     client::Client,
     namespace::{self, NamespaceError, truthy},
+    nest::relocate_payload,
     registry::{
         Fetched, MergedSessions, Node, Registry, SearchEvent, SessionsAggLookup, SessionsSlotKey,
     },
@@ -320,7 +321,7 @@ pub async fn sessions(
             }
             SessionsAggLookup::Miss => {
                 for answer in &mut answers {
-                    registry.relocate_nesting_with_records(
+                    Registry::relocate_nesting_with_records(
                         &mut answer.data,
                         &answer.node.id,
                         move_records.as_deref(),
@@ -361,7 +362,7 @@ pub async fn sessions(
     }
 
     for answer in &mut answers {
-        registry.relocate_nesting_with_records(
+        Registry::relocate_nesting_with_records(
             &mut answer.data,
             &answer.node.id,
             move_records.as_deref(),
@@ -456,9 +457,14 @@ pub async fn search(
     query: &Params,
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
+    let (_, move_records) = registry.nesting_snapshot();
     let mut answers = gather(registry, client, nodes, "/api/search", &upstream(query)).await;
     for answer in &mut answers {
-        registry.relocate_nesting_cow(&mut answer.data, &answer.node.id);
+        Registry::relocate_nesting_with_records(
+            &mut answer.data,
+            &answer.node.id,
+            move_records.as_deref(),
+        );
     }
     let nodes = registry.public();
     client
@@ -712,6 +718,8 @@ pub fn search_stream(
     query: &Params,
 ) -> Result<impl Stream<Item = String> + Send + 'static, AggregateError> {
     let nodes = selected(&registry, query)?;
+    // All events in this search describe nesting at the same point in time.
+    let (_, move_records) = registry.nesting_snapshot();
     let upstream: Arc<Vec<(String, String)>> = Arc::new(upstream(query));
     Ok(async_stream::stream! {
         let (tx, mut rx) = mpsc::channel::<(String, Event)>(64);
@@ -754,9 +762,14 @@ pub fn search_stream(
                     yield progress_line(&scans);
                 }
                 Event::Matches(rows) => {
-                    yield line(&json!({"type": "matches", "results": rows}));
+                    let mut results = Value::Array(rows);
+                    if let Some(records) = move_records.as_deref() {
+                        relocate_payload(&mut results, &nid, records);
+                    }
+                    yield line(&json!({"type": "matches", "results": results}));
                 }
-                Event::Result(Fetched { data, failure }) => {
+                Event::Result(Fetched { mut data, failure }) => {
+                    Registry::relocate_nesting_with_records(&mut data, &nid, move_records.as_deref());
                     let node = scan.node.clone();
                     if failure.is_some() {
                         scan.state = if registry.offline(&nid) { "offline" } else { "error" };

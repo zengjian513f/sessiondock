@@ -1485,13 +1485,7 @@ impl Registry {
     /// Copy-on-write nesting relocation: inspects `payload` first and only
     /// clones the underlying `Value` tree via `Arc::make_mut` when at least
     /// one row on `node` actually requires relocation mutation.
-    pub(crate) fn relocate_nesting_cow(&self, payload: &mut Arc<Value>, node: &str) {
-        let (_, records) = self.nesting_snapshot();
-        self.relocate_nesting_with_records(payload, node, records.as_deref());
-    }
-
     pub(crate) fn relocate_nesting_with_records(
-        &self,
         payload: &mut Arc<Value>,
         node: &str,
         records: Option<&[crate::session_links::Record]>,
@@ -1500,7 +1494,7 @@ impl Registry {
             return;
         };
         if needs_nesting_relocation(payload, node, records) {
-            self.relocate_nesting(Arc::make_mut(payload), node);
+            super::nest::relocate_payload(Arc::make_mut(payload), node, records);
         }
     }
 

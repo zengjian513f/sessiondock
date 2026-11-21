@@ -49,7 +49,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-selected-move-') as temporary, sync_playwright() as pw, ExitStack() as stack:
         root = Path(temporary)
         source = corpus_at(root/'source')
-        third = corpus_at(root/'third', 1)
+        third = corpus_at(root/'third', 3)
         nodes = [SimpleNamespace(name=name, nid=letter*32, port=free_port(), token=TOKEN)
                  for name, letter in (('源机器', 'a'), ('目标机器', 'b'), ('第三节点', 'c'))]
         for corpus, node in ((source, nodes[0]), (third, nodes[2])):
@@ -60,8 +60,13 @@ def main():
             source.uid('2'): {'nest_parent': {'source': 'codex', 'sid': ident(1)}, 'nest_initialized': True},
             source.uid('3'): {'nest_parent': {'source': 'codex', 'sid': ident(2)}, 'nest_initialized': True}}}))
         (third.root/'state/session-metadata.json').write_text(json.dumps({'schema_version': 1, 'revision': 1,
-            'sessions': {third.uid('1'): {'nest_parent': {'source': 'codex', 'sid': ident(1), 'node_id': nodes[0].nid},
-                                        'nest_initialized': True}}}))
+            'sessions': {
+                third.uid('1'): {'nest_parent': {'source': 'codex', 'sid': ident(1), 'node_id': nodes[0].nid},
+                                 'nest_initialized': True},
+                third.uid('2'): {'nest_parent': {'source': 'codex', 'sid': ident(1)}, 'nest_initialized': True},
+                third.uid('3'): {'nest_parent': {'source': 'codex', 'sid': ident(2), 'node_id': nodes[1].nid},
+                                 'nest_initialized': True},
+            }}))
         remote = Peer(args.peer, root, source,
                       {kind: str(source.root/kind) for kind in ('claude', 'codex', 'grok')}, nodes[1], args.binary)
         stack.callback(remote.close)
@@ -103,6 +108,9 @@ def main():
             row = page.locator(f'#side .item[data-uid="{uid}"]')
             if not row.is_visible():
                 page.locator('#nest-flat').click()
+            # The sidebar closes its context menu when a pending scroll fires.
+            row.scroll_into_view_if_needed()
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
             row.click(button='right')
             page.locator('#item-menu [data-act="clone"]').click()
             dialog = page.locator('#clone-group-dialog')
@@ -112,16 +120,33 @@ def main():
         def checkbox(dialog, uid):
             return dialog.locator(f'.transfer-tree input[data-uid="{uid}"]')
 
+        def read_tree(uid):
+            with page.expect_response(lambda r: r.url.endswith('/api/session/transfer/tree')) as response:
+                dialog = choose(uid)
+            assert response.value.ok, response.value.text()
+            return dialog, response.value.json()['sessions']
+
+        third_child = scoped(nodes[2].nid, third.uid('1'))
+        third_grandchild = scoped(nodes[2].nid, third.uid('2'))
+        orphan = scoped(nodes[2].nid, third.uid('3'))
+        inventory = page.request.get(f'http://127.0.0.1:{hub.port}/api/sessions?force=1').json()['sessions']
+        remote_order = [row['uid'] for row in inventory if row['uid'] in (third_child, third_grandchild)]
+
         # Inspect the full tree in both responsive layouts, with default selections,
         # disabled unsupported/other-node members and linked native dependencies.
         for width, theme in ((1280, 'light'), (390, 'dark')):
             page.set_viewport_size({'width': width, 'height': 900})
             page.emulate_media(color_scheme=theme)
-            dialog = choose(selected)
+            dialog, tree = read_tree(selected)
+            assert len(remote_order) == 2 and [row['uid'] for row in tree[-2:]] == remote_order, tree
+            parents = {row['uid']: row.get('parent_uid') for row in tree}
+            assert parents[third_child] == selected and parents[third_grandchild] == third_child, parents
+            assert orphan not in parents, parents
             for number in ('1', '2', '3', '4', '5'):
                 expect(checkbox(dialog, scoped(nodes[0].nid, source.uid(number)))).to_be_checked()
             expect(checkbox(dialog, scoped(nodes[0].nid, unsupported))).to_be_disabled()
-            expect(checkbox(dialog, scoped(nodes[2].nid, third.uid('1')))).to_be_disabled()
+            expect(checkbox(dialog, third_child)).to_be_disabled()
+            expect(checkbox(dialog, third_grandchild)).to_be_disabled()
             checkbox(dialog, scoped(nodes[0].nid, source.uid('2'))).uncheck()
             expect(checkbox(dialog, scoped(nodes[0].nid, source.uid('4')))).not_to_be_checked()
             expect(checkbox(dialog, scoped(nodes[0].nid, source.uid('3')))).to_be_checked()
@@ -137,6 +162,15 @@ def main():
 
         page.set_viewport_size({'width': 1280, 'height': 900})
         page.emulate_media(color_scheme='light')
+
+        # Open from the remote leaf to verify the same display edges work in
+        # the other direction, even with matching SIDs on different nodes.
+        dialog, tree = read_tree(third_grandchild)
+        parents = {row['uid']: row.get('parent_uid') for row in tree}
+        assert parents[third_grandchild] == third_child and parents[third_child] == selected, parents
+        assert parents[scoped(nodes[0].nid, source.uid('2'))] == selected and orphan not in parents, parents
+        expect(checkbox(dialog, selected)).to_be_disabled()
+        dialog.locator('.clone-cancel').click()
 
         def move(anchor, owner, selected_uid, destination, *, stale=False, lose_reply=False):
             dialog = choose(anchor)

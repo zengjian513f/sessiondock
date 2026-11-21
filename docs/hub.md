@@ -269,6 +269,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `{unchanged:true, sig, nodes, errors}`，否则附 `sig`、`built_at`。sig 只和本实现
   自己产生的值比较（切换时浏览器多刷一次整表）。
 - `search(registry, client, query)`：`progress` ≠ `1` 的 JSON 版，形状同上但无 sig。
+  两种搜索在请求开始时各取一次已完成迁移记录的快照，并用它解析整次搜索的附属关系。
 - `live`：`uids/tmux_uids` 只拼接答复成功的机器；`started_at` 合并。
 - `GET /api/events`：由 `ui_events` 能力声明的轻量 SSE。连接和重连先发
   `change` 基线通知；随后只发语义变化的 `live/term/sessions` 标志与
@@ -317,12 +318,13 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   "preparing"}`，已知离线的 `total:0,state:"offline"`），然后每台机器一个任务
   `fetch`（`Semaphore(16)`），进度/命中经 `mpsc(64)` 汇总：节点 `progress` →
   该机 `{done,total,state:"scanning"}` 并重发汇总 `progress{done=Σdone,
-  total=Σ(total or 0), total_known=all(total≠null), nodes}`；节点 `matches` → 原样
+  total=Σ(total or 0), total_known=all(total≠null), nodes}`；节点 `matches` 解析附属关系后发
   `matches{results}`；该机结束 → 失败时 `state = offline|error`（离线且 total 为
   null 补 0），成功时 `total` 取已知或 `total_pool`，`state = limited|done`，`done =
   scanned`（缺则截断时保持、否则 = total），重发 `progress`，`data.results` 真值再发
-  一条 `matches`；1 s 无事件发 `{"type":"heartbeat"}`；最后 `result{data}` = JSON
-  `search` 体。选择错误在流建立前返回（H4 仍可答 400）。流被丢弃（浏览器断开）即
+  一条 `matches`；该事件与最终 `result{data}` 共用已解析的节点结果。1 s 无事件发
+  `{"type":"heartbeat"}`。最终结果使用 JSON `search` 体。选择错误在流建立前返回（H4
+  仍可答 400）。流被丢弃（浏览器断开）即
   中止所有节点任务。
 - `delete(registry, client, body)`：`uids` 先 `split` 分组（首次出现顺序），空 →
   `没有选中任何会话`；`force` 保持布尔值并逐机顺序转发
