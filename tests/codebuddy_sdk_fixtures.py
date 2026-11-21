@@ -238,11 +238,13 @@ def fake_cli():
                 send({"type": "result", "subtype": "success", "is_error": False, "uuid": "replay-result-" + row["id"],
                       "result": text, "usage": {"input_tokens": 1, "output_tokens": 1}, "modelUsage": {}, "total_cost_usd": 0})
 
-    def stream_text(content, message_id):
+    def stream_text(content, message_id, hold=False):
         send({"type": "stream_event", "event": {"type": "message_start", "message": {"id": message_id, "model": state["model"]}}})
         send({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
         for part in (content[:8], content[8:]):
             send({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": part}}})
+        if hold:
+            interrupted.wait(30)
         send({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
         frame_id = record({"type": "message", "role": "assistant", "status": "completed",
             "content": [{"type": "output_text", "text": content, "providerData": {"annotations": []}}],
@@ -315,7 +317,7 @@ def fake_cli():
                       "uuid": str(uuid.uuid4()), "errors": ["synthetic native execution failure"],
                       "modelUsage": {}, "total_cost_usd": 0})
                 continue
-            stream_text("streaming CodeBuddy progress", message_id)
+            stream_text("streaming CodeBuddy progress", message_id, hold=content == 'progress-hold')
             if content == "run subagents":
                 subagent_frames()
             elif content == "recover offline output":

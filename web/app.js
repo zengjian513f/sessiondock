@@ -5870,7 +5870,7 @@ function markMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement.closest('.msg');
-      return n.parentElement.closest('mark, .fold-preview, .thinking-preview, .katex')
+      return n.parentElement.closest('mark, .fold-preview, .thinking-disclosure, .katex')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -5908,7 +5908,7 @@ async function markRegexMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .thinking-preview, .katex')
+      return n.parentElement?.closest('mark, .fold-preview, .thinking-disclosure, .katex')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -10102,10 +10102,8 @@ function messageBodyNode(m) {
   }
   // 命中的消息展开且不截断, 保证高亮可见; 但设上限, 否则搜 "a" 会把整个会话全量展开
   const collapsible = !['assistant', 'assistant·subagent'].includes(m.role);
-  const thinkingTitle = m.role === 'thinking'
-    ? m.native_type === 'PLANNER_RESPONSE' ? '思考记录'
-      : S.sel?.startsWith('codex:') ? '思考摘要' : ''
-    : '';
+  const thinkingTitle = m.role === 'thinking' && m.text.trim() && ![m.id, m.native_id].includes('plan-1')
+    ? (S.sel?.startsWith('codex:') ? '思考摘要' : '思考记录') : '';
   let long = Boolean(thinkingTitle) || (collapsible && m.text.length > CLIP);
   const found = SEARCH_ROLES.has(m.role) && hasTerm(m.text);
   const hit = found && S.autoOpen < AUTO_OPEN_MAX;

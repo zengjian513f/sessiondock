@@ -811,6 +811,11 @@ impl Bridge {
                 || inbox["data"].as_array().is_some_and(|v| !v.is_empty())
                 || !state.requests.is_empty()
         );
+        state.raw["progress"] = if active["data"].get(&session.sid).is_some() {
+            json!({})
+        } else {
+            Value::Null
+        };
         let latest = state
             .records
             .values()

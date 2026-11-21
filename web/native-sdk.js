@@ -117,6 +117,50 @@ function nativeSdkSnapshotDelta(before, change) {
   throw Error('SDK delta baseline');
 }
 
+function nativeSdkTurnProgress(raw, source) {
+  const {progress, items} = raw;
+  if (!progress || !Array.isArray(items)) return null;
+  const start = items.findLastIndex(item =>
+    (item.role === 'user' || (source === 'grok' && item.tool_name === 'shell'))
+    && (progress.request_id ? item.request_id === progress.request_id
+      : !item.steered && item.delivery !== 'steer' && item.delivery_state !== 'queued'
+        && item.status !== 'queued' && !String(item.id).startsWith('steer:')));
+  if (start < 0) return null;
+  const prompt = items[start];
+  const body = items.slice(start + 1).filter(item => !item.parent_tool_use_id
+    && (!progress.request_id || !item.request_id || item.request_id === progress.request_id));
+  const isThought = item => item.role === 'thinking' && item.id !== 'plan-1';
+  const isReply = item => item.role === 'assistant' && item.phase !== 'commentary'
+    && item.native_type !== 'error_message';
+  const isTool = item => item.role === 'tool' && (['running', 'in_progress', 'inProgress', 'ACTIVE'].includes(item.status)
+    || (!item.status && !item.result && (['tool_call', 'tool_use'].includes(item.native_type)
+      || (item.native_block?.type === 'tool_use' && !item.sdk_streaming))));
+  const tools = body.filter(isTool).map(item => item.name || item.tool_name || '工具');
+  const tail = (progress.stream_item && body.find(item => item.id === progress.stream_item))
+    || body.findLast(item => isThought(item) || isReply(item) || ['tool', 'tool_result'].includes(item.role));
+  const streaming = tail && (tail.sdk_streaming === true || tail.id === progress.stream_item
+    || (source === 'grok' && Array.isArray(tail.native_content))
+    || (source === 'agy' && tail.status === 'ACTIVE'));
+  const count = item => {
+    const text = item.text ?? item.content;
+    return typeof text === 'string' && text.trim() ? SdkUI.characterCount(text) : 0;
+  };
+  const label = streaming && isReply(tail) && count(tail) ? '生成回复'
+    : tools.length ? '执行工具' : streaming && isThought(tail) ? '思考中' : '处理中';
+  let replies = 0, summaries = 0;
+  for (const item of body) {
+    if (isReply(item)) replies += count(item);
+    if (isThought(item)) summaries += count(item);
+  }
+  // Agy may display the bridge's queued user echo before it is dispatched.
+  // OpenCode's user record can likewise predate consumption by its inbox.
+  const firstOutput = body.find(item => isThought(item) || isReply(item) || isTool(item));
+  const begin = source === 'agy' ? prompt.ts || firstOutput?.received_at
+    : source === 'opencode' ? firstOutput?.ts : prompt.ts || prompt.received_at;
+  return {label, tools, replies, summaries, started: Date.parse(begin), summaryName: '思考记录',
+    note: raw.runtime_error ? `运行实例：${raw.runtime_error}` : ''};
+}
+
 const NativeSdkView = {
   ...SdkUI.methods,
   sources: NATIVE_SDK_SOURCES,
@@ -808,6 +852,13 @@ const NativeSdkView = {
       : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
       : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
     clearTimeout(this.timerStatusRefresh);
+    if (kind === 'working' && this.connected && !raw.cancel_requested) {
+      const progress = nativeSdkTurnProgress(raw, this.uid.split(':', 1)[0]);
+      if (progress) {
+        this.setTurnProgress(progress);
+        return;
+      }
+    }
     if (kind === 'scheduled' && Number.isFinite(timers[0].due)) {
       const generation = this.generation;
       const wait = Math.min(Math.max(1, timers[0].due - Date.now()), 0x7fffffff);

@@ -109,6 +109,7 @@ pub(super) struct LiveState {
     next_item_id: u64,
     pub(super) current_assistant_id: Option<String>,
     pub(super) current_thinking_id: Option<String>,
+    progress_stream_item: Option<String>,
     tool_item_ids: HashMap<String, String>,
     message_item_ids: HashMap<String, String>,
     replay_ids: HashSet<String>,
@@ -190,6 +191,7 @@ impl LiveState {
             next_item_id: 1,
             current_assistant_id: None,
             current_thinking_id: None,
+            progress_stream_item: None,
             tool_item_ids: HashMap::new(),
             message_item_ids: HashMap::new(),
             replay_ids: HashSet::new(),
@@ -257,6 +259,7 @@ impl LiveState {
                 }
                 replay.current_assistant_id = None;
                 replay.current_thinking_id = None;
+                replay.progress_stream_item = None;
                 replay.running = false;
                 prompt_index += 1;
                 started = false;
@@ -275,6 +278,7 @@ impl LiveState {
             self.next_item_id = replay.next_item_id;
             self.current_assistant_id = replay.current_assistant_id;
             self.current_thinking_id = replay.current_thinking_id;
+            self.progress_stream_item = replay.progress_stream_item;
             self.tool_item_ids = replay.tool_item_ids;
             self.message_item_ids = replay.message_item_ids;
             self.replay_ids = replay.replay_ids;
@@ -654,6 +658,7 @@ impl LiveState {
         self.push_item(user_item);
         self.current_assistant_id = None;
         self.current_thinking_id = None;
+        self.progress_stream_item = None;
         self.tool_item_ids.clear();
         self.message_item_ids.clear();
         self.last_turn = Some(json!({ "status": "in_progress" }));
@@ -1462,12 +1467,16 @@ impl LiveState {
             && let Some(item) = self.item_mut(&existing_id)
         {
             append_text(item, chunk);
+            if role != "user" {
+                self.progress_stream_item = Some(existing_id);
+            }
             return;
         }
 
         if role == "user" {
             self.current_assistant_id = None;
             self.current_thinking_id = None;
+            self.progress_stream_item = None;
             if message_id.is_none() && !self.items.is_empty() {
                 self.history_dirty.insert(self.items.len() - 1);
                 self.projection_dirty = true;
@@ -1541,6 +1550,7 @@ impl LiveState {
 
         if let Some(item) = self.item_mut(&target_id) {
             append_text(item, chunk);
+            self.progress_stream_item = Some(target_id);
         }
     }
 
@@ -1575,6 +1585,7 @@ impl LiveState {
         if is_new {
             self.current_assistant_id = None;
             self.current_thinking_id = None;
+            self.progress_stream_item = None;
         }
 
         if let Some(entry) = self.item_mut(&item_id) {
@@ -1752,6 +1763,7 @@ impl LiveState {
             "session_id": self.session_id,
             "cwd": cwd,
             "running": self.running,
+            "progress":self.running.then(||json!({"stream_item":self.progress_stream_item})),
             "loading": self.loading,
             "items": if wire { json!(self.windowed_items()) } else if self.projection_dirty { json!(self.items) } else { Value::Null },
             // The projection needs each subtask's full `state.items` to write the

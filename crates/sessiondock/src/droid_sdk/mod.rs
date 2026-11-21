@@ -302,6 +302,7 @@ impl Session {
             "steers":live.accepted.values().filter(|r|r["operation"]=="steer" && r["consumed"]!=true).collect::<Vec<_>>(),
             "activity":live.activity,"background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
+            "progress":live.turns.front().map(|id|json!({"request_id":id})),
             "capabilities":capabilities()}}),
         )
     }

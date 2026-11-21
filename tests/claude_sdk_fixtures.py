@@ -290,11 +290,13 @@ def fake_cli():
         record("assistant", frame_id, message)
         send({"type": "assistant", "uuid": frame_id, "message": message})
 
-    def stream_text(content, message_id):
+    def stream_text(content, message_id, hold=False):
         send({"type": "stream_event", "event": {"type": "message_start", "message": {"id": message_id, "model": state["model"]}}})
         send({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
         for part in (content[:8], content[8:]):
             send({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": part}}})
+        if hold:
+            interrupted.wait(30)
         send({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
         assistant([{"type": "text", "text": content}], message_id)
 
@@ -380,7 +382,7 @@ def fake_cli():
                 send({'type':'system','subtype':'background_tasks_changed','tasks':[{'task_id':'synthetic-background','task_type':'local_bash','description':'Synthetic native background job'}]})
             if content == 'finish-background':
                 send({'type':'system','subtype':'background_tasks_changed','tasks':[]})
-            stream_text("streaming Claude progress", message_id)
+            stream_text("streaming Claude progress", message_id, hold=content == 'progress-hold')
             if content == 'presentation-heavy':
                 for index in range(160):
                     assistant([{"type": "thinking", "thinking": f"Presentation thinking {index}\n" * 20}],

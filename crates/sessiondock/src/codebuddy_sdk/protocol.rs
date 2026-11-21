@@ -1,7 +1,7 @@
 //! Projection of observed native messages, not persisted history or an oracle.
 use super::*;
 
-use crate::sdk_common::projection::{self, block_row, text};
+use crate::sdk_common::projection::{self, block_row, streaming_block_row, text};
 
 fn upsert(live: &mut Live, mut row: Value) {
     live.message_time.stamp(&mut row);
@@ -316,7 +316,7 @@ pub(super) fn observe_at(
                 "content_block_start" => {
                     if let Some(index) = event["index"].as_u64() {
                         let block = event["content_block"].clone();
-                        let row = block_row(&live.streaming_message, index, &block, None);
+                        let row = streaming_block_row(&live.streaming_message, index, &block);
                         live.streaming_blocks.insert(index, block);
                         upsert(&mut live, row);
                     }
@@ -341,7 +341,7 @@ pub(super) fn observe_at(
                                 } else {
                                     block[field] = json!(part);
                                 }
-                                let mut row = block_row(&message, index, block, None);
+                                let mut row = streaming_block_row(&message, index, block);
                                 if field == "partial_json" {
                                     let next = block[field].clone();
                                     row["text"] = next.clone();

@@ -127,6 +127,7 @@ impl Live {
             item
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
+            "progress":self.prompt_started.then(||json!({})),
             "last_turn":self.last_turn,"runtime_error":self.runtime_error,"retry":self.retry,"compact":self.compact,
             "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
             "model":self.models["currentModelId"],"effort":self.effort,

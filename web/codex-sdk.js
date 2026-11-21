@@ -36,10 +36,6 @@ const CodexSdkView = {
     this.limitsRecordedAt=null;this.limitsAccountAt=null;
     SdkUI.mount(this, {name: 'Codex', readOnly, historyReady,
       settings: (view, values) => CodexSdkControls.settings(view, values)});
-    this.turnMetric = el('span', 'sdk-turn-metric');
-    this.turnMetric.hidden = true;
-    this.turnMetric.setAttribute('aria-hidden', 'true');
-    this.notice.append(this.turnMetric);
     pane.querySelector('.sdk-gauges').innerHTML = `
       <span class="sdk-gauge" data-gauge="context" hidden></span>
       <span class="sdk-gauge" data-gauge="5h" hidden></span>
@@ -101,9 +97,6 @@ const CodexSdkView = {
     clearTimeout(this.openRetryTimer);
     clearTimeout(this.reconnectTimer);
     this.cancelStreamPaint();
-    clearTimeout(this.turnProgressTimer);
-    this.turnProgressTimer = 0;
-    this.turnMetric = null;
     this.openRead?.abort();
     this.openRead = null; this.openFailed = false; this.openRetryTimer = 0; this.openRetryDelay = 1000;
     clearTimeout(this.limitsRetryTimer);
@@ -890,7 +883,8 @@ const CodexSdkView = {
     if (mountedChanged) ConversationUI.refreshToolTails(this.box);
     updateMatchNav();
     if (this.streamStatusDirty) this.paintStatus();
-    else if (this.notice.dataset.turnProgress) this.paintTurnProgress();
+    else if (this.notice.dataset.turnProgress && this.turn)
+      this.setTurnProgress(sdkTurnProgress(this.turn, this.items.values()));
     this.streamStatusDirty = false;
     if (stick) this.scrollBottom();
   },
@@ -935,54 +929,6 @@ const CodexSdkView = {
     const card = requestCard(request, result => this.answer(request, result, card));
     card.dataset.sdkRequest = request.key;
     if (old) old.replaceWith(card); else this.live.append(card);
-  },
-
-  setNotice(...args) {
-    clearTimeout(this.turnProgressTimer);
-    this.turnProgressTimer = 0;
-    if (this.turnMetric) {
-      this.turnMetric.hidden = true;
-      this.turnMetric.textContent = '';
-    }
-    if (this.notice) delete this.notice.dataset.turnProgress;
-    SdkUI.methods.setNotice.call(this, ...args);
-  },
-
-  paintTurnProgress() {
-    if (!this.connected || !this.turn || !this.turnMetric) return;
-    const {label, tools, replies, summaries} = sdkTurnProgress(this.turn, this.items.values());
-    if (this.notice.dataset.turnProgress !== label) {
-      this.setNotice(label, 'working');
-      this.notice.dataset.turnProgress = label;
-    }
-    const started = Date.parse(this.turn.ts || this.turn.received_at);
-    const seconds = Math.floor((Date.now() - started) / 1000);
-    const elapsed = seconds >= 0 ? formatDuration(seconds * 1000) : '';
-    const count = value => value.toLocaleString('zh-CN');
-    const detail = [label];
-    if (elapsed) detail.push(`本轮已用时 ${elapsed}`);
-    if (label === '思考中') detail.push(summaries ? `本轮已收到 ${count(summaries)} 字符摘要` : '暂无可见摘要');
-    if (label === '生成回复') detail.push(`本轮已收到 ${count(replies)} 字符回复`);
-    if (tools.length) detail.push(`正在运行 ${count(tools.length)} 项工具 · ${tools.join('、')}`);
-    const metric = label === '生成回复' ? `${count(replies)} 字符`
-      : label === '执行工具' ? `${count(tools.length)} 项`
-      : label === '思考中' ? elapsed : '';
-    this.turnMetric.hidden = !metric;
-    const inline = metric ? ` · ${metric}` : '';
-    if (this.turnMetric.textContent !== inline) this.turnMetric.textContent = inline;
-    const text = detail.join('\n');
-    const menu = this.pane.querySelector('#sdk-status-menu');
-    if (menu.textContent !== text) {
-      menu.textContent = text;
-      this.notice.title = text;
-      this.updateStatusDisclosure();
-    }
-    if (!this.turnProgressTimer && Number.isFinite(started)) {
-      this.turnProgressTimer = setTimeout(() => {
-        this.turnProgressTimer = 0;
-        this.paintTurnProgress();
-      }, 1000);
-    }
   },
 
   paintStatus() {
@@ -1034,7 +980,7 @@ const CodexSdkView = {
       else if (status.activeFlags?.includes('waitingOnUserInput')) { parts.push('待回答'); kind = 'waiting'; }
       else if (compact?.status === 'inProgress') { parts.push('压缩中'); kind = 'maintenance'; }
       else if (active) {
-        if (this.connected && this.turnMetric) { this.paintTurnProgress(); return; }
+        if (this.connected) { this.setTurnProgress(sdkTurnProgress(this.turn, this.items.values())); return; }
         parts.push('处理中'); kind = 'working';
       }
       else if (interrupted) {
@@ -1261,23 +1207,17 @@ function sdkTurnProgress(turn, items) {
     if (item.type === 'reasoning') {
       thinking ||= active;
       for (const part of item.summary || []) {
-        if (part.trim()) summaries += sdkCharacterCount(part);
+        if (part?.trim()) summaries += SdkUI.characterCount(part);
       }
     } else if (item.type === 'agentMessage' && item.phase !== 'commentary' && item.text?.trim()) {
       replying ||= active;
-      replies += sdkCharacterCount(item.text);
+      replies += SdkUI.characterCount(item.text);
     } else if (active && Object.hasOwn(toolLabels, item.type)) {
       tools.push(item.tool || toolLabels[item.type]);
     }
   }
   const label = replying ? '生成回复' : tools.length ? '执行工具' : thinking ? '思考中' : '处理中';
-  return {label, tools, replies, summaries};
-}
-
-function sdkCharacterCount(text) {
-  let count = 0;
-  for (const character of text || '') count++;
-  return count;
+  return {label, tools, replies, summaries, started: Date.parse(turn.ts || turn.received_at)};
 }
 
 /** app-server ThreadItem → 消息模式的消息对象，由同一个 msgNode 渲染。 */

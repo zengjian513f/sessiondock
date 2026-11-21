@@ -35,6 +35,8 @@ pub(super) fn messages(record: &Value) -> Vec<Value> {
                             },
                             part["text"].clone(),
                             json!({"phase":if record["finish"]=="stop" && Some(index)==last_text {"final"} else {"progress"},
+                                "sdk_streaming":record["time"]["completed"].is_null() && record["finish"].is_null()
+                                    && part["time"]["end"].is_null(),
                                 "interrupted":record["error"]["type"]=="aborted"}),
                         ),
                         "tool" => {

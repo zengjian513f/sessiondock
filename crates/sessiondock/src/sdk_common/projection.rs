@@ -54,12 +54,12 @@ pub(crate) fn block_row(
         "text" => (
             format!("assistant:{message}:{index}"),
             "assistant",
-            text(&block["text"]),
+            block["text"].as_str().unwrap_or_default().to_owned(),
         ),
         "thinking" => (
             format!("thinking:{message}:{index}"),
             "thinking",
-            text(&block["thinking"]),
+            block["thinking"].as_str().unwrap_or_default().to_owned(),
         ),
         "tool_use" => (
             format!("tool:{}", block["id"].as_str().unwrap_or(message)),
@@ -79,5 +79,11 @@ pub(crate) fn block_row(
         row["name"] = block["name"].clone();
         row["input"] = block["input"].clone();
     }
+    row
+}
+
+pub(crate) fn streaming_block_row(message: &str, index: u64, block: &Value) -> Value {
+    let mut row = block_row(message, index, block, None);
+    row["sdk_streaming"] = json!(true);
     row
 }

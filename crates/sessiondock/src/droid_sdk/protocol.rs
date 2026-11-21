@@ -258,7 +258,7 @@ pub(super) fn observe_at(
                 let content = old + n["textDelta"].as_str().unwrap_or("");
                 upsert(
                     &mut live,
-                    json!({"id":id,"native_id":n["messageId"],"role":if thinking {"thinking"} else {"assistant"},"text":content,"content":content,"phase":"progress"}),
+                    json!({"id":id,"native_id":n["messageId"],"role":if thinking {"thinking"} else {"assistant"},"text":content,"content":content,"phase":"progress","sdk_streaming":true}),
                 );
             }
             "settings_updated" => settings(&mut live, &n["settings"]),

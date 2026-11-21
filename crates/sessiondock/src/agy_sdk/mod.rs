@@ -846,6 +846,7 @@ impl Live {
             })
             .collect();
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
+            "progress":data.active.as_ref().map(|id|json!({"request_id":id})),
             "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
             "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling,"cancel_error":data.cancel_error,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
@@ -1611,19 +1612,25 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) -> 
     }
     let kind = step["step_type"].as_str().unwrap_or("unknown");
     let native_id = format!("agy:{}:step:{}", live.sid, step["step_index"]);
-    if let Some(thinking) = step["transcript"]["thinking"]
+    let thinking_id = format!("{native_id}:thinking");
+    let thinking = step["transcript"]["thinking"]
         .as_str()
-        .filter(|text| !text.is_empty())
-    {
-        let id = format!("{native_id}:thinking");
-        if !data.items.iter().any(|item| item["id"] == id) {
-            let mut item = json!({"id":id,"role":"thinking","content":thinking,"request_id":turn.id,"native_type":"PLANNER_RESPONSE"});
-            time.stamp(&mut item);
-            if let Some(pos) = data.items.iter().position(|item| item["id"] == native_id) {
-                data.items.insert(pos, item);
-            } else {
-                insert_before_pending_users(&mut data.items, item);
-            }
+        .filter(|text| !text.trim().is_empty());
+    if let Some(item) = data.items.iter_mut().find(|item| item["id"] == thinking_id) {
+        if let Some(state) = step["state"].as_str() {
+            item["sdk_streaming"] = json!(state == "ACTIVE");
+        }
+        if let Some(thinking) = thinking {
+            item["content"] = json!(thinking);
+        }
+    } else if let Some(thinking) = thinking {
+        let mut item = json!({"id":thinking_id,"role":"thinking","content":thinking,"request_id":turn.id,
+            "native_type":"PLANNER_RESPONSE","sdk_streaming":step["state"]=="ACTIVE"});
+        time.stamp(&mut item);
+        if let Some(pos) = data.items.iter().position(|item| item["id"] == native_id) {
+            data.items.insert(pos, item);
+        } else {
+            insert_before_pending_users(&mut data.items, item);
         }
     }
     // A completed step notification need not carry any visible body. Its

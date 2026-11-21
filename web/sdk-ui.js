@@ -4,6 +4,11 @@
 // settings and protocol actions; history uses the ordinary conversation cache.
 const SdkUI = {
   historyViews: new Map(),
+  characterCount(text) {
+    let count = 0;
+    for (const character of text) count++;
+    return count;
+  },
   retainHistory(view) {
     if (!view.history?._sdkPlan) return;
     const key = viewKey(view.uid, view.agent), entry = cache.get(key);
@@ -77,7 +82,7 @@ const SdkUI = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '载入中'}</span></button>
+          <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '载入中'}</span><span class="sdk-turn-metric" aria-hidden="true" hidden></span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量"></div>
           <div class="sdk-options"><div class="sdk-pickers">
@@ -553,8 +558,60 @@ const SdkUI = {
     updateStatusDisclosure() {
       if (this.notice) ConversationUI.updateStatusDisclosure(this.notice, this.pane.querySelector('#sdk-status-menu'));
     },
+    clearTurnProgress() {
+      clearTimeout(this.turnProgressTimer);
+      this.turnProgressTimer = 0;
+      this.turnProgress = null;
+      if (!this.notice) return;
+      delete this.notice.dataset.turnProgress;
+      const metric = this.notice.querySelector('.sdk-turn-metric');
+      metric.hidden = true;
+      if (metric.textContent) metric.textContent = '';
+    },
+    setTurnProgress(progress) {
+      if (this.notice.dataset.turnProgress !== progress.label) {
+        this.setNotice(progress.label, 'working');
+        this.notice.dataset.turnProgress = progress.label;
+      }
+      this.turnProgress = progress;
+      this.paintTurnProgress();
+    },
+    paintTurnProgress() {
+      if (!this.connected || !this.turnProgress) return;
+      const {label, tools, replies, summaries, started, summaryName = '摘要', note} = this.turnProgress;
+      const seconds = Math.floor((Date.now() - started) / 1000);
+      const elapsed = seconds > 0 ? formatDuration(seconds * 1000) : seconds === 0 ? '0 秒' : '';
+      const count = value => value.toLocaleString('zh-CN');
+      const detail = [label];
+      if (elapsed) detail.push(`本轮已用时 ${elapsed}`);
+      if (label === '思考中') detail.push(summaries ? `本轮已收到 ${count(summaries)} 字符${summaryName}` : `暂无可见${summaryName}`);
+      if (label === '生成回复') detail.push(`本轮已收到 ${count(replies)} 字符回复`);
+      if (tools.length) detail.push(`正在运行 ${count(tools.length)} 项工具 · ${tools.join('、')}`);
+      if (note) detail.push(note);
+      const metric = label === '生成回复' ? `${count(replies)} 字符`
+        : label === '执行工具' ? `${count(tools.length)} 项`
+        : label === '思考中' ? elapsed : '';
+      const inline = metric ? ` · ${metric}` : '';
+      const holder = this.notice.querySelector('.sdk-turn-metric');
+      holder.hidden = !metric;
+      if (holder.textContent !== inline) holder.textContent = inline;
+      const text = detail.join('\n');
+      const menu = this.pane.querySelector('#sdk-status-menu');
+      if (menu.textContent !== text) {
+        menu.textContent = text;
+        this.notice.title = text;
+        this.updateStatusDisclosure();
+      }
+      if (!this.turnProgressTimer && Number.isFinite(started)) {
+        this.turnProgressTimer = setTimeout(() => {
+          this.turnProgressTimer = 0;
+          this.paintTurnProgress();
+        }, 1000);
+      }
+    },
     setNotice(text, kind = '', sticky = false, detail = null) {
       if (!this.notice) return;
+      this.clearTurnProgress();
       this.baseNotice = [text, kind, sticky, detail];
       if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
       this.notice.querySelector('[role=status]').textContent = ConversationUI.statusSummary(text, kind);
@@ -704,6 +761,7 @@ const SdkUI = {
 
     setConnected(connected) {
       this.connected = connected;
+      if (!connected) this.clearTurnProgress();
       if (this.pane) sdkSyncSettings(this);
       if (!this.uid || this.agent) return;
       paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(this.uid)}"]`));
