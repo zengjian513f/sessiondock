@@ -253,6 +253,64 @@ def restart_check(fixture, binary):
         browser.close()
 
 
+def startup_recovery_check(fixture, binary, screenshots):
+    from playwright.sync_api import sync_playwright, expect
+
+    checkpoint = fixture.root / "state/sdk-adapters/codebuddy" / (fixture.uid.encode().hex() + ".json")
+    detail = "codebuddy_sdk: native stream session_id differs from selected session"
+
+    def verify_previous_turn(page, filename):
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / filename), full_page=True)
+        status = page.locator(".native-sdk-pane .sdk-status")
+        expect(status).to_have_text("未完成")
+        status.click()
+        expect(page.locator("#sdk-status-menu")).to_contain_text("上一回合未正常结束")
+        page.keyboard.press("Escape")
+        raw = snapshot(page, fixture.uid)["raw"]
+        assert raw["error"] is None and raw["runtime_error"] is None, raw
+        assert raw["last_turn"] == {"status": "incomplete", "error": detail}, raw
+        assert len(user_prompts(fixture, "wrong SID at startup")) == 1
+        assert len(fixture.frames("spawn")) == 2
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        with fixture.server(binary, preserve_sdkhosts=True) as base:
+            page = browser.new_page(viewport={"width": 390, "height": 844}, color_scheme="light")
+            page.goto(base, wait_until="networkidle")
+            open_sdk(page, fixture, expect)
+            send(page, "wrong SID at startup")
+            wait_snapshot(page, fixture.uid, lambda raw: raw["error"] == detail)
+            deadline = time.monotonic() + 10
+            while json.loads(checkpoint.read_text())["host_key"] is not None:
+                assert time.monotonic() < deadline, "rejected native CLI did not exit"
+                time.sleep(0.05)
+            page.reload(wait_until="networkidle")
+            open_sdk(page, fixture, expect)
+            verify_previous_turn(page, "codebuddy-reopened-mobile-light.png")
+            page.close()
+
+        # Older builds persisted the previous error alongside a healthy replacement PID.
+        saved = json.loads(checkpoint.read_text())
+        assert saved["ready"] and saved["replaying"] and not saved["turns"], saved
+        saved.update(error=detail, error_kind="transport", last_turn=None)
+        checkpoint.write_text(json.dumps(saved))
+        with fixture.server(binary) as base:
+            page = browser.new_page(viewport={"width": 1280, "height": 900}, color_scheme="dark")
+            page.goto(base, wait_until="networkidle")
+            open_sdk(page, fixture, expect)
+            verify_previous_turn(page, "codebuddy-reattached-wide-dark.png")
+            send(page, "continue after restart")
+            expect(page.locator(".sdk-live")).to_contain_text("CodeBuddy synthetic final continue after restart")
+            raw = wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])["raw"]
+            assert raw["last_turn"]["status"] == "completed" and raw["error"] is None, raw
+            expect(page.locator(".native-sdk-pane .sdk-status")).to_have_text("就绪")
+            assert len(user_prompts(fixture, "continue after restart")) == 1
+            assert len(fixture.frames("spawn")) == 2
+        browser.close()
+
+
 def direct_check(fixture, binary):
     from playwright.sync_api import sync_playwright, expect
 
@@ -287,9 +345,11 @@ def main():
             browser_check(fixture, base, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-restart-") as temporary:
         restart_check(CodebuddyFixture(Path(temporary)), args.binary)
+    with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-startup-") as temporary:
+        startup_recovery_check(CodebuddyFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-direct-") as temporary:
         direct_check(CodebuddyFixture(Path(temporary)), args.binary)
-    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, subagent stream isolation, approval/question answers, create naming, unsupported controls, writer conflict, restart re-attach")
+    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, subagent stream isolation, approval/question answers, create naming, unsupported controls, writer conflict, startup error recovery, restart re-attach")
 
 
 if __name__ == "__main__":

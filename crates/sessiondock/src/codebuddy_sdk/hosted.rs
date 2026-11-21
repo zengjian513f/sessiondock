@@ -166,6 +166,7 @@ impl Bridge {
             let key = format!("codebuddy-{}", uuid()?);
             {
                 let mut live = lock(&session.live);
+                live.retire_transport_error();
                 live.host_key = Some(key.clone());
                 live.stdout_offset = 0;
                 live.ready = false;
@@ -173,8 +174,6 @@ impl Bridge {
                 live.state_observed = false;
                 live.native_running = false;
                 live.replaying = session.path.is_file() || session.fork_source.is_some();
-                // Reopening the channel must not erase the previous turn's
-                // failure. The next explicit turn clears its own error state.
                 live.background_tasks.clear();
                 live.streaming_blocks.clear();
                 live.control_requests.clear();
@@ -251,7 +250,7 @@ impl Bridge {
             session.clone(),
             sender,
             self.shutdown.clone(),
-            stop,
+            stop.clone(),
             done,
             caught_up,
             transport::diagnostic_secrets(&self.profile),
@@ -266,8 +265,24 @@ impl Bridge {
         }
         if resumed {
             // A completed startup handshake is never repeated on the same CLI.
-            if lock(&session.live).ready {
-                return Ok(());
+            {
+                let mut live = lock(&session.live);
+                if live.ready {
+                    // Older builds persisted a previous process's transport
+                    // error alongside an initialized replacement still in replay.
+                    if status.exit.is_none()
+                        && !stop.is_cancelled()
+                        && live.replaying
+                        && live.turns.is_empty()
+                        && !live.native_running
+                        && live.error_kind == Some("transport")
+                        && live.runtime_error.is_none()
+                    {
+                        live.retire_transport_error();
+                        live.save_checkpoint().map_err(error)?;
+                    }
+                    return Ok(());
+                }
             }
             let pending_initialize = lock(&session.live)
                 .control_requests
@@ -293,6 +308,24 @@ impl Bridge {
             }
         }
         self.initialize_session(session).await
+    }
+}
+
+impl Live {
+    fn retire_transport_error(&mut self) {
+        let runtime_error = self.runtime_error.take();
+        let error = if self.error_kind == Some("transport") {
+            self.error_kind = None;
+            self.error.take()
+        } else {
+            None
+        };
+        if self.last_turn.is_null()
+            && !self.accepted.is_empty()
+            && let Some(error) = error.or(runtime_error)
+        {
+            self.last_turn = json!({"status":"incomplete","error":error});
+        }
     }
 }
 

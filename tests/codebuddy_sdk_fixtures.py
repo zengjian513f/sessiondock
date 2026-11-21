@@ -282,6 +282,10 @@ def fake_cli():
             interrupted.clear()
             content = frame["message"]["content"]
             message_id = "msg-" + str(uuid.uuid4())
+            if content == "wrong SID at startup":
+                wrong_sid = str(uuid.uuid4())
+                send({**init_frame(state["model"]), "uuid": wrong_sid, "session_id": wrong_sid})
+                continue
             user_id = record({"type": "message", "role": "user", "content": [{"type": "input_text", "text": content}],
                               "providerData": {"agent": "cli"}})
             send(init_frame(state["model"]))
