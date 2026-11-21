@@ -151,7 +151,7 @@ def main():
                         if(!r.ok) throw Error(r.status); const v=await r.json();
                         return {count:v.connections.length, first:v.connections[0].opened_at,
                             last:v.connections.at(-1).session.sid, bindings:v.bindings.length};}''')
-                    assert full == dict(count=8 if args.agent_binary else COUNT, first=1, last='small-0', bindings=1), full
+                    assert full == dict(count=9 if args.agent_binary else COUNT, first=1, last='small-0', bindings=1), full
                     hwm = next(int(line.split()[1]) for line in Path(f'/proc/{process.pid}/status').read_text().splitlines()
                                if line.startswith('VmHWM:')) / 1024
                     print(json.dumps(dict(collector_bytes=size, projected_bytes=projected_size, cold_open_ms=times, live_reads_ms=live_times, peak_rss_mib=round(hwm),

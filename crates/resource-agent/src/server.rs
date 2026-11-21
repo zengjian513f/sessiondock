@@ -1,12 +1,13 @@
 use crate::{
     bandwidth,
     events::{self, Event},
-    gpu, io_events, memory, usage,
+    gpu, io_events, memory, persistence, usage,
 };
 use process_links::{
     Process, Report,
     agent::{CollectorStatus, Request, Resources, Sample},
-    engine::Engine,
+    connections::Records,
+    engine::{Engine, SaveSnapshot},
     linux::{self, Snapshot},
 };
 use serde_json::{Value, json};
@@ -20,7 +21,7 @@ use std::{
     },
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
@@ -334,7 +335,7 @@ impl PreparedResources {
 // connection histories and resource aggregation must not hold up sampling.
 enum Response {
     Value(Value),
-    Report(Arc<Report>),
+    Report(Arc<ReportSnapshot>),
     Usage(Arc<usage::Snapshot>),
     Resources {
         resources: Arc<PreparedResources>,
@@ -364,7 +365,8 @@ impl Response {
                     result: &*snapshot,
                 },
             )?,
-            Self::Report(report) if bindings_only => {
+            Self::Report(snapshot) if bindings_only => {
+                let report = &snapshot.report;
                 #[derive(serde::Serialize)]
                 struct Bindings<'a> {
                     version: u32,
@@ -452,8 +454,42 @@ impl Response {
 
 // Report readers use the last completed sample without joining attribution or
 // persistence work. Publishing only swaps an Arc under this short-held lock.
-struct Published {
+struct ReportSnapshot {
     report: Arc<Report>,
+    records: Records,
+}
+
+impl serde::Serialize for ReportSnapshot {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            // Engine builds the live report with an empty connections field.
+            #[serde(flatten)]
+            live: &'a Report,
+            #[serde(
+                skip_serializing_if = "Records::is_empty",
+                serialize_with = "serialize_records"
+            )]
+            connections: &'a Records,
+        }
+        fn serialize_records<S: serde::Serializer>(
+            records: &Records,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            serializer.collect_seq(records.values().map(|row| &row.record))
+        }
+        serde::Serialize::serialize(
+            &Wire {
+                live: &self.report,
+                connections: &self.records,
+            },
+            serializer,
+        )
+    }
+}
+
+struct Published {
+    report: Arc<ReportSnapshot>,
     health: Value,
 }
 type PublishedReport = Arc<Mutex<Published>>;
@@ -493,21 +529,20 @@ impl State {
         self.publish_report();
     }
     fn publish_report(&self) {
+        let next = Published {
+            report: Arc::new(ReportSnapshot {
+                report: self.report.clone(),
+                records: self.engine.connections.records(),
+            }),
+            health: self.health(),
+        };
         let previous = {
             let mut published = self
                 .published_report
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            std::mem::replace(
-                &mut *published,
-                Published {
-                    report: self.report.clone(),
-                    health: self.health(),
-                },
-            )
+            std::mem::replace(&mut *published, next)
         };
-        // Releasing a boot-long report can itself be expensive. Never do that
-        // while holding the publication lock used by liveness readers.
         drop(previous);
     }
     fn health(&self) -> Value {
@@ -523,17 +558,20 @@ impl State {
         request: Request,
     ) -> Result<Response, &'static str> {
         let lock_state = || state.lock().unwrap_or_else(|e| e.into_inner());
-        match request {
-            Request::Usage => Ok(Response::Usage(
-                usage.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-            )),
-            Request::Report => Ok(Response::Report(
+        let read_report = || {
+            Response::Report(
                 published
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .report
                     .clone(),
+            )
+        };
+        match request {
+            Request::Usage => Ok(Response::Usage(
+                usage.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             )),
+            Request::Report => Ok(read_report()),
             Request::Health => {
                 let mut health = published
                     .lock()
@@ -631,7 +669,7 @@ impl State {
                     state.engine.catalog(catalog);
                     state.refresh();
                 }
-                Ok(Response::Report(state.report.clone()))
+                Ok(read_report())
             }
             Request::Publish(published) => {
                 let mut state = lock_state();
@@ -640,7 +678,7 @@ impl State {
                 } = &mut *state;
                 engine.publish(published, snapshot);
                 state.refresh();
-                Ok(Response::Report(state.report.clone()))
+                Ok(read_report())
             }
         }
     }
@@ -1377,6 +1415,99 @@ fn serve(
     writer.write_all(b"\n")?;
     writer.flush()
 }
+struct SaveBatch {
+    attribution: SaveSnapshot,
+    usage: Option<usage::Snapshot>,
+    final_save: bool,
+}
+
+/// One writer owns both databases. A slow transaction leaves at most one
+/// pending snapshot, since the latest includes all earlier unsaved changes.
+#[derive(Default)]
+struct SaveQueue {
+    next: Mutex<Option<SaveBatch>>,
+    ready: Condvar,
+}
+
+impl SaveQueue {
+    fn submit(&self, batch: SaveBatch) {
+        let previous = self
+            .next
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(batch);
+        self.ready.notify_one();
+        drop(previous);
+    }
+
+    fn run(
+        &self,
+        mut attribution_store: persistence::Store,
+        mut usage_store: usage::Store,
+        published: &PublishedUsage,
+    ) -> io::Result<()> {
+        loop {
+            let batch = {
+                let mut pending = self
+                    .ready
+                    .wait_while(
+                        self.next.lock().unwrap_or_else(|e| e.into_inner()),
+                        |pending| pending.is_none(),
+                    )
+                    .unwrap_or_else(|e| e.into_inner());
+                pending.take().unwrap()
+            };
+            let final_save = batch.final_save;
+            let attribution = if final_save {
+                attribution_store.prepare_final_save()
+            } else {
+                Ok(())
+            }
+            .and_then(|()| attribution_store.save(batch.attribution, final_save));
+            if let Err(error) = &attribution {
+                crate::runtime_log::emit(
+                    "error",
+                    "resource.attribution_save_failed",
+                    json!({"error_kind":error.kind().to_string(), "final":final_save}),
+                );
+            }
+            let usage = if let Some(mut snapshot) = batch.usage {
+                let result = if final_save {
+                    usage_store.prepare_final_save()
+                } else {
+                    Ok(())
+                }
+                .and_then(|()| usage_store.save(&snapshot));
+                if let Err(error) = &result {
+                    crate::runtime_log::emit(
+                        "error",
+                        if final_save {
+                            "resource.final_usage_save_failed"
+                        } else {
+                            "resource.usage_save_failed"
+                        },
+                        json!({"error_kind":error.kind().to_string()}),
+                    );
+                    snapshot.set_persistence_error(error);
+                }
+                if !final_save {
+                    let previous = {
+                        let mut published = published.lock().unwrap_or_else(|e| e.into_inner());
+                        std::mem::replace(&mut *published, Arc::new(snapshot))
+                    };
+                    drop(previous);
+                }
+                result
+            } else {
+                Ok(())
+            };
+            if final_save {
+                return attribution.and(usage);
+            }
+        }
+    }
+}
+
 pub fn run() -> io::Result<()> {
     let config = Arc::new(Config::load()?);
     crate::runtime_log::init(
@@ -1433,7 +1564,7 @@ pub fn run() -> io::Result<()> {
     if snapshot.boot_id.is_empty() {
         return Err(io::Error::other("cannot read Linux boot identity"));
     }
-    let (store, saved) = crate::persistence::Store::open(
+    let (store, saved) = persistence::Store::open(
         &config.state,
         &config.node_id,
         &snapshot.boot_id,
@@ -1441,7 +1572,6 @@ pub fn run() -> io::Result<()> {
         now(),
         config.connection_retention_seconds,
     )?;
-    let store = Arc::new(Mutex::new(store));
     let mut engine = Engine::new(config.node_id.clone(), snapshot.boot_id.clone(), saved);
     engine.connections.retention_seconds = config.connection_retention_seconds;
     let status = CollectorStatus {
@@ -1481,15 +1611,18 @@ pub fn run() -> io::Result<()> {
     );
     let report = Arc::new(engine.update(&snapshot, data.sampled_at, status.clone()));
     let published_report = Arc::new(Mutex::new(Published {
-        report: report.clone(),
+        report: Arc::new(ReportSnapshot {
+            report: report.clone(),
+            records: engine.connections.records(),
+        }),
         health: Value::Null,
     }));
-    let mut usage = usage::Ledger::open(
+    let (mut usage, usage_store) = usage::Ledger::open(
         &config.state.with_extension("usage.json"),
         &config.node_id,
         now(),
     )?;
-    let published_usage = Arc::new(Mutex::new(Arc::new(usage.snapshot(None))));
+    let published_usage = Arc::new(Mutex::new(Arc::new(usage.snapshot())));
     let state = Arc::new(Mutex::new(State {
         published_report: published_report.clone(),
         engine,
@@ -1780,31 +1913,24 @@ pub fn run() -> io::Result<()> {
     } else {
         None
     };
+    let saves = Arc::new(SaveQueue::default());
+    saves.submit(SaveBatch {
+        attribution: state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .engine
+            .saved(),
+        usage: None,
+        final_save: false,
+    });
+    let pending_saves = saves.clone();
     let worker_usage = published_usage.clone();
+    let save_worker = std::thread::Builder::new()
+        .name("resource-persistence".into())
+        .spawn(move || pending_saves.run(store, usage_store, &worker_usage))?;
+    let sampler_saves = saves.clone();
     let worker_state = state.clone();
     let worker_config = config.clone();
-    let worker_store = store.clone();
-    let initial_saved = state
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .engine
-        .saved();
-    let initial_store = store.clone();
-    let restore_worker = std::thread::Builder::new()
-        .name("attribution-cleanup".into())
-        .spawn(move || {
-            if let Err(error) = initial_store
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .save(initial_saved)
-            {
-                crate::runtime_log::emit(
-                    "error",
-                    "resource.attribution_save_failed",
-                    json!({"error":error.to_string()}),
-                );
-            }
-        })?;
     let sampler_budget = slow_budget
         .as_ref()
         .and_then(|path| path.parent())
@@ -1813,7 +1939,6 @@ pub fn run() -> io::Result<()> {
         memory::enter_cpu_budget(sampler_budget.as_deref());
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
-        let mut usage_saved_at = Instant::now();
         while !STOP.load(Ordering::Relaxed) {
             let first = match receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(event) => Some(event),
@@ -1905,49 +2030,20 @@ pub fn run() -> io::Result<()> {
                 usage.observe(resources.raw(), &report);
             }
             if saved_at.elapsed() >= Duration::from_secs(30) {
-                let saved = worker_state
+                let attribution = worker_state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .engine
                     .saved();
-                if let Err(error) = worker_store
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .save(saved)
-                {
-                    crate::runtime_log::emit(
-                        "error",
-                        "resource.attribution_save_failed",
-                        json!({"error_kind":error.kind().to_string()}),
-                    );
-                }
-                if usage_saved_at.elapsed() >= Duration::from_secs(30) {
-                    let persistence_error = usage.save().err().map(|error| {
-                        crate::runtime_log::emit(
-                            "error",
-                            "resource.usage_save_failed",
-                            json!({"error_kind":error.kind().to_string()}),
-                        );
-                        error.to_string()
-                    });
-                    let next = Arc::new(usage.snapshot(persistence_error));
-                    let previous = {
-                        let mut published = worker_usage.lock().unwrap_or_else(|e| e.into_inner());
-                        std::mem::replace(&mut *published, next)
-                    };
-                    drop(previous);
-                    usage_saved_at = Instant::now();
-                }
+                sampler_saves.submit(SaveBatch {
+                    attribution,
+                    usage: Some(usage.snapshot()),
+                    final_save: false,
+                });
                 saved_at = Instant::now();
             }
         }
-        if let Err(error) = usage.save() {
-            crate::runtime_log::emit(
-                "error",
-                "resource.final_usage_save_failed",
-                json!({"error_kind":error.kind().to_string()}),
-            );
-        }
+        usage
     });
     // Reuse a fixed set of request threads and their allocator arenas. Blocking
     // enqueue applies backpressure without rejecting otherwise valid requests.
@@ -2004,22 +2100,35 @@ pub fn run() -> io::Result<()> {
     for worker in request_workers {
         let _ = worker.join();
     }
-    for child in tracer.as_mut().into_iter() {
-        unsafe {
-            libc::kill(child.id() as i32, libc::SIGINT);
+    let tracer_result = (|| {
+        if let Some(child) = tracer.as_mut() {
+            unsafe {
+                libc::kill(child.id() as i32, libc::SIGINT);
+            }
+            let until = Instant::now() + Duration::from_secs(2);
+            while child.try_wait()?.is_none() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if child.try_wait()?.is_none() {
+                child.kill()?;
+            }
+            child.wait()?;
         }
-        let until = Instant::now() + Duration::from_secs(2);
-        while child.try_wait()?.is_none() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        if child.try_wait()?.is_none() {
-            child.kill()?;
-        }
-        child.wait()?;
-    }
+        Ok(())
+    })();
     let _ = io_worker.join();
-    let _ = worker.join();
-    let _ = restore_worker.join();
+    let usage = worker
+        .join()
+        .map_err(|_| io::Error::other("resource sampler stopped unexpectedly"));
+    saves.submit(SaveBatch {
+        attribution: state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .engine
+            .saved(),
+        usage: usage.as_ref().ok().map(usage::Ledger::snapshot),
+        final_save: true,
+    });
     if let Some(worker) = pss_worker {
         let _ = worker.join();
     }
@@ -2029,13 +2138,10 @@ pub fn run() -> io::Result<()> {
     if let Some(worker) = gpu_worker {
         let _ = worker.join();
     }
-    store.lock().unwrap_or_else(|e| e.into_inner()).save(
-        state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .engine
-            .saved(),
-    )?;
-    fs::remove_file(&config.socket)?;
-    Ok(())
+    let saved = save_worker
+        .join()
+        .map_err(|_| io::Error::other("resource persistence stopped unexpectedly"))
+        .and_then(|result| result);
+    let removed = fs::remove_file(&config.socket);
+    tracer_result.and(saved).and(usage.map(|_| ())).and(removed)
 }
