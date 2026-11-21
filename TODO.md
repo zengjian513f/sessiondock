@@ -3,10 +3,9 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
-- [ ] Orion、Cetus 补发 Codex API 价值修复与 OpenAI 价目自动同步 `03fdf7fb`
-  （BUG-20261121-080412-a6b7ee；包含服务和前端，后端版本 `20261121T093339404882Z`）。
+- [ ] Orion、Cetus 补发 Codex API 价值修复与 OpenAI 档位计价 `7b20331f`
+  （BUG-20261121-080412-a6b7ee；包含服务、前端和 Standard、Fast、Ultrafast 价目同步）。
   两台正式部署均 SSH 超时；联网后通过部署工具补发完整服务和前端。
-  Lyra、Cygnus、Pavo、Vela 和 Hub 已更新、重启并通过健康检查。
 
 - [ ] Orion、Cetus 补发第二轮组件修复的节点服务 `caca8dbb`（后端版本
   `20261121T044547546279Z`）。两台在正式发布时均 SSH 超时。
