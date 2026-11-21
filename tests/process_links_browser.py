@@ -470,6 +470,9 @@ def main():
                     rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
                     child = next(r for r in rows if r['sid'] == 'child')
                     expected = {'source': 'codex', 'sid': 'parent', 'node_id': nodes[0].nid}
+                    if restarted:
+                        # The first pass explicitly reattaches this child through the Hub.
+                        expected['binding'] = {'kind': 'hub', 'through': 0}
                     assert 'spawned_by' not in child and child.get('nest_parent') == expected, child
                     assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'older')
                     stale = next(b for b in bindings if b['process']['pid'] == 701)
