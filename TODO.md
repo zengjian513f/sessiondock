@@ -3,7 +3,7 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
-- [ ] Orion、Cetus 补发节点服务与前端 `98a02113`，包含 Codex 回合阶段与思考摘要
+- [ ] Orion、Cetus 补发节点服务与前端 `9b7adbf0`，包含 Kiro API 价值粗估、Codex 回合阶段与思考摘要
   （BUG-20261121-111133-589aa4）及 `7b20331f` 的 Codex API 价值修复与
   Standard、Fast、Ultrafast 价目同步（BUG-20261121-080412-a6b7ee）。
   两台正式部署均 SSH 超时，联网后通过部署工具补发。
