@@ -133,14 +133,15 @@ pub struct TransferService {
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
-    hash_with_legacy_link(path, false)
+    hash_contents(path, fs::symlink_metadata(path)?.is_symlink(), false)
 }
-pub(super) fn hash_with_legacy_link(
+pub(super) fn hash_contents(
     path: &Path,
+    symlink: bool,
     legacy_link_digest: bool,
 ) -> Result<String, TransferError> {
     let mut digest = Sha256::new();
-    if fs::symlink_metadata(path)?.is_symlink() {
+    if symlink {
         let link = fs::read_link(path)?;
         if legacy_link_digest {
             digest.update(link.to_string_lossy().as_bytes());
@@ -703,7 +704,7 @@ impl TransferService {
                     source: file.source.clone(),
                     target: files.roots[&file.provider].join(&file.target),
                     sha256: hash(&stage)?,
-                    symlink: file.format == "symlink",
+                    symlink: file.is_symlink(),
                     staging: stage,
                 });
             }
@@ -761,7 +762,9 @@ impl TransferService {
             ));
         }
         for f in &op.plan.files {
-            if hash(&f.source)? != f.sha256 {
+            if !fs::symlink_metadata(&f.source)?.is_file()
+                || hash_contents(&f.source, false, false)? != f.sha256
+            {
                 return Err(TransferError::new(
                     "move_plan_stale",
                     "会话历史已变化，请重新查看迁移清单",
@@ -792,10 +795,10 @@ impl TransferService {
             }
             for before in &files.files {
                 let current = after.get(&before.source).ok_or_else(changed)?;
-                if before.sha256 != current.sha256
-                    && !(before.legacy_link_digest()
-                        && current.format == "symlink"
-                        && hash_with_legacy_link(&current.source, true)? == before.sha256)
+                if before.is_symlink() != current.is_symlink()
+                    || (before.sha256 != current.sha256
+                        && !(before.legacy_link_digest()
+                            && hash_contents(&current.source, true, true)? == before.sha256))
                 {
                     return Err(changed());
                 }

@@ -6,10 +6,11 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    io::{self, Read, Write},
+    path::{Component, Path, PathBuf},
 };
 
 /// Composer uploads belong to the workspace, not to the native session.
@@ -172,9 +173,19 @@ pub struct Snapshot {
         deserialize_with = "without_workspace_uploads"
     )]
     pub stamps: BTreeMap<PathBuf, Stamp>,
+    /// Publication may create these directories before a relative link is used.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    bypassed_directories: BTreeSet<PathBuf>,
 }
 impl Snapshot {
     pub fn capture(cwd: &Path, dependencies: &[PathBuf]) -> Result<Self, TransferError> {
+        Self::capture_with_directories(cwd, dependencies, &BTreeSet::new())
+    }
+    pub(super) fn capture_with_directories(
+        cwd: &Path,
+        dependencies: &[PathBuf],
+        planned_directories: &BTreeSet<PathBuf>,
+    ) -> Result<Self, TransferError> {
         if !cwd.is_absolute() {
             return Err(TransferError::new(
                 "move_cwd_missing",
@@ -189,21 +200,69 @@ impl Snapshot {
             entries: BTreeMap::new(),
             dependencies: BTreeMap::new(),
             stamps: BTreeMap::new(),
+            bypassed_directories: BTreeSet::new(),
         };
         let mut seen = BTreeSet::new();
         // The working directory is an execution location, not migration data.
         // Never enumerate it or follow unrelated project links.
 
         for path in dependencies {
-            result.walk(path, &mut seen).map_err(|mut error| {
-                error.message = format!("外部历史依赖 {}：{}", path.display(), error.message);
-                error
-            })?;
+            result
+                .walk(path, &mut seen, planned_directories)
+                .map_err(|mut error| {
+                    error.message = format!("外部历史依赖 {}：{}", path.display(), error.message);
+                    error
+                })?;
         }
         result.recheck()?;
         Ok(result)
     }
-    fn walk(&mut self, path: &Path, seen: &mut BTreeSet<PathBuf>) -> Result<(), TransferError> {
+    fn lookup<'a>(
+        &mut self,
+        path: &'a Path,
+        planned_directories: &BTreeSet<PathBuf>,
+    ) -> io::Result<(Cow<'a, Path>, fs::Metadata)> {
+        let missing = match fs::symlink_metadata(path) {
+            Ok(meta) => return Ok((Cow::Borrowed(path), meta)),
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound && !planned_directories.is_empty() =>
+            {
+                error
+            }
+            Err(error) => return Err(error),
+        };
+        // A planned directory can be traversed out of before it exists.
+        // Leave ".." intact at existing symlinks and at unplanned paths so the
+        // filesystem still decides what those components mean.
+        let mut lookup = PathBuf::new();
+        for component in path.components() {
+            if component == Component::ParentDir
+                && planned_directories.contains(&lookup)
+                && ordinary_or_missing_directory(&lookup)?
+            {
+                self.bypassed_directories.insert(lookup.clone());
+                lookup.pop();
+            } else {
+                lookup.push(component.as_os_str());
+            }
+        }
+        if lookup == path {
+            return Err(missing);
+        }
+        // A terminal slash or "/." still requires directory traversal.
+        let spelling = path.as_os_str().as_encoded_bytes();
+        if spelling.ends_with(b"/") || spelling.ends_with(b"/.") {
+            lookup.push(".");
+        }
+        let meta = fs::symlink_metadata(&lookup)?;
+        Ok((Cow::Owned(lookup), meta))
+    }
+    fn walk(
+        &mut self,
+        path: &Path,
+        seen: &mut BTreeSet<PathBuf>,
+        planned_directories: &BTreeSet<PathBuf>,
+    ) -> Result<(), TransferError> {
         super::coordination::check()?;
         if workspace_upload(path) {
             return Ok(());
@@ -211,12 +270,17 @@ impl Snapshot {
         if !seen.insert(path.to_owned()) {
             return Ok(());
         }
-        let meta = fs::symlink_metadata(path)?;
+        let (lookup, meta) = self.lookup(path, planned_directories)?;
+        let lookup = lookup.as_ref();
         let before = stamp(&meta);
-        if self.stamps.get(path).is_some_and(|prior| prior != &before) {
+        if self
+            .stamps
+            .get(lookup)
+            .is_some_and(|prior| prior != &before)
+        {
             return Err(stale());
         }
-        self.stamps.insert(path.to_owned(), before.clone());
+        self.stamps.insert(lookup.to_owned(), before.clone());
         let mut content = Content {
             kind: String::new(),
             bytes: 0,
@@ -226,27 +290,27 @@ impl Snapshot {
         };
         if meta.is_symlink() {
             content.kind = "symlink".into();
-            let link = fs::read_link(path)?;
+            let link = fs::read_link(lookup)?;
             content.link = Some(link);
             // canonicalize detects dangling links and link-only loops. Directory
             // cycles terminate through `seen`; their link target is still recorded.
-            let resolved = path.canonicalize()?;
-            self.walk(&resolved, seen)?;
+            let resolved = lookup.canonicalize()?;
+            self.walk(&resolved, seen, planned_directories)?;
         } else if meta.is_dir() {
             content.kind = "directory".into();
-            let mut children = fs::read_dir(path)?
-                .map(|e| e.map(|v| v.path()))
+            let mut children = fs::read_dir(lookup)?
+                .map(|e| e.map(|v| v.file_name()))
                 .collect::<Result<Vec<_>, _>>()?;
             children.sort();
             for child in children {
-                if child.file_name().is_some_and(|name| name == ".git") {
+                if child == ".git" {
                     continue;
                 }
-                self.walk(&child, seen)?;
+                self.walk(&path.join(child), seen, planned_directories)?;
             }
         } else if meta.is_file() {
             content.kind = "file".into();
-            let mut file = fs::File::open(path)?;
+            let mut file = fs::File::open(lookup)?;
             if stamp(&file.metadata()?) != before {
                 return Err(stale());
             }
@@ -269,7 +333,7 @@ impl Snapshot {
             // Never open a FIFO/socket/device while hashing a working tree.
             content.kind = format!("special:{:o}", before.mode & 0o170000);
         }
-        if stamp(&fs::symlink_metadata(path)?) != before {
+        if stamp(&fs::symlink_metadata(lookup)?) != before {
             return Err(stale());
         }
         self.dependencies.insert(path.into(), content);
@@ -279,6 +343,11 @@ impl Snapshot {
         super::coordination::check()?;
         if !self.cwd.is_dir() {
             return Err(TransferError::new("move_cwd_missing", "目标工作目录不存在"));
+        }
+        for path in &self.bypassed_directories {
+            if !ordinary_or_missing_directory(path)? {
+                return Err(stale());
+            }
         }
         for (path, before) in &self.stamps {
             let meta = fs::symlink_metadata(path).map_err(|e| {
@@ -308,6 +377,18 @@ impl Snapshot {
             ));
         }
         Ok(())
+    }
+}
+
+fn ordinary_or_missing_directory(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => {
+            fs::symlink_metadata(path.join(".."))?;
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
     }
 }
 
