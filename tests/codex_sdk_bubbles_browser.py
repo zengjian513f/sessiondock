@@ -28,7 +28,10 @@ def main():
         with corpus.paths['sdk'].open('a') as f:
             f.write(json.dumps(codex_message('user', TEXT)) + '\n')
             f.write(json.dumps(codex_message('assistant', TEXT)) + '\n')
-        with FakeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake, server(corpus, args.binary, root/'app.sock') as base:
+        state = root / 'state'
+        state.mkdir()
+        with FakeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake, server(
+                corpus, args.binary, root/'app.sock', {'SESSIONDOCK_STATE_DIR': str(state)}) as base:
             browser = p.chromium.launch(headless=True)
             for theme in ('light', 'dark'):
                 context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme=theme)
