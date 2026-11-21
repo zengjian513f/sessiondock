@@ -62,12 +62,23 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 采用[当前 Standard API 价格](../tools/agent_usage_prices.json)，非实际扣款，不含工具、
 图片等另收费项目。支持型号的单次输入超过 272K 时，整次输入和缓存按两倍、
 输出按 1.5 倍计价；提示另列不含长上下文加价的金额。管理员可以修改私有目录的
-`prices.json`；服务更新 `default-prices.json`，合并新增型号及缺失价阶字段，保留本地
-已配置的同名字段。自定义价阶应与自定义基础单价一起维护。重新计价无需重读正文。
-内置价目随服务发布更新，不自动联网同步。GPT-6.2
-[Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol) 和
-[Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra) 使用官方 Standard
-输入、输出、缓存读写及超过 272K 的完整价阶；旧私有价目没有的新型号从内置表补齐。
+`prices.json`；服务更新 `default-prices.json`。DELTA：后台采集首次运行及之后每 24 小时
+从 [OpenAI 官方价目](https://developers.openai.com/api/docs/pricing.md)同步 Standard
+文本模型，自动补入新型号及输入、输出、缓存读写、长上下文价阶；不混用 Batch、Fast
+等档位。其他厂商继续使用内置或本地价目。重新计价无需重读正文。
+
+成功价目与时间原子保存在私有 `online-prices.json`；断网、超时或官网格式无法解析时
+保留上次成功价格，首次无缓存则使用内置表，一小时后重试。官网未再列出的型号保留
+上次已知价格。金额提示和 `/api/usage.price_sync` 说明上次同步时间与失败原因，
+同步失败本身不隐藏已有估值；从未有过可信价格的型号仍按缺价处理。
+
+首次升级以先前部署的默认表（首次安装用当前内置表）保存 `price-base.json`，旧
+`prices.json` 中与该基线相同的字段
+交由自动价目维护，不同的字段作为人工覆盖保留，原文件不改写。之后按这个固定基线
+识别人工改动。需要明确固定价格（包括恰好等于旧默认值）时，在 `price-overrides.json`
+使用相同的 `models`／`aliases` 结构；其优先级最高。自定义价阶应与基础单价一起维护。
+服务环境 `SESSIONDOCK_USAGE_PRICE_SYNC=off` 关闭联网同步但继续使用缓存；
+`SESSIONDOCK_USAGE_PRICE_URL` 可指定管理员维护的同格式来源。浏览器不能修改同步地址。
 
 固定窗口以原生重置时间减去窗口时长求起点，费用不晚于官方采集时刻。
 月度缺少起点时通过私有 `settings.json` 或设置 API 配置带时区的起点并绑定当次
@@ -103,7 +114,9 @@ python3 tools/agent_usage.py rebuild --config CONFIG --agent claude
 ```
 
 配置含 `directory`、`quota_dir`、`prices` 和 `roots`（source → 原生根；OpenCode 为数据库路径），
-以及 `default_prices`、`transfer_dir`、`trash_dir`、`codex_archive`。新版建立 `ledger-v2.sqlite`，
+以及 `default_prices`、`transfer_dir`、`trash_dir`、`codex_archive`。服务还写入
+`price_sync`（`enabled`、`url`），独立脚本可使用相同配置；同步实现见
+[价格模块](../tools/agent_usage_prices.py)。新版建立 `ledger-v2.sqlite`，
 保留旧索引；首次升级重新读取原始计量，以补齐归属与额度观测。
 运行目录持有 SQLite 计量账本、文件偏移和 JSON 快照；只存计量、模型及原生身份，
 不存会话正文或凭据，不改写原生文件。JSONL 续读完整行，半行下次重读；

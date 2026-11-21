@@ -3,6 +3,7 @@
 import argparse
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
@@ -187,6 +189,122 @@ def price_upgrade(browser, binary, output):
         result=refresh();assert result['rows'][0]['partial']
         assert '历史记录不完整' in cell.get_attribute('title')
         expect(cell).not_to_contain_text('整轮')
+
+
+def price_sync_case(browser, binary, output):
+    with tempfile.TemporaryDirectory(prefix='sessiondock-price-sync-') as tmp, ExitStack() as stack:
+        root=Path(tmp);state=root/'state';directory=state/'agent-usage';now=time.time()
+        remote={'calls':0,'mode':'ok','revision':1}
+        class OfficialPrices(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                remote['calls']+=1
+                if remote['mode']=='offline':
+                    self.close_connection=True;return
+                rows=(
+                    '| gpt-6.1-sol | $4 | $20 | $0.2 | $5 | $10 | $8 | $30 | $0.4 | $10 | $20 |\n'
+                    '| gpt-sync-new | $2 | $10 | $0.1 | $2.5 | $5 | $4 | $15 | $0.2 | $5 | $10 |'
+                    if remote['revision']==1 else
+                    '| gpt-6.1-sol | $6 | $30 | $0.3 | $7.5 | $15 | $12 | $45 | $0.6 | $15 | $30 |\n'
+                    '| gpt-sync-new | $3 | $15 | $0.15 | $3.75 | $7.5 | $6 | $22.5 | $0.3 | $7.5 | $15 |')
+                body=('### Standard pricing data\n'
+                      '| Model | Short context input | Short context output | Short context cached input | Short context 30m write | Short context 12h write | Long context input | Long context output | Long context cached input | Long context 30m write | Long context 12h write |\n'
+                      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'+rows+'\n'
+                      '| Model | Input | Output | Cached input |\n| --- | --- | --- | --- |\n'
+                      '| gpt-sync-mini | $1 | $5 | - |\n'
+                      '### Batch pricing data\n| Model | Input | Output | Cached input |\n'
+                      '| gpt-sync-new | $999 | $999 | $999 |\n'
+                      'Short context: ≤272K input tokens. Long context: >272K input tokens.\n')
+                if remote['mode']=='malformed':body=body.replace('Short context output','Changed output column')
+                raw=body.encode();self.send_response(200);self.send_header('Content-Type','text/markdown')
+                self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+        httpd=ThreadingHTTPServer(('127.0.0.1',0),OfficialPrices)
+        thread=threading.Thread(target=httpd.serve_forever,daemon=True);thread.start()
+        stack.callback(httpd.server_close);stack.callback(httpd.shutdown)
+        native=root/'codex';native.mkdir();path=native/'usage.jsonl'
+        append(path,{'type':'session_meta','payload':{'id':'sync'}},quota_point(now-40,now+7200,0))
+        for model,total in (('gpt-6.1-sol',100000),('gpt-sync-new',100000),('gpt-sync-new',300000)):
+            records=codex(f'{model}-{total}',now-20,model)
+            records[1]['payload']['usage'].update(input_tokens=total,cached_input_tokens=total*3//5,
+                                                 output_tokens=100000,reasoning_output_tokens=0)
+            append(path,*records)
+        append(path,quota_point(now-10,now+7200,25));quotas(state,now)
+        prior=json.loads((REPO/'tools/agent_usage_prices.json').read_text())
+        prior['version']='prior-release';prior['models']['gpt-6.1-sol']['output']=8
+        dump(directory/'default-prices.json',prior)
+        custom=json.loads(json.dumps(prior))
+        custom['models']['gpt-6.1-sol']['input']=7
+        dump(directory/'prices.json',custom)
+        dump(directory/'settings.json',{'enabled':False,'interval_seconds':1,'sources':{}})
+        dump(directory/'config.json',{'directory':str(directory),'roots':{'codex':str(native)},
+             'quota_dir':str(state/'quotas'),'prices':str(directory/'prices.json')})
+        subprocess.run([sys.executable,str(REPO/'tools/agent_usage.py'),'collect','--config',str(directory/'config.json')],check=True,capture_output=True)
+        port=free_port();env=node_env(root,port,'127.0.0.0/8')
+        env.update(SESSIONDOCK_USAGE_PYTHON=sys.executable,SESSIONDOCK_USAGE_PRICE_SYNC='on',
+                   SESSIONDOCK_USAGE_PRICE_URL=f'http://127.0.0.1:{httpd.server_port}/pricing.md')
+        base,_=stack.enter_context(isolated_server(Corpus(root),binary,state_dir=state,extra_env=env))
+        hr=root/'hub';hr.mkdir();hub=Hub(binary.with_name('sessiondock-hub'),hr,[SimpleNamespace(port=port,token=TOKEN,name='Price Sync')])
+        hub.start();stack.callback(hub.stop)
+        context=browser.new_context(viewport={'width':1280,'height':950});stack.callback(context.close)
+        context.route('**/api/clients',lambda r:r.fulfill(json={'clients':[{'source':'codex','installed':True}]}))
+        page=context.new_page();page.goto(base+'/quotas.html')
+        cell=page.locator('[data-source="codex"] tbody .quota-api').first
+        expect(cell).not_to_contain_text('整轮');assert remote['calls']==0
+        def report():return page.evaluate("fetch('api/usage').then(r=>r.json())")
+        def wait_for(predicate):
+            deadline=time.monotonic()+45
+            while time.monotonic()<deadline:
+                result=report()
+                if not result.get('running') and predicate(result):return result
+                page.wait_for_timeout(200)
+            raise AssertionError(result)
+        def expire():
+            cache=json.loads((directory/'online-prices.json').read_text());cache['checked_at']=0
+            dump(directory/'online-prices.json',cache)
+        def refresh(due=False):
+            if due:expire()
+            before=report()['captured_at'];page.locator('#quota-refresh').click()
+            result=wait_for(lambda r:r['captured_at']!=before);page.reload();return result
+        result=refresh();expect(cell).to_contain_text('$5.39');expect(cell).to_contain_text('整轮')
+        assert result['rows'][0]['unpriced']==0 and result['metrics']['bytes_read']==0
+        assert remote['calls']==1 and result['price_sync']['updated_at']
+        assert json.loads((directory/'prices.json').read_text())==custom
+        assert json.loads((directory/'price-base.json').read_text())==prior
+        refresh();assert remote['calls']==1  # Normal refreshes use the daily cache.
+        remote['revision']=2;result=refresh(True);expect(cell).to_contain_text('$7.95')
+        successful=result['price_sync']['updated_at'];assert remote['calls']==2
+        for mode in ('offline','malformed'):
+            remote['mode']=mode;result=refresh(True)
+            expect(cell).to_contain_text('$7.95');expect(cell).to_contain_text('整轮')
+            assert result['price_sync']['updated_at']==successful
+            assert '同步失败' in cell.get_attribute('title')
+            calls=remote['calls'];refresh();assert remote['calls']==calls  # Failure backoff.
+        # Cold outage falls back to embedded prices and keeps genuinely unknown models partial.
+        (directory/'online-prices.json').unlink();remote['mode']='offline'
+        result=refresh();expect(cell).to_contain_text('$1.29');expect(cell).not_to_contain_text('整轮')
+        assert result['price_sync']['updated_at'] is None and result['rows'][0]['unpriced']==2
+        remote['mode']='ok';result=refresh(True);expect(cell).to_contain_text('$7.95')
+        # An administrator can explicitly pin even a rate equal to an old default.
+        dump(directory/'price-overrides.json',{'models':{'gpt-sync-new':{'input':2}}})
+        refresh();expect(cell).to_contain_text('$7.91')
+        (directory/'price-overrides.json').unlink()
+        remote['revision']=1;expire();before=report()['price_sync']['updated_at']
+        page.evaluate("fetch('api/usage/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true,interval_seconds:1,sources:{}})}).then(r=>r.json())")
+        result=wait_for(lambda r:r.get('price_sync',{}).get('updated_at')!=before)
+        assert result['price_sync']['error'] is None and result['metrics']['bytes_read']==0
+        page.reload();expect(cell).to_contain_text('$5.39')
+        for url,mode in ((base,'node'),(f'http://127.0.0.1:{hub.port}','hub')):
+            for width,theme in ((1280,'light'),(390,'dark')):
+                page.set_viewport_size({'width':width,'height':950});page.goto(url+'/quotas.html')
+                page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                expect(cell).to_contain_text('$5.39');assert 'OpenAI 价目上次同步' in cell.get_attribute('title')
+                if width==390:page.locator('.quota-scroll').evaluate_all('nodes=>nodes.forEach(n=>n.scrollLeft=100)')
+                page.screenshot(path=str(output/f'price-sync-{mode}-{width}.png'),full_page=True)
+        page.set_viewport_size({'width':1280,'height':950});page.goto(base)
+        page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click()
+        page.get_by_role('link',name='Agent 用量 →').click()
+        expect(cell).to_contain_text('$5.39');assert 'OpenAI 价目上次同步' in cell.get_attribute('title')
+        page.screenshot(path=str(output/'price-sync-settings.png'),full_page=True)
 
 
 def main():
@@ -427,6 +545,7 @@ def main():
             page.reload();expect(page.locator('[data-source="claude"] tbody .quota-api')).to_contain_text('$8.35')
             assert not errors,errors
             price_upgrade(browser,args.binary.resolve(),args.output)
+            price_sync_case(browser,args.binary.resolve(),args.output)
             print('PASS: original node/Hub tables, eight adapters, reference checkpoints, ownership, compaction, long context, exhaustion, duplicate/tail, partial/stale/zero, periodic refresh, wide/narrow light/dark')
 
 

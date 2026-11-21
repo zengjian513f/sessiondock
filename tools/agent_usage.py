@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+from agent_usage_prices import synced_prices
 
 SOURCES = ('codex', 'claude', 'grok', 'agy', 'kiro', 'droid', 'opencode', 'codebuddy')
 UTC = timezone.utc
@@ -643,11 +644,13 @@ def codex_sampling(ledger, ownership, bucket, start, end, until, used):
     return cutoff, None, '已用 0%，暂不估算' if used == 0 else '缺少同周期额度跳档记录，暂不估算'
 
 
-def load_prices(config):
+def load_prices(config, refresh=False):
     custom = read_json(config['prices'])
     default = read_json(config['default_prices'], {}) if config.get('default_prices') else {}
     if not default:
         return custom
+    if isinstance(config.get('price_sync'), dict):
+        return synced_prices(config, default, custom, save_json, refresh)
     result = {**default, **custom}
     result['models'] = dict(default.get('models', {}))
     for model, rates in custom.get('models', {}).items():
@@ -784,6 +787,7 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                          'local_sample': not source_settings.get('account_complete', False)})
     return {'version': 1, 'captured_at': iso(now), 'rows': rows,
             'price_version': prices.get('version'), 'price_sources': prices.get('sources', []),
+            'price_sync': prices.get('sync'),
             'basis': '按当前标准 API Token 单价估算，不含工具、图片等额外费用',
             'metrics': {'bytes_read': ledger.bytes, 'changed_files': ledger.changed}}
 
@@ -802,7 +806,7 @@ def main():
         ledger = Ledger(directory)
         try:
             settings = read_json(directory / 'settings.json', {}) or {}
-            prices = load_prices(config)
+            prices = load_prices(config, refresh=args.command in ('collect', 'rebuild', 'reprice'))
             ownership = Ownership(config)
             statuses = read_json(directory / 'status.json', {}) or {}
             if args.command in ('collect', 'rebuild'):

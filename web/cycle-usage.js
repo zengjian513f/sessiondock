@@ -49,6 +49,8 @@ function initCycleUsage(changed) {
       }
       if(row.base_api_usd!=null && !row.api_usd_max)detail.push(`不含长上下文加价：${money(row.base_api_usd)}`);
       for(const part of row.models || [])detail.push(`${part.model || '未知型号'}：${range(part.api_usd,part.api_usd_max)}，${part.requests} 次调用${part.unpriced?'（含未定价）':''}`);
+      if(data.price_sync?.updated_at)detail.push(`OpenAI 价目上次同步：${time(data.price_sync.updated_at)}`);
+      if(data.price_sync?.error)detail.push(data.price_sync.error);
       detail.push(`Standard API 等值，非实际扣款；价目 ${data.price_version || 'N/A'}。`,data.running?'正在增量更新…':`统计更新：${time(data.captured_at)}`);
       cell.title=detail.filter(Boolean).join('\n');cell.setAttribute('aria-label',`API 价值 ${cell.textContent}。${cell.title}`);
     }

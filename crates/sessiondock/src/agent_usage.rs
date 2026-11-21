@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 const SCRIPT: &str = include_str!("../../../tools/agent_usage.py");
+const PRICE_SYNC: &str = include_str!("../../../tools/agent_usage_prices.py");
 const PRICES: &str = include_str!("../../../tools/agent_usage_prices.json");
 
 pub struct AgentUsage {
@@ -44,6 +45,8 @@ impl AgentUsage {
         let value = directory.as_ref().map(|dir|json!({"directory":dir,"roots":roots,
             "quota_dir":config.state_dir.as_ref().unwrap().join("quotas"),"prices":dir.join("prices.json"),
             "default_prices":dir.join("default-prices.json"),
+            "price_sync":{"enabled":std::env::var("SESSIONDOCK_USAGE_PRICE_SYNC").as_deref()!=Ok("off"),
+                "url":std::env::var("SESSIONDOCK_USAGE_PRICE_URL").unwrap_or_else(|_|"https://developers.openai.com/api/docs/pricing.md".into())},
             "transfer_dir":config.state_dir.as_ref().unwrap().join("transfers"),
             "trash_dir":config.trash_dir,
             "codex_archive":config.roots.codex.as_ref().and_then(|p|p.parent()).map(|p|p.join("archived_sessions"))})).unwrap_or(Value::Null);
@@ -138,6 +141,14 @@ impl AgentUsage {
             crate::quotas::save(&dir.join("config.json"), &config)?;
             // Code and default prices belong to the running committed artifact.
             std::fs::write(dir.join("collector.py"), SCRIPT)?;
+            std::fs::write(dir.join("agent_usage_prices.py"), PRICE_SYNC)?;
+            if !dir.join("price-base.json").exists() {
+                let previous = std::fs::read(dir.join("default-prices.json"))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                    .unwrap_or(serde_json::from_str::<Value>(PRICES)?);
+                crate::quotas::save(&dir.join("price-base.json"), &previous)?;
+            }
             crate::quotas::save(
                 &dir.join("default-prices.json"),
                 &serde_json::from_str::<Value>(PRICES)?,
