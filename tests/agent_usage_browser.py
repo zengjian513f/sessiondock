@@ -288,6 +288,12 @@ def price_sync_case(browser, binary, output):
         dump(directory/'price-overrides.json',{'models':{'gpt-sync-new':{'input':2}}})
         refresh();expect(cell).to_contain_text('$7.91')
         (directory/'price-overrides.json').unlink()
+        managed=json.loads(json.dumps(custom));managed['models']['gpt-6.1-sol']['input']=2
+        managed['models']['gpt-6.1-sol'].pop('long')
+        dump(directory/'prices.json',managed)
+        result=refresh();expect(cell).to_contain_text('$7.91')
+        assert '本地覆盖' not in result['price_version']
+        dump(directory/'prices.json',custom)
         remote['revision']=1;expire();before=report()['price_sync']['updated_at']
         page.evaluate("fetch('api/usage/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true,interval_seconds:1,sources:{}})}).then(r=>r.json())")
         result=wait_for(lambda r:r.get('price_sync',{}).get('updated_at')!=before)

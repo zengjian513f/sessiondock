@@ -99,7 +99,12 @@ def edits(value, baseline):
     result = {}
     for key,item in value.items():
         if key not in baseline or item != baseline[key]:
-            result[key] = edits(item,baseline[key]) if isinstance(item,dict) and isinstance(baseline.get(key),dict) else item
+            if isinstance(item,dict) and isinstance(baseline.get(key),dict):
+                changed = edits(item,baseline[key])
+                if changed:
+                    result[key] = changed
+            else:
+                result[key] = item
     return result
 
 
