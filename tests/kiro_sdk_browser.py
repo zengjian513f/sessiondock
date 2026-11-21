@@ -18,13 +18,14 @@ from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 
+from browser_runtime import wait_for_async
 from codex_sdk_browser import server
 from history_fixtures import BINARY
 from kiro_sdk_fixtures import KiroFixture
 from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
 from sdkhost_fixtures import stop_private_sdkhosts
 from send_browser import initialize
-from sdk_ui_fixtures import start_sdk, reveal_sdk_tool
+from sdk_ui_fixtures import start_sdk
 
 
 def api_raw(page, method: str, body: dict):
@@ -78,6 +79,23 @@ def select_sdk(page, uid: str):
     expect(page.locator("#sdk-input")).to_be_enabled()
 
 
+def open_turn_tool(page, prompt, summary):
+    user = page.locator('.sdk-live > .msg[data-role="user"]').filter(
+        has=page.get_by_text(prompt, exact=True),
+    )
+    process = user.locator("xpath=following-sibling::*[1]").and_(page.locator(".turn-process"))
+    toggle = process.get_by_role("button", name="展开本轮过程", exact=True)
+    if toggle.count():
+        toggle.click()
+    tool = page.locator(".sdk-live .tool-msg").filter(has_text=summary)
+    expect(tool).to_be_attached()
+    group = tool.locator("xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' sdk-tool-group ')][1]")
+    group_toggle = group.get_by_role("button", name="展开工具调用组", exact=True)
+    if group_toggle.count():
+        group_toggle.click()
+    return tool
+
+
 def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     context.route(
@@ -91,7 +109,8 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
 
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
-    page.wait_for_function("async sid => { await loadSessions(true); return S.sessions.some(row => row.sid === sid); }", arg=fixture.empty_sid, polling=500, timeout=30000)
+    wait_for_async(page, "async sid => { await loadSessions(true); return S.sessions.some(row => row.sid === sid); }",
+                   arg=fixture.empty_sid, polling=500, timeout=30000)
     rows = page.evaluate("S.sessions")
     # Portable explicit SID admission; unrelated SID/cwd is never a global lock.
     evidence = fixture.proc / 'sdk-writers.json'
@@ -224,8 +243,11 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert sum("Kiro V3 uses ACP over JSON-RPC 2.0." in (item.get("content") or "") for item in replay_items) == 1, replay_items
 
     # Account credits: a separate zero-turn ACP query fills the footer after open.
-    credits = page.locator(".sdk-pane .sdk-status-row > .sdk-gauges .sdk-gauge").filter(has_text="月度")
-    expect(credits).to_have_count(1, timeout=30000)
+    credits = page.locator(".sdk-pane .sdk-status-row > .sdk-gauges .sdk-gauge").filter(
+        has=page.get_by_role("progressbar", name="KIRO POWER 月度 已用", exact=True),
+    )
+    expect(credits).to_be_visible(timeout=30000)
+    expect(credits.locator(":scope > span")).to_have_text("1m")
     expect(credits.locator("b")).to_have_text("25%")
     expect(credits.get_by_role("progressbar")).to_have_attribute("aria-label", "KIRO POWER 月度 已用")
     expect(credits).to_have_attribute("title", re.compile(
@@ -279,8 +301,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     expect(page.locator(".sdk-live")).to_contain_text("Kiro ACP V3 final answer for: Verify Kiro V3 streaming turn")
     # The tool bubble shows a readable summary (`读取 README.md`) and the plain
     # file content, not the raw rawInput/rawOutput JSON envelopes.
-    read_tool = page.locator(".sdk-live .tool-msg").filter(has_text="读取 README.md")
-    reveal_sdk_tool(read_tool)
+    read_tool = open_turn_tool(page, "Verify Kiro V3 streaming turn", "读取 README.md")
     expect(read_tool).to_be_visible()
     expect(read_tool.locator(".tool-out")).to_contain_text("# Kiro Workspace")
     expect(read_tool.locator(".tool-out")).not_to_contain_text('"content"')
@@ -304,8 +325,7 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     expect(page.locator(".sdk-live")).to_contain_text("Permission granted and command executed.")
     # The execute tool bubble reads as a shell command with its exit code and
     # plain stdout, not the `{"command": ...}` / `{"output": ...}` JSON.
-    exec_tool = page.locator(".sdk-live .tool-msg").filter(has_text="$ echo kiro-approved")
-    reveal_sdk_tool(exec_tool)
+    exec_tool = open_turn_tool(page, "permission-test", "$ echo kiro-approved")
     expect(exec_tool).to_be_visible()
     expect(exec_tool.locator(".tool-status")).to_contain_text("exit 0")
     expect(exec_tool.locator(".tool-out")).to_contain_text("kiro-approved")
@@ -427,8 +447,8 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     page.locator("#a-fork-chain").click()
     page.locator(f'#fork-chain-menu .chain-row[data-uid="{uid}"] .chain-toggle').click()
     page.locator(f'#side .item[data-uid="{uid}"]').click()
-    expect(page.locator("#msgs")).to_contain_text("Explain Kiro V3 ACP architecture")
-    expect(page.locator("#msgs")).to_contain_text("Kiro ACP V3 final answer for: Verify Kiro V3 streaming turn")
+    expect(page.locator(".sdk-history")).to_contain_text("Explain Kiro V3 ACP architecture")
+    expect(page.locator(".sdk-history")).to_contain_text("Kiro ACP V3 final answer for: Verify Kiro V3 streaming turn")
     assert len(fixture.received("session/load")) == loads_before_reload, "Reloading cached history activated native SDK"
 
     # Sidebar deletion uses the bulk route even for one row; it must show the same native semantics.
@@ -440,11 +460,14 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     assert len(fixture.received("session/delete")) == deletes_before
 
     # The stopped session keeps the account snapshot; the Agent quota page lists Kiro too.
-    expect(page.locator(".sdk-gauges .sdk-gauge:visible").filter(has_text="月度").locator("b")).to_have_text("81%")
+    expect(credits).to_be_visible()
+    expect(credits.locator("b")).to_have_text("81%")
     page.locator("#settings").click()
     page.get_by_role("tab", name="机器", exact=True).click()
     page.locator("#quota-open").click()
-    table = page.locator("#quota-dialog").get_by_role("table", name="Kiro", exact=True)
+    quota = page.locator("#quota-dialog")
+    quota.get_by_role("tab", name="Kiro", exact=True).click()
+    table = quota.get_by_role("table", name="Kiro", exact=True)
     expect(table.get_by_role("columnheader")).to_have_text(["机器", "窗口", "已使用", "API 价值", "重置倒计时", "采集"])
     expect(table.locator("tbody tr").first).to_contain_text("月度")
     expect(table.locator(".quota-remaining b")).to_have_text("81%")

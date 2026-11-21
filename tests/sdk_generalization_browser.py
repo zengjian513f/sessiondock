@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
+from browser_runtime import wait_for_async
 from history_fixtures import BINARY
 from native_sdk_footer_browser import provider
 from sdk_ui_fixtures import start_sdk
@@ -15,6 +16,12 @@ from popups import on_popup
 def open_view(page, base, source):
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
+    if source == 'kiro':
+        # The initial browser list can finish before ACP publishes all pages.
+        wait_for_async(page, """async source => {
+            await loadSessions(true);
+            return S.sessions.some(row => row.source === source);
+        }""", arg=source, polling=250)
     row=page.locator(f'#side .item[data-uid^="{source}:"]').first
     if not row.is_visible():
         page.locator(f'#chips button[data-source="{source}"]').click()
