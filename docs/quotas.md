@@ -47,7 +47,17 @@ DELTA：在原有额度表的“已使用”之后增加一列“API 价值”�
 首次到达 100% 时截止本轮金额，后续 Credits 消费不计入；延迟到达的较低读数
 不重开已结束的历史窗口。表内官方额度仍使用现有账号快照，不被这些历史采样覆盖。
 非整数原生百分比使用原值；缺跳档记录不猜整数边界。其他 Agent 使用同步采集的
-官方百分比。当前调用组合、上下文和缓存命中率改变，估值也会改变。
+官方百分比，Kiro 按下述回合样本外推。当前调用组合、上下文和缓存命中率改变，估值也会改变。
+
+DELTA：Kiro 的本期金额是本机可计价样本的粗估。主回合输入用 V3 原生日志的上下文
+占用推算，输出用助手生成内容和工具参数的长度推算。子任务按原生归属并入父回合；
+缺少上下文占用时，以生成片段之间累计的可见内容估算输入。按记录中的模型查 API
+价目，超出可确定的价阶或缺少计量则跳过该回合。将样本未折扣 API 价乘
+[0.375 缓存费用系数](https://gist.github.com/ngardiner/d577b3c9f3ca283937879bae8460102b#methodology)。
+页面以 `≈` 提示估算，悬停列出样本扣点、账号已用点数以及缺失回合。
+整月价值用同一批样本的 `金额 ÷ 样本 Credits × 套餐 Credits`，样本与官方本期额度
+无法配对时仅显示已有样本金额。每月 1 日 UTC 重置的账期从上月 1 日起算；
+其他重置日期使用原生或配置的起点。跨设备及网页用量若没有进入本机日志，不计入样本。
 
 DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件现在位于哪台机器判断。
 读取成功 move 的时间和方向，包含迁出保留在 trash 的原始记录及 Codex 归档，
@@ -141,7 +151,7 @@ python3 tools/agent_usage.py rebuild --config CONFIG --agent claude
 | Grok | usage.json 的 turns[].modelUsage 与 endedAt | 不叠加 session 总量；没有官方额度百分比时仅显示费用；未知 CLI 模型别名不套近似价格；回合聚合超过长上下文价阶但无法拆回请求时不定价 |
 | CodeBuddy | providerData.rawUsage，按 messageId 与 stepSeq 去重 | message／function_call 中重复 usage 只计一次；缺价或缓存写入口径不明不估套餐 |
 | OpenCode | 只读 session_message 的已完成 assistant 记录 | 不叠加 session 累计；cache.write 缺 TTL 时不估完整费用 |
-| Kiro | 官方额度中的月度 Credits | 没有可定价请求明细，显示原因，不将 Credits 当成 API 美元 |
+| Kiro | V3 的 `session.json`、`messages.jsonl`、关联的 `sub-executions` 和官方月度 Credits | 同一执行只计一次，使用完成回合的 `usage_summary` 配对扣点。未变化的会话不重读；当前仅覆盖有这类原生记录的样本 |
 | Droid | sessions 同级 logs/droid-log-single.log 及轮转日志的 Agent Streaming result、Model-Router Model transition | 按请求时间、tags.modelId 和 response/request ID 核算去重；不叠加 settings 总量、totalInputTokens 或 reasoningTokens；BYOK 排除；优先使用请求的额度组，闭源模型默认归 Standard；同一进程和会话在 402 后自动切换至 Kimi K3，后续匹配请求归 Core，直至下一次主模型切换；其余额度组缺失的记录仍标为不完整；缓存写入 TTL 未知显示 5m–1h 价格范围，日志未覆盖周期起点时仅列已知下限 |
 
 [周期用量 Chromium 回归](../tests/agent_usage_browser.py)实际打开节点与 Hub 页面、

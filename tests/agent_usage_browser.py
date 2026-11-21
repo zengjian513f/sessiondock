@@ -382,6 +382,115 @@ def price_sync_case(browser, binary, output):
         expect(cell).not_to_contain_text('整轮')
 
 
+def kiro_estimate_case(browser, binary, output):
+    with tempfile.TemporaryDirectory(prefix='sessiondock-kiro-usage-') as tmp, ExitStack() as stack:
+        root = Path(tmp)
+        state = root/'state'
+        native = root/'kiro'
+        session = native/'bucket'/'session'
+        main = session/'messages.jsonl'
+        now = time.time()
+        month = datetime.fromtimestamp(now, timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0)
+        end = month.replace(year=month.year+1, month=1) if month.month == 12 else month.replace(month=month.month+1)
+        dump(session/'session.json', {'id':'session', 'dataModelVersion':1, 'modelId':'claude-opus-5.5'})
+        dump(state/'agent-usage/settings.json', {'enabled':False,'interval_seconds':300,'sources':{}})
+
+        def record(ident, at, kind, execution='turn', **payload):
+            return {'id':ident, 'timestamp':iso(at), 'payload':{
+                'type':kind, 'executionId':execution, **payload}}
+
+        def quota(used, error=None):
+            dump(state/'quotas/kiro.json', {'source':'kiro', 'captured_at':iso(time.time()), 'error':error, 'buckets':[{
+                'id':'kiro:credit', 'group':'Power', 'window':'monthly', 'unit':'Credits',
+                'used':used, 'limit':10000, 'remaining_percent':100-used/100, 'resets_at':end.isoformat()}]})
+
+        at = max(month.timestamp(), now-20)
+        quota(30)
+        append(main,
+            record('asst',at,'assistant', reasoningModelId='qdev::claude-opus-5.5', content='abcd'*1000),
+            record('ctx1',at,'session_metadata', key='contextUsage', value={'usagePercentage':40}),
+            record('ctx2',at,'session_metadata', key='contextUsage', value={'usagePercentage':20}),
+            record('spawn',at,'sub_agent_start', parentExecutionId='turn', subSessionId='child'),
+            record('spawn-visible',at,'sub_agent_start', parentExecutionId='turn',
+                   subSessionId='visible-child', prompt='abcd'*1000),
+            record('summary',at,'usage_summary', promptTurnSummaries=[{'unit':'credit','usage':10}]),
+            record('summary-copy',at,'usage_summary', promptTurnSummaries=[{'unit':'credit','usage':10}]),
+            record('out-of-cycle-ctx',month.timestamp()-1,'session_metadata','old', key='contextUsage',
+                   value={'usagePercentage':90}),
+            record('out-of-cycle-credit',month.timestamp()-1,'usage_summary','old',
+                   promptTurnSummaries=[{'unit':'credit','usage':99}]),
+            record('unmatched-credit',at,'usage_summary','no-context', promptTurnSummaries=[{'unit':'credit','usage':20}]))
+        append(session/'sub-executions/child.jsonl',
+            record('child-context',at,'session_metadata', key='contextUsage', value={'usedTokens':50000}),
+            record('child-asst',at,'assistant', content='abcd'*1000))
+        append(session/'sub-executions/visible-child.jsonl',
+               record('visible-asst',at,'assistant', content='abcd'*1000))
+
+        port = free_port()
+        env = node_env(root,port,'127.0.0.0/8')
+        env.update(SESSIONDOCK_KIRO_ROOT=str(native), SESSIONDOCK_USAGE_PYTHON=sys.executable)
+        base,_ = stack.enter_context(isolated_server(Corpus(root),binary,state_dir=state,extra_env=env))
+        hub_root = root/'hub'
+        hub_root.mkdir()
+        hub = Hub(binary.with_name('sessiondock-hub'),hub_root,[SimpleNamespace(port=port,token=TOKEN,name='Kiro Sample')])
+        hub.start()
+        stack.callback(hub.stop)
+        context = browser.new_context(viewport={'width':1280,'height':950})
+        stack.callback(context.close)
+        context.route('**/api/clients',lambda r:r.fulfill(json={'clients':[{'source':'kiro','installed':True}]}))
+        page = context.new_page()
+        page.goto(base+'/quotas.html')
+        cell = page.locator('[data-source="kiro"] tbody .quota-api')
+        expect(cell).to_have_text('N/A')
+
+        def refresh():
+            fetch_report = "fetch('api/usage').then(r=>r.json())"
+            before = page.evaluate(fetch_report).get('captured_at')
+            page.locator('#quota-refresh').click()
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                report = page.evaluate(fetch_report)
+                if not report.get('running') and report.get('captured_at') and report['captured_at'] != before:
+                    page.reload()
+                    return report, next(r for r in report['rows'] if r['source']=='kiro')
+                page.wait_for_timeout(200)
+            raise AssertionError(report)
+
+        report, row = refresh()
+        expect(cell).to_have_text('≈ $1.00整轮 ≈ $999.00')
+        expect(cell).to_have_attribute('title', re.compile(r'0\.375[\s\S]+10 样本 Credits'))
+        assert row['sample_credits'] == 10 and row['unpriced'] == 1
+        assert row['start'] == month.isoformat()
+        assert '未纳入样本金额和扣点' in cell.get_attribute('title')
+        report, row = refresh()
+        assert report['metrics']['bytes_read'] == 0
+        expect(cell).to_contain_text('$999.00')
+        page.screenshot(path=str(output/'kiro-estimate-node.png'),full_page=True)
+        page.set_viewport_size({'width':390,'height':950})
+        page.goto(f'http://127.0.0.1:{hub.port}/quotas.html')
+        page.evaluate("document.documentElement.dataset.theme='dark'")
+        expect(cell).to_contain_text('$999.00')
+        page.locator('.quota-scroll').evaluate_all('nodes=>nodes.forEach(n=>n.scrollLeft=100)')
+        page.screenshot(path=str(output/'kiro-estimate-hub.png'),full_page=True)
+
+        page.set_viewport_size({'width':1280,'height':950})
+        page.goto(base)
+        page.locator('#settings').click()
+        page.get_by_role('tab',name='机器',exact=True).click()
+        page.get_by_role('link',name='Agent 用量 →').click()
+        expect(cell).to_contain_text('$999.00')
+        page.screenshot(path=str(output/'kiro-estimate-settings.png'),full_page=True)
+        page.goto(base+'/quotas.html')
+        quota(2)
+        refresh()
+        expect(cell).to_have_text('≈ $1.00')
+        assert '样本扣点与本期账号额度不匹配' in cell.get_attribute('title')
+        quota(30,'查询失败')
+        refresh()
+        expect(cell).to_have_text('≈ $1.00')
+        assert '官方额度已过期或查询失败' in cell.get_attribute('title')
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,default=BINARY);parser.add_argument('--output',type=Path,default=REPO/'target/agent-usage/screenshots');parser.add_argument('--baseline',action='store_true');args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=True)
@@ -621,6 +730,7 @@ def main():
             assert not errors,errors
             price_upgrade(browser,args.binary.resolve(),args.output)
             price_sync_case(browser,args.binary.resolve(),args.output)
+            kiro_estimate_case(browser,args.binary.resolve(),args.output)
             print('PASS: original node/Hub tables, eight adapters, reference checkpoints, ownership, compaction, long context, exhaustion, duplicate/tail, partial/stale/zero, periodic refresh, wide/narrow light/dark')
 
 

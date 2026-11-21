@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from agent_usage_prices import synced_prices
+from agent_usage_kiro import CACHE_FACTOR, metered_turns
 
 SOURCES = ('codex', 'claude', 'grok', 'agy', 'kiro', 'droid', 'opencode', 'codebuddy')
 UTC = timezone.utc
@@ -517,6 +518,43 @@ class Ledger:
         finally:
             con.close()
 
+    def kiro(self, metadata_path, rebuild=False):
+        root = metadata_path.parent
+        main = root/'messages.jsonl'
+        if not main.is_file():
+            return
+        children = {path.stem:path for path in sorted((root/'sub-executions').glob('*.jsonl'))}
+        signature = []
+        for path in (metadata_path, main, *children.values()):
+            stat = path.stat()
+            signature.append([str(path.relative_to(root)), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns])
+        previous = self.db.execute("select state from files where source='kiro' and path=?", (str(main),)).fetchone()
+        if not rebuild and previous and json.loads(previous[0]).get('files') == signature:
+            return
+        raw = metadata_path.read_bytes()
+        self.bytes += len(raw)
+        metadata = json.loads(raw)
+        if metadata.get('dataModelVersion') != 1 or metadata.get('id') != root.name:
+            return
+
+        def read_rows(path):
+            if path is None:
+                return
+            with path.open('rb') as stream:
+                for raw in stream:
+                    self.bytes += len(raw)
+                    if not raw.endswith(b'\n'):
+                        break
+                    row = json.loads(raw)
+                    if isinstance(row, dict):
+                        yield row
+
+        for item in metered_turns(metadata, read_rows(main), lambda child: read_rows(children.get(child)), stamp, number):
+            self.put('kiro', item)
+        self.changed += 1
+        self.db.execute('insert or replace into files values(?,?,?,?,?,?,?,?)',
+                        ('kiro',str(main),0,0,0,0,0,json.dumps({'files':signature})))
+
 
 def discover(root, source):
     patterns = {'codex': '**/*.jsonl', 'claude': '**/*.jsonl', 'codebuddy': '**/*.jsonl',
@@ -542,9 +580,9 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
             if not path.exists():
                 raise FileNotFoundError()
             if source == 'kiro':
-                result[source] = {'note': '官方 Credits；原生未提供可定价的请求明细'}
-                continue
-            if source == 'opencode':
+                for metadata in sorted(path.glob('*/*/session.json')):
+                    ledger.kiro(metadata, refresh_parser)
+            elif source == 'opencode':
                 ledger.opencode(path, rebuild)
             else:
                 for item in discover(path, source):
@@ -682,6 +720,68 @@ def load_prices(config, refresh=False):
     return result
 
 
+def kiro_summary(ledger, bucket, quota, windows, prices, status, now, single_bucket):
+    captured = stamp(quota.get('captured_at'))
+    start, end = bounds(bucket, captured, windows)
+    if start is None and end is not None and bucket.get('window') == 'monthly':
+        reset = datetime.fromtimestamp(end, UTC)
+        # These subscription cycles reset at the first day of the month UTC.
+        # An irregular reset requires an explicit start or a native start field.
+        if reset == reset.replace(day=1,hour=0,minute=0,second=0,microsecond=0):
+            start = datetime.fromtimestamp(end - 1, UTC).replace(day=1,hour=0,minute=0,second=0).timestamp()
+    until = min(now, captured) if captured else now
+    sample_credits, unknown = 0, 0
+    by_model = {}
+    if single_bucket and start is not None and end is not None and start <= until:
+        items = ledger.db.execute("select data from events where source='kiro' and at>=? and at<? and at<=?",
+                                  (start, end, until))
+        for raw, in items:
+            item = json.loads(raw)
+            components = [model_price(p['model'], p['tokens'], prices, now, aggregate=True)
+                          if p is not None else None for p in item['parts']]
+            if any(cost is None for cost in components):
+                unknown += 1
+                continue
+            sample_credits += item['credits']
+            for part, cost in zip(item['parts'], components):
+                model = part['model']
+                total = by_model.setdefault(model, {'model':model, 'api_usd':0})
+                total['api_usd'] += cost * CACHE_FACTOR
+    amount = sum(p['api_usd'] for p in by_model.values()) if sample_credits else None
+    used, limit = bucket.get('used'), bucket.get('limit')
+    used_percent = 100 * used / limit if number(used) and number(limit) and 0 < limit and used <= limit else None
+    notes = ['Kiro 原生会话样本。输入按上下文占用或子任务可见记录估算，输出按生成内容估算；API 标价乘 0.375。']
+    if amount is not None:
+        notes.append(f'已计价样本扣点 {sample_credits:,.2f} Credits'
+                     + (f'，账号已用 {used:,.2f} Credits' if number(used) else ''))
+    if unknown:
+        notes.append(f'{unknown} 个回合缺少模型、价目或计量，未纳入样本金额和扣点。')
+    reason = status.get('error')
+    if not reason and not single_bucket:
+        reason = '无法确认会话样本所属额度组'
+    if not reason and (start is None or end is None):
+        reason = '缺少周期边界，请设置本周期起点'
+    if not reason and (quota.get('error') or not captured or now - captured > 900):
+        reason = '官方额度已过期或查询失败'
+    if not reason and (end <= now or start > until):
+        reason = '缺少本期有效额度快照'
+    if not reason and amount is None:
+        reason = '本周期没有可配对扣点的 Kiro 计价样本'
+    if not reason and (not number(used) or not number(limit) or not limit or bucket.get('unit') != 'Credits'):
+        reason = '缺少账号已用 Credits 或套餐上限'
+    if not reason and (sample_credits > used + .01 or sample_credits > limit + .01):
+        reason = '样本扣点与本期账号额度不匹配，暂不外推'
+    estimate = amount / sample_credits * limit if not reason else None
+    return {'source':'kiro', 'id':bucket.get('id'), 'group':bucket.get('group'),
+            'window':bucket.get('window'), 'start':iso(start) if start is not None else None,
+            'end':iso(end) if end is not None else None, 'quota_at':quota.get('captured_at'),
+            'cost_until':iso(until), 'api_usd':amount, 'equivalent_usd':estimate,
+            'used_percent':used_percent,
+            'sample_credits':sample_credits, 'credit_limit':limit, 'approximate':True,
+            'notes':notes, 'models':list(by_model.values()), 'unpriced':unknown,
+            'reason':reason, 'local_sample':True}
+
+
 def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
     ownership = ownership or Ownership(config)
     rows = []
@@ -698,6 +798,10 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                         'starts_at': datetime.fromtimestamp(now, UTC).replace(day=1,hour=0,minute=0,second=0,microsecond=0).isoformat()}]
         source_settings = settings.get('sources', {}).get(source, {})
         state = statuses.get(source, {})
+        if source == 'kiro':
+            rows.extend(kiro_summary(ledger, bucket, quota, source_settings.get('windows', {}),
+                                     prices, state, now, len(buckets) == 1) for bucket in buckets)
+            continue
         file_states = [json.loads(x[0]) for x in ledger.db.execute(
             'select state from files where source=?', (source,))]
         for bucket in buckets:

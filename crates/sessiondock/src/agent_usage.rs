@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 const SCRIPT: &str = include_str!("../../../tools/agent_usage.py");
 const PRICE_SYNC: &str = include_str!("../../../tools/agent_usage_prices.py");
+const KIRO_USAGE: &str = include_str!("../../../tools/agent_usage_kiro.py");
 const PRICES: &str = include_str!("../../../tools/agent_usage_prices.json");
 
 pub struct AgentUsage {
@@ -142,6 +143,7 @@ impl AgentUsage {
             // Code and default prices belong to the running committed artifact.
             std::fs::write(dir.join("collector.py"), SCRIPT)?;
             std::fs::write(dir.join("agent_usage_prices.py"), PRICE_SYNC)?;
+            std::fs::write(dir.join("agent_usage_kiro.py"), KIRO_USAGE)?;
             if !dir.join("price-base.json").exists() {
                 let previous = std::fs::read(dir.join("default-prices.json"))
                     .ok()

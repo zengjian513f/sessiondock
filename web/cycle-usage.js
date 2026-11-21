@@ -33,7 +33,8 @@ function initCycleUsage(changed) {
       const data=node.usage,row=data?.rows?.find(r=>r.source===source && r.id===bucket?.id);
       const sameCycle=row && Date.parse(row.end)===Date.parse(bucket.resets_at);
       if(!sameCycle){cell.textContent='N/A';cell.title=node.usageError || (data?.running?'正在统计…':'尚无本周期统计');return;}
-      cell.textContent=(row.partial && row.api_usd!=null?'≥ ':'')+(row.partial?money(row.api_usd):range(row.api_usd,row.api_usd_max));
+      const prefix=row.api_usd==null?'':row.approximate?'≈ ':row.partial?'≥ ':'';
+      cell.textContent=prefix+(row.partial?money(row.api_usd):range(row.api_usd,row.api_usd_max));
       const stale=node.usageError || data.error || row.end && Date.parse(row.end)<=Date.now() || row.quota_at && Date.now()-Date.parse(row.quota_at)>900000;
       const detail=[row.scope,`周期：${time(row.start)} → ${time(row.end)}`,`费用截至：${time(row.cost_until || row.quota_at)}`];
       if(row.exhausted_at)detail.push('已在首次显示 100% 时截止；后续 Credits 消费不计入。');
@@ -44,13 +45,19 @@ function initCycleUsage(changed) {
       if(row.equivalent_usd!=null && !stale){
         const estimate=document.createElement('small');estimate.textContent=`整轮 ≈ ${range(row.equivalent_usd,row.equivalent_usd_max)}`;cell.append(estimate);
         const point=row.estimate_point;
-        detail.push(point?`首次显示 ${point.observed_percent}%（${time(point.at)}）：${money(point.api_usd)} ÷ ${point.percent}% ≈ ${money(row.equivalent_usd)}${point.rounded?'；半个百分点边界按四舍五入估计':''}`:
-          `${range(row.api_usd,row.api_usd_max)} ÷ ${row.used_percent}% ≈ ${range(row.equivalent_usd,row.equivalent_usd_max)}`);
+        if(row.sample_credits!=null){
+          const credits=n=>n.toLocaleString(undefined,{maximumFractionDigits:2});
+          detail.push(`${money(row.api_usd)} ÷ ${credits(row.sample_credits)} 样本 Credits × ${credits(row.credit_limit)} 套餐 Credits ≈ ${money(row.equivalent_usd)}（按原始精度计算）`);
+        }else{
+          detail.push(point?`首次显示 ${point.observed_percent}%（${time(point.at)}）：${money(point.api_usd)} ÷ ${point.percent}% ≈ ${money(row.equivalent_usd)}${point.rounded?'；半个百分点边界按四舍五入估计':''}`:
+            `${range(row.api_usd,row.api_usd_max)} ÷ ${row.used_percent}% ≈ ${range(row.equivalent_usd,row.equivalent_usd_max)}`);
+        }
       }
       if(row.base_api_usd!=null && !row.api_usd_max)detail.push(`不含长上下文加价：${money(row.base_api_usd)}`);
       for(const part of row.models || []){
         const tier={fast:'Fast',ultrafast:'Ultrafast',standard:''}[part.tier] ?? (part.tier?'未知档位':'');
-        detail.push(`${part.model || '未知型号'}${tier?' · '+tier:''}：${range(part.api_usd,part.api_usd_max)}，${part.requests} 次调用${part.unpriced?'（含未定价）':''}`);
+        const calls=part.requests!=null?`，${part.requests} 次调用`:'';
+        detail.push(`${part.model || '未知型号'}${tier?' · '+tier:''}：${range(part.api_usd,part.api_usd_max)}${calls}${part.unpriced?'（含未定价）':''}`);
       }
       if(data.price_sync?.updated_at)detail.push(`OpenAI 价目上次同步：${time(data.price_sync.updated_at)}`);
       if(data.price_sync?.error)detail.push(data.price_sync.error);
