@@ -134,11 +134,6 @@ impl SessionsSnapshot {
 }
 
 impl Snapshot {
-    #[allow(dead_code)]
-    pub fn new(sessions: Value, live: Value, term: Value) -> Self {
-        Self::from_sessions(Arc::new(SessionsSnapshot::new(sessions)), live, term)
-    }
-
     pub fn from_sessions(
         sessions: Arc<SessionsSnapshot>,
         mut live: Value,

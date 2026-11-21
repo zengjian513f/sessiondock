@@ -405,7 +405,19 @@ impl ViewSnapshot {
 
     pub fn messages(&self, query: &MessageQuery) -> Result<Value, SessionError> {
         validate_message_query(query)?;
-        message_batch(self, query, None, None, None)
+        let selection = select_batch(self, query, None)?;
+        let (mut response, tail) = batch_fields(self, &selection);
+        response["messages"] = Value::Array(
+            selection
+                .selected
+                .iter()
+                .map(|item| item.event.message.clone())
+                .collect(),
+        );
+        if let (Value::Object(fields), Value::Object(tail)) = (&mut response, tail) {
+            fields.extend(tail);
+        }
+        Ok(response)
     }
 
     /// Same append selection as messages, without serializing message bodies or
@@ -916,7 +928,6 @@ pub(crate) struct Selection<'a> {
     pub selected: Vec<Selected<'a>>,
     pub reset: bool,
     pub start: usize,
-    pub window: bool,
     pub total: usize,
     pub partial: Value,
     pub activity: Value,
@@ -976,7 +987,6 @@ fn select_batch<'a>(
         } else {
             begin
         },
-        window,
         total,
         partial,
         activity,
@@ -1010,61 +1020,6 @@ pub(crate) fn batch_fields(snapshot: &ViewSnapshot, selection: &Selection<'_>) -
         "activity_changed": selection.activity_changed, "activity": selection.activity,
     });
     (head, tail)
-}
-
-fn message_batch(
-    snapshot: &ViewSnapshot,
-    query: &MessageQuery,
-    media: Option<&crate::media::MediaStore>,
-    files: Option<&crate::files::FileService>,
-    pages: Option<&PageStore>,
-) -> Result<Value, SessionError> {
-    let selection = select_batch(snapshot, query, pages)?;
-    let messages = project_selected(snapshot, &selection.selected, media, files, pages)?;
-    let (mut response, tail) = batch_fields(snapshot, &selection);
-    response["messages"] = Value::Array(messages);
-    for (key, value) in tail.as_object().expect("object above") {
-        response[key] = value.clone();
-    }
-    if pages.is_some() && selection.window {
-        pages::validate_response(&response)?;
-    }
-    Ok(response)
-}
-
-/// Public message projection. With a media store, each message carries at most
-/// `DISPLAY_LIMIT` typed images inline plus `media_more` for any remainder;
-/// text-only consumers (search, input history) never see either field.
-pub(crate) fn project_selected(
-    snapshot: &ViewSnapshot,
-    selected: &[Selected<'_>],
-    media: Option<&crate::media::MediaStore>,
-    files: Option<&crate::files::FileService>,
-    pages: Option<&PageStore>,
-) -> Result<Vec<Value>, SessionError> {
-    let projected = if let Some(media) = media {
-        let events = selected
-            .iter()
-            .map(|selected| selected.event)
-            .collect::<Vec<_>>();
-        media_projection::project(snapshot, &events, media, files)?
-    } else {
-        Vec::new()
-    };
-    let mut messages = Vec::with_capacity(selected.len());
-    for (index, selected) in selected.iter().enumerate() {
-        let mut message = selected.event.message.clone();
-        if media.is_some() {
-            if !projected[index].is_empty() {
-                message["media"] = json!(&projected[index]);
-            }
-            if let Some(more) = pages::media_more(snapshot, selected, pages)? {
-                message["media_more"] = more;
-            }
-        }
-        messages.push(message);
-    }
-    Ok(messages)
 }
 
 // ---------------------------------------------------------------------------
