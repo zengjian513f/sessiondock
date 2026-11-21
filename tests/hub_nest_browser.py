@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, isolated_server
 from hub_fixtures import Hub, free_port, scoped
 from nest_tree_browser import open_item_menu
@@ -19,6 +19,7 @@ from node_auth_fixtures import node_env, TOKEN
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-hub-nest-') as temporary, sync_playwright() as pw:
         root = Path(temporary)
@@ -48,7 +49,8 @@ def main():
             parent = scoped(nodes[0].nid, corpora[0].uid('same'))
             child = scoped(nodes[1].nid, corpora[1].uid('child'))
             twin = scoped(nodes[1].nid, corpora[1].uid('same'))
-            expected = {'source': 'codex', 'sid': 'same', 'node_id': nodes[0].nid}
+            expected = {'source': 'codex', 'sid': 'same', 'node_id': nodes[0].nid,
+                        'binding': {'kind': 'hub', 'through': 4}}
             for restart in (False, True):
                 with ExitStack() as stack:
                     locals_ = []
@@ -59,6 +61,23 @@ def main():
                         hubroot = root / 'hub'
                         hubroot.mkdir()
                         hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, nodes)
+                        # The old A instance was moved to B. A now has its own
+                        # session with the same SID and a distinct transcript.
+                        transfers = hubroot/'transfers'
+                        transfers.mkdir(mode=0o700)
+                        for operation, target, sequence in (('a0'*16, nodes[1].nid, None),
+                                                              ('c0'*16, 'c'*32, 4)):
+                            path = transfers/f'{operation}.json'
+                            receipt = {
+                                'created_ms': 5, 'phase': 'complete',
+                                'request': {'uid': scoped(nodes[0].nid, f'codex:old-{operation}'),
+                                            'target_node': target, 'operation_id': operation},
+                                'result': {'mode': 'move', 'link_map': {'codex:same': 'codex:same'}},
+                            }
+                            if sequence is not None:
+                                receipt['move_seq'] = sequence
+                            path.write_text(json.dumps(receipt))
+                            path.chmod(0o600)
                     hub.start()
                     stack.callback(hub.stop)
                     context = browser.new_context(service_workers='block', viewport={'width': 1280, 'height': 900})
@@ -82,6 +101,18 @@ def main():
                     assert page.evaluate('uid => S.sessions.find(s => s.uid === uid).nest_parent', child) == expected
                     saved = json.loads((corpora[1].root / 'state/session-metadata.json').read_text())
                     assert saved['sessions'][corpora[1].uid('child')]['nest_parent'] == expected
+                    field = page.locator('#q')
+                    field.fill('child')
+                    field.press('Enter')
+                    expect(page.locator('#stat')).to_contain_text('全文命中')
+                    assert page.evaluate('uid => S.results.find(r => r.uid === uid).nest_parent', child) == expected
+                    ordinary = page.request.get(f'http://127.0.0.1:{hub.port}/api/search?q=child').json()
+                    assert next(row for row in ordinary['results'] if row['uid'] == child)['nest_parent'] == expected
+                    field.fill('')
+                    page.locator('#side .item[data-uid="'+parent+'"]').wait_for()
+                    if args.screenshots:
+                        args.screenshots.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(args.screenshots/f'explicit-after-legacy-{restart}.png'))
                     status, _, raw = hub.request('POST', '/api/session/nest', {'uid': parent, 'parent_uid': child})
                     assert status == 400 and '子会话' in json.loads(raw)['error'], (status, raw)
                     # Unauthenticated local callers cannot forge a resolved remote parent.

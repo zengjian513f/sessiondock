@@ -13,7 +13,7 @@ use crate::{
     error::ApiError,
     metadata::{
         GroupCatalogUpdate, MetadataError, MetadataSnapshot, MetadataStore, NestParent,
-        fork_parent_uids,
+        ParentBinding, fork_parent_uids,
     },
     sessions::SessionStore,
     state::{AppState, JsonBytes},
@@ -78,6 +78,8 @@ pub struct NestRequest {
     parent_uid: Option<String>,
     #[serde(default)]
     remote_parent: Option<NestParent>,
+    #[serde(default)]
+    move_fence: Option<u64>,
     #[serde(flatten)]
     diagnostics: Diagnostics,
 }
@@ -362,6 +364,10 @@ pub async fn nest(
             "跨机器附属需要通过 Hub 验证",
         ));
     }
+    let binding = hub
+        .and(body.move_fence)
+        .map(|through| ParentBinding::Hub { through });
+    let local_binding = binding.clone().unwrap_or(ParentBinding::Local);
     let pending = super::terminal::collect_sdk_sessions(&state)?;
     write(state, move |store, events| {
         let mut list = store.list(true)?;
@@ -380,7 +386,7 @@ pub async fn nest(
                 "会话不存在",
             ));
         }
-        let parent = if let Some(remote) = body.remote_parent {
+        let parent = if let Some(mut remote) = body.remote_parent {
             if parent_uid.is_some()
                 || !remote
                     .node_id
@@ -393,6 +399,7 @@ pub async fn nest(
                     "跨机器父会话信息无效",
                 ));
             }
+            remote.binding = binding;
             Some(remote)
         } else if let Some(parent_uid) = parent_uid {
             if parent_uid == body.uid {
@@ -437,6 +444,7 @@ pub async fn nest(
             }
             Some(NestParent {
                 node_id: None,
+                binding: Some(local_binding),
                 source: source.to_owned(),
                 sid: sid.to_owned(),
             })

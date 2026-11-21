@@ -104,9 +104,11 @@ Validation: `python3 tests/rewind_cli_browser.py`.
 
 ## Sidebar parent
 
-`POST /api/session/nest` stores one display-only parent, `nest_parent: {source, sid, node_id?}`.
-Absent `node_id` means the child's own node. `{uid, parent_uid}` attaches to a listed
-session; `{uid, parent_uid: null}` clears the relation. There is no independent flag,
+`POST /api/session/nest` stores one display-only parent, `nest_parent: {source, sid, node_id?, binding?}`.
+Absent `node_id` means the child's own node. The optional binding records the local decision,
+the Hub's last completed move when it resolved the parent, or the move that rewrote
+the address. `{uid, parent_uid}` attaches to a listed session. `{uid, parent_uid: null}`
+clears the relation. There is no independent flag,
 startup-source fallback or restore action. Native subagent relationships remain in the CLI history.
 选择迁移保留原生 ID 和已有显示父关系。父子只迁移一端时把本机父描述转换为明确的
 跨机描述；一起迁移时仍为本机关系。源端留下的子会话（包括不支持迁移的来源）指向目标父会话。
@@ -188,8 +190,9 @@ directory the route is `501 metadata_disabled`.
 The Hub also accepts a parent on another registered machine. It resolves both
 scoped UIDs against the fleet list, checks the complete displayed parent chain,
 and forwards a trusted `remote_parent: {node_id, source, sid}` descriptor to the
-child's node. The child's metadata owns the durable relation; Hub restart and
-browser reload preserve it. The descriptor is accepted only on the authenticated
+child's node together with the completed-move position. The position orders decisions
+and completions without comparing machine clocks. The child's metadata owns the
+durable relation across Hub restart and browser reload. The descriptor is accepted only on the authenticated
 node listener, never from a local browser. Browser-supplied descriptors are removed
 by the Hub before resolution. Hub nest writes are serialized through validation
 and forwarding; a cyclic fleet edge returns HTTP 400. Direct node writes can only

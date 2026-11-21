@@ -165,15 +165,15 @@ def check_trash_order(browser, hub, nodes):
 def seed_search_moves(root):
     transfers = root / "transfers"
     transfers.mkdir(mode=0o700)
-    # The saved relation still points to A. Replay A → B → C by timestamp,
-    # independently of the journal filenames and operation IDs.
-    for operation, stamp, source, target in (
-        ("move-z", 2, "a", "b"),
-        ("move-a", 3, "b", "c"),
+    # These operations have the same creation time and reverse lexical IDs.
+    # Only their durable completion positions describe A → B → C.
+    for operation, sequence, source, target in (
+        ("move-z", 1, "a", "b"),
+        ("move-a", 2, "b", "c"),
     ):
         path = transfers / f"{operation}.json"
         path.write_text(json.dumps({
-            "created_ms": stamp, "phase": "complete", "bytes_sent": 0, "bytes_total": 0,
+            "created_ms": 2, "move_seq": sequence, "phase": "complete", "bytes_sent": 0, "bytes_total": 0,
             "request": {"uid": scoped(NID[source], "claude:same-file-hash"),
                         "target_node": NID[target], "operation_id": operation},
             "result": {"mode": "move", "link_map": {"claude:same-native-id": "claude:same-native-id"}},

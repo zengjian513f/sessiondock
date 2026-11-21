@@ -1119,9 +1119,15 @@ async fn handle(
         && let Some(body) = body.as_mut()
     {
         body.remove("remote_parent");
+        body.remove("move_fence");
         if explicit.is_none() {
             crate::hub::nest::prepare(registry, client, body).await?;
         }
+    }
+    if path == "/api/session/transfer/tree"
+        && let Some(body) = body.as_mut()
+    {
+        body.remove("related_uids");
     }
     if explicit.is_none() {
         if method == Method::POST
@@ -1282,51 +1288,8 @@ async fn handle(
         let mut tree: Value = serde_json::from_slice(&bytes).map_err(|_| Reply::Upstream)?;
         let inventory =
             aggregate::sessions(registry, client, &[("force".into(), "1".into())]).await?;
-        let nesting = crate::hub::nest::TransferTree::new(&inventory);
-        nesting.extend(&mut tree);
-        loop {
-            let extra = tree["sessions"]
-                .as_array()
-                .and_then(|rows| rows.iter().find(|row| row["native_missing"] == true))
-                .and_then(|row| row["uid"].as_str())
-                .map(str::to_owned);
-            let Some(extra) = extra else {
-                break;
-            };
-            let (_, local) = namespace::split(&extra, true)
-                .map_err(|error| Reply::Invalid(error.to_string()))?;
-            let answer = client
-                .json(
-                    &target,
-                    "POST",
-                    "/api/session/transfer/tree",
-                    Some(&json!({"uid":local})),
-                    std::time::Duration::from_secs(300),
-                )
-                .await;
-            let members = tree["sessions"].as_array_mut().unwrap();
-            let mut found = false;
-            if let Ok((200, value)) = answer {
-                let value = namespace::public_payload(value, &node, "/api/session/transfer/tree");
-                for member in value["sessions"].as_array().into_iter().flatten() {
-                    found |= member["uid"] == extra;
-                    if let Some(existing) = members
-                        .iter_mut()
-                        .find(|existing| existing["uid"] == member["uid"])
-                    {
-                        *existing = member.clone();
-                    } else {
-                        members.push(member.clone());
-                    }
-                }
-            }
-            if !found && let Some(member) = members.iter_mut().find(|member| member["uid"] == extra)
-            {
-                member["native_missing"] = false.into();
-                member["disabled_reason"] = "原生记录当前不可迁移".into();
-            }
-            nesting.extend(&mut tree);
-        }
+        crate::hub::nest::complete_transfer_tree(client, &target, &node, &inventory, &mut tree)
+            .await?;
         return ok(&tree);
     }
     if method == Method::POST

@@ -12,8 +12,8 @@ use std::{
 };
 
 pub use model::{
-    Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent, SCHEMA_VERSION,
-    TimelinePin, fork_parent_uids,
+    Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent, ParentBinding,
+    SCHEMA_VERSION, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";

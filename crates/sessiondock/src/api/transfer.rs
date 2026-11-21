@@ -13,7 +13,7 @@ use crate::{
     trash::RunState,
 };
 use axum::{
-    Json,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -51,7 +51,12 @@ fn member_rows(
     snapshot: &SessionSnapshot,
     uid_for: impl Fn(&crate::transfer::group::Member) -> Result<String, TransferError>,
 ) -> Result<Vec<Value>, TransferError> {
-    let rows = snapshot.list["sessions"].as_array();
+    let mut rows = std::collections::HashMap::new();
+    for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
+        if let Some(uid) = row["uid"].as_str() {
+            rows.entry(uid).or_insert(row);
+        }
+    }
     let index = snapshot.index();
     let entries: std::collections::HashMap<_, _> = index
         .candidates()
@@ -62,7 +67,7 @@ fn member_rows(
         .iter()
         .map(|member| {
             let uid = uid_for(member)?;
-            if let Some(row) = rows.and_then(|rows| rows.iter().find(|row| row["uid"] == uid)) {
+            if let Some(row) = rows.get(uid.as_str()).copied() {
                 return Ok(row.clone());
             }
             let mut row = json!({"uid":uid,"sid":member.sid,"source":member.source,
@@ -162,15 +167,32 @@ pub struct PlanRequest {
     #[serde(default)]
     mode: Option<String>,
 }
-pub async fn tree(State(state): State<AppState>, Json(body): Json<PlanRequest>) -> Response {
+#[derive(Deserialize)]
+pub struct TreeRequest {
+    uid: String,
+    #[serde(default)]
+    related_uids: Option<Vec<String>>,
+}
+
+pub async fn tree(
+    State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    Json(body): Json<TreeRequest>,
+) -> Response {
     let service = match service(&state) {
         Ok(service) => service,
         Err(error) => return *error,
     };
+    let related = hub.and(body.related_uids);
     let (mut tree, group, snapshot) = match tokio::task::spawn_blocking(move || {
         let snapshot = service.inventory_snapshot()?;
-        let group = service.group_in(&body.uid, &snapshot)?;
-        Ok::<_, TransferError>((service.selection_tree(&group, &snapshot), group, snapshot))
+        let group =
+            service.groups_in(&body.uid, related.as_deref().unwrap_or_default(), &snapshot)?;
+        let mut tree = service.selection_tree(&group, &snapshot);
+        if related.is_some() {
+            tree["supplemented"] = true.into();
+        }
+        Ok::<_, TransferError>((tree, group, snapshot))
     })
     .await
     {

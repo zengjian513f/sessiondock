@@ -283,6 +283,7 @@ impl TransferService {
                     &selection.source_node,
                     &selection.target_node,
                     &selection.target_node,
+                    &op.id,
                     &identities,
                     &BTreeSet::new(),
                 )
@@ -531,6 +532,7 @@ impl TransferService {
                     &selection.source_node,
                     &selection.target_node,
                     &selection.source_node,
+                    &op.id,
                     &identities,
                     &selection.uids,
                 )

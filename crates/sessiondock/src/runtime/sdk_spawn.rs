@@ -88,6 +88,7 @@ pub async fn capture(
         }
         Some((
             parent.map(|parent| NestParent {
+                binding: None,
                 node_id: None,
                 source: parent.source.clone(),
                 sid: parent.sid.clone(),
@@ -131,6 +132,7 @@ pub async fn capture(
                             && same_process(&root, process)
                         {
                             return Some(NestParent {
+                                binding: None,
                                 node_id: Some(binding.session.node_id.clone()),
                                 source: binding.session.source.clone(),
                                 sid: binding.session.sid.clone(),

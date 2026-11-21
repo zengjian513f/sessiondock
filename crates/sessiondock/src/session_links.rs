@@ -19,6 +19,8 @@ pub struct Request {
 pub struct Record {
     pub id: String,
     pub created_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_seq: Option<u64>,
     pub mode: String,
     pub phase: String,
     pub source_node: String,

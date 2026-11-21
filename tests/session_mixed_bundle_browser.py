@@ -162,8 +162,9 @@ def main():
         target_metadata = json.loads(peer.read(root/'destination/state/session-metadata.json'))['sessions']
         assert target_metadata[source.uid('a')]['group'] == '待办'
         assert target_metadata[source.uid('a')]['starred'] is True
-        assert target_metadata[selected]['nest_parent'] == {'source':'codex','sid':ident(2)}
-        assert target_metadata[grok_uid]['nest_parent'] == {'source':'claude','sid':ident(2)}
+        binding = {'kind': 'move', 'operation': plan['operation_id']}
+        assert target_metadata[selected]['nest_parent'] == {'source':'codex','sid':ident(2), 'binding':binding}
+        assert target_metadata[grok_uid]['nest_parent'] == {'source':'claude','sid':ident(2), 'binding':binding}
         audit = root/'audit'; audit.mkdir()
         for name in ('state_5.sqlite','thread_history_1.sqlite','goals_1.sqlite'):
             (audit/name).write_bytes(peer.read(source.root/'codex'/name))

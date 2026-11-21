@@ -440,6 +440,15 @@ impl TransferService {
         selected: &str,
         snapshot: &SessionSnapshot,
     ) -> Result<group::Group, TransferError> {
+        self.groups_in(selected, &[], snapshot)
+    }
+
+    pub(crate) fn groups_in(
+        &self,
+        selected: &str,
+        related: &[String],
+        snapshot: &SessionSnapshot,
+    ) -> Result<group::Group, TransferError> {
         // Query the reverse index after refreshing changed native inputs.
         // The first request builds it on demand; unchanged histories are reused.
         // Only the relationship inventory is serialized; page, composer and
@@ -449,7 +458,7 @@ impl TransferService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
-        let result = inventory.group(snapshot, selected, &self.references);
+        let result = inventory.group(snapshot, selected, related, &self.references);
         crate::log::info(
             "transfer.relationships",
             serde_json::json!({"ms": started.elapsed().as_millis()}),
@@ -646,6 +655,11 @@ impl TransferService {
                             relation.as_object_mut().unwrap().remove("node_id");
                         } else {
                             relation["node_id"] = node.to_owned().into();
+                        }
+                        if moved || relation["binding"]["kind"] == "local" {
+                            relation["binding"] = json!(crate::metadata::ParentBinding::Move {
+                                operation: op.id.clone(),
+                            });
                         }
                     }
                     if relation["node_id"].is_null()
@@ -1079,6 +1093,20 @@ impl TransferService {
             ];
             for (uid, row) in &mut op.metadata_after {
                 let before = current.row(uid);
+                if let Some(parent) = row.get_mut("nest_parent").and_then(Value::as_object_mut)
+                    && let Some(existing) = before["nest_parent"].as_object()
+                    && ["source", "sid", "node_id"]
+                        .iter()
+                        .all(|key| parent.get(*key) == existing.get(*key))
+                {
+                    // Same saved address: keep the destination's binding and
+                    // let the existing reuse/conflict rules compare the row.
+                    if let Some(binding) = existing.get("binding") {
+                        parent.insert("binding".into(), binding.clone());
+                    } else {
+                        parent.remove("binding");
+                    }
+                }
                 let mut merged = before.as_object().cloned().unwrap_or_default();
                 merged.remove("clone_operation");
                 for key in portable {

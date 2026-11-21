@@ -36,7 +36,15 @@ pub(crate) fn project(document: &mut Value, expanded: &[ExpandedParent], node_id
                     .or_insert(0usize) += 1;
             } else {
                 *remote_counts
-                    .entry((node.to_owned(), source.to_owned(), sid.to_owned()))
+                    .entry((
+                        node.to_owned(),
+                        source.to_owned(),
+                        sid.to_owned(),
+                        serde_json::from_value::<crate::metadata::ParentBinding>(
+                            parent["binding"].clone(),
+                        )
+                        .ok(),
+                    ))
                     .or_insert(0usize) += 1;
             }
         }
@@ -84,8 +92,13 @@ pub(crate) fn project(document: &mut Value, expanded: &[ExpandedParent], node_id
     document["child_counts"] = json!(
         remote_counts
             .into_iter()
-            .map(|((node_id, source, sid), count)| {
-                json!({"node_id": node_id, "source": source, "sid": sid, "count": count})
+            .map(|((node_id, source, sid, binding), count)| {
+                let mut row =
+                    json!({"node_id": node_id, "source": source, "sid": sid, "count": count});
+                if let Some(binding) = binding {
+                    row["binding"] = json!(binding);
+                }
+                row
             })
             .collect::<Vec<_>>()
     );
