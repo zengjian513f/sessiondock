@@ -33,7 +33,7 @@
 
 `rename`、`compact`、`usage` 均不提供：CLI 没有对应控制请求，stream-json 中的
 `/rename` 会被当作普通提示词交给模型（已实测），因此桥接明确返回 `codebuddy_sdk_unsupported`，
-不把命令文本发给模型。`fast_mode`、MCP elicitation、user dialog、子代理均不支持。
+不把命令文本发给模型。`fast_mode`、MCP elicitation、user dialog 均不支持，子代理无独立 SDK 入口。
 `shared_tui:false`：无法加入独立 TUI 正在使用的运行时；Linux、macOS、Windows 在首次连接和每次发送前
 检查 SID 与完整原生文件持有者，排除 SDK 自有进程及后代，冲突返回 `codebuddy_sdk_session_busy`，
 不接管、不发信号。SDK 运行期间启动同一会话的 CLI 返回 `sdk_session_busy`。
@@ -50,6 +50,10 @@ DELTA（2.182.0）：分支和回退已接到消息按钮及网页命令；必�
 - `initialize` 响应含 `models`、`commands`、`currentModelId` 和 **`account`（含登录令牌）**。
   桥接只读取 `models`；账号字段不进入快照、检查点、日志或浏览器。
 - `system/init` 在每次运行开始时发出（首条用户消息之后），`session_id` 与 `--session-id` 一致。
+- DELTA（BUG-20261121-015748-3bae52）：原生 `Agent` 工具启动子代理时，主进程 stdout
+  也会发出带子代理 SID 的 `system/init`。确认主会话身份后，桥接按 SID 丢弃异会话帧，
+  主回合继续运行。异会话帧不能写入主会话投影、更新设置、发起审批或结束主回合。
+  初次绑定仍校验主 SID 和 cwd，确认状态随检查点恢复。
 - 恢复时 CLI 在 `initialize` 之后把**整段历史**重放到 stdout（`system/init`（`model:"unknown"`）、
   历史 `user`/`assistant` 帧以及每轮一个 `result`）。历史属于读模型，桥接在 `replaying`
   期间丢弃这些帧（仍处理控制消息），直到已接受回合引出模型不是 `unknown` 的下一条
@@ -68,6 +72,6 @@ DELTA（2.182.0）：分支和回退已接到消息按钮及网页命令；必�
 [codebuddy_sdk_browser.py](../tests/codebuddy_sdk_browser.py) 用复现上述协议的假 CLI
 （[codebuddy_sdk_fixtures.py](../tests/codebuddy_sdk_fixtures.py)）覆盖：读模型列表和历史、
 设置立即生效且不发模型提示、发送／去重／历史与实时对齐、关页后继续与停止、审批允许／拒绝／
-问题回答、令牌不外泄、创建的目录命名、不支持的控制、同 SID 独立进程冲突、节点重启重附着。
+问题回答、令牌不外泄、创建的目录命名、不支持的控制、子代理流隔离、同 SID 独立进程冲突、节点重启重附着。
 真实 2.175.0 的证据来自隔离探测（`glm-5.3-flash`，临时工作目录）：审批和问题回答、中断、
 恢复重放、目录命名；假 CLI 与真实 CLI 的结果分别记录，真实 CLI 套件尚未纳入仓库。

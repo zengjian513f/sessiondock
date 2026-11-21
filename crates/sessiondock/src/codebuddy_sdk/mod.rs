@@ -85,6 +85,9 @@ struct Live {
     #[serde(skip)]
     outbound: Option<transport::Outbound>,
     ready: bool,
+    /// Missing in legacy checkpoints that may have passed the parent init.
+    #[serde(default)]
+    parent_initialized: Option<bool>,
     native_running: bool,
     state_observed: bool,
     #[serde(skip)]
@@ -258,6 +261,7 @@ impl Session {
                 turns: VecDeque::new(),
                 outbound: None,
                 ready: false,
+                parent_initialized: Some(false),
                 native_running: false,
                 state_observed: false,
                 runtime_stop: None,

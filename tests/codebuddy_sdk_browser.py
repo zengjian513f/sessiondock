@@ -113,6 +113,17 @@ def browser_check(fixture, base, screenshots):
         assert SECRET not in json.dumps(final), "account token leaked"
         capture(page, "codebuddy-sdk-wide-light.png")
 
+        # Native Agent init frames carry child SIDs in the parent's stdout.
+        send(page, "run subagents")
+        expect(page.locator(".sdk-live")).to_contain_text("CodeBuddy synthetic final run subagents")
+        raw = wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])["raw"]
+        assert raw["session_id"] == fixture.sid and raw["last_turn"]["status"] == "completed", raw
+        assert raw["model"] == "fake-buddy-2" and raw["settings"]["permission_mode"] != "synthetic-child-mode", raw
+        assert raw["error"] is None and raw["runtime_error"] is None and not raw["requests"], raw
+        expect(page.locator(".native-sdk-pane").get_by_text("synthetic child output", exact=True)).to_have_count(0)
+        assert len(user_prompts(fixture, "run subagents")) == 1
+        assert len(fixture.frames("spawn")) == spawned + 1
+
         reveal_mode = page.locator("#native-sdk-permission_mode")
         if not reveal_mode.is_visible():
             page.locator("#sdk-more, [data-sdk-more]").first.click()
@@ -226,18 +237,19 @@ def restart_check(fixture, binary):
             page = browser.new_page(service_workers="block")
             page.goto(base, wait_until="networkidle")
             open_sdk(page, fixture, expect)
-            send(page, "hold")
-            wait_snapshot(page, fixture.uid, lambda raw: raw["running"])
+            send(page, "hold subagents")
+            expect(page.locator(".sdk-live")).to_contain_text("streaming CodeBuddy progress")
             page.close()
         with fixture.server(binary) as base:
             page = browser.new_page(service_workers="block")
             page.goto(base, wait_until="networkidle")
             open_sdk(page, fixture, expect)
             assert len(fixture.frames("spawn")) == 1, "restart launched a second runtime"
-            assert len(user_prompts(fixture, "hold")) == 1
+            assert len(user_prompts(fixture, "hold subagents")) == 1
             page.locator("#sdk-stop").click()
             expect(page.locator(".sdk-live")).to_contain_text("CodeBuddy interrupted")
-            wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])
+            raw = wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])["raw"]
+            assert raw["error"] is None and raw["runtime_error"] is None and not raw["requests"], raw
         browser.close()
 
 
@@ -277,7 +289,7 @@ def main():
         restart_check(CodebuddyFixture(Path(temporary)), args.binary)
     with tempfile.TemporaryDirectory(prefix="sessiondock-codebuddy-sdk-direct-") as temporary:
         direct_check(CodebuddyFixture(Path(temporary)), args.binary)
-    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, approval/question answers, create naming, unsupported controls, writer conflict, restart re-attach")
+    print("PASS CodeBuddy native SDK: read-model listing, replay suppression, settings, send/dedupe/stop, subagent stream isolation, approval/question answers, create naming, unsupported controls, writer conflict, restart re-attach")
 
 
 if __name__ == "__main__":

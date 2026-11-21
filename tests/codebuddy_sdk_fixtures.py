@@ -208,7 +208,7 @@ def fake_cli():
 
     def send(frame):
         with output_lock:
-            print(json.dumps({**frame, "session_id": sid}), flush=True)
+            print(json.dumps({"session_id": sid, **frame}), flush=True)
 
     def record(row):
         nonlocal previous
@@ -264,6 +264,18 @@ def fake_cli():
         with mutex:
             return pending.pop(key)[1]
 
+    def subagent_frames():
+        for _ in range(3):
+            child_sid = str(uuid.uuid4())
+            send({**init_frame("synthetic-child-model"), "uuid": child_sid, "session_id": child_sid,
+                  "permissionMode": "synthetic-child-mode"})
+            send({"type": "assistant", "session_id": child_sid, "uuid": str(uuid.uuid4()),
+                  "message": {"content": [{"type": "text", "text": "synthetic child output"}]}})
+            send({"type": "control_request", "session_id": child_sid, "request_id": str(uuid.uuid4()),
+                  "request": {"subtype": "can_use_tool", "tool_name": "Bash"}})
+            send({"type": "result", "session_id": child_sid, "subtype": "success",
+                  "uuid": str(uuid.uuid4()), "usage": {"input_tokens": 999}})
+
     def turns():
         while True:
             frame = inputs.get()
@@ -286,8 +298,12 @@ def fake_cli():
                       "modelUsage": {}, "total_cost_usd": 0})
                 continue
             stream_text("streaming CodeBuddy progress", message_id)
-            if content == "hold":
+            if content == "run subagents":
+                subagent_frames()
+            elif content in ("hold", "hold subagents"):
                 interrupted.wait(30)
+                if content == "hold subagents":
+                    subagent_frames()
             elif content in ("approval", "question"):
                 call_id = "call_" + uuid.uuid4().hex[:24]
                 tool = "Bash" if content == "approval" else "AskUserQuestion"

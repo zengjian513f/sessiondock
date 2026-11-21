@@ -169,6 +169,7 @@ impl Bridge {
                 live.host_key = Some(key.clone());
                 live.stdout_offset = 0;
                 live.ready = false;
+                live.parent_initialized = Some(false);
                 live.state_observed = false;
                 live.native_running = false;
                 live.replaying = session.path.is_file() || session.fork_source.is_some();
@@ -397,9 +398,7 @@ async fn run(
                 }
                 let frame: Value = serde_json::from_slice(&line)
                     .map_err(|_| "codebuddy_sdk: invalid native stream-json output")?;
-                let is_delta = frame["type"] == "stream_event"
-                    && frame["event"]["type"] == "content_block_delta";
-                protocol::observe_at(
+                offset_dirty = protocol::observe_at(
                     &session,
                     frame,
                     Some(next),
@@ -408,7 +407,6 @@ async fn run(
                 if let Some(err) = lock(&session.live).last_checkpoint_error.clone() {
                     return Err(err);
                 }
-                offset_dirty = is_delta;
             }
             if offset_dirty {
                 let mut live = lock(&session.live);

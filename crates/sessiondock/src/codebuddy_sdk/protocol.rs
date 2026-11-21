@@ -12,12 +12,17 @@ pub(super) fn observe(session: &Session, frame: Value) {
     observe_at(session, frame, None, Some(crate::sdk_message_time::now()));
 }
 
+/// Returns whether the new stdout offset still needs a final checkpoint.
 pub(super) fn observe_at(
     session: &Session,
     frame: Value,
     offset: Option<u64>,
     received: Option<String>,
-) {
+) -> bool {
+    let mut live = lock(&session.live);
+    if let Some(offset) = offset {
+        live.stdout_offset = offset;
+    }
     // Native SessionStart hooks run before --resume loads its persisted SID.
     // These unprojected startup notifications carry a temporary process UUID;
     // discard their telemetry without accepting any of its content or identity.
@@ -28,50 +33,35 @@ pub(super) fn observe_at(
             Some("hook_started" | "hook_response")
         )
     {
-        if let Some(offset) = offset {
-            let mut live = lock(&session.live);
-            live.stdout_offset = offset;
-            if let Err(error) = live.save_checkpoint() {
-                live.last_checkpoint_error = Some(format!("codebuddy_sdk_checkpoint: {error}"));
-            } else {
-                live.last_checkpoint_error = None;
-            }
-        }
-        return;
+        return true;
     }
-    let is_delta =
-        frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
-    let mut live = lock(&session.live);
-    live.message_time = crate::sdk_message_time::MessageTime::new(&frame, received);
-    if let Some(offset) = offset {
-        live.stdout_offset = offset;
-    }
+    let init = frame["type"] == "system" && frame["subtype"] == "init";
     // CodeBuddy replays the whole persisted conversation on stdout after
     // `initialize` when it resumes a session. History belongs to the read
     // model, so those frames must not enter the live projection. The replay
     // precedes the first live run, which announces itself with its own
     // `system/init` once an accepted turn is being processed.
     if live.replaying {
-        let live_run = frame["type"] == "system"
-            && frame["subtype"] == "init"
-            && !live.turns.is_empty()
-            && frame["model"] != "unknown";
+        let live_run = init && !live.turns.is_empty() && frame["model"] != "unknown";
         let control = matches!(
             frame["type"].as_str(),
             Some("control_response" | "control_request" | "control_cancel_request")
         );
-        if live_run {
-            live.replaying = false;
-        } else if !control {
-            return;
+        if !live_run && !control {
+            return true;
         }
     }
-    // A process is tied to one exact SID; don't let a foreign frame's content
-    // or approval cross into the selected native session.
+    // Agent subprocesses can emit their own SID on the parent's stdout.
+    // Once the parent is bound, filter those frames before interpreting them.
     if frame["session_id"]
         .as_str()
         .is_some_and(|sid| !sid.is_empty() && sid != session.sid)
     {
+        // A legacy checkpoint can resume past the parent init. Its side
+        // frames still cannot establish identity or change the projection.
+        if live.parent_initialized != Some(false) {
+            return true;
+        }
         live.error =
             Some("codebuddy_sdk: native stream session_id differs from selected session".into());
         live.error_kind = Some("transport");
@@ -79,8 +69,14 @@ pub(super) fn observe_at(
             stop.cancel();
         }
         session.publish(&mut live);
-        return;
+        return false;
     }
+    if init {
+        live.replaying = false;
+    }
+    let is_delta =
+        frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
+    live.message_time = crate::sdk_message_time::MessageTime::new(&frame, received);
     match frame["type"].as_str().unwrap_or("") {
         "control_response" => {
             let response = &frame["response"];
@@ -136,11 +132,11 @@ pub(super) fn observe_at(
             session.publish(&mut live);
             drop(live);
             restore_initial_requests(session);
-            return;
+            return false;
         }
         "control_request" => {
             let Some(key) = frame["request_id"].as_str() else {
-                return;
+                return true;
             };
             let native = &frame["request"];
             if native["subtype"] == "can_use_tool" {
@@ -404,7 +400,7 @@ pub(super) fn observe_at(
             }
         }
         "system" => {
-            if frame["subtype"] == "init" {
+            if init {
                 if let Some(cwd) = frame["cwd"].as_str()
                     && Path::new(cwd) != session.cwd
                 {
@@ -416,6 +412,8 @@ pub(super) fn observe_at(
                     if let Some(stop) = &live.runtime_stop {
                         stop.cancel();
                     }
+                } else if frame["session_id"] == session.sid {
+                    live.parent_initialized = Some(true);
                 }
                 if let Some(model) = frame["model"].as_str() {
                     live.model = Some(model.into());
@@ -485,6 +483,7 @@ pub(super) fn observe_at(
     } else {
         session.publish(&mut live);
     }
+    is_delta
 }
 
 /// The caller answers one native card. CodeBuddy's `can_use_tool` reply is
