@@ -1009,9 +1009,7 @@ impl Bridge {
             .title
             .clone()
             .ok_or("kiro_sdk_rename_pending: 原生已接受改名，但尚未返回标题，请刷新核对。")?;
-        self.catalog
-            .remember_native(&sid, json!({"title":title}), Some(uid))
-            .await?;
+        self.catalog.remember_rename(&sid, &title, uid).await?;
         tokio::task::spawn_blocking(move || {
             let mut state = session.state.lock().unwrap();
             session.project(&mut state);
@@ -1075,7 +1073,7 @@ impl Bridge {
         let mut metadata = result.clone();
         metadata["cwd"] = json!(cwd);
         metadata["forked_from_id"] = json!(source.sid);
-        let entry = self.catalog.remember_native(sid, metadata, None).await?;
+        let entry = self.catalog.remember_native(sid, metadata).await?;
         Ok(
             json!({"uid":entry.uid,"session_id":entry.sid,"cwd":entry.cwd,
             "session":{"uid":entry.uid,"sid":entry.sid,"session_id":entry.sid,

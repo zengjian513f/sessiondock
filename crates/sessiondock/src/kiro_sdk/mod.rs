@@ -573,10 +573,7 @@ impl Bridge {
             .filter(|s| !s.is_empty())
             .ok_or("Kiro session/new did not return sessionId")?;
         let metadata = json!({"sessionId":sid,"cwd":cwd,"title":result["_meta"]["title"].as_str().unwrap_or("新建 Kiro 会话"),"_meta":{"kiro":{"modelId":settings["modelId"],"createdAt":result["_meta"]["createdAt"]}}});
-        let entry = self
-            .catalog
-            .remember_native(sid, metadata.clone(), None)
-            .await?;
+        let entry = self.catalog.remember_native(sid, metadata.clone()).await?;
         self.catalog.bind_host(&entry.uid, Some(host_key)).await?;
         session.bind_identity(&entry.uid, sid)?;
         session.set_projection(self.catalog.clone()).await?;
