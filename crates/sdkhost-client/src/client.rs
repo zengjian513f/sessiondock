@@ -9,7 +9,7 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Stream {
@@ -274,10 +274,16 @@ impl Client {
         }
     }
     async fn rpc<T: serde::de::DeserializeOwned>(&self, request: Request) -> io::Result<T> {
-        let mut socket = match platform::connect(&self.dir).await {
+        let socket = match platform::connect(&self.dir).await {
             Ok(socket) => socket,
             Err(connect_error) => return self.offline(request, connect_error).await,
         };
+        Self::exchange(socket, request).await
+    }
+    async fn exchange<T: serde::de::DeserializeOwned>(
+        mut socket: impl AsyncRead + AsyncWrite + Unpin,
+        request: Request,
+    ) -> io::Result<T> {
         let mut bytes = serde_json::to_vec(&request)?;
         bytes.push(b'\n');
         socket.write_all(&bytes).await?;
@@ -299,22 +305,20 @@ impl Client {
             serde_json::from_slice(&tokio::fs::read(self.dir.join("status.json")).await?)?;
         let value = match request {
             Request::Status if status.exit.is_some() => {
-                if !status.stdout_eof {
-                    status.stdout_len = status.stdout_len.max(
-                        tokio::fs::metadata(self.dir.join("stdout"))
-                            .await
-                            .map(|m| m.len())
-                            .unwrap_or(status.stdout_len),
-                    );
-                }
-                if !status.stderr_eof {
-                    status.stderr_len = status.stderr_len.max(
-                        tokio::fs::metadata(self.dir.join("stderr"))
-                            .await
-                            .map(|m| m.len())
-                            .unwrap_or(status.stderr_len),
-                    );
-                }
+                let dir = self.dir.clone();
+                status = tokio::task::spawn_blocking(move || {
+                    if !status.stdout_eof {
+                        let len = crate::segments::len(&dir.join("stdout"));
+                        status.stdout_len = status.stdout_len.max(len.unwrap_or(0));
+                    }
+                    if !status.stderr_eof {
+                        let len = crate::segments::len(&dir.join("stderr"));
+                        status.stderr_len = status.stderr_len.max(len.unwrap_or(0));
+                    }
+                    status
+                })
+                .await
+                .map_err(io::Error::other)?;
                 serde_json::to_value(status)?
             }
             Request::Read { stream, offset, .. } => {
@@ -387,9 +391,23 @@ impl Client {
         serde_json::from_value(value).map_err(io::Error::other)
     }
     pub async fn status(&self) -> io::Result<Status> {
-        match self.rpc(Request::Status).await {
-            Ok(v) => Ok(v),
-            Err(e) => self.offline(Request::Status, e).await,
+        self.status_with_connection()
+            .await
+            .map(|(status, _)| status)
+    }
+
+    /// The boolean distinguishes a live status reply from an exit record on disk.
+    pub async fn status_with_connection(&self) -> io::Result<(Status, bool)> {
+        let result = match platform::connect(&self.dir).await {
+            Ok(socket) => Self::exchange(socket, Request::Status).await,
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(status) => Ok((status, true)),
+            Err(error) => self
+                .offline(Request::Status, error)
+                .await
+                .map(|status| (status, false)),
         }
     }
     pub async fn write(&self, id: &str, bytes: &[u8]) -> io::Result<Receipt> {

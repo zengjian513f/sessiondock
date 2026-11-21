@@ -1,7 +1,8 @@
 //! Restartable stream transport. Only this adapter interprets CodeBuddy frames.
 use super::*;
+use crate::sdk_common::hosted::{Projection, Runtime, Stdout, Termination, uncertain_write};
 use crate::sdk_common::private_dir;
-use sdkhost_client::{Client, Stream};
+use sdkhost_client::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::sdk_common::outbox::{Entry, Sender};
@@ -96,11 +97,10 @@ impl Bridge {
                     Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
                     Err(e) => return Err(error(e)),
                 };
-            if active
-                && !entries.iter().any(|entry| {
-                    entry.frame["type"] == "user" && entry.frame["uuid"] == receipt["message_id"]
-                })
-            {
+            let entry = entries.iter().find(|entry| {
+                entry.frame["type"] == "user" && entry.frame["uuid"] == receipt["message_id"]
+            });
+            if active && entry.is_none() {
                 let mut live = lock(&session.live);
                 live.turns.retain(|turn| turn != id);
                 live.error = Some(
@@ -111,10 +111,19 @@ impl Bridge {
                 session.publish(&mut live);
                 return Err(live.error.clone().unwrap());
             }
-            Client::attach(&self.state_dir.as_ref().unwrap().join("sdkhost"), &key)
+            let client = Client::attach(&self.state_dir.as_ref().unwrap().join("sdkhost"), &key)
                 .await
                 .map_err(error)?;
             self.attach_hosted(session, false).await?;
+            if active && let Some(entry) = entry {
+                let receipt = client.receipt(&entry.id).await.map_err(error)?;
+                let state = receipt
+                    .as_ref()
+                    .map_or("missing", |receipt| receipt.state.as_str());
+                if state != "written" {
+                    return Err(uncertain_write("codebuddy", state));
+                }
+            }
         } else if active {
             return Err("codebuddy_sdk_recovery: runtime unavailable; not replayed".into());
         }
@@ -233,7 +242,7 @@ impl Bridge {
             wake: Arc::new(tokio::sync::Notify::new()),
             closed: Arc::new(AtomicBool::new(false)),
         };
-        let stop = CancellationToken::new();
+        let stop = session.stop.child_token();
         let (done, done_rx) = watch::channel(false);
         {
             let mut live = lock(&session.live);
@@ -256,7 +265,6 @@ impl Bridge {
             transport::diagnostic_secrets(&self.profile),
         ));
         wait_catchup.await.map_err(error)??;
-        protocol::restore_initial_requests(session);
         if lock(&session.live).outbound.is_none() {
             if allow_launch && lock(&session.live).host_key.is_none() {
                 return Box::pin(self.attach_hosted(session, true)).await;
@@ -342,255 +350,40 @@ async fn run(
     secrets: Vec<String>,
 ) {
     let mut caught_up = Some(caught_up);
-    let mut sent = 0;
-    let mut deliberate = false;
-    let mut detached = false;
-    let mut read_offset = lock(&session.live).stdout_offset;
-    let mut buffer = Vec::new();
-    let mut signal_sent = false;
-    let mut stderr_offset = 0;
-    let mut stderr_buffer = Vec::new();
-    let mut write_error = None;
-    let mut drained_exit = false;
-    let mut pending_projection = false;
-    let mut last_publish = std::time::Instant::now();
-    let outcome: Result<(), String> = async {
-        let mut status = client.status().await.map_err(error)?;
-        let live_start = status.stdout_len;
-        loop {
-            if shutdown.is_cancelled() {
-                detached = true;
-                return Ok(());
-            }
-            if !signal_sent && (stop.is_cancelled() || session.stop.is_cancelled()) {
-                deliberate = true;
-                client.signal(9).await.map_err(error)?;
-                signal_sent = true;
-            }
-            // Entries are durable before acknowledgement; host receipts make a
-            // repeated transport write harmless after a lost acknowledgement.
-            let entries = if write_error.is_none() {
-                lock(&sender.entries)[sent..].to_vec()
-            } else {
-                Vec::new()
-            };
-            for entry in entries {
-                // The submitter publishes its protocol association under this lock.
-                lock(&session.live).save_checkpoint().map_err(error)?;
-                let mut bytes = serde_json::to_vec(&entry.frame).map_err(error)?;
-                bytes.push(b'\n');
-                let written = async {
-                    let receipt = match client.receipt(&entry.id).await.map_err(error)? {
-                        Some(receipt) => receipt,
-                        None => client.write(&entry.id, &bytes).await.map_err(error)?,
-                    };
-                    if receipt.state != "written" {
-                        return Err(format!("codebuddy_sdk_write_uncertain: {}", receipt.state));
-                    }
-                    Ok(())
-                }
-                .await;
-                if let Err(error) = written {
-                    // A process may finish its turn and exit before a queued
-                    // control write. Preserve its final output before reporting
-                    // the write failure, and never retry the uncertain write.
-                    sender.closed.store(true, Ordering::Release);
-                    write_error = Some(error);
-                    break;
-                }
-                if entry.frame["type"] == "control_response"
-                    && let Some(id) = entry.frame["response"]["request_id"].as_str()
-                {
-                    let mut live = lock(&session.live);
-                    if let Some(card) = live.requests.remove(id) {
-                        protocol::retire_dialog(&mut live, &card);
-                    }
-                    live.save_checkpoint().map_err(error)?;
-                }
-                sent += 1;
-            }
-            // At the live edge, give a process that just closed stdin
-            // time to produce its final output and exit after a write failure.
-            let wait_for_exit = write_error.is_some()
-                && read_offset >= status.stdout_len
-                && stderr_offset >= status.stderr_len;
-            let output = crate::sdk_common::host::read_available(
-                &client,
-                &status,
-                Stream::Stdout,
-                read_offset,
-                wait_for_exit,
-            )
-            .await
-            .map_err(error)?;
-            read_offset = output.next_offset;
-            buffer.extend_from_slice(&output.bytes);
-            let buffer_start = read_offset - buffer.len() as u64;
-            let mut consumed = 0;
-            let mut offset_dirty = false;
-            while consumed < buffer.len() {
-                let tail = &buffer[consumed..];
-                let Some(length) = tail
-                    .iter()
-                    .position(|byte| *byte == b'\n')
-                    .map(|position| position + 1)
-                    .or_else(|| output.eof.then_some(tail.len()))
-                else {
-                    break;
-                };
-                let line = &tail[..length];
-                consumed += length;
-                let next = buffer_start + consumed as u64;
-                if line.iter().all(u8::is_ascii_whitespace) {
-                    lock(&session.live).stdout_offset = next;
-                    offset_dirty = true;
-                    continue;
-                }
-                let frame: Value = serde_json::from_slice(line)
-                    .map_err(|_| "codebuddy_sdk: invalid native stream-json output")?;
-                match protocol::observe_at(&session, frame, Some(next), || {
-                    crate::sdk_message_time::hosted(&client, next, live_start)
-                }) {
-                    protocol::Observation::OffsetOnly => offset_dirty = true,
-                    protocol::Observation::Projected => {
-                        offset_dirty = true;
-                        pending_projection = true;
-                    }
-                    protocol::Observation::Published => {
-                        offset_dirty = false;
-                        pending_projection = false;
-                        last_publish = std::time::Instant::now();
-                    }
-                }
-                if let Some(err) = lock(&session.live).last_checkpoint_error.clone() {
-                    return Err(err);
-                }
-            }
-            buffer.drain(..consumed);
-            let diagnostic = crate::sdk_common::host::read_available(
-                &client,
-                &status,
-                Stream::Stderr,
-                stderr_offset,
-                wait_for_exit,
-            )
-            .await
-            .map_err(error)?;
-            stderr_offset = diagnostic.next_offset;
-            stderr_buffer.extend_from_slice(&diagnostic.bytes);
-            while let Some(length) = stderr_buffer
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map(|position| position + 1)
-                .or_else(|| {
-                    (diagnostic.eof && !stderr_buffer.is_empty()).then_some(stderr_buffer.len())
-                })
-            {
-                let line: Vec<_> = stderr_buffer.drain(..length).collect();
-                let line = transport::redact(
-                    String::from_utf8_lossy(&line).trim_end().to_owned(),
-                    &secrets,
-                );
-                let mut live = lock(&session.live);
-                live.stderr.push_back(line);
-                while live.stderr.len() > 100 {
-                    live.stderr.pop_front();
-                }
-            }
-            status = client.status().await.map_err(error)?;
-            // Replay can contain hundreds of thousands of frames. Persist their
-            // cursor and projection together at the checkpoint cadence, and
-            // publish the recovered state once the attachment boundary is read.
-            if pending_projection
-                && read_offset >= live_start
-                && (caught_up.is_some()
-                    || read_offset >= status.stdout_len
-                    || last_publish.elapsed() >= Duration::from_millis(100))
-            {
-                let mut live = lock(&session.live);
-                session.publish_throttled(&mut live);
-                if let Some(err) = &live.last_checkpoint_error {
-                    return Err(err.clone());
-                }
-                pending_projection = false;
-                last_publish = std::time::Instant::now();
-            } else if offset_dirty {
-                lock(&session.live)
-                    .save_checkpoint_throttled()
-                    .map_err(error)?;
-            }
-            if status.output_error.is_some() {
-                continue;
-            }
-            if read_offset >= live_start
-                && status.exit.is_none()
-                && write_error.is_none()
-                && let Some(reply) = caught_up.take()
-            {
-                lock(&session.live).save_checkpoint().map_err(error)?;
-                let _ = reply.send(Ok(()));
-            }
-            if status.stdout_eof
-                && read_offset >= status.stdout_len
-                && buffer.is_empty()
-                && status.stderr_eof
-                && stderr_offset >= status.stderr_len
-                && stderr_buffer.is_empty()
-                && let Some(exit) = status.exit
-            {
-                drained_exit = true;
-                if let Some(error) = &write_error {
-                    return Err(error.clone());
-                }
-                if !deliberate && !exit.success() {
-                    return Err(format!(
-                        "codebuddy_sdk_disconnected: native CLI exit code {:?}, signal {:?}; {}",
-                        exit.code,
-                        exit.signal,
-                        lock(&session.live)
-                            .stderr
-                            .back()
-                            .cloned()
-                            .unwrap_or_default()
-                    ));
-                }
-                return Ok(());
-            }
-            if read_offset < status.stdout_len
-                || stderr_offset < status.stderr_len
-                || (status.stdout_eof && !buffer.is_empty())
-                || (status.stderr_eof && !stderr_buffer.is_empty())
-            {
-                continue;
-            }
-            if status.exit.is_none()
-                && let Some(error) = &write_error
-            {
-                if wait_for_exit {
-                    return Err(error.clone());
-                }
-                continue;
-            }
-            tokio::select! {
-                _ = shutdown.cancelled() => { detached = true; return Ok(()); }
-                _ = sender.wake.notified() => {}
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-            }
+    let mut end = Termination::default();
+    let outcome = async {
+        protocol::restore_initial_requests(&session);
+        if let Some(error) = lock(&session.live).last_checkpoint_error.clone() {
+            return Err(error);
         }
+        let stdout_offset = lock(&session.live).stdout_offset;
+        Runtime {
+            client: &client,
+            sender: &sender,
+            shutdown: &shutdown,
+            stop: &stop,
+            secrets: &secrets,
+        }
+        .run(
+            &mut SessionProjection {
+                session: &session,
+                pending_projection: false,
+                last_publish: std::time::Instant::now(),
+            },
+            stdout_offset,
+            &mut caught_up,
+            &mut end,
+        )
+        .await
     }
     .await;
     sender.closed.store(true, Ordering::Release);
-    // A child can exit between the read loop's status query and this one.
-    // Keep the host association after a write failure until its output has
-    // been drained, so a later attachment can still recover the final result.
-    let exited = client.status().await.ok().is_some_and(|s| s.exit.is_some())
-        && (write_error.is_none() || drained_exit);
     let mut live = lock(&session.live);
     live.outbound = None;
     live.pid = None;
     live.runtime_stop = None;
     live.runtime_done = None;
-    if !detached && (exited || deliberate) {
+    if !end.detached && (end.retired || end.deliberate) {
         live.host_key = None;
         live.ready = false;
         if let Err(error) = &outcome {
@@ -600,7 +393,7 @@ async fn run(
                 live.error = Some(error.clone());
                 live.error_kind = Some("transport");
             }
-        } else if !deliberate && (!live.turns.is_empty() || live.native_running) {
+        } else if !end.deliberate && (!live.turns.is_empty() || live.native_running) {
             let error = "codebuddy_sdk_disconnected: native CLI exited with unfinished work; accepted input is not replayed";
             live.runtime_error = Some(error.into());
             if live.last_turn.is_null() && live.error.is_none() {
@@ -614,9 +407,9 @@ async fn run(
         live.requests.clear();
         live.background_tasks.clear();
     }
-    if !detached
-        && !exited
-        && !deliberate
+    if !end.detached
+        && !end.retired
+        && !end.deliberate
         && let Err(error) = &outcome
     {
         live.runtime_error = Some(error.clone());
@@ -637,5 +430,112 @@ async fn run(
     let _ = done.send(true);
     if let Some(reply) = caught_up {
         let _ = reply.send(outcome);
+    }
+}
+
+struct SessionProjection<'a> {
+    session: &'a Session,
+    pending_projection: bool,
+    last_publish: std::time::Instant,
+}
+
+impl Projection for SessionProjection<'_> {
+    const ATTACHMENT_BOUNDARY: bool = true;
+
+    fn checkpoint(&self) -> io::Result<()> {
+        lock(&self.session.live).save_checkpoint()
+    }
+
+    fn written(&self, frame: &Value) -> io::Result<()> {
+        if frame["type"] == "control_response"
+            && let Some(id) = frame["response"]["request_id"].as_str()
+        {
+            let mut live = lock(&self.session.live);
+            if let Some(card) = live.requests.remove(id) {
+                protocol::retire_dialog(&mut live, &card);
+            }
+            live.save_checkpoint()?;
+        }
+        Ok(())
+    }
+
+    fn write_failed(&self, error: &str) {
+        let mut live = lock(&self.session.live);
+        live.runtime_error = Some(error.into());
+        if live.error.is_none() && live.last_turn.is_null() {
+            live.error = Some(error.into());
+            live.error_kind = Some("transport");
+        }
+        for (_, reply) in std::mem::take(&mut live.controls) {
+            let _ = reply.send(Err(error.into()));
+        }
+        self.session.publish(&mut live);
+    }
+
+    fn stdout(&mut self, batch: Stdout<'_>) -> Result<(), String> {
+        let session = self.session;
+        let mut offset_dirty = false;
+        for (next, line) in batch.lines() {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                lock(&session.live).stdout_offset = next;
+                offset_dirty = true;
+                continue;
+            }
+            let frame: Value = serde_json::from_slice(line)
+                .map_err(|_| "codebuddy_sdk: invalid native stream-json output")?;
+            match protocol::observe_at(session, frame, Some(next), || batch.received_at(next)) {
+                protocol::Observation::OffsetOnly => offset_dirty = true,
+                protocol::Observation::Projected => {
+                    offset_dirty = true;
+                    self.pending_projection = true;
+                }
+                protocol::Observation::Published => {
+                    offset_dirty = false;
+                    self.pending_projection = false;
+                    self.last_publish = std::time::Instant::now();
+                }
+            }
+            if let Some(error) = lock(&session.live).last_checkpoint_error.clone() {
+                return Err(error);
+            }
+        }
+        // Replay can contain hundreds of thousands of frames. Persist their
+        // cursor and projection together and publish once the attachment
+        // boundary is read.
+        if self.pending_projection
+            && batch.offset >= batch.live_start
+            && (batch.catching_up
+                || batch.offset >= batch.live_end
+                || self.last_publish.elapsed() >= Duration::from_millis(100))
+        {
+            let mut live = lock(&session.live);
+            session.publish_throttled(&mut live);
+            if let Some(error) = &live.last_checkpoint_error {
+                return Err(error.clone());
+            }
+            self.pending_projection = false;
+            self.last_publish = std::time::Instant::now();
+        } else if offset_dirty {
+            lock(&session.live)
+                .save_checkpoint_throttled()
+                .map_err(error)?;
+        }
+        Ok(())
+    }
+
+    fn stderr(&self, line: String) {
+        let mut live = lock(&self.session.live);
+        live.stderr.push_back(line);
+        if live.stderr.len() > 100 {
+            live.stderr.pop_front();
+        }
+    }
+
+    fn last_diagnostic(&self) -> String {
+        lock(&self.session.live)
+            .stderr
+            .back()
+            .cloned()
+            .unwrap_or_default()
     }
 }

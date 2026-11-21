@@ -1473,9 +1473,11 @@ impl NativeSdks {
                 return;
             }
         }
-        // A restored Kiro receipt belongs to its original host generation.
-        // Opening here could replace an exited host and hide its final result.
-        if !(source == "kiro" && !first.runtime_state.is_empty()) {
+        // Observe a restored receipt on its original host generation. Opening
+        // a new host here would erase the terminal state of the previous one.
+        let observing_host = matches!(source, "kiro" | "claude" | "codebuddy" | "droid")
+            && !first.runtime_state.is_empty();
+        if !observing_host {
             if let Err(error) = self
                 .provider_call(source, "open", target.clone(), json!({}))
                 .await
