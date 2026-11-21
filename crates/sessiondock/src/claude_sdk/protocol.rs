@@ -8,7 +8,7 @@ fn upsert(live: &mut Live, mut row: Value) {
     projection::upsert(&mut live.items, row);
 }
 
-pub(super) fn observe(session: &Session, frame: Value) {
+fn observe(session: &Session, frame: Value) {
     observe_at(session, frame, None, Some(crate::sdk_message_time::now()));
 }
 
@@ -128,9 +128,13 @@ pub(super) fn observe_at(
                     _ => {}
                 }
             }
-            if let Some(id) = response["request_id"].as_str()
-                && let Some(waiter) = live.controls.remove(id)
-            {
+            let waiter = response["request_id"]
+                .as_str()
+                .and_then(|id| live.controls.remove(id));
+            session.publish(&mut live);
+            drop(live);
+            restore_initial_requests(session);
+            if let Some(waiter) = waiter {
                 let result = if response["subtype"] == "error" {
                     Err(format!(
                         "claude_sdk_rejected: {}",
@@ -146,9 +150,6 @@ pub(super) fn observe_at(
                 };
                 let _ = waiter.send(result);
             }
-            session.publish(&mut live);
-            drop(live);
-            restore_initial_requests(session);
             return;
         }
         "control_request" => {

@@ -300,11 +300,6 @@ async fn run(
     let mut deliberate = false;
     let mut detached = false;
     let mut read_offset = lock(&session.live).stdout_offset;
-    let live_start = client
-        .status()
-        .await
-        .map(|s| s.stdout_len)
-        .unwrap_or(u64::MAX);
     let mut buffer = Vec::new();
     let mut signal_sent = false;
     let mut stderr_offset = 0;
@@ -312,6 +307,8 @@ async fn run(
     let mut write_error = None;
     let mut drained_exit = false;
     let outcome: Result<(), String> = async {
+        let mut status = client.status().await.map_err(error)?;
+        let live_start = status.stdout_len;
         loop {
             if shutdown.is_cancelled() {
                 detached = true;
@@ -324,11 +321,12 @@ async fn run(
             }
             // Entries are durable before acknowledgement; host receipts make a
             // repeated transport write harmless after a lost acknowledgement.
-            let entries = lock(&sender.entries).clone();
-            for entry in &entries[sent..] {
-                if write_error.is_some() {
-                    break;
-                }
+            let entries = if write_error.is_none() {
+                lock(&sender.entries)[sent..].to_vec()
+            } else {
+                Vec::new()
+            };
+            for entry in entries {
                 // The submitter publishes its protocol association under this lock.
                 lock(&session.live).save_checkpoint().map_err(error)?;
                 let mut bytes = serde_json::to_vec(&entry.frame).map_err(error)?;
@@ -361,10 +359,20 @@ async fn run(
                 }
                 sent += 1;
             }
-            let output = client
-                .read(Stream::Stdout, read_offset)
-                .await
-                .map_err(error)?;
+            // At the live edge, give a process that just closed stdin
+            // time to produce its final output and exit after a write failure.
+            let wait_for_exit = write_error.is_some()
+                && read_offset >= status.stdout_len
+                && stderr_offset >= status.stderr_len;
+            let output = crate::sdk_common::host::read_available(
+                &client,
+                &status,
+                Stream::Stdout,
+                read_offset,
+                wait_for_exit,
+            )
+            .await
+            .map_err(error)?;
             read_offset = output.next_offset;
             buffer.extend_from_slice(&output.bytes);
             let mut offset_dirty = false;
@@ -406,10 +414,15 @@ async fn run(
                     live.save_checkpoint_throttled().map_err(error)?;
                 }
             }
-            let diagnostic = client
-                .read(Stream::Stderr, stderr_offset)
-                .await
-                .map_err(error)?;
+            let diagnostic = crate::sdk_common::host::read_available(
+                &client,
+                &status,
+                Stream::Stderr,
+                stderr_offset,
+                wait_for_exit,
+            )
+            .await
+            .map_err(error)?;
             stderr_offset = diagnostic.next_offset;
             stderr_buffer.extend_from_slice(&diagnostic.bytes);
             while let Some(length) = stderr_buffer
@@ -431,7 +444,10 @@ async fn run(
                     live.stderr.pop_front();
                 }
             }
-            let status = client.status().await.map_err(error)?;
+            status = client.status().await.map_err(error)?;
+            if status.output_error.is_some() {
+                continue;
+            }
             if read_offset >= status.stdout_len
                 && !(status.stdout_eof && status.exit.is_some())
                 && write_error.is_none()
@@ -466,18 +482,25 @@ async fn run(
                 }
                 return Ok(());
             }
-            if read_offset < status.stdout_len || stderr_offset < status.stderr_len {
+            if read_offset < status.stdout_len
+                || stderr_offset < status.stderr_len
+                || (status.stdout_eof && !buffer.is_empty())
+                || (status.stderr_eof && !stderr_buffer.is_empty())
+            {
                 continue;
             }
             if status.exit.is_none()
                 && let Some(error) = &write_error
             {
-                return Err(error.clone());
+                if wait_for_exit {
+                    return Err(error.clone());
+                }
+                continue;
             }
             tokio::select! {
                 _ = shutdown.cancelled() => { detached = true; return Ok(()); }
                 _ = sender.wake.notified() => {}
-                _ = tokio::time::sleep(Duration::from_millis(25)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }
         }
     }

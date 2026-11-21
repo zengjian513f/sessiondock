@@ -245,6 +245,7 @@ def fake_cli():
     assert any(parent.exists() and parent.samefile(home / "projects") for parent in path.parents), path
     assert not any(os.environ.get(key) for key in ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"))
     log = Path(os.environ["SESSIONDOCK_FAKE_CLAUDE_LOG"])
+    cancel_startup_approval = log.with_name("cancel-startup-approval").is_file()
     mutex = threading.Lock()
     output_lock = threading.Lock()
     state = {"model": value("--model") or "fake-claude", "effort": value("--effort") or "low",
@@ -466,6 +467,13 @@ def fake_cli():
                 state["dialog_kinds"] = request.get("supportedDialogKinds", [])
                 response = {"models": [{"value": "fake-claude", "displayName": "Synthetic Claude", "supportsEffort": True, "supportedEffortLevels": ["low", "high"]}],
                     "commands": [{"name": "compact", "description": "Compact synthetic context"}], "pid": os.getpid(), "fast_mode_state": "off"}
+                if cancel_startup_approval:
+                    response["pending_permission_requests"] = [
+                        {"type": "control_request", "session_id": sid, "request_id": key,
+                         "request": {"subtype": "can_use_tool", "tool_name": "Bash",
+                                     "input": {"command": "printf synthetic"}}}
+                        for key in ("startup-cancelled", "startup-pending")
+                    ]
             elif subtype == "set_model":
                 state["model"] = request["model"]
             elif subtype == "rename_session":
@@ -475,6 +483,8 @@ def fake_cli():
                     stream.write(json.dumps({"type":"custom-title","sessionId":sid,"customTitle":request["title"]})+"\n")
             elif subtype == "set_permission_mode":
                 state["permission_mode"] = request["mode"]
+                if cancel_startup_approval:
+                    send({"type": "control_cancel_request", "request_id": "startup-cancelled"})
             elif subtype == "apply_flag_settings":
                 if "effortLevel" in request["settings"]: state["effort"] = request["settings"]["effortLevel"]
                 if "fastMode" in request["settings"]: state["fast_mode"] = request["settings"]["fastMode"]

@@ -143,8 +143,7 @@ def browser_check(fixture, base, screenshots):
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
         refresh_usage(page)
         footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
-        expect(footer).to_have_attribute('title', re.compile('输入 Token：100'))
-        expect(footer).to_have_attribute('title', re.compile('缓存读取：30'))
+        expect(footer).to_have_attribute('title', re.compile(r'上下文：已用 0\.6%'))
         assert_usage_outside_menu(page)
         usage = wait_snapshot(page, fixture.uid, lambda raw: raw.get('usage', {}).get('tokens', {}).get('total_tokens') == 160)['raw']['usage']
         assert usage['tokens'] == {'input': 100, 'output': 20, 'reasoning': 5, 'cache': {'read': 30, 'write': 10}, 'total_tokens': 160}, usage
@@ -543,6 +542,44 @@ def startup_hooks_check(fixture, binary, foreign_kind):
         browser.close()
 
 
+def startup_cancel_check(fixture, binary):
+    from playwright.sync_api import sync_playwright, expect
+    with fixture.server(binary) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = browser.new_page(viewport={'width': 1280, 'height': 900}, service_workers='block')
+        page.goto(base, wait_until='networkidle')
+        open_sdk(page, fixture, expect)
+        reveal(page, '#native-sdk-permission_mode').select_option('plan')
+        wait_snapshot(page, fixture.uid, lambda raw: raw['settings'].get('permission_mode') == 'plan')
+        close_more(page)
+
+        stop = page.locator('#a-session-toggle')
+        if not stop.is_visible():
+            page.locator('#a-more').click()
+        expect(stop).to_have_attribute('aria-label', '停止会话')
+        with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/stop')) as stopped:
+            stop.click()
+        assert stopped.value.ok, stopped.value.text()
+        (fixture.root / 'cancel-startup-approval').touch()
+
+        page.reload(wait_until='networkidle')
+        open_sdk(page, fixture, expect)
+        assert len(fixture.frames('spawn')) == 2
+        controls = [frame['request'] for frame in fixture.frames('control_request')]
+        assert [frame['mode'] for frame in controls if frame['subtype'] == 'set_permission_mode'] == ['plan', 'plan']
+        raw = snapshot(page, fixture.uid)['raw']
+        assert [card['key'] for card in raw['requests']] == ['startup-pending'], raw['requests']
+
+        expect(page.locator('[data-sdk-request="startup-cancelled"]')).to_have_count(0)
+        card = page.locator('[data-sdk-request="startup-pending"]')
+        card.get_by_role('button', name='拒绝', exact=True).click()
+        expect(card).to_have_count(0)
+        send(page, 'browser startup cancellation')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser startup cancellation')
+        assert [frame['response']['request_id'] for frame in fixture.frames('control_response')] == ['startup-pending']
+        browser.close()
+
+
 def startup_failure_check(fixture, binary, screenshots=None):
     from playwright.sync_api import sync_playwright, expect
     launcher = json.loads(fixture.launcher.read_text())
@@ -576,6 +613,8 @@ def main():
             startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-') as temporary:
         startup_failure_check(ClaudeFixture(Path(temporary)), args.binary, args.screenshots)
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-cancel-') as temporary:
+        startup_cancel_check(ClaudeFixture(Path(temporary)), args.binary)
     with tempfile.TemporaryDirectory(prefix="sessiondock-claude-sdk-") as temporary:
         fixture = ClaudeFixture(Path(temporary))
         with fixture.server(args.binary) as base:
@@ -587,7 +626,7 @@ def main():
             idle_check(fixture, base, clock)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-fork-restart-') as temporary:
         fork_restart_check(ClaudeFixture(Path(temporary)), args.binary)
-    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, quiet/active/request/task/subscriber survival and same-instance reopen")
+    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, startup approval cancellation, native fork boundaries/source preservation/deduplication, quiet/active/request/task/subscriber survival and same-instance reopen")
 
 
 if __name__ == "__main__":

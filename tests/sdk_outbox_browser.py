@@ -50,7 +50,7 @@ def main():
                         with page.expect_response(lambda r: r.url.endswith('/api/native-sdk/respond')) as failed:
                             button.click()
                         assert not failed.value.ok, failed.value.text()
-                        # The hosted writer polls every 25 ms even without a wake.
+                        # The hosted writer also polls without an outbox wake.
                         page.wait_for_timeout(1000)
                         assert not replies(fixture, key), (source, 'failed write reached native CLI', replies(fixture, key))
                         assert any(r['key'] == key for r in snapshot(page, fixture.uid)['raw']['requests'])

@@ -73,17 +73,6 @@ impl Bridge {
                 }
                 live.ready = true;
                 session.publish(&mut live);
-                drop(live);
-                for field in [
-                    "pending_permission_requests",
-                    "pending_user_dialog_requests",
-                ] {
-                    if let Some(requests) = initialized[field].as_array() {
-                        for request in requests {
-                            protocol::observe(session, request.clone());
-                        }
-                    }
-                }
                 Ok(())
             }
             Err(error) => {
