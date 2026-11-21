@@ -1,7 +1,7 @@
 use crate::{
     bandwidth,
     events::{self, Event},
-    gpu, io_events, memory,
+    gpu, io_events, memory, usage,
 };
 use process_links::{
     Process, Report,
@@ -335,6 +335,7 @@ impl PreparedResources {
 enum Response {
     Value(Value),
     Report(Arc<Report>),
+    Usage(Arc<usage::Snapshot>),
     Resources {
         resources: Arc<PreparedResources>,
         diagnostic: Value,
@@ -354,6 +355,13 @@ impl Response {
                 &Envelope {
                     ok: true,
                     result: value,
+                },
+            )?,
+            Self::Usage(snapshot) => serde_json::to_writer(
+                writer,
+                &Envelope {
+                    ok: true,
+                    result: &*snapshot,
                 },
             )?,
             Self::Report(report) if bindings_only => {
@@ -449,13 +457,7 @@ struct Published {
     health: Value,
 }
 type PublishedReport = Arc<Mutex<Published>>;
-type PublishedUsage = Arc<Mutex<Arc<Value>>>;
-
-fn usage_response(published: &PublishedUsage) -> Response {
-    let snapshot = published.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    // Clone the response outside the publication lock; attribution may be busy.
-    Response::Value((*snapshot).clone())
-}
+type PublishedUsage = Arc<Mutex<Arc<usage::Snapshot>>>;
 
 struct State {
     published_report: PublishedReport,
@@ -464,7 +466,6 @@ struct State {
     report: Arc<Report>,
     resources: Arc<PreparedResources>,
     status: CollectorStatus,
-    usage: PublishedUsage,
     forks: u64,
     execs: u64,
     exits: u64,
@@ -515,10 +516,36 @@ impl State {
             "collector":self.status,"processes":self.snapshot.entries.len(),
             "fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits,"pss":self.pss_control.lock().unwrap_or_else(|e| e.into_inner()).health()})
     }
-    fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
+    fn handle(
+        state: &Mutex<Self>,
+        published: &PublishedReport,
+        usage: &PublishedUsage,
+        request: Request,
+    ) -> Result<Response, &'static str> {
+        let lock_state = || state.lock().unwrap_or_else(|e| e.into_inner());
         match request {
+            Request::Usage => Ok(Response::Usage(
+                usage.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            )),
+            Request::Report => Ok(Response::Report(
+                published
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .report
+                    .clone(),
+            )),
+            Request::Health => {
+                let mut health = published
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .health
+                    .clone();
+                health["runtime_log"] = crate::runtime_log::snapshot();
+                Ok(Response::Value(health))
+            }
             Request::PssDemand { session, inclusive } => {
-                let mut control = self.pss_control.lock().unwrap_or_else(|e| e.into_inner());
+                let state = lock_state();
+                let mut control = state.pss_control.lock().unwrap_or_else(|e| e.into_inner());
                 control
                     .demands
                     .retain(|(_, _, deadline)| *deadline > Instant::now());
@@ -540,14 +567,13 @@ impl State {
                 }
                 Ok(Response::Value(json!({"lease_seconds":30})))
             }
-            Request::Usage => Ok(usage_response(&self.usage)),
-            Request::Health => Ok(Response::Value(self.health())),
             Request::Probe {
                 enabled,
                 lease_id,
                 lease_seconds,
             } => {
-                let mut diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
+                let state = lock_state();
+                let mut diagnostic = state.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
                 if !diagnostic.supported {
                     return Err("此机器不支持临时 I/O 探测");
                 }
@@ -584,31 +610,37 @@ impl State {
                 }
                 Ok(Response::Value(diagnostic.value()))
             }
-            Request::Report => Ok(Response::Report(self.report.clone())),
             Request::Resources => {
-                let diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
+                let state = lock_state();
+                let diagnostic = state.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
                 Ok(Response::Resources {
-                    resources: self.resources.clone(),
+                    resources: state.resources.clone(),
                     diagnostic: diagnostic.value(),
                     io_active: diagnostic.state == "active"
                         && diagnostic.deadline.is_some_and(|d| d > Instant::now()),
                 })
             }
             Request::Catalog(catalog) => {
-                if catalog.node_id != self.engine.node_id || catalog.boot_id != self.engine.boot_id
+                let mut state = lock_state();
+                if catalog.node_id != state.engine.node_id
+                    || catalog.boot_id != state.engine.boot_id
                 {
                     return Err("catalog belongs to another node or boot");
                 }
-                if catalog != self.engine.catalog {
-                    self.engine.catalog(catalog);
-                    self.refresh();
+                if catalog != state.engine.catalog {
+                    state.engine.catalog(catalog);
+                    state.refresh();
                 }
-                Ok(Response::Report(self.report.clone()))
+                Ok(Response::Report(state.report.clone()))
             }
             Request::Publish(published) => {
-                self.engine.publish(published, &self.snapshot);
-                self.refresh();
-                Ok(Response::Report(self.report.clone()))
+                let mut state = lock_state();
+                let State {
+                    engine, snapshot, ..
+                } = &mut *state;
+                engine.publish(published, snapshot);
+                state.refresh();
+                Ok(Response::Report(state.report.clone()))
             }
         }
     }
@@ -1277,9 +1309,9 @@ fn rate(current: Option<f64>, previous: Option<f64>, elapsed: Option<f64>, reaso
 
 fn serve(
     mut stream: UnixStream,
-    state: Arc<Mutex<State>>,
-    published: PublishedReport,
-    published_usage: PublishedUsage,
+    state: &Mutex<State>,
+    published: &PublishedReport,
+    published_usage: &PublishedUsage,
     uid: u32,
 ) -> io::Result<()> {
     use std::os::fd::AsRawFd;
@@ -1327,30 +1359,9 @@ fn serve(
         Ok(Request::Resources) => "resources",
         Err(_) => "invalid",
     };
-    let response = match decoded {
-        Ok(Request::Usage) => Ok(usage_response(&published_usage)),
-        Ok(Request::Report) => Ok(Response::Report(
-            published
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .report
-                .clone(),
-        )),
-        Ok(Request::Health) => {
-            let mut health = published
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .health
-                .clone();
-            health["runtime_log"] = crate::runtime_log::snapshot();
-            Ok(Response::Value(health))
-        }
-        Ok(request) => state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .handle(request),
-        Err(_) => Err("invalid request"),
-    };
+    let response = decoded
+        .map_err(|_| "invalid request")
+        .and_then(|request| State::handle(state, published, published_usage, request));
     if response.is_err() || op == "probe" || started.elapsed() >= Duration::from_secs(2) {
         crate::runtime_log::emit(
             if response.is_err() { "warn" } else { "info" },
@@ -1473,12 +1484,12 @@ pub fn run() -> io::Result<()> {
         report: report.clone(),
         health: Value::Null,
     }));
-    let mut usage = crate::usage::Ledger::open(
+    let mut usage = usage::Ledger::open(
         &config.state.with_extension("usage.json"),
         &config.node_id,
         now(),
     )?;
-    let published_usage = Arc::new(Mutex::new(Arc::new(usage.view())));
+    let published_usage = Arc::new(Mutex::new(Arc::new(usage.snapshot(None))));
     let state = Arc::new(Mutex::new(State {
         published_report: published_report.clone(),
         engine,
@@ -1486,7 +1497,6 @@ pub fn run() -> io::Result<()> {
         resources: Arc::new(PreparedResources::new(data, &report)),
         report,
         status,
-        usage: published_usage.clone(),
         forks: 0,
         execs: 0,
         exits: 0,
@@ -1912,17 +1922,15 @@ pub fn run() -> io::Result<()> {
                     );
                 }
                 if usage_saved_at.elapsed() >= Duration::from_secs(30) {
-                    let persistence_error = usage.save().err();
-                    let mut view = usage.view();
-                    if let Some(error) = persistence_error {
+                    let persistence_error = usage.save().err().map(|error| {
                         crate::runtime_log::emit(
                             "error",
                             "resource.usage_save_failed",
                             json!({"error_kind":error.kind().to_string()}),
                         );
-                        view["persistence_error"] = json!(error.to_string());
-                    }
-                    let next = Arc::new(view);
+                        error.to_string()
+                    });
+                    let next = Arc::new(usage.snapshot(persistence_error));
                     let previous = {
                         let mut published = worker_usage.lock().unwrap_or_else(|e| e.into_inner());
                         std::mem::replace(&mut *published, next)
@@ -1959,13 +1967,7 @@ pub fn run() -> io::Result<()> {
                     let stream = pending.lock().unwrap_or_else(|e| e.into_inner()).recv();
                     let Ok(stream) = stream else { break };
                     let started = Instant::now();
-                    let result = serve(
-                        stream,
-                        state.clone(),
-                        published.clone(),
-                        published_usage.clone(),
-                        uid,
-                    );
+                    let result = serve(stream, &state, &published, &published_usage, uid);
                     if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
                         crate::runtime_log::emit(
                             "warn",

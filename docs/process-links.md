@@ -623,9 +623,12 @@ residency time. A background pmon observation every ten seconds supplies per-PID
 SM utilization; missing values remain unknown, and concurrent per-card sums cap
 at one card. This is an estimate, not exclusive GPU billing. No whole-device
 utilization is charged to sessions. Reboots, restart gaps and intervals over ten
-seconds are not extrapolated. Snapshots publish and atomically persist every
-thirty seconds, with a final flush on orderly shutdown; abrupt termination can
-lose the unflushed tail. Historical usage starts at deployment, not session birth.
+seconds are not extrapolated. Every thirty seconds the collector attempts an
+atomic save and publishes the completed usage snapshot. If the save fails, the
+new snapshot includes `persistence_error` and the next save retries pending
+changes. Readers keep a consistent snapshot while sampling continues. A final
+flush runs on orderly shutdown; abrupt termination can lose the unflushed tail.
+Historical usage starts at deployment, not session birth.
 
 Browser acceptance lives in Node Status `tests/usage_browser.py`: private real
 collector with fixture GPU CLI, CPU task, same-card processes, restart persistence,

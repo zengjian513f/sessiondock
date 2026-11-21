@@ -95,14 +95,20 @@ def gpu_collector(root, receives_links=False):
         listener.close()
 
 
+def collector_result(corpus, op):
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.settimeout(5)
+        sock.connect(str(corpus.root / 'agent.sock'))
+        sock.sendall(json.dumps({'op': op}).encode() + b'\n')
+        with sock.makefile('rb') as response:
+            return json.loads(response.readline())['result']
+
+
 def thread_write_counter_browser(page, corpus, proc):
     """Real collector and resource refreshes; synthetic task counters are the oracle."""
     task = proc / '100/task'
     def read():
-        with socket.socket(socket.AF_UNIX) as sock:
-            sock.settimeout(5); sock.connect(str(corpus.root/'agent.sock'))
-            sock.sendall(b'{"op":"resources"}\n')
-            result=json.loads(sock.makefile('rb').readline())['result']
+        result = collector_result(corpus, 'resources')
         return result['sampled_at'], next(x for x in result['samples'] if x['process']['pid']==100)['write_bytes']
     at, total=read(); assert total==0, (at,total)
     def observed(expected):
@@ -139,6 +145,45 @@ def thread_write_counter_browser(page, corpus, proc):
         real_task.unlink()
         observed(9*mib)
     print('PASS browser task writes: child reaping, exited/reused threads, partial/unreadable counters and baselines',flush=True)
+
+
+def usage_snapshots_browser(page, corpus, proc):
+    """Refresh resources through Chromium while usage saves fail and recover."""
+    database = corpus.root / 'agent-state.usage.sqlite3'
+    with sqlite3.connect(database) as db:
+        db.execute("""CREATE TRIGGER fixture_fail_usage BEFORE UPDATE ON usage_meta
+            BEGIN SELECT RAISE(ABORT, 'fixture usage save failure'); END""")
+        durable_at = json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at']
+
+    try:
+        thread_write_counter_browser(page, corpus, proc)
+
+        def failed_snapshot():
+            view = collector_result(corpus, 'usage')
+            return view if 'persistence_error' in view else None
+
+        failed = wait_for(failed_snapshot, timeout=40)
+        assert 'fixture usage save failure' in failed['persistence_error'], failed
+        assert failed['updated_at'] > durable_at, failed
+        assert any(row['storage_write_v2_bytes'] > 0 for row in failed['rows']), failed
+        page.get_by_role('button', name='刷新资源').click()
+        wait_for(lambda: collector_result(corpus, 'health')['sampled_at'] > failed['updated_at'])
+        assert collector_result(corpus, 'usage') == failed
+        with sqlite3.connect(database) as db:
+            assert json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at'] == durable_at
+    finally:
+        with sqlite3.connect(database) as db:
+            db.execute('DROP TRIGGER fixture_fail_usage')
+
+    def recovered_snapshot():
+        view = collector_result(corpus, 'usage')
+        return view if 'persistence_error' not in view and view['updated_at'] > failed['updated_at'] else None
+
+    recovered = wait_for(recovered_snapshot, timeout=40)
+    with sqlite3.connect(database) as db:
+        assert json.loads(db.execute('SELECT data FROM usage_meta').fetchone()[0])['updated_at'] == recovered['updated_at']
+        assert [json.loads(row[0]) for row in db.execute('SELECT data FROM usage_rows ORDER BY key')] == recovered['rows']
+    print('PASS failed and recovered usage snapshots, retained dirty rows and independent resource sampling', flush=True)
 
 
 def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=None):
@@ -180,7 +225,7 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     if observed:
                         assert resources['availability'] == 'observed', resources
                         expect(page.locator('.sr-node .sr-status')).to_have_text('在线')
-                        thread_write_counter_browser(page, corpus, proc)
+                        usage_snapshots_browser(page, corpus, proc)
                     else:
                         assert resources['availability'] == 'unavailable' and resources['samples'] is None
                         expect(page.locator('.sr-node .sr-status')).to_have_text('采集端不支持')
@@ -472,15 +517,19 @@ def main():
                         assert response.status == 403
                         if args.with_agent:
                             resource_url = '/api/session/resources?' + urlencode({'uid': parent, 'scope': 'direct'})
+                            inclusive_url = resource_url.replace('scope=direct', 'scope=inclusive')
                             hubbase = f'http://127.0.0.1:{hub.port}'
-                            direct = wait_for(lambda: (lambda data: data if any(
-                                row['node_id'] == nodes[1].nid and
-                                row['metrics'].get('memory_pss_bytes', {}).get('value') == 400 * 1024
-                                for row in data['nodes']) else None)(get_json(opener, hubbase, resource_url)))
-                            inclusive = get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                            def remote_pss(url, kib):
+                                data = get_json(opener, hubbase, url)
+                                if any(row['node_id'] == nodes[1].nid and
+                                       row['metrics'].get('memory_pss_bytes', {}).get('value') == kib * 1024
+                                       for row in data['nodes']):
+                                    return data
+
+                            direct = wait_for(lambda: remote_pss(resource_url, 400))
+                            inclusive = wait_for(lambda: remote_pss(inclusive_url, 2501))
                             remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
-                            assert remote['metrics']['memory_pss_bytes']['value'] == 2501 * 1024, inclusive
-                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                            wait_for(lambda: get_json(opener, hubbase, inclusive_url)
                                      ['totals']['metrics']['gpu_count']['value'] == 2)
                             assert all(row['status'] == 'ok' for row in direct['nodes']), direct
                             assert {row['node_id'] for row in direct['nodes']} == {node.nid for node in nodes}
@@ -504,7 +553,7 @@ def main():
                             shutil.rmtree(procs[0] / '601')
                             shutil.rmtree(procs[0] / '930')
                             page.get_by_role('button', name='刷新资源').click()
-                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                            wait_for(lambda: get_json(opener, hubbase, inclusive_url)
                                      ['totals']['metrics']['gpu_count']['value'] == 1)
                             page.get_by_role('button', name='刷新资源').click()
                             expect(gpu).to_have_text('1 张')
@@ -519,7 +568,7 @@ def main():
                             # the independent GPU observation, not CLI liveness.
                             (corpora[0].root / 'gpu.csv').write_text('300, GPU-independent, 16\n')
                             (corpora[1].root / 'gpu.csv').write_text('')
-                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                            wait_for(lambda: get_json(opener, hubbase, inclusive_url)
                                      ['totals']['metrics']['gpu_count']['value'] == 0, timeout=30)
                             page.get_by_role('button', name='刷新资源').click()
                             expect(gpu).to_have_text('0 张')
@@ -621,9 +670,14 @@ def main():
                     if index == 1:
                         assert saved['started_at'] == 123.
                         assert saved['device_models']['GPU-old'] == 'Synthetic retained model'
+                        view = collector_result(corpus, 'usage')
+                        assert view['version'] == 1 and view['storage_write_version'] == 2
+                        assert view['started_at'] == 123. and view['gaps'][0] == [100., 101.]
+                        assert view['device_models']['GPU-old'] == 'Synthetic retained model'
                         with sqlite3.connect(database) as db:
                             historic=json.loads(db.execute("SELECT data FROM usage_rows WHERE key='historical'").fetchone()[0])
                             assert historic['cpu_seconds']==12. and historic['storage_write_bytes']==42*1024**4 and historic['storage_write_v2_bytes']==0.
+                            assert historic in view['rows']
                             assert db.execute('SELECT count(*) FROM fixture_usage_updates').fetchone()[0]==0
                             assert db.execute('SELECT start,end FROM usage_gaps WHERE id=0').fetchone()==(100.,101.)
                         assert list(json.loads(ledger.read_text())['rows'])==['historical'], 'legacy backup must not be rewritten'

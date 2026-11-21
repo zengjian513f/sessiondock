@@ -32,6 +32,9 @@ MODULE_SUITES = {
     "assets": ["static_assets_*", "meta_*", "prefs_*"],
 }
 BROAD_MODULES = {"main", "lib", "config", "security", "state", "error"}
+SHARED_RUST_PACKAGES = {
+    "crates/runtime_log.rs": ("sessiondock", "ptyhost", "resource-agent"),
+}
 SELF_SCRIPTS = {"tests/check_docs_links.py", "tests/check_agents_md.py"}
 say = lambda line: print(line, flush=True)   # noqa: E731  (progress must reach a redirected stdout live)
 
@@ -166,7 +169,9 @@ def plan_for(mode: str, changed: list[str], names: list[str], *, root: Path = RO
         scripts |= extra
         if not matched and not extra:
             plan['unmapped'].append(path)
-        if path.startswith('crates/'):
+        if path in SHARED_RUST_PACKAGES:
+            packages.update(SHARED_RUST_PACKAGES[path])
+        elif path.startswith('crates/'):
             packages.add(path.split('/')[1])
         elif path in {'Cargo.toml', 'Cargo.lock'}:
             packages.update(['sessiondock', 'ptyhost', 'ptyhost-client'])

@@ -1,13 +1,15 @@
 //! Durable, sampled accounting. No browser request advances counters.
+use im::{OrdMap, Vector};
 use process_links::{Process, Report, Session, agent::Resources};
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
+    sync::Arc,
 };
 
 fn identity(s: &Session) -> String {
@@ -35,7 +37,7 @@ struct Row {
     first_at: f64,
     last_at: f64,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Saved {
     version: u32,
     node_id: String,
@@ -43,11 +45,73 @@ struct Saved {
     updated_at: f64,
     gap_seconds: f64,
     #[serde(default)]
-    gaps: Vec<[f64; 2]>,
-    device_models: BTreeMap<String, String>,
+    gaps: Vector<[f64; 2]>,
+    device_models: OrdMap<String, String>,
     #[serde(default)]
-    rows: BTreeMap<String, Row>,
+    rows: OrdMap<String, Arc<Row>>,
 }
+
+/// A completed publication shares history with the ledger. Observations copy
+/// only the paths to changed rows and gaps, while readers serialize this version.
+pub struct Snapshot {
+    saved: Saved,
+    persistence_error: Option<String>,
+}
+
+impl Serialize for Snapshot {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            version: u32,
+            node_id: &'a str,
+            started_at: f64,
+            updated_at: f64,
+            gap_seconds: f64,
+            gaps: &'a Vector<[f64; 2]>,
+            #[serde(serialize_with = "serialize_rows")]
+            rows: &'a OrdMap<String, Arc<Row>>,
+            cpu_status: &'static str,
+            storage_write_status: &'static str,
+            storage_write_version: u32,
+            gpu_status: &'static str,
+            compute_status: &'static str,
+            device_models: &'a OrdMap<String, String>,
+            timezone: &'static str,
+            reason: &'static str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            persistence_error: Option<&'a str>,
+        }
+
+        fn serialize_rows<S: Serializer>(
+            rows: &OrdMap<String, Arc<Row>>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            serializer.collect_seq(rows.values())
+        }
+
+        let saved = &self.saved;
+        Wire {
+            version: saved.version,
+            node_id: &saved.node_id,
+            started_at: saved.started_at,
+            updated_at: saved.updated_at,
+            gap_seconds: saved.gap_seconds,
+            gaps: &saved.gaps,
+            rows: &saved.rows,
+            cpu_status: "partial",
+            storage_write_status: "partial",
+            storage_write_version: 2,
+            gpu_status: "estimated",
+            compute_status: "estimated",
+            device_models: &saved.device_models,
+            timezone: "Asia/Shanghai",
+            reason: "CPU 为已观察进程累计执行时间差，短命进程可能漏计；GPU 为计算上下文驻留采样，非独占卡时；有效计算卡时按 pmon 进程 SM 利用率估算，缺失不补零；同卡并发利用率相加后封顶，可能重叠。存储写入 v2 按 /proc/PID/task/TID/io 的线程身份连续差分累计，排除回收子进程历史；首次、漏采与重启仅建立基线。旧 storage_write_bytes 保留为历史，当前使用 storage_write_v2_bytes，不扣取消写入，不代表实际落盘量或完整 NFS 写入量；短命进程及未观测区间可能漏计。每日桶按北京时间划分。",
+            persistence_error: self.persistence_error.as_deref(),
+        }
+        .serialize(serializer)
+    }
+}
+
 struct Prior {
     owner: String,
     cpu: f64,
@@ -107,7 +171,7 @@ impl Ledger {
             saved.gaps = gaps
                 .query_map([], |r| Ok([r.get(0)?, r.get(1)?]))
                 .map_err(io::Error::other)?
-                .collect::<rusqlite::Result<Vec<_>>>()
+                .collect::<rusqlite::Result<Vector<_>>>()
                 .map_err(io::Error::other)?;
             saved
         } else {
@@ -123,9 +187,9 @@ impl Ledger {
                     started_at: at,
                     updated_at: at,
                     gap_seconds: 0.,
-                    gaps: Vec::new(),
-                    device_models: BTreeMap::new(),
-                    rows: BTreeMap::new(),
+                    gaps: Vector::new(),
+                    device_models: OrdMap::new(),
+                    rows: OrdMap::new(),
                 },
                 Err(e) => return Err(e),
             }
@@ -165,7 +229,7 @@ impl Ledger {
         let continuous = self.at > 0. && self.boot == resources.boot_id && dt <= 10.;
         if !continuous {
             self.saved.gap_seconds += (at - self.saved.updated_at).max(0.);
-            self.saved.gaps.push([self.saved.updated_at, at]);
+            self.saved.gaps.push_back([self.saved.updated_at, at]);
         }
         let bindings: BTreeMap<_, _> = report.bindings.iter().map(|b| (&b.process, b)).collect();
         let mut previous = BTreeMap::new();
@@ -291,23 +355,26 @@ impl Ledger {
                     let fraction = (end - start) / dt;
                     let row_key = format!("{day}:{key}");
                     self.dirty.insert(row_key.clone());
-                    let row = self.saved.rows.entry(row_key).or_insert(Row {
-                        session: session.clone(),
-                        scope: scope.clone(),
-                        day,
-                        cpu_seconds: 0.,
-                        storage_write_bytes: 0.,
-                        storage_write_observed_seconds: 0.,
-                        storage_write_v2_bytes: 0.,
-                        storage_write_v2_observed_seconds: 0.,
-                        gpu_seconds: BTreeMap::new(),
-                        compute_seconds: BTreeMap::new(),
-                        compute_observed_seconds: 0.,
-                        gpu_observed_seconds: 0.,
-                        observed_seconds: 0.,
-                        first_at: start,
-                        last_at: end,
+                    let row = self.saved.rows.entry(row_key).or_insert_with(|| {
+                        Arc::new(Row {
+                            session: session.clone(),
+                            scope: scope.clone(),
+                            day,
+                            cpu_seconds: 0.,
+                            storage_write_bytes: 0.,
+                            storage_write_observed_seconds: 0.,
+                            storage_write_v2_bytes: 0.,
+                            storage_write_v2_observed_seconds: 0.,
+                            gpu_seconds: BTreeMap::new(),
+                            compute_seconds: BTreeMap::new(),
+                            compute_observed_seconds: 0.,
+                            gpu_observed_seconds: 0.,
+                            observed_seconds: 0.,
+                            first_at: start,
+                            last_at: end,
+                        })
                     });
+                    let row = Arc::make_mut(row);
                     if session.title.is_some() {
                         row.session.title = session.title.clone();
                     }
@@ -355,8 +422,11 @@ impl Ledger {
         self.boot = resources.boot_id.clone();
         self.saved.updated_at = at;
     }
-    pub fn view(&self) -> Value {
-        json!({"version":1,"node_id":self.saved.node_id,"started_at":self.saved.started_at,"updated_at":self.saved.updated_at,"gap_seconds":self.saved.gap_seconds,"gaps":self.saved.gaps,"rows":self.saved.rows.values().collect::<Vec<_>>(),"cpu_status":"partial","storage_write_status":"partial","storage_write_version":2,"gpu_status":"estimated","compute_status":"estimated","device_models":self.saved.device_models,"timezone":"Asia/Shanghai","reason":"CPU 为已观察进程累计执行时间差，短命进程可能漏计；GPU 为计算上下文驻留采样，非独占卡时；有效计算卡时按 pmon 进程 SM 利用率估算，缺失不补零；同卡并发利用率相加后封顶，可能重叠。存储写入 v2 按 /proc/PID/task/TID/io 的线程身份连续差分累计，排除回收子进程历史；首次、漏采与重启仅建立基线。旧 storage_write_bytes 保留为历史，当前使用 storage_write_v2_bytes，不扣取消写入，不代表实际落盘量或完整 NFS 写入量；短命进程及未观测区间可能漏计。每日桶按北京时间划分。"})
+    pub fn snapshot(&self, persistence_error: Option<String>) -> Snapshot {
+        Snapshot {
+            saved: self.saved.clone(),
+            persistence_error,
+        }
     }
     pub fn save(&mut self) -> io::Result<()> {
         let tx = self.db.transaction().map_err(io::Error::other)?;
@@ -381,7 +451,8 @@ impl Ledger {
                 }
             }
         }
-        for (id, gap) in self.saved.gaps.iter().enumerate().skip(self.persisted_gaps) {
+        for id in self.persisted_gaps..self.saved.gaps.len() {
+            let gap = self.saved.gaps[id];
             tx.execute(
                 "INSERT INTO usage_gaps VALUES(?1,?2,?3)",
                 params![id, gap[0], gap[1]],
