@@ -73,6 +73,12 @@ def provider(source, root, binary, *, cli=False, report=False, extra_env=None):
                 if cli == 'shared': mixed_launcher(peer, root, extra)
                 with peer.server(binary, extra) as base:
                     yield base, peer, extra
+            elif source == 'droid':
+                from droid_sdk_fixtures import DroidFixture
+                peer = DroidFixture(root)
+                if cli == 'shared': mixed_launcher(peer, root, extra)
+                with peer.server(binary, extra) as base:
+                    yield base, peer, extra
             elif source == 'codex':
                 corpus = build(root)
                 if cli:

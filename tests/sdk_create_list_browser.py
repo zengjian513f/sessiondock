@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SDK creation stays in the sidebar before first input: five CLIs, node and Hub."""
+"""SDK creation stays in the sidebar before first input on node and Hub."""
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -16,9 +16,41 @@ from sdk_start_stop_fixtures import provider
 from codex_sdk_create_browser import check_delete_menus
 
 
+def check_receipt_navigation(browser, page, base, uid, screenshots, label):
+    def check_opened(current):
+        assert current.evaluate('uid => !!SdkView.pending(uid)', uid)
+        expect(current.locator('#sdk-input')).to_be_visible()
+        expect(current.locator('#sdk-composer .sdk-status')).not_to_have_attribute('data-state', 'connecting')
+        expect(current.locator('.sdk-msgs .msg')).to_have_count(0)
+        assert current.evaluate('S.sel') == uid
+
+    link = page.url
+    assert 'sid=' in link, link
+    # Reopening the home URL exercises saved selection without an explicit link.
+    page.goto(base, wait_until='domcontentloaded')
+    page.wait_for_function('T.listLoaded')
+    check_opened(page)
+    page.screenshot(path=str(screenshots/f'{label}-restored-wide-light.png'), full_page=True)
+
+    # An explicit link must work without any local preferences or saved UID.
+    fresh = browser.new_context(viewport={'width': 390, 'height': 900},
+                                color_scheme='dark', service_workers='block')
+    try:
+        linked = fresh.new_page()
+        linked.goto(link, wait_until='domcontentloaded')
+        for state in ('linked', 'reloaded'):
+            linked.wait_for_function('T.listLoaded')
+            check_opened(linked)
+            linked.screenshot(path=str(screenshots/f'{label}-{state}-mobile-dark.png'), full_page=True)
+            if state == 'linked':
+                linked.reload(wait_until='domcontentloaded')
+    finally:
+        fresh.close()
+
+
 def exercise(browser, base, source, peer, root, screenshots, label):
     context = browser.new_context(viewport={'width': 1440, 'height': 900},
-                                  service_workers='block')
+                                  color_scheme='light', service_workers='block')
     page = context.new_page()
     page.set_default_timeout(20000)
     errors = []
@@ -30,6 +62,9 @@ def exercise(browser, base, source, peer, root, screenshots, label):
         (root/'empty-time').touch()
     open_dialog(page)
     page.locator(f'input[name=new-source][value={source}]').check()
+    if source == 'opencode':
+        page.locator('#new-model').click()
+        page.locator('#new-model-options [role=option]', has_text='Synthetic OpenCode').click()
     page.locator('#new-cwd').fill(str(cwd))
     endpoint = 'codex-sdk' if source == 'codex' else 'native-sdk'
     with page.expect_response(lambda r: f'/api/{endpoint}/create' in r.url) as event:
@@ -48,8 +83,10 @@ def exercise(browser, base, source, peer, root, screenshots, label):
     assert replay.json()['session']['created'] == receipt['session']['created']
     row = page.locator(f'#side .item[data-uid="{uid}"]')
     expect(row).to_be_visible()
+    if source in ('codebuddy', 'droid'):
+        check_receipt_navigation(browser, page, base, uid, screenshots, f'{label}-{source}')
     # Pending receipts survive a reload without changing UID or their timestamp.
-    page.reload(wait_until='networkidle')
+    page.reload(wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
     expect(row).to_be_visible()
     row.click()
@@ -107,7 +144,7 @@ def exercise(browser, base, source, peer, root, screenshots, label):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--sources', default='agy,claude,grok,opencode,codex')
+    parser.add_argument('--sources', default='agy,claude,grok,opencode,codex,codebuddy,droid')
     parser.add_argument('--screenshots', type=Path,
                         default=Path(tempfile.gettempdir())/'sessiondock-sdk-create-list')
     args = parser.parse_args()
@@ -118,6 +155,8 @@ def main():
             for source in args.sources.split(','):
                 root = Path(tmp)/source
                 root.mkdir()
+                if source == 'droid':
+                    (root/'defer-native-history').touch()
                 with provider(source, root, args.binary) as (base, peer, extra):
                     exercise(browser, base, source, peer, root, args.screenshots, 'node')
                     hub_root = root/'hub'

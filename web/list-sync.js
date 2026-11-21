@@ -7,6 +7,8 @@ globalThis.SessionDockNetwork = (() => {
   const base = new URL('.', location.href);
   const api = new URL('api/', base).pathname;
   const snapshots = new Map();
+  const expandedSnapshots = new Map();
+  const maxExpandedSnapshots = 8;
   let stopped = '', sleeping = false, sequence = 0;
   let backgroundAbort = new AbortController();
   const pausedError = () => new DOMException('自动同步已暂停', 'AbortError');
@@ -64,7 +66,9 @@ globalThis.SessionDockNetwork = (() => {
     if (!delta) return wire;
     if (!baseline || delta.base !== baseline.list_version) throw new Error('列表同步基线已失效');
     const result = {...wire};
-    for (const [name, patch] of Object.entries(delta.collections)) result[name] = expandRows(baseline[name], patch);
+    for (const [name, patch] of Object.entries(delta.collections)) {
+      result[name] = wire.list_unchanged === true ? baseline[name] : expandRows(baseline[name], patch);
+    }
     delete result.list_delta;
     delete result.list_unchanged;
     return result;
@@ -92,11 +96,13 @@ globalThis.SessionDockNetwork = (() => {
       && [api + 'sessions', api + 'term/list'].includes(url.pathname);
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init.headers).forEach((v, k) => headers.set(k, v));
-    let cacheKey, baseline, run;
+    let cache, cacheKey, baseline, callerSig, run;
     if (list) {
+      if (url.pathname === api + 'sessions') callerSig = url.searchParams.get('sig');
       url.searchParams.delete('sig');
       const key = new URL(url); key.searchParams.delete('force'); key.searchParams.sort();
-      cacheKey = key.toString(); baseline = snapshots.get(cacheKey)?.data; run = ++sequence;
+      cache = key.searchParams.has('expanded') ? expandedSnapshots : snapshots;
+      cacheKey = key.toString(); baseline = cache.get(cacheKey)?.data; run = ++sequence;
       headers.set('X-SessionDock-List', baseline?.list_version || 'new');
     }
     const response = await nativeFetch(list ? url : input, {...init, headers, signal:requestSignal});
@@ -109,13 +115,21 @@ globalThis.SessionDockNetwork = (() => {
     const wire = await response.json();
     requestSignal?.throwIfAborted();
     const data = expand(wire, baseline);
-    if (data.list_version && (!snapshots.has(cacheKey) || snapshots.get(cacheKey).run < run)) {
-      snapshots.set(cacheKey, {run, data});
+    if (data.list_version && (!cache.has(cacheKey) || cache.get(cacheKey).run < run)) {
+      cache.delete(cacheKey);
+      cache.set(cacheKey, {run, data});
+      if (cache === expandedSnapshots && cache.size > maxExpandedSnapshots) {
+        cache.delete(cache.keys().next().value);
+      }
     }
-    // Return a fresh decoded object to the page; the transport baseline above
-    // never becomes S.sessions/T.list and cannot acquire UI-only mutations.
-    const output = {...data};
-    if (wire.list_delta && wire.list_unchanged && url.pathname === api + 'sessions') output.unchanged = true;
+    // An independent full read may have advanced the wire baseline while the
+    // sidebar still holds an older signature.
+    let output = data;
+    if (wire.list_delta && wire.list_unchanged === true && callerSig && callerSig === data.sig) {
+      const {sessions, ...envelope} = data;
+      output = {...envelope, unchanged: true};
+    }
+    // The caller decodes its own rows, leaving cached wire rows untouched.
     const resultHeaders = new Headers(response.headers);
     resultHeaders.delete('Content-Length'); resultHeaders.delete('Content-Encoding');
     return new Response(JSON.stringify(output), {status:response.status, statusText:response.statusText, headers:resultHeaders});

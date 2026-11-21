@@ -58,6 +58,7 @@ def fake_cli():
         return
     assert sys.argv[-5:] == ['exec','--input-format','stream-jsonrpc','--output-format','stream-jsonrpc'],sys.argv
     log=Path(os.environ['SESSIONDOCK_FAKE_DROID_LOG'])
+    defer_history=(log.parent/'defer-native-history').exists()
     def record(v):
         with log.open('a') as f:f.write(json.dumps(v)+'\n')
     record({'type':'spawn','args':sys.argv[2:],'pid':os.getpid()})
@@ -69,6 +70,8 @@ def fake_cli():
     def reply(v,result):emit({'id':v['id'],'type':'response','result':result})
     def note(v):emit({'type':'notification','method':'droid.session_notification','params':{'sessionId':sid,'notification':v}})
     def msg(mid,role,text,request=None):
+        if defer_history and not path.exists():
+            path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n')
         m={'id':mid,'role':role,'content':[{'type':'text','text':text}],'createdAt':1794186000000,'modelId':settings['modelId']}
         with path.open('a') as f:f.write(json.dumps({'type':'message','id':mid,'timestamp':'2026-11-09T01:00:00Z','message':m})+'\n')
         note({'type':'create_message','message':m,**({'requestId':request} if request else {})})
@@ -84,7 +87,10 @@ def fake_cli():
         elif method in ('droid.initialize_session','droid.load_session'):
             sid=p['sessionId'];path=Path(os.environ['FACTORY_HOME_OVERRIDE'])/'.factory/sessions'/project_key(Path.cwd())/(sid+'.jsonl')
             if method=='droid.initialize_session':
-                path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n');settings.update({k:p[k] for k in ('modelId','reasoningEffort') if k in p})
+                path.parent.mkdir(parents=True,exist_ok=True)
+                if not defer_history:
+                    path.write_text(json.dumps(native_records(sid,Path.cwd(),[])[0])+'\n')
+                settings.update({k:p[k] for k in ('modelId','reasoningEffort') if k in p})
             else:assert path.is_file()
             reply(v,{'sessionId':sid,'session':{'messages':[]},'settings':settings,'availableModels':models})
             if (log.parent/'replay-history').exists():

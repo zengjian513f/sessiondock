@@ -247,43 +247,6 @@ const NativeSdkControls = {
     this.rememberUsage(view);
     this.layout(view);
   },
-  paintUsageDetail(detail,view,usage,t,total,input,output,credits=null,creditLimit=null,creditUnit='Credits',creditResetRaw=null) {
-    const count=value=>value.toLocaleString(undefined,{maximumFractionDigits:0});
-    const creditCount=value=>value.toLocaleString(undefined,{maximumFractionDigits:2});
-    const section=title=>{const block=el('section','sdk-usage-group');block.append(el('h4','',title));detail.append(block);return block;};
-    const metric=(holder,label,value)=>{const row=el('div','sdk-usage-metric');row.append(el('span','',label),el('b','',value));holder.append(row);};
-    const note=(holder,value)=>holder.append(el('p','sdk-control-note',value));
-    detail.replaceChildren();
-    const tokenValues=[total,input,output,t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens,t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens,t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens];
-    const hasTokens=tokenValues.some(value=>typeof value==='number' && Number.isFinite(value));
-    const tokens=hasTokens ? section('累计 Token') : el('section');
-    if(total!=null)tokens.append(el('div','sdk-usage-total',count(total)));
-    const grid=el('div','sdk-usage-metrics');tokens.append(grid);
-    for(const [label,value] of [['输入',input],['输出',output],['思考',t.reasoning ?? t.thinking_tokens ?? t.thinkingTokens ?? t.reasoningTokens],['缓存读取',t.cache?.read ?? t.cache_read_tokens ?? t.cacheReadInputTokens ?? t.cachedInputTokens ?? t.cachedReadTokens],['缓存写入',t.cache?.write ?? t.cache_creation_input_tokens ?? t.cacheCreationInputTokens ?? t.cacheCreationTokens]])
-      if(typeof value==='number' && Number.isFinite(value))metric(grid,label,count(value));
-    const cost=usage.cost_usd ?? usage.total_cost_usd ?? (Number.isFinite(usage.costUsdTicks)?usage.costUsdTicks/1e10:undefined);
-    if(typeof cost==='number' && !usage.usageIsIncomplete && !usage.costIsPartial)metric(grid,'成本',`$${cost.toLocaleString(undefined,{maximumFractionDigits:6})}`);
-    if(hasTokens && usage.basis)note(tokens,usage.basis==='native cumulative modelUsage; estimated cost; thinking included in output'?'原生累计用量；成本为估算；思考计入输出':usage.basis);
-    if(typeof credits==='number' && Number.isFinite(credits)){
-      const creditSection=section('Credit 用量');
-      const creditLabel=creditLimit!=null ? `${creditCount(credits)} / ${creditCount(creditLimit)} ${creditUnit}` : `${creditCount(credits)} ${creditUnit}`;
-      creditSection.append(el('div','sdk-usage-total',creditLabel));
-      const resetNote=this.formatReset(creditResetRaw);
-      if(resetNote)note(creditSection,resetNote.replace(/^\s*·\s*/,''));
-    }
-    const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage;
-    if(context && Number.isFinite(context.percent ?? context.percentage)){
-      const holder=section('上下文'),percent=context.percent ?? context.percentage;
-      holder.append(UsageUI.gauge('已用',percent,context.basis || '原生估计'));
-      if(Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens))note(holder,`${count(context.used_tokens)} / ${count(context.max_tokens)} Token`);
-    }
-    if(view.raw?.step_usage){const step=section('最近步骤 · 单独统计');for(const [key,value] of Object.entries(view.raw.step_usage))metric(step,({input_tokens:'输入',output_tokens:'输出',thinking_tokens:'思考',cache_read_tokens:'缓存读取',total_tokens:'Token',credits:'Credits',credit:'Credit'})[key] || key,typeof value==='number'?count(value):JSON.stringify(value));}
-    if(view.raw?.settings?.fast_mode_state){const state=view.raw.settings.fast_mode_state;note(detail,`Fast 状态：${{off:'关闭',on:'开启',enabled:'开启',disabled:'关闭'}[state] || (typeof state==='string'?state:JSON.stringify(state))}`);}
-    if(view.raw?.settings?.fast_mode_disabled_reason)note(detail,`Fast 不可用：${view.raw.settings.fast_mode_disabled_reason}`);
-    for(const error of [view.usageData?.quota?.error,view.usageError,...Object.values(view.raw?.usage_errors || {})])if(error){
-      const message=String(error),line=el('p','sdk-control-note',message.length>200 ? `${message.slice(0,200)}…` : message);line.title=message;detail.append(line);
-    }
-  },
   paintSettings(view) {
     const holder=view.pane.querySelector('#native-sdk-settings'),raw=view.raw || {},source=view.uid.split(':')[0];
     const modes=raw.modes?.availableModes || (Array.isArray(raw.modes)?raw.modes:null) || (source==='droid' && view.capabilities.mode ? ['auto','spec'] : source==='kiro' && (view.capabilities.mode || view.capabilities.settings) ? ['default','plan','auto'] : []);

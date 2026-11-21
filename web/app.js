@@ -12547,6 +12547,10 @@ function routeSession(spec, sessions = S.sessions) {
   const uid = uidOfDeepLink(spec, sessions);
   return uid ? {uid, agent: null} : agentOfDeepLink(spec, sessions);
 }
+function hasSdkReceiptSource(spec) {
+  const colon = spec?.indexOf(':') ?? -1;
+  return colon > 0 && Object.hasOwn(SESSIONDOCK_CLIS, spec.slice(0, colon));
+}
 let deepLinkSequence = 0;
 async function waitForTermList() {
   if (typeof T === 'undefined') await new Promise(resolve =>
@@ -12576,7 +12580,7 @@ async function openExternalSession(spec, historyMode = 'replace') {
     return true;
   }
   let route = routeSession(spec), sidebarCatalog = null;
-  if (!route && /^(codex|claude|grok|opencode|agy|kiro):/.test(spec)) {
+  if (!route && hasSdkReceiptSource(spec)) {
     await waitForTermList();
     if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
     const pendingRoute = routeSession(spec, T.sdkSessions || []);
@@ -12658,7 +12662,7 @@ loadSessions(!!DEEP_SID).then(async ok => {
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
     openSession(last, savedAgent?.uid === last ? savedAgent.id : null, {historyMode:'replace'});
-  } else if (restoreDetail && /^(codex|claude|grok|opencode|agy|kiro):/.test(last || '')) {
+  } else if (restoreDetail && hasSdkReceiptSource(last)) {
     await waitForTermList();
     if (S.sel || store.get('sel', null) !== last) return;
     if (SdkView.pending(last)) await openSession(last, null, {historyMode:'replace'});

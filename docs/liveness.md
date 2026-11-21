@@ -271,7 +271,11 @@ the first response is complete, then only changed/deleted/inserted rows cross
 the browser and hub-to-node connections. Unchanged terminal lists carry only
 the current envelope and an empty delta. Missing revisions fall back to full
 snapshots; history cursors, list ordering and offline rows retain their semantics.
-The browser keeps its wire baseline separate from rows annotated by the UI.
+The browser keeps its wire baseline separate from the sidebar signature and
+the rows annotated by the UI. An empty session delta omits rows from the
+browser response only when the caller's signature also matches. The browser
+retains the eight most recently updated expanded-branch snapshots, and a
+discarded snapshot falls back to a full read.
 
 A page that detects a newer server build pauses background HTTP reads, UI/history
 SSE and terminal attachments until reload. Draft saving remains available.

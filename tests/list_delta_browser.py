@@ -7,13 +7,14 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import tempfile
 import threading
 import time
 from types import SimpleNamespace
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, claude_row, encoded, isolated_server
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
@@ -55,10 +56,101 @@ class Tap(BaseHTTPRequestHandler):
             conn.close()
 
 
+def check_cleanup_overlap(page, corpus, screenshots):
+    # The flat sidebar and the cleanup preview read the same catalog scope.
+    page.evaluate("setChildMode('flat')")
+    page.wait_for_function('!sessionLoadActive && S.childMode === "shown"')
+
+    # Hold sidebar reads while a real cleanup preview advances the wire cache.
+    def hold_polls(route):
+        url = urlsplit(route.request.url)
+        if parse_qs(url.query).get('force') != ['1']:
+            route.abort()
+            return
+        # Prime the real node read model with a forced scan, then serve its
+        # response in the shared transport scope to exercise that cache hit.
+        forced = route.fetch()
+        assert forced.ok
+        response = route.fetch(url=url._replace(query='').geturl())
+        route.fulfill(response=response)
+
+    route_pattern = re.compile(r'/api/sessions(?:\?|$)')
+    page.route(route_pattern, hold_polls)
+    page.wait_for_function('!sessionPollRequest')
+    old_sig = page.evaluate('S.sig')
+    title = 'Discovered while checking cleanup'
+    corpus.paths['bulk-1199'].unlink()
+    corpus.put('bulk-cleanup', 'claude', [claude_row('bulk-cleanup', 'user', 'u0', None, title,
+        timestamp='2026-09-13T12:00:00Z')], [])
+    assert page.evaluate('S.sig') == old_sig
+    if not page.locator('#session-cleanup').is_visible():
+        page.locator('#header-more-btn').click()
+    with page.expect_response(lambda response: '/api/sessions?force=1' in response.url) as preview:
+        page.locator('#session-cleanup').click()
+    refreshed = preview.value.json()
+    assert refreshed['sig'] != old_sig, refreshed
+    expect(page.locator('#session-cleanup-close')).to_be_enabled()
+    expect(page.locator('#session-cleanup-status')).to_contain_text('没有超过')
+    if screenshots:
+        page.screenshot(path=str(screenshots/'cleanup-wide-light.png'), full_page=True)
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.emulate_media(color_scheme='dark')
+        page.screenshot(path=str(screenshots/'cleanup-mobile-dark.png'), full_page=True)
+        page.set_viewport_size({'width': 1440, 'height': 900})
+        page.emulate_media(color_scheme='light')
+    page.locator('#session-cleanup-close').click()
+    assert page.evaluate('S.sig') == old_sig
+    page.unroute(route_pattern, hold_polls)
+    with page.expect_response(lambda response: urlsplit(response.url).path == '/api/sessions'
+                              and not urlsplit(response.url).query) as polling:
+        assert page.evaluate('pollSessions()')
+    polled = polling.value.json()
+    assert polled.get('list_unchanged') is True, (polled.keys(), polled.get('list_version'))
+    if screenshots:
+        page.screenshot(path=str(screenshots/'cleanup-sidebar-wide-light.png'), full_page=True)
+    assert page.evaluate('S.sig') == refreshed['sig']
+    expect(page.locator('#side .item').filter(has_text=title)).to_be_visible()
+    page.evaluate("setChildMode('hidden')")
+    page.wait_for_function('!sessionLoadActive')
+    print('PASS node cleanup: transport unchanged response reaches the sidebar with its newer rows', flush=True)
+
+
+def check_snapshot_scope(page, node_id):
+    get_list = '''query => fetch(appUrl('api/sessions' + (query ? '?' + query : '')))
+        .then(response => response.json())'''
+    full = page.evaluate(get_list, '')
+    assert full.get('sessions') and not full.get('unchanged')
+    compact = page.evaluate(get_list, urlencode({'sig': full['sig']}))
+    assert compact['unchanged'] is True and 'sessions' not in compact
+
+    def expanded(index):
+        parent = {'source': 'claude', 'sid': f'bulk-{index:04d}', 'node_id': node_id}
+        query = urlencode({'children': 'hidden', 'expanded': json.dumps([parent])})
+        with page.expect_request(lambda request: 'expanded=' in request.url) as request:
+            data = page.evaluate(get_list, query)
+        assert data.get('sessions'), data
+        return request.value.headers['x-sessiondock-list']
+
+    for index in range(8):
+        assert expanded(index) == 'new'
+    assert expanded(1) != 'new'
+    assert expanded(8) == 'new'
+    assert expanded(1) != 'new'
+    assert expanded(0) == 'new'
+    with page.expect_request(lambda request: urlsplit(request.url).path == '/api/sessions'
+                             and not urlsplit(request.url).query) as request:
+        assert page.evaluate(get_list, '')['sessions']
+    assert request.value.headers['x-sessiondock-list'] != 'new'
+    print('PASS caller signature compaction and expanded-scope eviction without losing the ordinary list', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     count = 1200
     with tempfile.TemporaryDirectory(prefix='sessiondock-list-delta-') as tmp, sync_playwright() as pw, ExitStack() as stack:
         browser = pw.chromium.launch(headless=True); stack.callback(browser.close)
@@ -99,7 +191,9 @@ def main():
                     hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [node])
                     hub.start(); mode.callback(hub.stop)
                     base = f'http://127.0.0.1:{hub.port}'
-                context = browser.new_context(); mode.callback(context.close)
+                context = browser.new_context(viewport={'width': 1440, 'height': 900},
+                                              color_scheme='light')
+                mode.callback(context.close)
                 page = context.new_page(); records = []; errors = []; network = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.on('request', lambda request: network.append((request.method, urlsplit(request.url).path)))
@@ -114,6 +208,10 @@ def main():
                 page.goto(base, wait_until='domcontentloaded')
                 page.wait_for_function('n=>S.sessions.length===n && uiEventsReady && T.listLoaded && !uiEventApplying', arg=count, timeout=45000)
                 initial = max(size for path, size, _ in records if path == '/api/sessions')
+                if not hub_mode:
+                    check_cleanup_overlap(page, corpus, args.screenshots)
+                check_snapshot_scope(page, nid)
+                records[:] = [record for record in records if record[0] != '/api/sessions']
                 uid = corpus.uid('bulk-0000')
                 if hub_mode: uid = uid.replace(':', f':{nid}~', 1)
                 # A real user action changes one row among a batch-sized list.
