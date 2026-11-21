@@ -3,7 +3,7 @@ from collections import defaultdict
 import json
 
 
-CACHE_FACTOR = 0.375
+CACHE_FACTOR = 0.15
 # Published Kiro context windows for the model IDs that report percentages.
 CONTEXT_WINDOWS = {
     'claude-opus-5-5':1000000, 'claude-sonnet-5-5':1000000, 'claude-haiku-5-5':1000000,

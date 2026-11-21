@@ -750,7 +750,8 @@ def kiro_summary(ledger, bucket, quota, windows, prices, status, now, single_buc
     amount = sum(p['api_usd'] for p in by_model.values()) if sample_credits else None
     used, limit = bucket.get('used'), bucket.get('limit')
     used_percent = 100 * used / limit if number(used) and number(limit) and 0 < limit and used <= limit else None
-    notes = ['Kiro 原生会话样本。输入按上下文占用或子任务可见记录估算，输出按生成内容估算；API 标价乘 0.375。']
+    notes = [f'Kiro 原生会话样本。输入按上下文占用或子任务可见记录估算，输出按生成内容估算。'
+             f'API 标价总额乘 {CACHE_FACTOR:g}，参考 Claude Code 的 Opus 5.5 缓存计费。']
     if amount is not None:
         notes.append(f'已计价样本扣点 {sample_credits:,.2f} Credits'
                      + (f'，账号已用 {used:,.2f} Credits' if number(used) else ''))

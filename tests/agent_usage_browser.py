@@ -457,19 +457,19 @@ def kiro_estimate_case(browser, binary, output):
             raise AssertionError(report)
 
         report, row = refresh()
-        expect(cell).to_have_text('≈ $1.00整轮 ≈ $999.00')
-        expect(cell).to_have_attribute('title', re.compile(r'0\.375[\s\S]+10 样本 Credits'))
+        expect(cell).to_have_text('≈ $0.40整轮 ≈ $399.60')
+        expect(cell).to_have_attribute('title', re.compile(r'0\.15[\s\S]+10 样本 Credits'))
         assert row['sample_credits'] == 10 and row['unpriced'] == 1
         assert row['start'] == month.isoformat()
         assert '未纳入样本金额和扣点' in cell.get_attribute('title')
         report, row = refresh()
         assert report['metrics']['bytes_read'] == 0
-        expect(cell).to_contain_text('$999.00')
+        expect(cell).to_contain_text('$399.60')
         page.screenshot(path=str(output/'kiro-estimate-node.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':950})
         page.goto(f'http://127.0.0.1:{hub.port}/quotas.html')
         page.evaluate("document.documentElement.dataset.theme='dark'")
-        expect(cell).to_contain_text('$999.00')
+        expect(cell).to_contain_text('$399.60')
         page.locator('.quota-scroll').evaluate_all('nodes=>nodes.forEach(n=>n.scrollLeft=100)')
         page.screenshot(path=str(output/'kiro-estimate-hub.png'),full_page=True)
 
@@ -478,16 +478,16 @@ def kiro_estimate_case(browser, binary, output):
         page.locator('#settings').click()
         page.get_by_role('tab',name='机器',exact=True).click()
         page.get_by_role('link',name='Agent 用量 →').click()
-        expect(cell).to_contain_text('$999.00')
+        expect(cell).to_contain_text('$399.60')
         page.screenshot(path=str(output/'kiro-estimate-settings.png'),full_page=True)
         page.goto(base+'/quotas.html')
         quota(2)
         refresh()
-        expect(cell).to_have_text('≈ $1.00')
+        expect(cell).to_have_text('≈ $0.40')
         assert '样本扣点与本期账号额度不匹配' in cell.get_attribute('title')
         quota(30,'查询失败')
         refresh()
-        expect(cell).to_have_text('≈ $1.00')
+        expect(cell).to_have_text('≈ $0.40')
         assert '官方额度已过期或查询失败' in cell.get_attribute('title')
 
 
