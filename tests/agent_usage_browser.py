@@ -207,14 +207,32 @@ def price_sync_case(browser, binary, output):
                     if remote['revision']==1 else
                     '| gpt-6.1-sol | $6 | $30 | $0.3 | $7.5 | $15 | $12 | $45 | $0.6 | $15 | $30 |\n'
                     '| gpt-sync-new | $3 | $15 | $0.15 | $3.75 | $7.5 | $6 | $22.5 | $0.3 | $7.5 | $15 |')
-                body=('### Standard pricing data\n'
-                      '| Model | Short context input | Short context output | Short context cached input | Short context 30m write | Short context 12h write | Long context input | Long context output | Long context cached input | Long context 30m write | Long context 12h write |\n'
-                      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'+rows+'\n'
+                header=('| Model | Short context input | Short context output | Short context cached input | Short context 30m write | Short context 12h write | Long context input | Long context output | Long context cached input | Long context 30m write | Long context 12h write |\n'
+                        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n')
+                body=('### Standard pricing data\n'+header+rows+'\n'
                       '| Model | Input | Output | Cached input |\n| --- | --- | --- | --- |\n'
                       '| gpt-sync-mini | $1 | $5 | - |\n'
                       '### Batch pricing data\n| Model | Input | Output | Cached input |\n'
                       '| gpt-sync-new | $999 | $999 | $999 |\n'
-                      'Short context: ≤272K input tokens. Long context: >272K input tokens.\n')
+                      '### Fast pricing data\n'+header+
+                      '| gpt-6.1-sol | $4 | $20 | $0.2 | $5 | $10 | $8 | $30 | $0.4 | $10 | $20 |\n'
+                      '| gpt-5.4 (<272K context length) | $5 | $30 | $0.5 | - | - | - | - | - | - | - |\n'
+                      '### Ultrafast pricing data\n'+header+
+                      '| gpt-6.1-sol | $12 | $60 | $0.6 | $15 | $30 | $24 | $90 | $1.2 | $30 | $60 |\n'
+                      'Short context: ≤272K input tokens. Long context: >272K input tokens.\n'
+                      'Ultrafast costs 3 times the Standard rate through February 28, 2027, and 6 times the Standard rate starting March 1, 2027 (Pacific time).\n'
+                      '### Ultrafast promotion pricing data\n'+header+
+                      '| gpt-sync-new | $6 | $30 | $0.3 | $7.5 | $15 | $12 | $45 | $0.6 | $15 | $30 |\n'
+                      '### Ultrafast list pricing data\n'+header+
+                      '| gpt-sync-new | $12 | $60 | $0.6 | $15 | $30 | $24 | $90 | $1.2 | $30 | $60 |\n'
+                      'Specialized models\n\nStandard\n\n### Grouped Pricing Table data\n'
+                      '| Category | Model | Input | Output | Cached input | 30m write | 12h write |\n'
+                      '| --- | --- | --- | --- | --- | --- | --- |\n'
+                      '| Codex | gpt-5.3-codex | $1.75 | $14 | $0.175 | - | - |\n'
+                      'Fast\n\n### Grouped Pricing Table data\n'
+                      '| Category | Model | Input | Output | Cached input |\n'
+                      '| --- | --- | --- | --- | --- |\n'
+                      '| Codex | gpt-5.3-codex | $3.50 | $28 | $0.35 |\n')
                 if remote['mode']=='malformed':body=body.replace('Short context output','Changed output column')
                 raw=body.encode();self.send_response(200);self.send_header('Content-Type','text/markdown')
                 self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
@@ -242,6 +260,8 @@ def price_sync_case(browser, binary, output):
         port=free_port();env=node_env(root,port,'127.0.0.0/8')
         env.update(SESSIONDOCK_USAGE_PYTHON=sys.executable,SESSIONDOCK_USAGE_PRICE_SYNC='on',
                    SESSIONDOCK_USAGE_PRICE_URL=f'http://127.0.0.1:{httpd.server_port}/pricing.md')
+        dump(directory/'online-prices.json', {'url':env['SESSIONDOCK_USAGE_PRICE_URL'],
+             'checked_at':now, 'updated_at':iso(now), 'models':{}})
         base,_=stack.enter_context(isolated_server(Corpus(root),binary,state_dir=state,extra_env=env))
         hr=root/'hub';hr.mkdir();hub=Hub(binary.with_name('sessiondock-hub'),hr,[SimpleNamespace(port=port,token=TOKEN,name='Price Sync')])
         hub.start();stack.callback(hub.stop)
@@ -311,6 +331,55 @@ def price_sync_case(browser, binary, output):
         page.get_by_role('link',name='Agent 用量 →').click()
         expect(cell).to_contain_text('$5.39');assert 'OpenAI 价目上次同步' in cell.get_attribute('title')
         page.screenshot(path=str(output/'price-sync-settings.png'),full_page=True)
+
+        page.goto(base+'/quotas.html')
+        page.evaluate("fetch('api/usage/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false,interval_seconds:1,sources:{}})}).then(r=>r.json())")
+        wait_for(lambda r: not r['settings']['enabled'])
+        def settings(tier, at):
+            return {'type':'event_msg','timestamp':iso(at),'payload':{
+                'type':'thread_settings_applied','thread_settings':{'service_tier':tier}}}
+        def request(ident, at, model, total, tier=None):
+            records = codex(ident,at,model)
+            records[1]['payload']['usage'].update(input_tokens=total,cached_input_tokens=total*3//5,output_tokens=100000)
+            if tier:
+                records[1]['payload']['service_tier'] = tier
+            return records
+
+        fast = request('tier-fast',now-18,'gpt-6.1-sol',100000)
+        fast[1]['timestamp'] = fast[2]['timestamp'] = iso(now-17)
+        append(path,settings('priority',now-19),fast[0],settings('ultrafast',now-17.5),*fast[1:],
+               *request('tier-ultra',now-16,'gpt-sync-new',300000),
+               *request('tier-standard',now-15,'gpt-6.1-sol',100000,'default'))
+        result = refresh()
+        pricing = json.loads((directory/'online-prices.json').read_text())
+        assert pricing['tiers']['fast']['gpt-5.3-codex']['output'] == 28
+        promotion, regular = pricing['tiers']['ultrafast']['gpt-sync-new']
+        assert promotion['until'] == regular['from'] == '2027-03-01T08:00:00Z'
+        expected = '$15.91' if iso(now-16) < '2027-03-01T08:00:00+00:00' else '$21.95'
+        expect(cell).to_contain_text(expected)
+        assert 'gpt-6.1-sol · Fast：$2.17' in cell.get_attribute('title')
+        assert 'gpt-sync-new · Ultrafast' in cell.get_attribute('title')
+        assert '2 次调用未记录实际档位' in cell.get_attribute('title')
+        assert result['rows'][0]['unpriced'] == 0
+        remote['mode'] = 'offline'
+        result = refresh(True)
+        expect(cell).to_contain_text(expected)
+        assert result['price_sync']['error'] and result['rows'][0]['unpriced'] == 0
+        page.screenshot(path=str(output/'price-tiers-node.png'),full_page=True)
+        page.set_viewport_size({'width':390,'height':950})
+        page.goto(f'http://127.0.0.1:{hub.port}/quotas.html')
+        page.evaluate("document.documentElement.dataset.theme='dark'")
+        expect(cell).to_contain_text(expected)
+        assert 'Ultrafast' in cell.get_attribute('aria-label')
+        page.locator('.quota-scroll').evaluate_all('nodes=>nodes.forEach(n=>n.scrollLeft=100)')
+        page.screenshot(path=str(output/'price-tiers-hub.png'),full_page=True)
+
+        page.goto(base+'/quotas.html')
+        append(path,*request('tier-unsupported',now-14,'gpt-sync-mini',100000,'fast'))
+        result = refresh()
+        assert result['rows'][0]['unpriced'] == 1
+        expect(cell).to_contain_text('记录不完整')
+        expect(cell).not_to_contain_text('整轮')
 
 
 def main():

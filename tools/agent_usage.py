@@ -162,6 +162,14 @@ def droid_record(raw):
     return [item]
 
 
+def codex_tier(value):
+    if value in (None, '', 'default', 'standard'):
+        return 'standard'
+    if value in ('priority', 'fast'):
+        return 'fast'
+    return 'ultrafast' if value == 'ultrafast' else 'unknown'
+
+
 def parse_usage_record(source, row, state, path, offset):
     """Return only scalar metering fields; never store conversation text."""
     if not isinstance(row, dict):
@@ -174,8 +182,15 @@ def parse_usage_record(source, row, state, path, offset):
         if kind == 'session_meta':
             state['sid'] = p.get('id', path.stem)
             state['fork'] = bool(p.get('forked_from_id'))
+        if kind == 'event_msg' and p.get('type') == 'thread_settings_applied':
+            settings = p.get('thread_settings') or {}
+            if 'service_tier' in settings:
+                state['settings_tier'] = codex_tier(settings['service_tier'])
         if kind == 'turn_context':
             state['model'] = p.get('model') or ''
+            # A change to thread settings during this turn applies to the next
+            # turn's snapshot. A response's own tier can override this estimate.
+            state['turn_tier'] = codex_tier(p.get('service_tier', state.get('settings_tier')))
         if kind == 'token_usage_record':
             state['per_request'] = True
             u = p.get('usage') or {}
@@ -210,12 +225,15 @@ def parse_usage_record(source, row, state, path, offset):
             ident = f"{state.get('sid',path.stem)}:{row.get('timestamp')}:{total.get('total_tokens')}"
         else:
             return []
+        recorded_tier = p.get('service_tier')
+        tier = codex_tier(recorded_tier if recorded_tier is not None else state.get('turn_tier'))
         return [{**event(ident, row.get('timestamp'), state.get('model'),
                       {'input': u.get('input_tokens'), 'output': u.get('output_tokens'),
                        'cache_read': u.get('cached_input_tokens', 0),
                        'cache_write': u.get('cache_write_input_tokens', 0)}, included=True,
                       partial=bool(u.get('cache_write_input_tokens'))),
-                 'sid': p.get('thread_id') or state.get('sid', path.stem)}]
+                 'sid': p.get('thread_id') or state.get('sid', path.stem),
+                 'tier':tier, 'tier_inferred':recorded_tier is None and tier != 'standard'}]
     if source == 'claude' and kind == 'assistant':
         msg = row.get('message') or {}; u = msg.get('usage') or {}
         if not u or not msg.get('id'):
@@ -280,7 +298,7 @@ def parse_record(source, row, state, path, offset):
                 t = pending['tokens']
                 if (last.get('input_tokens'),last.get('cached_input_tokens',0),last.get('output_tokens')) == (t['input']+t['cache_read'],t['cache_read'],t['output']):
                     pending = state.pop('pending_request')
-                    items.append({**pending, 'at':stamp(row.get('timestamp')), 'reported':True})
+                    items.append({**pending, 'price_at':pending['at'], 'at':stamp(row.get('timestamp')), 'reported':True})
             for name in ('primary', 'secondary'):
                 bucket = limits.get(name) or {}
                 if not number(bucket.get('used_percent')):
@@ -515,7 +533,7 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
         if source not in SOURCES or not root or agent not in ('all', source):
             continue
         try:
-            version = {'codex': 2, 'agy': 2, 'droid': 3}.get(source, 1)
+            version = {'codex': 3, 'agy': 2, 'droid': 3}.get(source, 1)
             stored = ledger.db.execute('select version from parser_versions where source=?',(source,)).fetchone()
             refresh_parser = rebuild or (stored[0] if stored else 1) != version
             if source == 'droid' and refresh_parser:
@@ -546,9 +564,10 @@ def collect(ledger, config, agent='all', rebuild=False, ownership=None):
     return result
 
 
-def model_price(model, tokens, prices, now, aggregate=False, long_context=True):
+def model_price(model, tokens, prices, now, aggregate=False, long_context=True, tier='standard'):
     canonical = prices.get('aliases', {}).get(model, model)
-    entries = prices.get('models', {}).get(canonical, [])
+    models = prices.get('models', {}) if tier == 'standard' else prices.get('tiers', {}).get(tier, {})
+    entries = models.get(canonical, [])
     if isinstance(entries, dict):
         entries = [entries]
     for price in reversed(entries):
@@ -657,6 +676,7 @@ def load_prices(config, refresh=False):
         base = result['models'].get(model, {})
         result['models'][model] = {**base, **rates} if isinstance(base,dict) and isinstance(rates,dict) else rates
     result['aliases'] = {**default.get('aliases',{}), **custom.get('aliases',{})}
+    result['tiers'] = {**default.get('tiers',{}), **custom.get('tiers',{})}
     if custom.get('version') != default.get('version'):
         result['version'] = f"{default.get('version')} / 配置 {custom.get('version')}"
     return result
@@ -701,6 +721,7 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
             estimate_amount = base_amount = range_extra = estimate_extra = 0
             by_model = {}
             unknown = 0
+            inferred_tiers = 0
             multiple = source == 'codex' and len({b.get('group') for b in buckets}) > 1
             ambiguous = multiple
             if start is not None and end is not None:
@@ -722,10 +743,15 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                     if match is None:
                         ambiguous = True
                         continue
-                    part = by_model.setdefault(model, {'model': model, 'requests': 0, 'unpriced': 0, 'api_usd': 0, 'api_usd_max':0,
+                    tier = item.get('tier', 'standard')
+                    if item.get('tier_inferred'):
+                        inferred_tiers += 1
+                    price_at = now if tier == 'standard' else item.get('price_at', item['at'])
+                    part = by_model.setdefault((model, tier), {'model': model, 'tier':tier, 'requests': 0, 'unpriced': 0, 'api_usd': 0, 'api_usd_max':0,
                                                        'tokens': dict.fromkeys(TOKEN_KEYS, 0)})
                     part['requests'] += 1
-                    cost = None if item['partial'] or item['at'] is None else model_price(model, item['tokens'], prices, now, aggregate=source=='grok')
+                    cost = None if item['partial'] or price_at is None or item['at'] is None else model_price(
+                        model, item['tokens'], prices, price_at, aggregate=source=='grok', tier=tier)
                     upper = cost
                     if cost is not None and item.get('cache_ttl_unknown'):
                         tokens = dict(item['tokens'])
@@ -739,7 +765,8 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
                         part['api_usd'] += cost
                         part['api_usd_max'] += upper
                         range_extra += upper - cost
-                        base_amount += model_price(model, item['tokens'], prices, now, aggregate=source=='grok', long_context=False) or 0
+                        base_amount += model_price(model, item['tokens'], prices, price_at,
+                                                  aggregate=source=='grok', long_context=False, tier=tier) or 0
                         if item['at'] <= estimate_until:
                             estimate_amount += cost
                             estimate_extra += upper - cost
@@ -771,13 +798,18 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
             estimate = estimate_amount * 100 / denominator if not reason and amount is not None else None
             if point:
                 point['api_usd'] = estimate_amount
+            notes = []
+            if range_extra:
+                notes.append('缓存写入未记录有效期，金额范围按 5 分钟至 1 小时单价计算')
+            if inferred_tiers:
+                notes.append(f'{inferred_tiers} 次调用未记录实际档位，按该轮开始时的设置估算')
             rows.append({'source': source, 'id': bucket.get('id'), 'group': bucket.get('group'),
                          'window': bucket.get('window'), 'start': iso(start) if start is not None else None,
                          'end': iso(end) if end is not None else None, 'used_percent': used,
                          'api_usd': amount, 'equivalent_usd': estimate, 'reason': reason,
                          'api_usd_max':amount + range_extra if amount is not None and range_extra else None,
                          'equivalent_usd_max':estimate + estimate_extra * 100 / denominator if estimate is not None and estimate_extra else None,
-                         'notes':['缓存写入未记录有效期，金额范围按 5 分钟至 1 小时单价计算'] if range_extra else [],
+                         'notes':notes,
                          'base_api_usd':base_amount if priced else None, 'estimate_point':point,
                          'exhausted_at':exhausted_at, 'cost_until':iso(until),
                          'partial': bool(unknown or ambiguous or partial_files or missing_history or missing_logs or state.get('note') or state.get('error')),
@@ -788,7 +820,7 @@ def summarize(ledger, config, settings, prices, statuses, now, ownership=None):
     return {'version': 1, 'captured_at': iso(now), 'rows': rows,
             'price_version': prices.get('version'), 'price_sources': prices.get('sources', []),
             'price_sync': prices.get('sync'),
-            'basis': '按当前标准 API Token 单价估算，不含工具、图片等额外费用',
+            'basis': '按 API Token 单价和可用档位信息估算，不含工具、图片等额外费用',
             'metrics': {'bytes_read': ledger.bytes, 'changed_files': ledger.changed}}
 
 

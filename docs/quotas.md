@@ -59,13 +59,17 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 部分统计显示 `≥` 和“记录不完整”；缓存写入有效期未知但两档价格都可核实时，
 显示金额范围，整轮估值使用相同范围除以已用百分比。
 
-采用[当前 Standard API 价格](../tools/agent_usage_prices.json)，非实际扣款，不含工具、
-图片等另收费项目。支持型号的单次输入超过 272K 时，整次输入和缓存按两倍、
-输出按 1.5 倍计价；提示另列不含长上下文加价的金额。管理员可以修改私有目录的
+API 价值按 token 单价估算，不含工具、图片等另收费项目。支持长上下文价格的型号按
+单次输入量选择对应价阶；提示另列不含长上下文加价的金额。管理员可以修改私有目录的
 `prices.json`；服务更新 `default-prices.json`。DELTA：后台采集首次运行及之后每 24 小时
-从 [OpenAI 官方价目](https://developers.openai.com/api/docs/pricing.md)同步 Standard
-文本模型，自动补入新型号及输入、输出、缓存读写、长上下文价阶；不混用 Batch、Fast
-等档位。其他厂商继续使用内置或本地价目。重新计价无需重读正文。
+从 [OpenAI 官方价目](https://developers.openai.com/api/docs/pricing.md)同步 Standard、
+Fast 和 Ultrafast 文本模型的输入、输出、缓存读写及长上下文价阶。Codex 优先按逐请求计量
+记录中的 `service_tier` 选价，`priority` 归入 Fast。缺少实际档位时，使用该轮开始时
+日志记下的设置；缺少设置的旧记录依然按 Standard 估算。提示列出各型号和档位，
+并标明按设置估算的调用。已知档位没有对应价格时，该调用计为未定价。
+GPT-6.2 的 Ultrafast 促销价和常规价按请求记录时间和官网公布的太平洋时间切换点选择。
+其他厂商继续使用[内置](../tools/agent_usage_prices.json)或本地价目。
+档位采集升级时重建 Codex 索引一次；之后重新计价无需重读日志。
 
 成功价目与时间原子保存在私有 `online-prices.json`；断网、超时或官网格式无法解析时
 保留上次成功价格，首次无缓存则使用内置表，一小时后重试。官网未再列出的型号保留
@@ -76,7 +80,8 @@ DELTA：费用按迁移账本记录的本机执行区间归属，不能按文件
 `prices.json` 中与该基线相同的字段
 交由自动价目维护，不同的字段作为人工覆盖保留，原文件不改写。之后按这个固定基线
 识别人工改动。需要明确固定价格（包括恰好等于旧默认值）时，在 `price-overrides.json`
-使用相同的 `models`／`aliases` 结构；其优先级最高。自定义价阶应与基础单价一起维护。
+使用 `models`／`aliases` 或 `tiers.fast.<型号>`、`tiers.ultrafast.<型号>`；
+其优先级最高。自定义价阶应与基础单价一起维护。
 服务环境 `SESSIONDOCK_USAGE_PRICE_SYNC=off` 关闭联网同步但继续使用缓存；
 `SESSIONDOCK_USAGE_PRICE_URL` 可指定管理员维护的同格式来源。浏览器不能修改同步地址。
 
