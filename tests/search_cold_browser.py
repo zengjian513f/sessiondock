@@ -6,6 +6,7 @@ speed. Search must ignore tool output, preserve semantic hits on cold/hot and
 append paths, and leave a subsequent ordinary history open fully functional.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -90,6 +91,61 @@ def cache_backfill(binary, browser, root):
     print('PASS persistent fold backfill: disabled, oversized and shrinking Unicode bodies', flush=True)
 
 
+def kiro_cache_restart(binary, browser, root):
+    data = Corpus(root)
+    for name in ('claude', 'codex', 'grok', 'kiro-native', 'proc'):
+        (root / name).mkdir(parents=True)
+    sid = '019a0000-0000-7000-8000-000000000301'
+    uid = 'kiro:0123456789abcdef'
+    projection = root / 'kiro-projection'
+    session = projection / 'synthetic-account' / sid
+    session.mkdir(parents=True)
+    timestamp = '2026-09-11T10:00:00Z'
+    projection_format = 'sessiondock-kiro-projection-v1'
+    (session / 'summary.json').write_text(json.dumps({
+        'format': projection_format, 'uid': uid, 'history_synced': True,
+        'session': {'id': sid, 'title': 'Synthetic Kiro session', 'cwd': '/synthetic/kiro',
+                    'created': timestamp, 'updated': timestamp},
+    }), encoding='utf-8')
+    text = 'Kiro 持久缓存中的助手答复'
+    (session / 'messages.jsonl').write_bytes(encoded({
+        'format': projection_format,
+        'item': {'id': 'reply', 'role': 'assistant', 'text': text, 'timestamp': timestamp},
+    }))
+    cache = root / 'search-cache'
+    env = {
+        'SESSIONDOCK_KIRO_ROOT': str(root / 'kiro-native'),
+        'SESSIONDOCK_KIRO_PROJECTION_ROOT': str(projection),
+        'SESSIONDOCK_PROC_ROOT': str(root / 'proc'),
+        'SESSIONDOCK_GROK_ACTIVE': str(root / 'grok' / 'active.json'),
+        'SESSIONDOCK_SEARCH_CACHE_DIR': str(cache),
+        'SESSIONDOCK_SEARCH_FOLD_BYTES': '0',
+    }
+    entry = cache / uid.replace(':', '-')
+    written = None
+    for phase in ('cold', 'restart'):
+        with isolated_server(data, binary, extra_env=env) as (base, _):
+            page = browser.new_page(service_workers='block')
+            try:
+                page.route('**/*', lambda route: route.continue_()
+                           if route.request.url.startswith(base + '/') else route.abort())
+                page.goto(base, wait_until='networkidle')
+                expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible()
+                if phase == 'cold':
+                    assert not entry.exists(), 'List opening prebuilt Kiro search text'
+                _, result = search(page, '持久缓存中的助手答复', 1)
+                assert result[0]['uid'] == uid and result[0]['hits'] == 1, result
+                assert text in result[0]['snippet'], result
+                assert entry.is_file(), f'Kiro search body was not persisted: {list(cache.iterdir())}'
+                if phase == 'cold':
+                    written = entry.stat().st_mtime_ns
+                else:
+                    assert entry.stat().st_mtime_ns == written, 'Restart search rewrote the Kiro cache entry'
+            finally:
+                page.close()
+    print('PASS Kiro persistent search: cold result persisted and reused after restart', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -162,6 +218,7 @@ def main():
                       f'cold={cold:.3f}s hot={hot:.3f}s; hits, ignored tools, append, history and native preservation',
                       flush=True)
                 cache_backfill(args.binary, browser, data.root / 'backfill')
+                kiro_cache_restart(args.binary, browser, data.root / 'kiro')
             finally:
                 browser.close()
 

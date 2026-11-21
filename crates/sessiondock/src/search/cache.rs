@@ -40,7 +40,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{SearchError, fold};
-use crate::sessions::SearchVersion;
+use crate::{lifecycle::model::Source, sessions::SearchVersion};
 
 /// Bump when `search::body`'s text or the header format changes; the build
 /// fingerprint already covers parser changes between binaries.
@@ -377,15 +377,14 @@ impl Drop for InflightGuard<'_> {
 
 fn uid_file_name(uid: &str) -> Option<String> {
     let (source, hex) = uid.split_once(':')?;
-    if !matches!(
-        source,
-        "claude" | "codex" | "grok" | "opencode" | "agy" | "codebuddy" | "droid"
-    ) || hex.len() != 16
+    let source = Source::parse(source)?;
+    if source == Source::Shell
+        || hex.len() != 16
         || !hex.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return None;
     }
-    Some(format!("{source}-{hex}"))
+    Some(format!("{}-{hex}", source.as_str()))
 }
 
 fn file_name_uid(name: &str) -> Option<String> {
