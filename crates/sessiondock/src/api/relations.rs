@@ -22,8 +22,15 @@ pub async fn info(
     State(state): State<AppState>,
     Query(query): Query<InfoQuery>,
 ) -> Result<JsonBytes, ApiError> {
+    let transfer = (state.capabilities["research"] == true)
+        .then(|| state.transfer.clone())
+        .flatten();
     metadata::write(state, move |store, _| {
-        relations::info(&store.list(true)?, &query.uid).ok_or_else(missing)
+        let mut info = relations::info(&store.list(true)?, &query.uid).ok_or_else(missing)?;
+        if let Some(node) = transfer.and_then(|service| service.incoming_move_source(&query.uid)) {
+            info["research_previous_nodes"] = json!([node]);
+        }
+        Ok(info)
     })
     .await
 }

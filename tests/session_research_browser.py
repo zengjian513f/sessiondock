@@ -3,11 +3,13 @@
 import argparse
 from contextlib import ExitStack
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
+from uuid import UUID
 
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
@@ -16,6 +18,44 @@ from node_auth_fixtures import node_env, TOKEN
 from nest_tree_browser import open_item_menu
 
 SID = '15badaae-951a-4fa2-b3fc-d6a7790c95ff'
+MOVED = '15badaae-951a-4fa2-b3fc-d6a7790c9600'
+
+
+def retained_moves(corpus, hubroot, current, intermediate, original):
+    uid = corpus.uid(MOVED)
+    path = corpus.paths[MOVED]
+    native = 'codex:' + MOVED
+    identities = dict(threads={MOVED: MOVED}, rollouts={}, turns={}, records={}, tool_calls={})
+    member = dict(uid=uid, source='codex', sid=MOVED, title='跨机研究会话',
+                  cwd='/synthetic/research', agent=False, path=str(path), root=str(corpus.root/'codex'))
+    group = dict(selected=uid, members=[member], edges=[], blockers=[])
+    operation = str(UUID(int=2))
+    receipt = dict(id=operation, uid=uid, target_uid=uid, phase='complete', moving=True,
+                   compacted=True, incoming_digest='synthetic move', ownership_sequence=2,
+                   selection=dict(uids=[uid], source_node=intermediate, target_node=current),
+                   native=dict(databases=[]), metadata_before={}, metadata_after={},
+                   plan=dict(version=1, mode='move', group=group, identities=identities,
+                             files=[], reference_issues=[]),
+                   staged=dict(version=1, mode='move', publishable=True, required_checks=[],
+                               identities=identities, reference_issues=[],
+                               files=[dict(source=str(path), relative=str(path.relative_to(corpus.root/'codex')),
+                                           source_sha256='', sha256='', bytes=0, boundaries={})]))
+    journal = corpus.root/'state/transfers'/operation/'operation.json'
+    journal.parent.mkdir(parents=True)
+    journal.write_text(json.dumps(receipt))
+    journals = hubroot/'transfers'
+    journals.mkdir()
+    for order, source, target, mode, phase in (
+        (1, original, intermediate, 'move', 'complete'),
+        (2, intermediate, current, 'move', 'complete'),
+        (3, 'd'*32, current, 'clone', 'complete'),
+        (4, 'e'*32, current, 'move', 'aborted'),
+    ):
+        operation = str(UUID(int=order))
+        request = dict(uid=scoped(source, uid), target_node=target, operation_id=operation)
+        result = dict(mode=mode, link_map={uid: native, native: native})
+        (journals/f'{operation}.json').write_text(json.dumps(
+            dict(request=request, phase=phase, result=result, created_ms=order, move_seq=order)))
 
 
 def synthetic():
@@ -38,16 +78,20 @@ def main():
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-research-') as temp, sync_playwright() as pw, ExitStack() as stack:
         root=Path(temp); corpus=Corpus(root/'node')
-        for sid in (SID,'empty','unregistered'):
-            corpus.put(sid,'codex',[codex_row('session_meta',{'id':sid,'cwd':'/synthetic/research','timestamp':'2026-10-13T01:00:00Z'}),
+        for sid in (SID,'empty','unregistered',MOVED,'other-record'):
+            native_id = MOVED if sid == 'other-record' else sid
+            corpus.put(sid,'codex',[codex_row('session_meta',{'id':native_id,'cwd':'/synthetic/research','timestamp':'2026-10-13T01:00:00Z'}),
                                    codex_message('user','会话研究关联 / Research participation '+sid)],[])
         node=SimpleNamespace(name='Friendly display name', nid='a'*32, port=free_port(), token=TOKEN)
+        intermediate, original = 'b'*32, 'c'*32
+        hubroot=root/'hub';hubroot.mkdir()
+        retained_moves(corpus, hubroot, node.nid, intermediate, original)
         (corpus.root/'ids').mkdir(); (corpus.root/'ids/node-id').write_text(node.nid+'\n')
         (corpus.root/'proc').mkdir()
         env=node_env(corpus.root,node.port,'127.0.0.0/8'); env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
         env['SESSIONDOCK_LABDESK_URL']='/research-ledger/'
-        local=stack.enter_context(isolated_server(corpus,args.binary,extra_env=env))[0]
-        hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node]);hub.env['SESSIONDOCK_LABDESK_URL']='/research-ledger/';hub.start();stack.callback(hub.stop)
+        local=stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))[0]
+        hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node]);hub.env['SESSIONDOCK_LABDESK_URL']='/research-ledger/';hub.start();stack.callback(hub.stop)
         base=f'http://127.0.0.1:{hub.port}'
         plain=Corpus(root/'plain')
         plain.put(SID,'codex',[codex_row('session_meta',{'id':SID,'cwd':'/synthetic/research'}),codex_message('user','Standalone session')],[])
@@ -64,8 +108,16 @@ def main():
         context=browser.new_context(viewport={'width':1280,'height':1000});stack.callback(context.close)
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         mode={'value':'normal'}; requests=[]; held=[]; expected_project={'value':'synthetic-research'}
+        moved_registration = {'node': original}
         def route_research(route):
             query=parse_qs(urlsplit(route.request.url).query);requests.append(query)
+            if query['session_uid'] == ['codex:'+MOVED]:
+                status = ('node_unmapped' if query['node'] == [node.nid] and mode['value'] == 'unmapped'
+                          else 'host_mismatch')
+                value = synthetic() if query['node'] == [moved_registration['node']] else dict(
+                    status=status, experiments=[], reports=[], related_reports=[])
+                route.fulfill(json=value)
+                return
             assert query['node']==[node.nid],query
             if mode['value']=='hold':
                 held.append(route);return
@@ -105,7 +157,8 @@ def main():
             caps=page.evaluate('SessionDockCapabilities.config')
             assert caps['research'] is False and caps['labdesk_url'] is None,caps
         shot('disabled')
-        page.goto(base);page.wait_for_function('S.sessions.length === 3')
+        page.goto(base)
+        expect(page.locator(f'#side .item[data-uid="{scoped(node.nid,corpus.uid(SID))}"]')).to_be_visible()
         open_item_menu(page,scoped(node.nid,corpus.uid(SID)))
         assert page.locator('#item-menu [data-act="info"]').count() == 0
         page.keyboard.press('Escape')
@@ -157,8 +210,31 @@ def main():
         open_info('empty');expect(page.locator('#research-status')).to_contain_text('尚无已登记');shot('empty')
         open_info('unregistered');expect(page.locator('#research-status')).to_contain_text('尚未登记');shot('unregistered')
         open_info(url=local);expect(page.locator('#research-count')).to_have_text('实验 8 · 步骤 8 · 研报 2')
+        for sid, url, registration, expected_nodes, width, theme in (
+            (MOVED, base, original, [node.nid, intermediate, original], 1280, 'light'),
+            (MOVED, local, intermediate, [node.nid, intermediate], 390, 'dark'),
+            ('other-record', base, original, [node.nid], 390, 'dark'),
+            ('other-record', local, intermediate, [node.nid], 1280, 'light'),
+            (MOVED, base, node.nid, [node.nid], 1280, 'dark'),
+        ):
+            page.set_viewport_size({'width':width,'height':1000})
+            modes = ('normal', 'unmapped') if sid == MOVED and registration != node.nid else ('normal',)
+            for lookup_mode in modes:
+                mode['value']=lookup_mode
+                moved_registration['node']=registration
+                start=len(requests)
+                open_info(sid, url)
+                page.evaluate('theme=>document.documentElement.dataset.theme=theme',theme)
+                if sid == MOVED:
+                    expect(page.locator('#research-count')).to_have_text('实验 8 · 步骤 8 · 研报 2')
+                else:
+                    expect(page.locator('#research-status')).to_contain_text('机器与当前会话不同')
+                assert requests[start:] == [dict(session_uid=['codex:'+MOVED], node=[nid])
+                                             for nid in expected_nodes], requests[start:]
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            shot(f'move-{sid == MOVED}-{url == base}-{registration[0]}')
         assert not errors,errors
-        print('PASS research browser: standalone + Hub disabled without requests, custom URL node + Hub, native identity, ledger query, missing experiment link, exact steps, direct/contextual reports, links, folds, wide/mobile themes, errors/retry and empty states',flush=True)
+        print('PASS research browser: native node + Hub lookup, retained moves, same-SID record isolation, current registration priority, associations, links, folds, themes, errors/retry and empty states',flush=True)
 
 
 if __name__=='__main__':main()

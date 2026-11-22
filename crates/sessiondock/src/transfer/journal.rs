@@ -41,6 +41,8 @@ pub(in crate::transfer) struct Index {
     pub publications: Vec<Publication>,
     pub replaced_files: BTreeMap<PathBuf, prefix::Original>,
     pub active_uids: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_source: Option<String>,
 }
 
 #[derive(Default)]
@@ -127,7 +129,7 @@ impl TransferService {
             BTreeSet::new()
         };
         Ok(Index {
-            version: 1,
+            version: 2,
             compacted: op.compacted,
             source,
             home: self.home.clone(),
@@ -156,7 +158,32 @@ impl TransferService {
                 BTreeMap::new()
             },
             active_uids,
+            move_source: op
+                .selection
+                .as_ref()
+                .filter(|_| {
+                    op.phase == "complete"
+                        && op.moving
+                        && op.incoming_digest.is_some()
+                        && !op.new_ids()
+                })
+                .map(|selection| selection.source_node.clone()),
         })
+    }
+
+    /// Only a completed import of this exact record proves a previous node.
+    pub(crate) fn incoming_move_source(&self, uid: &str) -> Option<String> {
+        let cache = self.journals.0.lock().unwrap_or_else(|e| e.into_inner());
+        let latest = cache
+            .entries
+            .values()
+            .map(|(_, index)| index)
+            .filter(|index| {
+                (index.move_source.is_some() && index.active_uids.contains(uid))
+                    || (index.summary.retired_source && index.summary.source_uids.contains(uid))
+            })
+            .max_by_key(|index| (index.summary.ownership_sequence, &index.summary.id))?;
+        latest.move_source.clone()
     }
 
     // The cache is optional: failure to write it must not turn a committed
@@ -184,7 +211,9 @@ impl TransferService {
         }
         if let Ok(raw) = fs::read(path.with_file_name(INDEX_FILE))
             && let Ok(index) = serde_json::from_slice::<Index>(&raw)
-            && index.version == 1
+            && (index.version == 2
+                || (index.version == 1
+                    && !(index.incoming && index.moving && index.summary.phase == "complete")))
             && index.source == before
             && index.home == self.home
         {

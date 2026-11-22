@@ -66,7 +66,7 @@
       if (version !== sequence) return;
       data = next; render();
       if (embedded) parent.sessionContentLoad(document, 'ready');
-      SessionDockResearch.load(data.session);
+      SessionDockResearch.load(data.session, data.research_previous_nodes);
     } catch (error) { if (version === sequence) {
       $('#info-status').textContent = `读取失败：${error.message}`;
       if (embedded) parent.sessionContentLoad(document, 'error');

@@ -8,6 +8,51 @@ use std::{
 };
 
 type Key = (String, String);
+
+/// Walk the Hub's ordered, completed moves backward without crossing copies
+/// or changes of native identity. A return move can revisit a node.
+pub(crate) fn previous_move_nodes(row: &Value, moves: &[Record]) -> Vec<String> {
+    let (Some(uid), Some(source), Some(sid)) = (
+        row["uid"].as_str(),
+        row["source"].as_str(),
+        row["sid"].as_str(),
+    ) else {
+        return Vec::new();
+    };
+    let Ok((current_node, local_uid)) = namespace::split(uid, true) else {
+        return Vec::new();
+    };
+    let mut node = current_node.as_str();
+    let mut identity = format!("{source}:{sid}");
+    if source == "claude"
+        && let Some(agent) = row["agent_id"].as_str()
+        && !sid.contains("/agent:")
+    {
+        identity.push_str("/agent:");
+        identity.push_str(agent);
+    }
+    let mut seen = BTreeSet::from([node.to_owned()]);
+    let mut previous = Vec::new();
+    for record in moves.iter().rev() {
+        if record.source_node != node && record.target_node != node {
+            continue;
+        }
+        if !record.mappings.contains_key(&local_uid)
+            || record.next(&identity).as_deref() != Some(identity.as_str())
+        {
+            continue;
+        }
+        if record.target_node != node {
+            break;
+        }
+        node = &record.source_node;
+        if seen.insert(node.to_owned()) {
+            previous.push(node.to_owned());
+        }
+    }
+    previous
+}
+
 struct Resolver<'a> {
     registry: &'a Registry,
     client: &'a Client,

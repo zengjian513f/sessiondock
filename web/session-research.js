@@ -37,7 +37,6 @@
     return `<article class="sd-session-card si-research-row"><div class="body">${link(url('reports', {rid:item.report_id, project:item.project}), title(item.report_id, item.title), item.available)}<div class="m card-meta">${esc(context)}</div></div></article>`;
   }
   function render(value) {
-    if (!['ok', ...Object.keys(labels)].includes(value.status) || !['experiments','reports','related_reports'].every(k => Array.isArray(value[k]))) throw new Error('研究台账返回了无效结果');
     const count = value.experiments.reduce((sum, item) => sum + item.steps.length, 0);
     const empty = !value.experiments.length && !value.reports.length;
     $('#research-count').textContent = value.status === 'ok' ? `实验 ${value.experiments.length} · 步骤 ${count} · 研报 ${value.reports.length}` : '';
@@ -47,9 +46,18 @@
     $('#research-status').textContent = labels[value.status] || (empty ? '尚无已登记的研究关联。' : '');
     rendered = true;
   }
-  async function load(row) {
+  async function query(sessionUid, node, signal) {
+    const target = new URL('api/session-research', base);
+    target.search = new URLSearchParams({session_uid:sessionUid, node});
+    const response = await fetch(target, {signal, credentials:'same-origin', headers:{Accept:'application/json'}});
+    if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? '研究台账认证不可用' : `研究台账请求失败（${response.status}）`);
+    const value = await response.json();
+    if (!['ok', ...Object.keys(labels)].includes(value.status) || !['experiments','reports','related_reports'].every(k => Array.isArray(value[k]))) throw new Error('研究台账返回了无效结果');
+    return value;
+  }
+  async function load(row, previousNodes = []) {
     if (!base) { $('#info-research').hidden = true; return; }
-    current = row;
+    current = {row, previousNodes};
     controller?.abort(); controller = new AbortController();
     const version = ++generation, signal = controller.signal;
     $('#info-research').hidden = false;
@@ -66,11 +74,17 @@
       if (!node || !row.source || !row.sid) throw new Error('缺少会话或机器标识');
       const sid = row.source === 'claude' && row.agent_id && !row.sid.includes('/agent:')
         ? `${row.sid}/agent:${row.agent_id}` : row.sid;
-      const target = new URL('api/session-research', base);
-      target.search = new URLSearchParams({session_uid:`${row.source}:${sid}`, node});
-      const response = await fetch(target, {signal, credentials:'same-origin', headers:{Accept:'application/json'}});
-      if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? '研究台账认证不可用' : `研究台账请求失败（${response.status}）`);
-      const value = await response.json();
+      const sessionUid = `${row.source}:${sid}`;
+      let value = await query(sessionUid, node, signal);
+      if (value.status === 'host_mismatch' || value.status === 'node_unmapped') {
+        for (const previous of previousNodes) {
+          const registered = await query(sessionUid, previous, signal);
+          if (registered.status === 'ok' || registered.status === 'unregistered') {
+            value = registered;
+            break;
+          }
+        }
+      }
       if (version === generation) render(value);
     } catch (error) {
       if (version !== generation) return;
@@ -79,6 +93,6 @@
       $('#research-retry').hidden = false;
     } finally { clearTimeout(timer); }
   }
-  $('#research-retry').onclick = () => current && load(current);
+  $('#research-retry').onclick = () => current && load(current.row, current.previousNodes);
   window.SessionDockResearch = {load};
 })();

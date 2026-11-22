@@ -383,6 +383,11 @@ The native identity comes from the resolved session row, never the record UID or
 title/path match; node mode obtains its persistent node ID from `/api/meta`.
 Labdesk checks its node-to-host mapping against the ledger host before returning links.
 An unregistered session, missing node mapping and conflicting host have distinct messages.
+If Labdesk cannot match the current node, the information page checks previous nodes
+proven by completed, identity-preserving move receipts, newest first. The Hub can
+follow several moves. A standalone node can verify the most recent import recorded
+locally. The query keeps the same native identity and Labdesk still checks the
+registration host. The original registration and its links stay in the ledger.
 
 Explicit experiment links and experiments containing explicitly linked steps are shown
 together, with the latter labeled as step-derived. Steps are nested under their experiment;

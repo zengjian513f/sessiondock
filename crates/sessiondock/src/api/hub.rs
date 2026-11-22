@@ -1053,8 +1053,15 @@ async fn handle(
             .find(|(key, _)| key == "uid")
             .map(|(_, value)| value.as_str())
             .unwrap_or("");
-        let value = crate::metadata::relations::info(&inventory, uid)
+        let mut value = crate::metadata::relations::info(&inventory, uid)
             .ok_or_else(|| ProxyError::Invalid("会话不存在".into()))?;
+        if state.capabilities["research"] == true
+            && let (_, Some(moves)) = registry.nesting_snapshot()
+        {
+            value["research_previous_nodes"] = json!(
+                crate::hub::session_links::previous_move_nodes(&value["session"], &moves,)
+            );
+        }
         return ok(&value);
     }
     let attachment = ATTACHMENT_PATHS.contains(&path.as_str());
