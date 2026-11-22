@@ -1301,7 +1301,9 @@ fn host_accepts_no_record(host_binary: &Path, host_dir: &Path) -> bool {
     if std::fs::create_dir_all(&probe).is_err() {
         return true;
     }
-    let accepted = match Command::new(host_binary)
+    let mut command = Command::new(host_binary);
+    background_command(&mut command);
+    let accepted = match command
         .arg("--dir")
         .arg(&probe)
         .args(["--no-record", "list"])
