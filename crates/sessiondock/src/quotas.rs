@@ -293,6 +293,9 @@ async fn query(profile: &CliProfile, kiro_home: Option<&Path>) -> Result<Value, 
         {
             return Err(());
         }
+        // The Agy updater can open a separate Windows Terminal even for a hidden /usage query.
+        #[cfg(windows)]
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
         let output = command
             .args(["-p", "/usage", "--output-format", "json"])
             .output()

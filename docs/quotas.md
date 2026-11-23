@@ -188,6 +188,7 @@ Codex：启动 `app-server --stdio`，先 `initialize` / `initialized`，再
 
 Agy：`-p /usage --output-format json`，要求 SUCCESS、num_turns=0、command.name=usage；
 只读 `command.data.groups[].buckets[]` 的 id、window、remaining_fraction、reset_time。
+Windows 上的额度查询为 Agy 子进程设置 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，防止后台更新器在桌面打开终端。
 不解析 response 文本。配置中禁用 slash commands 时不能调用，以免命令成为推理提示。
 
 Claude：原生 statusLine JSON 中的 `rate_limits.five_hour`、`seven_day`、`spend_limit`，
