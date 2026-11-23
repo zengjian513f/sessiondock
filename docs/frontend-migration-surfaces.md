@@ -381,7 +381,7 @@ DELTA（BUG-20261120-125152-47b539）：气泡内还有正文被纵向裁切时�
 [SDK 共用界面](../tests/sdk_shared_ui_browser.py) 与
 [普通会话](../tests/remaining_ui_conversation_browser.py)。
 
-DELTA：节点和 Hub 在本机的 `POST /api/syntax/highlight` 中使用[嵌入式语法规则](../crates/sessiondock/src/syntax/render.js)识别语言并生成高亮 HTML。普通对话、SDK 历史和实时输出先显示原文，再按批发送需要着色的正文、命令、工具输出或 diff 行。请求数组每项含 `kind`（`code`、`command` 或 `tool`）、`source` 及可选 `language`、`path`。返回数组按原顺序给出高亮 HTML、语言和检测状态，纯文本项为 `null`。原文或语言已经改变的气泡丢弃迟到结果，请求失败时原文仍可读。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
+DELTA：节点和 Hub 在本机的 `POST /api/syntax/highlight` 中使用[嵌入式语法规则](../crates/sessiondock/src/syntax/render.js)识别语言并生成高亮 HTML。普通对话、SDK 历史和实时输出先显示原文，再按批发送需要着色的正文、命令、工具输出或 diff 行。请求数组每项含 `kind`（`code`、`command` 或 `tool`）、`source` 及可选 `language`、`path`。返回数组按原顺序给出高亮 HTML、语言和检测状态，纯文本项为 `null`。支持分段显示的页面发送 `chunked: true`。对长结果，服务端返回独立的着色片段和原文 UTF-16 结束位置；跨段注释、字符串的语法状态延续。长围栏按行分组显示原文，高亮返回时复用行组，只给视口内的片段建立着色节点。原文或语言已经改变的气泡丢弃迟到结果，请求失败时原文仍可读。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
 DELTA（2026-10-18 按气泡类型收缩）：助手正文（包括过程说明、计划、最终回答）
 完整展示，不按字数或高度裁切。用户输入、思考等辅助正文除 4,000 字阈值外，

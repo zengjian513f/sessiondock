@@ -5858,6 +5858,8 @@ function refreshSearchHighlights() {
             const parent = mark.parentNode;
             mark.replaceWith(document.createTextNode(mark.textContent));
             parent.normalize();
+            const slice = parent.closest('sd-syntax-slice');
+            if (slice) queueSyntaxSlice(slice, slice._visible);
           }
         }
         if (hasActiveSearchHashits) {
@@ -10794,13 +10796,97 @@ function resumeToolSyntax(card) {
   paintSyntax(card);
 }
 
+// Long blocks always contain their complete plain text. Only the portions in
+// view need token elements. Element lifecycle also covers cached SDK panes.
+const pendingSyntaxSlices = new Map();
+let syntaxSliceFrame = null;
+function paintSyntaxSlices() {
+  measureBrowserWork('syntax.viewport', paintPendingSyntaxSlices, {blocks: pendingSyntaxSlices.size});
+}
+function paintPendingSyntaxSlices() {
+  syntaxSliceFrame = null;
+  const start = performance.now();
+  let matchesChanged = false;
+  for (const [slice, visible] of pendingSyntaxSlices) {
+    pendingSyntaxSlices.delete(slice);
+    if (slice.isConnected && slice._painted !== visible) {
+      const selection = window.getSelection();
+      if ((!selection?.isCollapsed && selection?.containsNode(slice, true))
+          || slice.querySelector('mark')) continue;
+      if (visible) {
+        slice._plain ??= slice.textContent;
+        slice.innerHTML = slice._html;
+      }
+      else slice.textContent = slice._plain;
+      slice._painted = visible;
+      if (visible && S.term) { markMatches(slice); matchesChanged = true; }
+    }
+    if (performance.now() - start >= 4) break;
+  }
+  if (matchesChanged) updateMatchNav();
+  if (pendingSyntaxSlices.size) syntaxSliceFrame = requestAnimationFrame(paintSyntaxSlices);
+}
+function queueSyntaxSlice(slice, visible) {
+  slice._visible = visible;
+  if (!slice._html) return;
+  if (slice._painted === visible) {
+    pendingSyntaxSlices.delete(slice);
+    return;
+  }
+  pendingSyntaxSlices.set(slice, visible);
+  if (syntaxSliceFrame === null) syntaxSliceFrame = requestAnimationFrame(paintSyntaxSlices);
+}
+const syntaxSliceObserver = typeof IntersectionObserver === 'function' && new IntersectionObserver(entries => {
+  for (const entry of entries) queueSyntaxSlice(entry.target, entry.isIntersecting);
+});
+customElements.define('sd-syntax-slice', class extends HTMLElement {
+  connectedCallback() {
+    this._painted ??= false;
+    if (syntaxSliceObserver) syntaxSliceObserver.observe(this);
+    else queueSyntaxSlice(this, true);
+  }
+  disconnectedCallback() {
+    if (syntaxSliceObserver) syntaxSliceObserver.unobserve(this);
+    pendingSyntaxSlices.delete(this);
+    this._visible = false;
+  }
+});
+
+function mountSyntaxChunks(code, source, chunks) {
+  const existing = code.children;
+  if (existing.length === chunks.length && chunks.every(({end}, i) =>
+    existing[i].localName === 'sd-syntax-slice' && Number(existing[i].dataset.end) === end)) {
+    for (let i = 0; i < chunks.length; i++) {
+      const slice = existing[i];
+      slice._html = chunks[i].html;
+      if (slice._visible) queueSyntaxSlice(slice, true);
+    }
+    return;
+  }
+  const selection = window.getSelection();
+  if (!selection?.isCollapsed && selection?.containsNode(code, true)) return;
+  const fragment = document.createDocumentFragment();
+  let start = 0;
+  for (const {end, html} of chunks) {
+    const slice = document.createElement('sd-syntax-slice');
+    slice._html = html;
+    slice._plain = slice.textContent = source.slice(start, end);
+    slice._painted = false;
+    fragment.appendChild(slice);
+    start = end;
+  }
+  code.replaceChildren(fragment);
+}
+
 function applySyntaxBlock(job, result) {
   const {code, block} = job;
   if (!code.isConnected || deferFoldedToolSyntax(code) || code.textContent !== block.source
       || (code.dataset.codeLang || '') !== block.language || (code.dataset.codePath || '') !== block.path) return;
   code.dataset.syntaxDone = '1';
-  if (!result?.html) return;
-  code.innerHTML = result.html;
+  if (result?.chunks?.length && result.chunks.at(-1).end === block.source.length) {
+    mountSyntaxChunks(code, block.source, result.chunks);
+  } else if (result?.html) code.innerHTML = result.html;
+  else return;
   code.classList.add('hljs');
   if (result.language) code.classList.add(`language-${result.language}`);
   if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
@@ -10834,7 +10920,7 @@ async function flushSyntax() {
     const source = code.textContent;
     const kind = code.matches('code.tool-command') ? 'command'
       : code.matches('pre.tool-out') ? 'tool' : 'code';
-    jobs.push({code, block: {kind, source, language: code.dataset.codeLang || '', path: code.dataset.codePath || ''}});
+    jobs.push({code, block: {kind, source, language: code.dataset.codeLang || '', path: code.dataset.codePath || '', chunked: true}});
     characters += source.length;
     // Batch small diff lines into one round trip. Large blocks travel whole.
     if (jobs.length >= 16 || characters >= 65536) break;
@@ -10858,7 +10944,8 @@ async function flushSyntax() {
         do {
           counts.blocks++;
           counts.characters += jobs[i].block.source.length;
-          counts.html_characters += results[i]?.html?.length || 0;
+          counts.html_characters += results[i]?.html?.length
+            || results[i]?.chunks?.reduce((sum, chunk) => sum + chunk.html.length, 0) || 0;
           applySyntaxBlock(jobs[i], results[i]);
           i++;
         } while (i < jobs.length && performance.now() - start < 8);
@@ -10893,6 +10980,21 @@ function paintSyntax(root = document) {
     syntaxGenerations.set(code, renderSeq);
   }
   scheduleSyntax();
+}
+
+// Keep the original line groups in place while the server prepares colours.
+// The final newline of each group belongs to the source and stays copyable.
+function fenceContent(lines, first, last) {
+  if (last - first <= 48) return esc(lines.slice(first, last).join('\n'));
+  const parts = [];
+  let end = 0;
+  for (let i = first; i < last; i += 48) {
+    const next = Math.min(i + 48, last);
+    const plain = lines.slice(i, next).join('\n') + (next < last ? '\n' : '');
+    end += plain.length;
+    parts.push(`<sd-syntax-slice class="syntax-lines" data-end="${end}" style="--syntax-lines:${next - i}">${esc(plain)}</sd-syntax-slice>`);
+  }
+  return parts.join('');
 }
 
 // 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
@@ -10946,8 +11048,8 @@ function md(text, full, media = [], context = {}, cache = null) {
     flush();
     const info = open[2].trim();
     const language = info.match(/^[\w+.-]+/)?.[0] || '';
-    const code = lines.slice(i + 1, close).join('\n');
-    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${esc(code)}</code></pre>`);
+    const code = fenceContent(lines, i + 1, close);
+    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${code}</code></pre>`);
     if (canCache && !hadUnclosedFence && close < lines.length - 1) {
       cache.prefix = text.slice(0, lineStarts[close + 1]);
       cache.html = output.join('');

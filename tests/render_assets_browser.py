@@ -74,7 +74,8 @@ def main():
                 codex_message('user', 'Markdown 编号 ' + name),
                 codex_message('assistant', body, 2),
             ], [])
-        code = ''.join(f'const value{i} = "line {i}";\n' for i in range(16000)).rstrip()
+        code = '/*\n' + ('跨行注释 <tag> & 🚀\n' * 96) + '*/\n'
+        code += ''.join(f'const value{i} = "line {i}";\n' for i in range(16000)).rstrip()
         for sid, title, body in (
             ('plain', 'Plain rendering', 'No optional renderer is needed here.'),
             ('formula', 'Formula rendering', 'An equation: $$x^2 + y^2 = z^2$$'),
@@ -134,11 +135,48 @@ def main():
                 }''')
                 page.locator('#msgs .msg[data-role="user"] button').filter(has_text='展开全文').click()
                 assert held and any(item['source'] == code for item in held[0].request.post_data_json)
-                held.pop(0).continue_()
+                page.locator('#q').press('ArrowLeft')
+                block.evaluate("el => { window.rawSlices = [...el.children]; }")
+                with page.expect_response('**/api/syntax/highlight', timeout=30000) as rendered:
+                    held.pop(0).continue_()
                 page.unroute('**/api/syntax/highlight')
+                chunks = next(result['chunks'] for result in rendered.value.json() if result and 'chunks' in result)
+                assert sum(chunk['html'].count('class="hljs-keyword"') for chunk in chunks) == 16000
                 expect(block).to_have_attribute('data-syntax-done', '1', timeout=15000)
+                assert block.evaluate("el => rawSlices.length > 1 && rawSlices.every((s, i) => el.children[i] === s)")
                 assert block.text_content() == code
-                assert block.locator('.hljs-keyword').count() == 16000
+                slices = block.locator('sd-syntax-slice')
+                slices.first.scroll_into_view_if_needed()
+                expect(slices.first.locator('.hljs-comment').first).to_be_attached()
+                slices.nth(1).scroll_into_view_if_needed()
+                expect(slices.nth(1).locator('.hljs-comment')).to_contain_text('跨行注释 <tag> & 🚀')
+                slices.last.scroll_into_view_if_needed()
+                expect(slices.last.locator('.hljs-keyword').last).to_have_text('const')
+                assert 0 < block.locator('.hljs-keyword').count() < 1000
+                assert block.text_content() == code
+                selected = block.evaluate('''el => {
+                  const selection = getSelection(), range = document.createRange();
+                  range.selectNodeContents(el);
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+                  const text = selection.toString();
+                  selection.removeAllRanges();
+                  return text;
+                }''')
+                assert selected == code
+                if args.screenshots:
+                    page.screenshot(path=str(args.screenshots / 'code-1280-light.png'))
+                    mobile = browser.new_page(viewport={'width': 675, 'height': 900}, color_scheme='dark')
+                    mobile.goto(base)
+                    mobile.locator(f'#side .item[data-uid="{corpus.uid("code")}"]').click()
+                    mobile.locator('#msgs button').filter(has_text='展开全文').click()
+                    mobile_code = mobile.locator('#msgs .mb code.code-block')
+                    expect(mobile_code).to_have_attribute('data-syntax-done', '1', timeout=30000)
+                    last_slice = mobile_code.locator('sd-syntax-slice').last
+                    last_slice.scroll_into_view_if_needed()
+                    expect(last_slice.locator('.hljs-keyword').last).to_be_visible()
+                    mobile.screenshot(path=str(args.screenshots / 'code-675-dark.png'))
+                    mobile.close()
                 assert page.evaluate('syntaxTicks') > 0
                 page.evaluate('clearInterval(syntaxClock)')
                 # The collapsed scrollport keeps the complete highlighted source.
@@ -152,6 +190,16 @@ def main():
                 expect(block).to_have_attribute('data-syntax-done', '1')
                 assert preview.evaluate('el => el.clientHeight < el.scrollHeight')
                 assert block.text_content() == code
+                page.locator('#q').fill('value12345')
+                page.locator('#q').press('Enter')
+                expect(block.locator('mark')).to_have_text('value12345')
+                if not page.locator('#m-next').is_visible():
+                    page.locator('#a-more').click()
+                page.locator('#m-next').click()
+                expect(block.locator('mark.cur')).to_have_text('value12345')
+                page.keyboard.press('Escape')
+                page.locator('#q').press('Escape')
+                expect(block.locator('mark')).to_have_count(0)
                 open_session('batched')
                 # The first render batch lives in a detached fragment while
                 # later batches yield; its queued syntax work must survive.

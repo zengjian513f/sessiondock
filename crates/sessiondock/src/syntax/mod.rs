@@ -1,5 +1,6 @@
 //! Generate optional conversation highlighting from trusted, embedded grammars.
 //! Source text and path hints are JS function arguments, never module names or scripts.
+mod chunks;
 use std::{
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
@@ -26,11 +27,16 @@ pub(crate) struct Block {
     language: String,
     #[serde(default)]
     path: String,
+    #[serde(default)]
+    chunked: bool,
 }
 
 #[derive(Serialize)]
 pub(crate) struct Highlight {
-    html: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    html: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chunks: Option<Vec<chunks::Chunk>>,
     language: String,
     detected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,8 +98,15 @@ fn render(
             function.call((kind, block.source, block.language, block.path))?;
         object
             .map(|value| {
+                let html: String = value.get("html")?;
+                let chunks = if block.chunked {
+                    chunks::split(&html)
+                } else {
+                    None
+                };
                 Ok(Highlight {
-                    html: value.get("html")?,
+                    html: if chunks.is_none() { Some(html) } else { None },
+                    chunks,
                     language: value.get("language")?,
                     detected: value.get("detected")?,
                     languages: value.get("languages")?,
