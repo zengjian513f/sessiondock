@@ -9592,6 +9592,7 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
       paint();
     }
     n.classList.remove('folded');
+    for (const child of n.children) resumeToolSyntax(child);
     toggle.setAttribute('aria-expanded', 'true');
     toggle.title = '收起工具调用组';
     toggle.setAttribute('aria-label', toggle.title);
@@ -9612,7 +9613,11 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
       n._activeItem = active ? last : null;
     }
     const children = [...n.children].filter(child => child.matches('.tool-entry, [data-sdk-item]'));
-    children.forEach((child, index) => child.classList.toggle('tool-active-tail', !!active && index === children.length - 1));
+    children.forEach((child, index) => {
+      const tail = !!active && index === children.length - 1;
+      child.classList.toggle('tool-active-tail', tail);
+      if (tail || !n.classList.contains('folded')) resumeToolSyntax(child);
+    });
     n.classList.toggle('has-active-tool', !!active);
     paintGroupPreview(peek, active ? all.slice(0, -1) : all);
     preview.hidden = active && all.length === 1;
@@ -10773,6 +10778,21 @@ let syntaxWorker = null, syntaxBusy = false, syntaxFrame = null;
 const syntaxQueue = new Set();
 const syntaxGenerations = new WeakMap();
 
+// Folded SDK groups retain live tool cards so incoming events can update them.
+// Keep only a flag on the card, so opening it highlights its latest contents.
+function deferFoldedToolSyntax(code) {
+  const card = code.closest('.sdk-tool-group.folded > [data-sdk-item]:not(.tool-active-tail)');
+  if (!card) return false;
+  card._syntaxDeferred = true;
+  return true;
+}
+
+function resumeToolSyntax(card) {
+  if (!card._syntaxDeferred) return;
+  delete card._syntaxDeferred;
+  paintSyntax(card);
+}
+
 function scheduleSyntax() {
   if (syntaxBusy || syntaxFrame !== null || !syntaxQueue.size) return;
   syntaxFrame = requestAnimationFrame(() => {
@@ -10781,7 +10801,11 @@ function scheduleSyntax() {
     const waiting = [];
     for (const candidate of syntaxQueue) {
       syntaxQueue.delete(candidate);
-      if (candidate.isConnected && !candidate.dataset.syntaxDone) { code = candidate; break; }
+      if (candidate.isConnected && !candidate.dataset.syntaxDone) {
+        if (deferFoldedToolSyntax(candidate)) continue;
+        code = candidate;
+        break;
+      }
       // Large histories yield while their nodes still live in a fragment.
       // Keep those jobs until publication, but discard abandoned render plans.
       if (!candidate.dataset.syntaxDone && syntaxGenerations.get(candidate) === renderSeq
@@ -10798,7 +10822,7 @@ function scheduleSyntax() {
     const finish = result => {
       clearTimeout(timer);
       // An expanded/replaced preview must never receive an older worker reply.
-      if (code.isConnected && code.textContent === source
+      if (code.isConnected && !deferFoldedToolSyntax(code) && code.textContent === source
           && (code.dataset.codeLang || '') === language && (code.dataset.codePath || '') === path) {
         code.dataset.syntaxDone = '1';
         if (result?.html) {

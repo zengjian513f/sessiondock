@@ -124,14 +124,17 @@ def main():
                 assert block.locator('.hljs-keyword').count() == 16000
                 assert page.evaluate('syntaxTicks') > 0
                 page.evaluate('clearInterval(syntaxClock)')
-                # Rapid preview changes must not receive a stale full-code reply.
+                # The collapsed scrollport keeps the complete highlighted source.
+                preview = block.locator('xpath=ancestor::*[contains(@class,"content-preview")][1]')
                 page.locator('#msgs .msg[data-role="user"] button').filter(has_text='收起').click()
                 expect(block).to_have_attribute('data-syntax-done', '1')
-                assert len(block.text_content()) < 5000
+                assert preview.evaluate('el => el.clientHeight < el.scrollHeight')
+                assert block.text_content() == code
                 page.locator('#msgs .msg[data-role="user"] button').filter(has_text='展开全文').click()
                 page.locator('#msgs .msg[data-role="user"] button').filter(has_text='收起').click()
                 expect(block).to_have_attribute('data-syntax-done', '1')
-                assert len(block.text_content()) < 5000
+                assert preview.evaluate('el => el.clientHeight < el.scrollHeight')
+                assert block.text_content() == code
                 open_session('batched')
                 # The first render batch lives in a detached fragment while
                 # later batches yield; its queued syntax work must survive.

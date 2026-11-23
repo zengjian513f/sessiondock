@@ -85,6 +85,11 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(group.locator('.tool-active-tail .tool-out')).to_be_visible()
         expect(group.locator('.tool-active-tail .tool-out')).to_contain_text('输出第 7 行')
         expect(group.locator('.tool-out:visible')).to_have_count(1)
+        if mode == 'sdk':
+            hidden_command = group.locator(':scope > [data-sdk-item]:not(.tool-active-tail) code.tool-command').first
+            expect(hidden_command).to_be_attached()
+            expect(group.locator('.tool-active-tail .tool-out')).to_have_attribute('data-syntax-done', '1')
+            assert not hidden_command.get_attribute('data-syntax-done'), 'decorated a folded SDK tool card'
         diagnostics = page.evaluate('sdkDiagnosticState()')
         if mode == 'sdk':
             assert diagnostics['source'] == source and diagnostics['connected'], diagnostics
@@ -195,6 +200,9 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         expect(toggle).to_have_attribute('aria-expanded', 'false')
         toggle.press('Enter')
         expect(toggle).to_have_attribute('aria-expanded', 'true')
+        if mode == 'sdk':
+            expect(hidden_command).to_be_visible()
+            expect(hidden_command).to_have_attribute('data-syntax-done', '1')
         capture('anchored-expanded')
         first = group.locator('.tool-entry').first
         expect(group.locator('.tool-out:visible')).to_have_count(6)
