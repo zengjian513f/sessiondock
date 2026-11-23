@@ -237,7 +237,7 @@ const appUrl = path => {
 const BUILD_ID = document.querySelector('meta[name="sessiondock-build"]')?.content || '';
 // One ephemeral page identity joins HTTP, SSE, terminal and final DOM receipts.
 // It intentionally is not persisted: duplicated/restored tabs must remain distinct.
-const AUDIT_PAGE_ID = globalThis.crypto?.randomUUID?.()
+const AUDIT_PAGE_ID = window.__sessiondockPageId || globalThis.crypto?.randomUUID?.()
   || [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
 window.__sessiondockPageId = AUDIT_PAGE_ID;
@@ -328,9 +328,21 @@ function scheduleBrowserAudit(delay = AUDIT_FLUSH_MS) {
   browserAuditTimer = setTimeout(flushBrowserAudit, delay);
 }
 
+globalThis.SessionDockWatchdog?.setContext(() => ({
+  uid:S.sel || '', view:typeof SessionContentView === 'undefined' ? 'list' : SessionContentView.kind || (S.sel ? 'chat' : 'list'),
+  agent:S.agent || '', sdk_items:typeof SdkView === 'undefined' ? 0 : SdkView.items?.size ?? SdkView.raw?.items?.length ?? 0,
+  sdk_history:typeof SdkView === 'undefined' ? 0 : SdkView.historyData?.messages?.length || 0,
+  heap_mb:performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+  terminal:typeof T !== 'undefined' && !!T.name,
+}));
 function browserAuditEvent(event, data = {}, fields = {}) {
   if (!SessionDockCapabilities.allows('audit')) return;
   try {
+    if (/^(http\.|sse\.|search\.|session\.opened$|detail\.rendered$|content_view\.changed$)/.test(event)) {
+      globalThis.SessionDockWatchdog?.mark(event, {trace:fields.traceId || '', status:data.status,
+        stage:event === 'detail.rendered' ? data.source : undefined},
+        event === 'session.opened' || event === 'content_view.changed');
+    }
     // The service stores metadata only; message/DOM/terminal bodies would
     // waste bandwidth and prematurely fill the byte-limited audit batches.
     const record = {
@@ -479,10 +491,14 @@ const browserWorkSamples = [];
 function measureBrowserWork(phase, run, counts = {}) {
   if (!SessionDockCapabilities.allows('audit')) return run();
   const start = performance.now(), uid = S.sel, view = SessionContentView.kind || 'chat';
+  // Keep the entry even when the synchronous snapshot never returns.
+  if (phase.endsWith('.snapshot') || phase.endsWith('.commit') || phase === 'sdk.history')
+    globalThis.SessionDockWatchdog?.mark('begin.' + phase, {}, true);
   try { return run(); }
   finally {
     const duration = performance.now() - start;
     if (duration >= 50) {
+      globalThis.SessionDockWatchdog?.mark('end.' + phase, {duration_ms:Math.round(duration)});
       browserWorkSamples.push({phase, start_ms: start, duration_ms: duration, uid, view, ...counts});
       if (browserWorkSamples.length > 64) browserWorkSamples.shift();
     }
@@ -763,9 +779,9 @@ document.addEventListener('click', event => {
   if (!target) return;
   browserAuditEvent('ui.clicked', {
     tag: target.tagName, id: target.id || '', classes: target.className || '',
-    title: target.getAttribute('title') || '', uid: target.dataset?.uid || '',
+    uid: target.dataset?.uid || '',
     action: target.dataset?.v || target.dataset?.termKey || target.dataset?.attach || '',
-    text: (target.textContent || '').trim().slice(0, 80),
+    delay_ms: Math.max(0, Math.round(performance.now() - event.timeStamp)),
     x: Math.round(event.clientX), y: Math.round(event.clientY),
   });
 }, true);
@@ -5540,6 +5556,7 @@ $('#side').addEventListener('scroll', () => { if ($('#side')._windowed) layoutSi
 new ResizeObserver(() => { if ($('#side')._windowed) layoutSidebarWindow(); }).observe($('#side'));
 
 function renderSide(suppliedList = null) {
+  globalThis.SessionDockWatchdog?.mark('sidebar.render');
   if (sidebarTextSelectionProtected() || transferSidebarPaused()) {
     sidebarRenderDeferred = true;
     return;

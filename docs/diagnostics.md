@@ -73,6 +73,36 @@ snapshots would add bandwidth and fragment batches without retaining evidence.
 The trace IDs, timestamps, status, latency and other `data` fields remain.
 This batching does not slow input readiness checks or conversation updates.
 
+## Whole-page stall recording
+
+Every frontend HTML entry starts a dedicated worker when browser audit is enabled.
+Once per second while the page is visible the worker asks for an event-loop reply
+and an animation-frame reply. Five seconds without either yields one
+`browser.watchdog.stalled` receipt, sent **by the worker while the page is still
+unresponsive**. The next healthy interval yields `browser.watchdog.recovered`.
+Join them by page ID and `data.incident`. Compare task and frame gaps and their
+last reply times. A frame reply observes a callback before paint. A missed reply
+alone cannot identify a lock or establish whether pixels reached the display.
+
+The receipt carries the last observed surface, view, session and SDK item count
+when available, and up to 16 recent metadata markers. These include input kind,
+control ID and dispatch delay, request trace IDs, navigation and render stages,
+and entry into SDK history or snapshot work. Typed keys, drafts, message bodies,
+file paths and tool output are excluded from these markers. Correlate the UTC
+times with existing long frames, HTTP, SSE and terminal receipts. The node keeps
+the ordinary audit retention window. For a Hub page without a scoped session,
+the worker uses the explicit node when available or an online node as its
+audit destination. The page identity and surface remain in the receipt.
+
+Healthy probes stay inside the browser. Hidden, sleeping and unloading pages
+stop probing. A scheduling gap in the worker itself resets the observation
+window. A closed tab, lost network or suspended renderer can prevent delivery.
+For CPU stacks, input dispatch, layout, paint and GPU activity, start an Edge
+DevTools **Performance** runtime recording before the stall with JavaScript
+sampling enabled. Stop and save the trace after the affected interval. If the
+whole renderer hangs permanently, collect the renderer’s native thread dump
+while it is still hung to inspect lock owners and waiting threads.
+
 ## Main-thread long frames
 
 The page reports every main-thread frame of 1 s or longer as
