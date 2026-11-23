@@ -203,6 +203,8 @@ catalogs are cached per profile in memory: the CLI probe warms absent or
 one background refresh runs, and an empty listing never replaces a cached one.
 The first request joins an ongoing startup listing; failed listings also respect
 the refresh interval.
+On Windows, CLI and SDK model listings set `AGY_CLI_DISABLE_AUTO_UPDATE=true`
+for the Agy query so its updater cannot open a terminal on the desktop.
 The CLI may independently use
 a different synthetic catalog model for its background title generator; that
 request is separate from the interactive model selected by `--model`.

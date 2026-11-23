@@ -235,6 +235,8 @@ impl ProcessConfig {
 
     pub async fn models(&self, shutdown: CancellationToken) -> Result<Value, String> {
         let mut command = self.command(&self.model_cwd);
+        #[cfg(windows)]
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
         command
             .arg("models")
             .stdin(Stdio::null())

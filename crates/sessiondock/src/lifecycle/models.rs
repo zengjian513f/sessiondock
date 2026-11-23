@@ -984,6 +984,11 @@ fn run_bounded(
     timeout: Duration,
 ) -> Option<String> {
     let mut command = crate::sdk_common::host::command(profile);
+    #[cfg(windows)]
+    if profile.source == Source::Agy {
+        // Agy's background updater starts its own visible console for --version.
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+    }
     command.args(args);
     if cwd.is_dir() {
         command.current_dir(cwd);
