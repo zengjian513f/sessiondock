@@ -1709,12 +1709,12 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   text-rendering: geometricPrecision;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-.code-block > .syntax-lines {
+.code-block > .syntax-lines, .tool-out.wrap > .tool-lines {
   display: block;
   content-visibility: auto;
   contain-intrinsic-block-size: auto calc(var(--syntax-lines) * 1lh);
 }
-.code-block > .syntax-lines:has(mark) { content-visibility: visible; }
+.code-block > .syntax-lines:has(mark), .tool-out.wrap > .tool-lines:has(mark) { content-visibility: visible; }
 :where(.mb pre, .tool-text-frame > pre)[data-code-language]::before {
   content: attr(data-code-language); position: sticky; float: right; right: 0; top: 0;
   margin: -5px -7px 3px 10px; padding: 1px 5px; border-radius: 4px;
@@ -1732,6 +1732,15 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .hljs-meta { color: var(--syntax-number); }
 .hljs-deletion { color: var(--diff-del-fg); background: var(--diff-del-bg); }
 .hljs-addition { background: var(--diff-add-bg); }
+::highlight(sd-tool-comment) { color: var(--syntax-comment); }
+::highlight(sd-tool-keyword) { color: var(--syntax-keyword); }
+::highlight(sd-tool-string) { color: var(--syntax-string); }
+::highlight(sd-tool-number) { color: var(--syntax-number); }
+::highlight(sd-tool-title) { color: var(--syntax-title); }
+::highlight(sd-tool-builtin) { color: var(--syntax-built-in); }
+::highlight(sd-tool-attr) { color: var(--syntax-attr); }
+::highlight(sd-tool-addition) { color: var(--syntax-string); background-color: var(--diff-add-bg); }
+::highlight(sd-tool-deletion) { color: var(--diff-del-fg); background-color: var(--diff-del-bg); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .mb code:not(pre code) {

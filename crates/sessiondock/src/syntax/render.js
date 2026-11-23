@@ -36,6 +36,15 @@ function languageForPath(rawPath = '') {
   return dot >= 0 ? (extensionLanguages.get(name.slice(dot + 1)) || '') : '';
 }
 
+// Only a single literal input identifies the bytes printed by cat. Pipes,
+// redirections and multiple operands can change the format or hide boundaries.
+function catFile(command = '') {
+  const wrapped = command.match(/^\s*(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+'([^']+)'\s*$/);
+  const match = (wrapped?.[1] || command).match(/^\s*(?:\S*\/)?cat\s+(?:--\s+)?(?:'([^'\n]+)'|"([^"$`\\\n]+)"|([^\s;|&<>`$*?\[\\'"]+))\s*$/);
+  const path = match?.[1] || match?.[2] || match?.[3] || '';
+  return path.startsWith('-') ? '' : path;
+}
+
 function detectionSource(source) {
   let text = String(source || '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
   // Codex 工具回执常在真正内容前包一层 Script completed / Output
@@ -49,11 +58,12 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>]/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[char]));
 }
 
+const mark = (name, value) => `<span class="hljs-${name}">${escapeHtml(value)}</span>`;
+
 function shellCommandHighlight(source) {
   const tokens = String(source || '').match(/\s+|&&?|\|\||>>?|<<?|[|;()]|"(?:\\.|[^"\\])*"|'[^']*'|[^\s|;&()<>]+/g) || [];
   let expectCommand = true;
   let first = true;
-  const mark = (name, value) => `<span class="hljs-${name}">${escapeHtml(value)}</span>`;
   const html = tokens.map(token => {
     if (/^\s+$/.test(token)) return escapeHtml(token);
     if (first && /^(?:\$|#|❯)$/.test(token)) {
@@ -214,8 +224,97 @@ function highlightSegments(source, rawPath = '') {
   return {html, language, languages: [...languages], detected: true, segmented: true};
 }
 
-export function renderBlock(kind, source, language, path) {
+// Checkpoints hold grammar modes, never the tool transcript. Completed lines
+// can resume a multiline token even after another command has been painted.
+const checkpoints = new Map();
+const toolColors = {
+  comment: 'comment', quote: 'comment', keyword: 'keyword', 'selector-tag': 'keyword',
+  literal: 'keyword', section: 'keyword', string: 'string', regexp: 'string',
+  number: 'number', symbol: 'number', bullet: 'number', variable: 'number',
+  'template-variable': 'number', meta: 'number', title: 'title', built_in: 'builtin',
+  type: 'builtin', attr: 'attr', name: 'attr', attribute: 'attr', deletion: 'deletion', addition: 'addition',
+};
+
+function renderToolStream(source, checkpoint, key, final, path) {
+  const previous = checkpoint && checkpoints.get(checkpoint);
+  if (checkpoint && !previous) return {reset: true};
+  let language = previous?.language || '', top = previous?.top;
+  let embedded = {...previous?.embedded};
+  let hint = previous?.hint ?? languageForPath(path), fence = previous?.fence || '', fencedLanguage = previous?.fencedLanguage || '';
+  const languages = new Set();
+  let offset = 0;
+  const ranges = [];
+  function visit(node, color) {
+    if (typeof node === 'string') {
+      const end = offset + node.length;
+      if (color && end > offset) {
+        const last = ranges[ranges.length - 1];
+        if (last?.[1] === offset && last[2] === color) last[1] = end;
+        else ranges.push([offset, end, color]);
+      }
+      offset = end;
+    } else {
+      const style = toolColors[node.scope?.split('.')[0]] || color;
+      for (const child of node.children) visit(child, style);
+    }
+  }
+  for (const [line] of source.matchAll(/[^\n]*\n|[^\n]+$/g)) {
+    const marker = (!hint || hint === 'markdown') && line.match(/^\s{0,3}(`{3,}|~{3,})\s*([\w.+-]*)\s*$/);
+    if (marker && (!fence || (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2]))) {
+      if (fence) { fence = ''; fencedLanguage = ''; }
+      else {
+        fence = marker[1];
+        const label = marker[2].toLowerCase();
+        fencedLanguage = aliases[label] || label;
+      }
+      language = ''; top = null; embedded = {}; offset += line.length;
+      continue;
+    }
+    const prompt = !fence && !top?.parent && line.match(/^\s*(?:\$|❯)\s+(.+)/);
+    const next = fence ? fencedLanguage : prompt ? 'bash' : hint || (top?.parent ? language : line.trim()
+      ? lineStartLanguage(line) || language || inferLanguage(line) : '');
+    if (language !== next) { top = null; embedded = {}; language = next; }
+    if (!hljs.getLanguage(language) || line.includes('\x1b[')) { offset += line.length; continue; }
+    const result = hljs.highlightContinuation(language, line, top, embedded);
+    if (result.errorRaised) { top = null; embedded = {}; offset += line.length; continue; }
+    languages.add(language);
+    top = result._top;
+    if (prompt) { hint = languageForPath(catFile(prompt[1])); language = ''; top = null; embedded = {}; }
+    visit(result._emitter.rootNode, '');
+  }
+  const continuation = (language || hint || fence) && !final ? key : '';
+  if (continuation) {
+    checkpoints.set(key, {language, top, embedded, hint, fence, fencedLanguage});
+    if (checkpoints.size > 512) checkpoints.delete(checkpoints.keys().next().value);
+  }
+  if (checkpoint) checkpoints.delete(checkpoint);
+  return {ranges, continuation, language, languages: [...languages], detected: !!languages.size};
+}
+
+function renderTool(source, path) {
+  const hint = languageForPath(path);
+  // Use the same block boundaries for a historical snapshot as for live
+  // stdout. A known source file retains its own grammar.
+  if ((!hint || hint === 'markdown') && /^(?: {0,3}(?:`{3,}|~{3,})|\s*[$❯]\s+cat\s)/m.test(source)) {
+    const {ranges, languages} = renderToolStream(source, '', '', true, path);
+    if (!ranges.length) return null;
+    let offset = 0;
+    const html = [];
+    for (const [start, end, color] of ranges) {
+      html.push(escapeHtml(source.slice(offset, start)), mark(color === 'builtin' ? 'built_in' : color, source.slice(start, end)));
+      offset = end;
+    }
+    html.push(escapeHtml(source.slice(offset)));
+    return {html: html.join(''), language: languages.length === 1 ? languages[0] : '', languages, detected: true};
+  }
+  return highlightSegments(source, path);
+}
+
+export function renderBlock(kind, source, language, path, options = {}) {
+  const {checkpoint, key, final, command} = options;
+  if (kind === 'stream' || kind === 'tool') path ||= catFile(command);
+  if (kind === 'stream') return renderToolStream(source, checkpoint, key, final, path);
   if (kind === 'command') return shellCommandHighlight(source);
-  if (kind === 'tool') return highlightSegments(source, path);
+  if (kind === 'tool') return renderTool(source, path);
   return highlight(source, language, path);
 }

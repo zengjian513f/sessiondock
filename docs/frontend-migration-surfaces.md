@@ -383,6 +383,17 @@ DELTA（BUG-20261120-125152-47b539）：气泡内还有正文被纵向裁切时�
 
 DELTA：节点和 Hub 在本机的 `POST /api/syntax/highlight` 中使用[嵌入式语法规则](../crates/sessiondock/src/syntax/render.js)识别语言并生成高亮 HTML。普通对话、SDK 历史和实时输出先显示原文，再按批发送需要着色的正文、命令、工具输出或 diff 行。请求数组每项含 `kind`（`code`、`command` 或 `tool`）、`source` 及可选 `language`、`path`。返回数组按原顺序给出高亮 HTML、语言和检测状态，纯文本项为 `null`。支持分段显示的页面发送 `chunked: true`。对长结果，服务端返回独立的着色片段和原文 UTF-16 结束位置；跨段注释、字符串的语法状态延续。长围栏按行分组显示原文，高亮返回时复用行组，只给视口内的片段建立着色节点。原文或语言已经改变的气泡丢弃迟到结果，请求失败时原文仍可读。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
+DELTA（Codex 执行中命令输出）：命令栏用 shell 规则。工具卡按 `outputDelta` 就地追加原文，
+高亮端点的 `kind: stream` 只接收新增完整行，最后一个未完行即时显示原文，完成时补色。
+返回的 UTF-16 字符范围标注词元颜色，`continuation` 延续跨行字符串、注释及代码块语言。
+页面分段保留原文，在支持 CSS Custom Highlight 的浏览器里只对可见文本范围注册颜色。
+单文件 `cat` 的字面量路径提示输出语言，多个操作数、管道和重定向不据首个文件推定
+整段输出。混合 stdout 使用明确标注的代码围栏、命令提示符和代码特征切分。
+已有 diff 只更新未完成的末行及新行。完整回执改写 stdout 或断线取得新快照时以
+服务端文本重建，解析状态被回收后按原文重新建立一次。
+[工具增量浏览器验收](../tests/tool_progress_browser.py)。
+
+
 DELTA（2026-10-18 按气泡类型收缩）：助手正文（包括过程说明、计划、最终回答）
 完整展示，不按字数或高度裁切。用户输入、思考等辅助正文除 4,000 字阈值外，
 也按实际渲染高度提供 340 px 预览；短字数、多行或窄屏折行的内容同样有“展开全文/收起”，搜索命中仍沿用

@@ -868,7 +868,7 @@ const CodexSdkView = {
       const before = this.nodes.get(id);
       const group = before?.closest('.sdk-tool-group');
       if (group) groups.add(group);
-      if (item) this.paintItem(item);
+      if (item) this.paintItem(item, true);
       const node = this.nodes.get(id);
       if (Boolean(before) !== Boolean(node)) mountedChanged = true;
       if (node) markMatches(node);
@@ -890,7 +890,7 @@ const CodexSdkView = {
   },
 
   // ---------------------------------------------------------------- 渲染
-  paintItem(item) {
+  paintItem(item, appended = false) {
     let message = this.replayOmitted?.has(item.id) || item.questions?.length ? null : itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
@@ -903,6 +903,13 @@ const CodexSdkView = {
       return;
     }
     message.status = item.status;
+    if (old && item.type === 'commandExecution' && updateCommandOutput(old, message, appended)) {
+      old._updateMessageHeader?.(message);
+      old._sdkMessage = decoratedMessage;
+      old._sdkToolMessage = message;
+      old._toolItems = [message];
+      return;
+    }
     const toolState = TOOL_ROLES.has(message.role) ? ConversationUI.toolState(old) : null;
     const ready = this.preparedItems?.get(item);
     const node = ready && ready.ts === message.ts ? ready.node : msgNode(message);
@@ -1236,7 +1243,7 @@ function itemMessage(item) {
     case 'commandExecution': {
       const command = item.commandActions?.[0]?.command || item.command || '';
       const output = item.aggregatedOutput || '';
-      return {role: 'tool', name: 'shell', summary: `$ ${command}`, text: item.command || command,
+      return {role: 'tool', name: 'shell', streamOutput: !done, summary: `$ ${command}`, text: item.command || command,
         result: done || output ? {role: 'tool_result', text: output, exit_code: item.exitCode ?? undefined,
           duration_s: item.durationMs != null ? item.durationMs / 1000 : undefined,
           error: failed || (item.exitCode != null && item.exitCode !== 0)} : null};

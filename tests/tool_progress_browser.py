@@ -4,6 +4,7 @@ import argparse
 import copy
 from pathlib import Path
 import tempfile
+import time
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
@@ -12,6 +13,142 @@ from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
 from sdk_mode_fixtures import provider
 from sdk_selection_fixtures import snapshots
+
+
+def check_output_deltas(page, group, events, raw, capture):
+    snapshot = events.packet
+    item = {**raw['items'][-1], 'command': "cat 'results file.py'",
+            'aggregatedOutput': 'answer = None\n', 'status': 'inProgress'}
+    pre = group.locator('.tool-active-tail .tool-out')
+    def publish(method, payload):
+        events.packet = {'seq': events.packet['seq'], 'method': method, 'raw': payload}
+        events.publish()
+    def wait_syntax():
+        expect(pre).to_have_attribute('data-syntax-done', '1')
+    def color_contains(style, text):
+        page.wait_for_function('''([style, text]) => {
+          const pre = document.querySelector('.tool-active-tail .tool-out');
+          return [...(CSS.highlights.get('sd-tool-' + style) || [])].some(
+            r => pre.contains(r.startContainer) && r.startContainer.data.slice(r.startOffset, r.endOffset).includes(text));
+        }''', arg=[style, text])
+    requests = []
+    def record(request):
+        if request.url.endswith('/api/syntax/highlight'):
+            requests.extend(x['source'] for x in request.post_data_json if x['kind'] == 'stream')
+    page.on('request', record)
+    publish('item/started', {'item': item})
+    expect(pre).to_have_text(item['aggregatedOutput'])
+    wait_syntax()
+    color_contains('keyword', 'None')
+    expect(group.locator('.tool-active-tail .tool-command .hljs-title')).to_have_text('cat')
+    assert pre.get_attribute('data-code-language') == 'python'
+    initial_pre = pre.element_handle()
+    first_text = pre.locator('sd-tool-syntax').first.evaluate_handle('piece => piece.firstChild')
+    requests.clear()
+    def append(delta):
+        item['aggregatedOutput'] += delta
+        publish('item/commandExecution/outputDelta', {'itemId': item['id'], 'delta': delta})
+        page.wait_for_function("source => document.querySelector('.tool-active-tail .tool-out')._toolStream?.source === source",
+                               arg=item['aggregatedOutput'])
+        wait_syntax()
+        if not pre.locator('.tool-diff-line').count():
+            assert pre.text_content() == item['aggregatedOutput']
+    append('x = """first\n')
+    color_contains('string', 'first')
+    append('const 🚀 is Python text\n')
+    color_contains('string', 'const 🚀')
+    append('end"""\n')
+    append('ret')
+    assert requests == ['x = """first\n', 'const 🚀 is Python text\n', 'end"""\n'], requests
+    append('urn 42')
+    publish('item/completed', {'item': {**item, 'status': 'completed', 'exitCode': 0}})
+    color_contains('keyword', 'return')
+    assert requests[-1] == 'return 42' and len(requests) == 4, requests
+    assert initial_pre.evaluate("pre => pre === document.querySelector('.tool-active-tail .tool-out')")
+    assert first_text.evaluate('node => node.isConnected')
+    expect(pre.locator('span[class*="hljs-"]')).to_have_count(0)
+    capture('incremental-python')
+    # A changed authoritative completion replaces stdout and drops old ranges.
+    corrected = {**item, 'status': 'completed', 'aggregatedOutput': 'import sys'}
+    publish('item/completed', {'item': corrected})
+    expect(pre).to_have_text('import sys')
+    expect(pre.locator('.hljs-keyword')).to_have_text('import')
+    assert not first_text.evaluate('node => node.isConnected')
+
+    item.update(command='cat a.py b.js', aggregatedOutput='```python\n')
+    publish('item/started', {'item': item})
+    expect(pre).to_have_text(item['aggregatedOutput'])
+    wait_syntax()
+    append('return True\n```\n```js\n')
+    append('const ok = 1;\n```\n')
+    color_contains('keyword', 'const')
+    color_contains('keyword', 'return')
+    assert set(pre.get_attribute('data-syntax-languages').split(',')) == {'python', 'javascript'}
+    capture('incremental-mixed')
+    # Hold a real response while another suffix arrives; then simulate an
+    # evicted lexer checkpoint. The prefix remains readable in both cases.
+    held = []
+    hold_next = True
+    pattern = '**/api/syntax/highlight'
+    def intercept(route):
+        nonlocal hold_next
+        if hold_next and any(block['kind'] == 'stream' for block in route.request.post_data_json):
+            held.append(route)
+            hold_next = False
+        else:
+            route.continue_()
+    page.route(pattern, intercept)
+    def held_request():
+        deadline = time.monotonic() + 5
+        while not held and time.monotonic() < deadline:
+            page.wait_for_timeout(10)
+        assert held, 'expected an incremental syntax request'
+        return held.pop()
+    def send(delta):
+        item['aggregatedOutput'] += delta
+        publish('item/commandExecution/outputDelta', {'itemId': item['id'], 'delta': delta})
+        page.wait_for_function("s => document.querySelector('.tool-active-tail .tool-out').textContent === s",
+                               arg=item['aggregatedOutput'])
+    send('$ cat config.py\n')
+    first = held_request()
+    send('enabled = None\n')
+    first.continue_()
+    wait_syntax()
+    color_contains('keyword', 'None')
+    hold_next = True
+    send('value = False\n')
+    first = held_request()
+    batch = first.request.post_data_json
+    first.fulfill(json=[{'reset': True} if b['kind'] == 'stream' else None for b in batch])
+    wait_syntax()
+    color_contains('keyword', 'False')
+    page.unroute(pattern, intercept)
+    assert pre.text_content() == item['aggregatedOutput']
+    append(''.join(f'row_{i} = None\n' for i in range(140)))
+    assert pre.locator('sd-tool-syntax.tool-lines').count() >= 2
+    pre.evaluate("""p => { const r = new Range(); r.selectNodeContents(p);
+                             getSelection().removeAllRanges(); getSelection().addRange(r); }""")
+    # Chromium omits the final unpainted newline from a native pre selection.
+    assert page.evaluate('getSelection().toString()') == item['aggregatedOutput'].removesuffix('\n')
+    page.evaluate('getSelection().removeAllRanges()')
+    capture('incremental-long')
+    # Old diff rows and their token spans must survive an appended patch line.
+    append('diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+return 1\n')
+    row = pre.locator('.tool-diff-line.add').first
+    expect(row.locator('.hljs-keyword')).to_have_text('return')
+    old_keyword = row.locator('.hljs-keyword').element_handle()
+    append('+return 2\n')
+    expect(pre.locator('.tool-diff-line.add .hljs-keyword')).to_have_count(2)
+    assert old_keyword.evaluate('node => node.isConnected')
+    completed = "$ cat config.py\nreturn '<tag> & 🚀'\n"
+    publish('item/completed', {'item': {**item, 'status': 'completed', 'aggregatedOutput': completed}})
+    expect(pre.locator('.hljs-built_in')).to_have_text('cat')
+    expect(pre.locator('.hljs-keyword')).to_have_text('return')
+    assert pre.text_content() == completed
+    page.remove_listener('request', record)
+    events.packet = {**snapshot, 'seq': events.packet['seq']}
+    events.publish()
+    expect(pre).to_contain_text('输出第 17 行')
 
 
 def exercise(browser, base, source, events, watch, shots, label, mode):
@@ -100,6 +237,8 @@ def exercise(browser, base, source, events, watch, shots, label, mode):
         def capture(state):
             if shots: page.screenshot(path=str(shots / f'{name}-{state}.png'), full_page=True)
         capture('running')
+        if source == 'codex' and mode == 'sdk':
+            check_output_deltas(page, group, events, raw, capture)
         stable = [group.element_handle(), group.locator('.group-preview').element_handle(),
                   group.locator('.group-outline code').first.element_handle()] if mode == 'sdk' else []
         def unchanged_summary():

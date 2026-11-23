@@ -8971,31 +8971,34 @@ function eventDetailFrame(body) {
   return frame;
 }
 
-function addClippedPre(entry, cls, text, codePath = '') {
+function addClippedPre(entry, cls, text, codePath = '', streaming = false) {
   const pre = el('pre', cls);
   if (codePath) pre.dataset.codePath = codePath;
-  setToolOutput(pre, text);
+  if (streaming) { initToolStream(pre); appendToolStream(pre, text); }
+  else setToolOutput(pre, text);
   entry.appendChild(toolTextFrame(pre));
   const actions = el('div', 'tool-out-actions');
   actions.appendChild(toolWrapButton(pre));
-  if (outputStats(text).lines > OUT_LINES || text.length > OUT_CHARS) {
-    const expandLabel = '展开全文';
-    pre.classList.add('collapsed-output');
-    queuePreviewTail(pre);
-    const more = el('button', 'more', expandLabel);
-    let expanded = false;
-    more.onclick = () => {
-      expanded = !expanded;
-      pre.classList.toggle('collapsed-output', !expanded);
-      if (!expanded) queuePreviewTail(pre);
-      more.textContent = expanded ? '收起' : expandLabel;
-      more.setAttribute('aria-expanded', String(expanded));
-    };
-    more.setAttribute('aria-expanded', 'false');
-    actions.appendChild(more);
-  }
-  if (actions.childElementCount) entry.appendChild(actions);
+  entry.appendChild(actions);
+  if (text.length > OUT_CHARS || outputStats(text).lines > OUT_LINES) addToolExpansion(pre, actions);
   return pre;
+}
+
+function addToolExpansion(pre, actions) {
+  const expandLabel = '展开全文';
+  pre.classList.add('collapsed-output');
+  queuePreviewTail(pre);
+  const more = el('button', 'more', expandLabel);
+  let expanded = false;
+  more.onclick = () => {
+    expanded = !expanded;
+    pre.classList.toggle('collapsed-output', !expanded);
+    if (!expanded) queuePreviewTail(pre);
+    more.textContent = expanded ? '收起' : expandLabel;
+    more.setAttribute('aria-expanded', String(expanded));
+  };
+  more.setAttribute('aria-expanded', 'false');
+  actions.appendChild(more);
 }
 
 function toolEntry(m) {
@@ -9103,19 +9106,23 @@ function appendAgyOutputPreview(entry, m) {
   return true;
 }
 
+function toolResultLabel(r, complete, stats) {
+  const status = [complete ? (r.error ? '✗ 出错' : '✓ 完成') : '运行中…'];
+  if (Number.isInteger(r.exit_code)) status.push(`exit ${r.exit_code}`);
+  if (Number.isFinite(+r.duration_s)) status.push(formatDuration(+r.duration_s * 1000));
+  status.push(stats.lines > 1 ? `${stats.lines.toLocaleString()} 行`
+    : `${stats.chars.toLocaleString()} 字符`);
+  return status.join(' · ');
+}
+
 function appendToolResult(entry, r, m) {
   if (!entry || !r || entry.dataset.result === '1') return;
   entry._toolComplete = ConversationUI.toolComplete({...m, result: r});
   if (r.counted !== false) entry.dataset.result = '1'; // 吸收的结果单独补入计数
-  const status = [entry._toolComplete ? (r.error ? '✗ 出错' : '✓ 完成') : '运行中…'];
-  if (Number.isInteger(r.exit_code)) status.push(`exit ${r.exit_code}`);
-  if (Number.isFinite(+r.duration_s)) status.push(formatDuration(+r.duration_s * 1000));
-  const stats = outputStats(r.text || '');
-  status.push(stats.lines > 1 ? `${stats.lines.toLocaleString()} 行`
-    : `${stats.chars.toLocaleString()} 字符`);
-  entry.appendChild(el('div', 'tool-status' + (r.error ? ' err' : ''), status.join(' · ')));
+  entry.appendChild(el('div', 'tool-status' + (r.error ? ' err' : ''), toolResultLabel(r, entry._toolComplete, outputStats(r.text || ''))));
   if (String(r.text || '').trim()) {
-    addClippedPre(entry, 'tool-out' + (r.error ? ' err' : ''), r.text, toolOutputPath(m));
+    const pre = addClippedPre(entry, 'tool-out' + (r.error ? ' err' : ''), r.text, toolOutputPath(m), m.streamOutput);
+    if (m.name === 'shell') pre._outputCommand = m.text;
   }
   if (r.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(r.media, r.media_more));
   entry.insertAdjacentHTML('beforeend', nativeFileLinks(r.native_files));
@@ -9160,22 +9167,55 @@ function paintToolOutputDiff(pre) {
   const path = diffCodePath(lines.slice(unified));
   const fragment = document.createDocumentFragment();
   lines.forEach((line, i) => {
-    const row = el('span', 'tool-diff-line');
-    const kind = i >= unified ? diffKind(line) : '';
-    if (kind) row.classList.add(kind);
-    const parts = path && diffCodeParts(line, kind);
-    if (parts) {
-      row.classList.add('code');
-      row.appendChild(el('i', '', parts.marker));
-      const code = el('code', '', parts.source || ' ');
-      code.dataset.codePath = path;
-      row.appendChild(code);
-    } else {
-      row.textContent = line || ' ';
-    }
-    fragment.appendChild(row);
+    const complete = !pre._toolStream || pre._toolStream.final || i < lines.length - 1;
+    fragment.appendChild(toolDiffRow(line, i >= unified ? diffKind(line) : '', complete ? path : ''));
   });
   pre.replaceChildren(fragment);
+  if (pre._toolStream) pre._toolStream.diff = {path, tail: lines.at(-1)};
+}
+
+function toolDiffRow(line, kind, path) {
+  const row = el('span', 'tool-diff-line');
+  if (kind) row.classList.add(kind);
+  const parts = path && diffCodeParts(line, kind);
+  if (parts) {
+    row.classList.add('code');
+    row.appendChild(el('i', '', parts.marker));
+    const code = el('code', '', parts.source || ' ');
+    code.dataset.codePath = path;
+    row.appendChild(code);
+  } else {
+    row.textContent = line || ' ';
+  }
+  return row;
+}
+
+function appendToolDiff(pre, delta, final) {
+  const diff = pre._toolStream.diff;
+  if (!final && !delta.includes('\n')) {
+    if (!delta) return;
+    const row = pre.lastElementChild;
+    if (!diff.tail) row.textContent = '';
+    diff.tail += delta;
+    row.className = 'tool-diff-line ' + diffKind(diff.tail);
+    row.append(delta);
+    return;
+  }
+  const lines = (diff.tail + delta).split('\n');
+  const last = pre.lastElementChild;
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], complete = i < lines.length - 1 || final;
+    if (complete && /^(?:---|\+\+\+) /.test(line)) {
+      const path = diffCodePath([line]);
+      if (path && path !== '/dev/null') diff.path = path;
+    }
+    const row = toolDiffRow(line, diffKind(line), complete ? diff.path : '');
+    fragment.appendChild(row);
+    if (complete) paintSyntax(row);
+  }
+  last.replaceWith(fragment);
+  diff.tail = lines.at(-1);
 }
 
 function diffRows(lines, path) {
@@ -10879,6 +10919,7 @@ function mountSyntaxChunks(code, source, chunks) {
 }
 
 function applySyntaxBlock(job, result) {
+  if (job.state) { applyToolStream(job, result); return; }
   const {code, block} = job;
   if (!code.isConnected || deferFoldedToolSyntax(code) || code.textContent !== block.source
       || (code.dataset.codeLang || '') !== block.language || (code.dataset.codePath || '') !== block.path) return;
@@ -10917,11 +10958,18 @@ async function flushSyntax() {
       continue;
     }
     if (deferFoldedToolSyntax(code)) continue;
-    const source = code.textContent;
-    const kind = code.matches('code.tool-command') ? 'command'
-      : code.matches('pre.tool-out') ? 'tool' : 'code';
-    jobs.push({code, block: {kind, source, language: code.dataset.codeLang || '', path: code.dataset.codePath || '', chunked: true}});
-    characters += source.length;
+    if (code._toolStream) {
+      const job = streamSyntaxJob(code);
+      if (!job) continue;
+      jobs.push(job);
+      characters += job.block.source.length;
+    } else {
+      const source = code.textContent;
+      const kind = code.matches('code.tool-command') ? 'command'
+        : code.matches('pre.tool-out') ? 'tool' : 'code';
+      jobs.push({code, block: {kind, source, language: code.dataset.codeLang || '', path: code.dataset.codePath || '', command: code._outputCommand, chunked: true}});
+      characters += source.length;
+    }
     // Batch small diff lines into one round trip. Large blocks travel whole.
     if (jobs.length >= 16 || characters >= 65536) break;
   }
@@ -10957,6 +11005,7 @@ async function flushSyntax() {
     // Plain text remains readable. A later paint can retry a transient failure.
   } finally {
     syntaxRequest = null;
+    if (!request.signal.aborted) for (const job of jobs) retryToolStream(job);
     scheduleSyntax();
   }
 }
