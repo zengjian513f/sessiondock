@@ -30,6 +30,7 @@ MODULE_SUITES = {
     "runtime": ["session_freeze_*", "live_*", "spawned_by_*", "managed_*", "restart_state_*", "lifecycle_*"],
     "bridge": ["claude_prompt_*", "prompt_*", "live_*"], "native_replay": ["native_*"],
     "assets": ["static_assets_*", "meta_*", "prefs_*"],
+    "syntax": ["render_assets_browser", "tool_progress_browser", "sdk_shared_ui_browser"],
 }
 BROAD_MODULES = {"main", "lib", "config", "security", "state", "error"}
 SHARED_RUST_PACKAGES = {
@@ -50,7 +51,6 @@ WEB_SUITES = {
     "page-sleep": ["page_sleep_browser"], "nodes": ["hub_browser"],
     "list-sync": ["list_delta_browser"], "groups": ["sidebar_flat_scroll_browser"],
     "popup": ["toolbar_options_browser"], "assets": ["render_assets_browser"],
-    "syntax": ["render_assets_browser"], "syntax-worker": ["render_assets_browser"],
     "typography": ["content_scroll_browser", "frontend_framework_browser"], "capabilities": ["legacy_browser"],
     "cli": ["cli_diagnostics_browser"], "pwa-install": ["remaining_ui_lifecycle_browser"],
 }

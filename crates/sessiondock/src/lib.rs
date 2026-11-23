@@ -54,6 +54,7 @@ pub mod sessions;
 pub mod shell_env;
 mod state;
 mod storage_maintenance;
+mod syntax;
 pub(crate) mod terminal;
 pub mod transfer;
 pub(crate) mod trash;

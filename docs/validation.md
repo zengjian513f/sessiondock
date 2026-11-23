@@ -545,9 +545,9 @@ Frontend performance regressions also run as ordinary browser suites:
   runtime discovery is held, read-only actions, discovery failure and CPU profiles.
 - `conversation_performance_browser`: click to expand a lazy tool group,
   append synthetic native history, cancel a backtracking regex and search again.
-- `render_assets_browser`: open ordinary/formula/code sessions, verify optional
-  libraries load on demand, expand 16,000 lines of code through worker highlighting,
-  and collapse it without accepting stale worker output.
+- `render_assets_browser` opens ordinary, formula and code sessions, checks mixed
+  language results, expands 16,000 lines while the server highlighting request is
+  held and verifies the complete highlighted source after the response and collapse.
 - `sidebar_select_scroll_browser` additionally checks unchanged DOM identity,
   incremental membership, collapsed groups and overlapping list polls.
 - `terminal_selection_browser` additionally checks a 5,000-line synthetic PTY

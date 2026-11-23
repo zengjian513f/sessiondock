@@ -23,3 +23,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 [profile.release]
 strip = true
+
+# Run the embedded regexp interpreter at normal speed in development fixtures too.
+[profile.dev.package.rquickjs-sys]
+opt-level = 2

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional renderers load on demand; large code is highlighted off the UI thread."""
+"""Optional renderers load on demand; node-generated highlighting preserves the source."""
 import argparse
 import os
 from pathlib import Path
@@ -78,6 +78,9 @@ def main():
         for sid, title, body in (
             ('plain', 'Plain rendering', 'No optional renderer is needed here.'),
             ('formula', 'Formula rendering', 'An equation: $$x^2 + y^2 = z^2$$'),
+            ('mixed', 'Mixed code blocks', '```\n{"taxRate": 0.0010}\n```\n\n'
+                '```text\nplain <tag> & value\n```\n\n'
+                '```python\ndef example():\n    return """first\n<tag> & 星"""\n```'),
             ('code', 'Large code rendering', '```javascript\n' + code + '\n```'),
         ):
             corpus.put(sid, 'claude', [
@@ -111,14 +114,28 @@ def main():
                 open_session('formula')
                 expect(page.locator('#msgs .katex')).to_be_visible()
                 assert any('/vendor/katex/katex.min.js' in url for url in requests)
+                open_session('mixed')
+                mixed = page.locator('#msgs .code-block')
+                expect(mixed.nth(0).locator('.hljs-attr')).to_have_text('"taxRate"')
+                expect(mixed.nth(1)).to_have_attribute('data-syntax-done', '1')
+                assert mixed.nth(1).text_content() == 'plain <tag> & value'
+                expect(mixed.nth(2).locator('.hljs-keyword').first).to_have_text('def')
+                assert mixed.nth(2).locator('.hljs-string').text_content() == '"""first\n<tag> & 星"""'
+                held = []
+                page.route('**/api/syntax/highlight', lambda route: held.append(route))
                 open_session('code')
                 block = page.locator('#msgs .mb code.code-block')
-                expect(block).to_have_attribute('data-syntax-done', '1')
+                expect(block).to_be_visible()
+                assert block.text_content() == code
+                expect(block.locator('.hljs-keyword')).to_have_count(0)
                 page.evaluate('''() => {
                   window.syntaxTicks = 0;
                   window.syntaxClock = setInterval(() => syntaxTicks++, 10);
                 }''')
                 page.locator('#msgs .msg[data-role="user"] button').filter(has_text='展开全文').click()
+                assert held and any(item['source'] == code for item in held[0].request.post_data_json)
+                held.pop(0).continue_()
+                page.unroute('**/api/syntax/highlight')
                 expect(block).to_have_attribute('data-syntax-done', '1', timeout=15000)
                 assert block.text_content() == code
                 assert block.locator('.hljs-keyword').count() == 16000
@@ -147,8 +164,9 @@ def main():
                 expect(cold.locator('#msgs .katex')).to_have_count(1)
                 expect(cold.locator('#msgs .code-block')).to_have_attribute('data-syntax-done', '1')
                 cold.close()
+                assert not any('/vendor/highlight/' in url or '/syntax-worker.js' in url for url in requests)
                 assert not errors, errors
-                print('PASS render assets: lazy libraries, worker highlighting, exact large code, responsive UI, stale preview protection')
+                print('PASS render assets: lazy libraries, backend highlighting, exact large code, responsive UI, stale preview protection')
             finally:
                 browser.close()
 

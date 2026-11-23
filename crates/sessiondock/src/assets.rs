@@ -168,10 +168,7 @@ impl Assets {
                         .replace(&marker, &injection)
                         .into_bytes();
                 } else if path.ends_with(".css")
-                    || matches!(
-                        path.as_str(),
-                        "/grid/facade.js" | "/grid/model.js" | "/syntax.js" | "/syntax-worker.js"
-                    )
+                    || matches!(path.as_str(), "/grid/facade.js" | "/grid/model.js")
                 {
                     // typography.css and ES module entrypoints version their sub-resource
                     // URLs the same way the pages version their scripts, so fonts and

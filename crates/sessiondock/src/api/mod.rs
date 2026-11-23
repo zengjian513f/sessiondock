@@ -30,6 +30,7 @@ mod relations;
 pub(crate) mod runtime;
 mod search;
 mod shell_env;
+mod syntax;
 mod terminal;
 mod transfer;
 pub(crate) use transfer::fence as transfer_fence;
@@ -72,6 +73,10 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
 pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
+        .route(
+            "/syntax/highlight",
+            post(syntax::highlight).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .route("/quotas", get(quotas::get))
         .route("/quotas/refresh", post(quotas::refresh))
         .route("/usage", get(agent_usage::get))

@@ -6174,6 +6174,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   const ac = inflight = new AbortController();
   closeWatch();
   ++renderSeq;                 // Cancel detached render batches before the next fetch completes.
+  syntaxRequest?.abort();
   syntaxQueue.clear();
   formulaRoots.clear();
   if (typeof T !== 'undefined') {
@@ -10774,7 +10775,7 @@ const AUTO_OPEN_MAX = 40;    // 最多自动展开这么多条命中消息, 其�
 const MARK_MAX = 3000;       // 单页高亮节点上限
 const clipText = t => t.length > CLIP ? t.slice(0, CLIP) + '\n… (点下方按钮展开全文)' : t;
 
-let syntaxWorker = null, syntaxBusy = false, syntaxFrame = null;
+let syntaxRequest = null, syntaxFrame = null;
 const syntaxQueue = new Set();
 const syntaxGenerations = new WeakMap();
 
@@ -10793,72 +10794,84 @@ function resumeToolSyntax(card) {
   paintSyntax(card);
 }
 
+function applySyntaxBlock(job, result) {
+  const {code, block} = job;
+  if (!code.isConnected || deferFoldedToolSyntax(code) || code.textContent !== block.source
+      || (code.dataset.codeLang || '') !== block.language || (code.dataset.codePath || '') !== block.path) return;
+  code.dataset.syntaxDone = '1';
+  if (!result?.html) return;
+  code.innerHTML = result.html;
+  code.classList.add('hljs');
+  if (result.language) code.classList.add(`language-${result.language}`);
+  if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
+  if (result.detected) code.dataset.detected = result.language;
+  const host = code.tagName === 'PRE' ? code
+    : (code.classList.contains('code-block') && code.parentElement?.tagName === 'PRE'
+      ? code.parentElement : null);
+  if (result.language && host) host.dataset.codeLanguage = result.language;
+  if (S.term) markMatches(code);
+}
+
 function scheduleSyntax() {
-  if (syntaxBusy || syntaxFrame !== null || !syntaxQueue.size) return;
-  syntaxFrame = requestAnimationFrame(() => {
-    syntaxFrame = null;
-    let code;
-    const waiting = [];
-    for (const candidate of syntaxQueue) {
-      syntaxQueue.delete(candidate);
-      if (candidate.isConnected && !candidate.dataset.syntaxDone) {
-        if (deferFoldedToolSyntax(candidate)) continue;
-        code = candidate;
-        break;
-      }
-      // Large histories yield while their nodes still live in a fragment.
-      // Keep those jobs until publication, but discard abandoned render plans.
-      if (!candidate.dataset.syntaxDone && syntaxGenerations.get(candidate) === renderSeq
-          && candidate.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE) waiting.push(candidate);
+  if (syntaxRequest || syntaxFrame !== null || !syntaxQueue.size) return;
+  syntaxFrame = requestAnimationFrame(flushSyntax);
+}
+
+async function flushSyntax() {
+  syntaxFrame = null;
+  const jobs = [], waiting = [];
+  let characters = 0;
+  for (const code of syntaxQueue) {
+    syntaxQueue.delete(code);
+    if (code.dataset.syntaxDone) continue;
+    if (!code.isConnected) {
+      // A yielded history render publishes this fragment in a later batch.
+      if (syntaxGenerations.get(code) === renderSeq
+          && code.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE) waiting.push(code);
+      continue;
     }
-    for (const candidate of waiting) syntaxQueue.add(candidate);
-    if (!code) return;         // Fragment publication schedules us; do not spin every frame.
-    syntaxBusy = true;
+    if (deferFoldedToolSyntax(code)) continue;
     const source = code.textContent;
-    const language = code.dataset.codeLang || '', path = code.dataset.codePath || '';
     const kind = code.matches('code.tool-command') ? 'command'
       : code.matches('pre.tool-out') ? 'tool' : 'code';
-    let timer;
-    const finish = result => {
-      clearTimeout(timer);
-      // An expanded/replaced preview must never receive an older worker reply.
-      if (code.isConnected && !deferFoldedToolSyntax(code) && code.textContent === source
-          && (code.dataset.codeLang || '') === language && (code.dataset.codePath || '') === path) {
-        code.dataset.syntaxDone = '1';
-        if (result?.html) {
-          code.innerHTML = result.html;
-          code.classList.add('hljs');
-          if (result.language) code.classList.add(`language-${result.language}`);
-          if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
-          if (result.detected) code.dataset.detected = result.language;
-          const host = code.tagName === 'PRE' ? code
-            : (code.classList.contains('code-block') && code.parentElement?.tagName === 'PRE'
-                ? code.parentElement : null);
-          if (result.language && host) host.dataset.codeLanguage = result.language;
-          // Syntax arrives after message search decoration now. Reapply the
-          // current query to the new text nodes instead of losing its marks.
-          if (S.term) { markMatches(code); updateMatchNav(); }
-        }
-      }
-      syntaxBusy = false;
-      scheduleSyntax();
-    };
-    const failed = () => {
-      syntaxWorker?.terminate();
-      syntaxWorker = null;
-      finish(null);
-    };
-    try {
-      syntaxWorker ||= new Worker(SessionDockAssets.url('syntax-worker.js'), {type: 'module'});
-      syntaxWorker.onmessage = event => measureBrowserWork('syntax.apply', () => finish(event.data),
-        {characters: source.length, html_characters: event.data?.html?.length || 0});
-      syntaxWorker.onerror = failed;
-      // Optional decoration must not hold up other blocks indefinitely. The
-      // complete original text stays readable even when a grammar stalls.
-      timer = setTimeout(failed, 5000);
-      syntaxWorker.postMessage({source, kind, language, path});
-    } catch { failed(); }
-  });
+    jobs.push({code, block: {kind, source, language: code.dataset.codeLang || '', path: code.dataset.codePath || ''}});
+    characters += source.length;
+    // Batch small diff lines into one round trip. Large blocks travel whole.
+    if (jobs.length >= 16 || characters >= 65536) break;
+  }
+  for (const code of waiting) syntaxQueue.add(code);
+  if (!jobs.length) return;
+  const request = syntaxRequest = new AbortController();
+  try {
+    const response = await fetch(appUrl('api/syntax/highlight'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(jobs.map(job => job.block)), signal: request.signal,
+    });
+    if (!response.ok) return;
+    const results = await response.json();
+    if (!Array.isArray(results) || results.length !== jobs.length) return;
+    let i = 0;
+    while (i < jobs.length && !request.signal.aborted) {
+      const counts = {blocks: 0, characters: 0, html_characters: 0};
+      measureBrowserWork('syntax.apply', () => {
+        const start = performance.now();
+        do {
+          counts.blocks++;
+          counts.characters += jobs[i].block.source.length;
+          counts.html_characters += results[i]?.html?.length || 0;
+          applySyntaxBlock(jobs[i], results[i]);
+          i++;
+        } while (i < jobs.length && performance.now() - start < 8);
+        if (S.term) updateMatchNav();
+      }, counts);
+      if (i < jobs.length) await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  } catch {
+    // Plain text remains readable. A later paint can retry a transient failure.
+  } finally {
+    syntaxRequest = null;
+    scheduleSyntax();
+  }
 }
 
 function paintSyntax(root = document) {

@@ -164,7 +164,8 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
         expect(page.locator('#setting-scale-value')).to_have_text(f'{scale}%')
         page.keyboard.press('Escape')
     row = page.locator(f'#side .item[data-uid^="{source}:"]').first
-    if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
+    disabled_filter = page.locator(f'#chips button.off[data-source="{source}"]')
+    if disabled_filter.count(): disabled_filter.click()
     row.click()
     page.locator('#a-sdk').click()
     process = page.locator('.sdk-history .turn-process[data-turn-id="past"]')
@@ -186,6 +187,15 @@ def exercise(browser, base, source, events, width, theme, screenshots, scale=100
         bubble = page.locator(f'.sdk-history .msg[data-role="{role}"]').first
         body = bubble.locator(':scope > .message-bubble > .mb')
         expect(body).to_contain_text(end)
+        if role == 'thinking':
+            disclosure = bubble.locator('.thinking-disclosure')
+            expect(body).to_be_hidden()
+            disclosure.click()
+            expect(body).to_be_visible()
+            expect(body).to_contain_text(end)
+            disclosure.click()
+            expect(body).to_be_hidden()
+            continue
         check_bubble_scroll(page, bubble, body, editor)
         bubble.get_by_text('展开全文', exact=False).click()
         assert body.evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')

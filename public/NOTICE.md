@@ -9,7 +9,8 @@ license, assert ownership of imported code, or replace any component's license.
 - `crates/ptyhost` was imported as an independent session host. The repository
   maintainer must establish the applicable redistribution rights for this source
   before publishing; this notice does not invent an upstream license.
-- `web/vendor/highlight/` includes its BSD license in `LICENSE`.
+- `crates/sessiondock/src/syntax/vendor/highlight/` includes the embedded Highlight.js grammars and their BSD license in `LICENSE`.
+  Its HTML renderer collects fragments and joins them once for the embedded engine.
 - `web/vendor/katex/` includes its MIT license in `LICENSE` and bundled font assets.
 - `web/fonts/` includes Ubuntu Font Licence 1.0, SIL Open Font License 1.1, and
   Bitstream Vera notices. See its [README](web/fonts/README.md) and accompanying

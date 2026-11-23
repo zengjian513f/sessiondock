@@ -23,6 +23,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 avif-parse = { version = "2", default-features = false }
 html-escape = "0.2"
 regex = "1"
+# Embed the existing highlight.js grammars in node and Hub binaries.
+rquickjs = { version = "0.11", features = ["parallel"] }
 fancy-regex = "0.18"
 # Search prefilter: the matcher's own simple case-folding tables and the
 # `[\p{L}\p{N}_]` word class (regex-syntax), substring search over folded

@@ -249,6 +249,11 @@ pub struct HubState {
 /// The hub router: one gate, one dispatcher.
 pub fn hub_router(state: HubState) -> Router {
     Router::new()
+        .route(
+            "/api/syntax/highlight",
+            axum::routing::post(super::syntax::highlight)
+                .layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .fallback(any(dispatch))
         .layer(middleware::from_fn(crate::log::requests))
         .layer(middleware::from_fn_with_state(
