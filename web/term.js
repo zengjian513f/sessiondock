@@ -706,16 +706,18 @@ function prepareBugReportNode() {
   for (const n of Nodes.list) {
     const option = document.createElement('option');
     option.value = n.id;
-    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
-    option.disabled = !Nodes.capabilities[n.id]?.enabled || Nodes.capabilities[n.id]?.bug_report !== true;
+    const reason = reportNodeReason(n);
+    option.textContent = reason ? `${n.name}（${reason}）` : n.name;
+    option.disabled = !!reason;
     select.appendChild(option);
   }
   const usable = id => [...select.options].some(o => o.value === id && !o.disabled);
   select.value = preferred.find(usable) || [...select.options].find(o => !o.disabled)?.value || '';
   $('#bug-report-node-label').hidden = false;
-  if (drafted && select.value !== drafted && Nodes.list.some(n => n.id === drafted)) {
+  const draftNode = Nodes.list.find(n => n.id === drafted);
+  if (draftNode && select.value !== drafted) {
     $('#bug-report-error').textContent =
-      `${bugReportNodeName(drafted)} 离线，上面没发出的报告草稿要等它恢复后才能打开`;
+      `${draftNode.name} ${reportNodeReason(draftNode)}，上面没发出的报告草稿要等它恢复后才能打开`;
   }
 }
 
@@ -906,17 +908,17 @@ function bugReportOrigin(workerNode) {
   return {node_id: nodeId, node_name: bugReportNodeName(nodeId), uid};
 }
 
+function reportNodeReason(node) {
+  return nodePickerReason(node, Nodes.capabilities[node.id]?.bug_report === true, '未启用报告');
+}
+
 function bugReportNodeError(node) {
   if (!HUB_MODE) return '';
   if (!node) return '没有可用的机器：请先在顶部选择一台在线机器或打开一个会话';
   const info = Nodes.list.find(n => n.id === node);
-  if (info?.online === false) {
-    return `${info.name || '所选机器'} 离线，无法在该机器上保存报告；请换一台在线机器`;
-  }
-  if (!Nodes.capabilities[node]?.enabled) {
-    return `${info?.name || '所选机器'} 未启用终端，无法启动处理会话；请换一台机器`;
-  }
-  return '';
+  if (!info) return '所选机器已移除';
+  const reason = reportNodeReason(info);
+  return reason ? `${info.name} ${reason}，无法在该机器上保存报告；请换一台机器` : '';
 }
 
 // 处理机器不是问题机器时，先向问题机器要一份服务端上下文（会话行、发送账本、
@@ -941,9 +943,20 @@ function closeBugReportAttachMenu() {
   $('#bug-report-add').setAttribute('aria-expanded', 'false');
 }
 
-function openBugReportDialog() {
+async function openBugReportDialog() {
   if (!bugReportsEnabled()) return;
   const dialog = $('#bug-report-dialog');
+  // Resolve a partial inventory before choosing the draft's processing node.
+  // A failed read can recover while the session remains usable.
+  if (HUB_MODE && Nodes.errors.get('term')?.some(error =>
+      Nodes.list.some(n => n.id === error.node_id && n.online !== false))) {
+    await (T.listRequest || loadTermList());
+    if (dialog.open) return;
+    if (!Nodes.list.some(n => !reportNodeReason(n))) {
+      await appAlert(Nodes.list.map(n => `${n.name}：${reportNodeReason(n)}`).join('\n'));
+      return;
+    }
+  }
   $('#bug-report-type input[value=bug]').checked = true;
   $('#bug-report-error').textContent = '';
   $('#bug-report-go').disabled = typeof staleBuildShown !== 'undefined' && staleBuildShown;

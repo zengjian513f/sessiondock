@@ -119,9 +119,10 @@ const PathCompletion = {
 
   open(input, getUid, autoFill = true, composing = false) {
     const uid = getUid();
-    const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(uid)] : SessionDockCapabilities.config;
+    const node = nodeOf(uid);
+    const capabilities = HUB_MODE ? observedNodeCapabilities.get(node) : SessionDockCapabilities.config;
     const token = this.token(input);
-    if (!uid || capabilities?.conversation_path_completion !== true || !token) {
+    if (!uid || !token || (HUB_MODE && !node) || (capabilities && capabilities.conversation_path_completion !== true)) {
       this.close(input); return;
     }
     const previous = this.states.get(input);
@@ -151,6 +152,18 @@ const PathCompletion = {
   async load(input, state) {
     state.timeout = setTimeout(() => state.abort.abort(), 8000);
     try {
+      // A new Hub page can receive a failed terminal inventory before its first
+      // successful one. Confirm support directly with the session's own node.
+      const node = nodeOf(state.uid);
+      if (HUB_MODE && !observedNodeCapabilities.has(node)) {
+        const meta = await fetch(appUrl(`api/nodes/${node}/api/meta`),
+          {signal: state.abort.signal, cache: 'no-store'});
+        if (!meta.ok) throw new Error(`读取节点能力失败（HTTP ${meta.status}）`);
+        const data = await meta.json();
+        if (!this.valid(input, state)) return;
+        const capabilities = observedNodeCapabilities.get(node) || data.capabilities;
+        if (capabilities?.conversation_path_completion !== true) { this.close(input); return; }
+      }
       const params = new URLSearchParams({uid: state.uid, path: state.token.prefix});
       const response = await fetch(appUrl(`api/session/conversation/complete-path?${params}`),
         {signal: state.abort.signal, cache: 'no-store'});
@@ -163,10 +176,13 @@ const PathCompletion = {
       state.status.remove();
       const list = el('div', 'input-history-list'); list.setAttribute('role', 'listbox');
       list.setAttribute('aria-label', '路径候选');
+      const prefix = state.token.prefix;
+      const parentLength = Math.max(prefix.lastIndexOf('/'), state.token.windows ? prefix.lastIndexOf('\\') : -1) + 1;
       state.entries.forEach((entry, index) => {
         const button = el('button', 'input-history-item'); button.type = 'button'; button.tabIndex = -1;
         button.id = `${state.box.id}-${index}`; button.setAttribute('role', 'option');
-        button.append(el('span', 'input-history-text', entry.path), el('small', '', entry.directory ? '目录' : '文件'));
+        button.title = entry.path;
+        button.append(el('span', 'input-history-text', entry.path.slice(parentLength)), el('small', '', entry.directory ? '目录' : '文件'));
         button.onmousedown = event => event.preventDefault();
         button.onclick = () => this.insert(input, state, entry);
         state.buttons.push(button); list.append(button);

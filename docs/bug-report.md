@@ -403,7 +403,10 @@ audit and lifecycle services listed above; capture-only does not remove those
 storage/service prerequisites. With `SESSIONDOCK_BUG_REPORT_WORKER=true`, the
 existing launch flow and `202` worker response remain. Report buttons are hidden
 when the report capability is absent; the source/model controls are hidden when
-only capture is configured. Hub tracks these capabilities per node.
+only capture is configured. Hub uses each node’s report capability for the picker and
+submission. Both the report and new-session pickers use registry health for the offline
+label. They distinguish a failed or missing capability observation from a disabled feature.
+The report picker retries an online node’s failed inventory before choosing the draft’s machine.
 
 Worker prompts follow the target repository's AGENTS.md and user authorization.
 They contain no built-in fleet deploy command or implicit publishing permission.

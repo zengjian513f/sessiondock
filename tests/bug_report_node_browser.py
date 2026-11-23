@@ -122,8 +122,9 @@ def open_report(page):
     # Resolve whichever entry is currently visible on every click retry.
     page.wait_for_timeout(150)  # responsive header settles after viewport changes
     page.locator("#report-bug:visible, #header-more-btn:visible").first.click()
-    if not page.locator("#bug-report-dialog").is_visible():
-        page.locator("#report-bug").click()
+    if page.locator('#header-menu #report-bug').is_visible():
+        page.locator('#header-menu #report-bug').click()
+    expect(page.locator('#bug-report-dialog')).to_be_visible()
 
 
 def check_report_drag_selection(page):
@@ -796,16 +797,19 @@ def main():
                     assert not page.locator("#bug-report-error").inner_text()
                     page.locator("#bug-report-dialog .modal-close").click()
                     # Its machine going offline says where the draft is instead of hiding it.
-                    nodes[1].set(term_enabled=False)
+                    nodes[1].set(offline=True)
                     page.evaluate("loadTermList()")
                     page.wait_for_function(('Nodes.capabilities["' + NID["b"] + '"]?.enabled === false'))
+                    page.evaluate('loadTermList(true)')
+                    page.wait_for_function("Nodes.list.find(n => n.name === 'NodeB').online === false")
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     assert page.evaluate("bugReportNode()") == NID["a"]
                     assert page.locator("#bug-report-error").inner_text() \
                         == "NodeB 离线，上面没发出的报告草稿要等它恢复后才能打开"
                     page.locator("#bug-report-dialog .modal-close").click()
-                    nodes[1].set(term_enabled=True)
+                    nodes[1].set(offline=False)
+                    page.wait_for_function("Nodes.list.find(n => n.name === 'NodeB').online === true", timeout=30000)
                     page.evaluate("loadTermList()")
                     page.wait_for_function(('Nodes.capabilities["' + NID["b"] + '"]?.enabled === true'))
                     open_report(page)
@@ -854,19 +858,34 @@ def main():
                     assert not page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")
                     page.locator("#bug-report-dialog .modal-close").click()
 
-                    # 5. A machine without a usable terminal is just "（离线）" in both pickers.
+                    # Opening the picker retries an online node's failed observation.
+                    nodes[0].set(term_error=True)
+                    page.evaluate('loadTermList(true)')
+                    page.wait_for_function("Nodes.errors.get('term')?.some(e => e.node_id === '"
+                                           + NID['a'] + "')")
+                    nodes[0].set(term_error=False)
+                    open_report(page)
+                    expect(page.locator('#bug-report-node')).to_have_value(NID['a'])
+                    expect(page.locator('#bug-report-node option:checked')).to_have_text('NodeA')
+                    page.locator("#bug-report-dialog .modal-close").click()
+
+                    # 5. Terminal availability, report support and node reachability are independent.
                     nodes[2].set(term_enabled=False)
                     page.evaluate("loadTermList()")
                     page.wait_for_function(('Nodes.capabilities["' + NID["c"] + '"]?.enabled === false'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     vega = next(o for o in options(page) if o["text"].startswith("Vega"))
-                    assert vega == {**vega, "text": "Vega（离线）", "disabled": True}, vega
-                    page.locator("#bug-report-dialog .modal-close").click()
+                    assert vega == {"value": NID["c"], "text": "Vega", "disabled": False}, vega
+                    page.select_option("#bug-report-node", NID["c"])
+                    page.fill("#bug-report-description", "在线节点保存报告")
+                    page.locator("#bug-report-go").click()
+                    expect(page.locator("#bug-report-dialog")).not_to_be_visible()
+                    assert boundary.calls[-1][1]["_node"] == NID["c"]
                     page.locator("#new-session").click()
                     expect(page.locator("#new-session-dialog")).to_be_visible()
                     assert page.evaluate("""() => [...document.querySelectorAll('#new-node option')]
-                        .filter(o => o.value === '%s').map(o => [o.textContent, o.disabled])""" % NID["c"]) == [["Vega（离线）", True]]
+                        .filter(o => o.value === '%s').map(o => [o.textContent, o.disabled])""" % NID["c"]) == [["Vega（无法启动会话）", True]]
                     page.locator("#new-session-dialog .modal-cancel").click()
                     nodes[2].set(term_enabled=True)
                     page.evaluate("loadTermList()")

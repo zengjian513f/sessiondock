@@ -6,9 +6,9 @@ const STORAGE_PREFIX = SessionDockCapabilities.namespace
 // list 只有启用的机器，别处都按它；machines 是设置页用的完整名单（含停用的），
 // 顺序就是注册表顺序，只由用户在设置页拖动决定，不随启用状态变
 const Nodes = {list: [], machines: [], off: new Set(), capabilities: {}, errors: new Map()};
-// Last successful SDK capability observations are for viewing only. Failed
-// terminal probes still disable launch controls through Nodes.capabilities.
-const sdkViewCapabilities = new Map();
+// Read-only features can use the last successful observation during a failed probe.
+// Launch controls use the current observation in Nodes.capabilities.
+const observedNodeCapabilities = new Map();
 try { Nodes.off = new Set(JSON.parse(SessionDockCapabilities.stored('nodesOff', STORAGE_PREFIX)) || []); } catch {}
 
 function nodeOf(uid) {
@@ -51,7 +51,7 @@ function agentSdkAvailable(source, node = '') {
   return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
 }
 function hubSdkViewAvailable(source, node) {
-  const cap = sdkViewCapabilities.get(node) || Nodes.capabilities[node] || {};
+  const cap = observedNodeCapabilities.get(node) || Nodes.capabilities[node] || {};
   return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
 }
 function agentStartUnavailable(source, node = '') {
@@ -401,7 +401,7 @@ function applyNodeState(data, context = 'nodes') {
   if (data.capabilities) {
     const failed = new Set((data.errors || []).map(error => error.node_id));
     for (const [node, cap] of Object.entries(data.capabilities)) {
-      if (!failed.has(node)) sdkViewCapabilities.set(node, cap);
+      if (!failed.has(node)) observedNodeCapabilities.set(node, cap);
     }
     Nodes.capabilities = data.capabilities;
   }
@@ -535,6 +535,13 @@ async function loadNodes() {
   applyNodeState(await r.json());
 }
 
+function nodePickerReason(node, available, unavailable) {
+  if (node.online === false) return '离线';
+  if (Nodes.errors.get('term')?.some(error => error.node_id === node.id)) return '能力读取失败';
+  if (!Nodes.capabilities[node.id]) return '尚未读取能力';
+  return available ? '' : unavailable;
+}
+
 function prepareNewNode() {
   if (!HUB_MODE) return;
   const select = document.querySelector('#new-node');
@@ -548,8 +555,9 @@ function prepareNewNode() {
       || (!newContinueOrigin && (Nodes.capabilities[n.id]?.codex_sdk === true || Object.values(Nodes.capabilities[n.id]?.native_sdks || {}).some(Boolean)));
     const option = document.createElement('option');
     option.value = n.id;
-    option.textContent = n.name + (available ? '' : '（离线）');
-    option.disabled = !available;
+    const reason = nodePickerReason(n, available, '无法启动会话');
+    option.textContent = reason ? `${n.name}（${reason}）` : n.name;
+    option.disabled = !!reason;
     select.appendChild(option);
   }
   if ([...select.options].some(o => o.value === preferred && !o.disabled)) select.value = preferred;

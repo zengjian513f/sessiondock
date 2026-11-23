@@ -89,6 +89,64 @@ def visible_attachments(page, selector, width):
     assert download.suggested_filename == '屏幕截图-with-realistic-long-name.png'
 
 
+def exercise_partial_inventory(page, editor, uid, work, screenshots, label):
+    nid = uid.split(':', 1)[1].split('~', 1)[0]
+    failed = True
+
+    def probe(route):
+        response = route.fetch()
+        data = response.json()
+        cap = data['capabilities'][nid]
+        cap['conversation_path_completion'] = False
+        if failed:
+            cap.update(enabled=False, codex_sdk=False, native_sdks={}, sources={}, conversation_send=False,
+                       bug_report=False, bug_report_worker=False, resume_sources={})
+            data.update(partial=True, errors=[{'node_id': nid, 'error': 'terminal list timed out'}])
+        route.fulfill(response=response, json=data)
+
+    def check_candidates(tab, field):
+        field.fill(' ' + str(work) + '/')
+        field.press('Tab')
+        popup = tab.get_by_role('listbox', name='路径候选')
+        expect(popup.get_by_role('option')).to_have_count(4)
+        if screenshots and tab == page:
+            tab.screenshot(path=str(screenshots / f'{label}-partial-paths.png'), full_page=True)
+        candidate = popup.get_by_role('option', name='readme-two.md 文件', exact=True)
+        expect(candidate).to_have_attribute('title', str(work / 'readme-two.md'))
+        candidate.click()
+        expect(field).to_have_value(' ' + str(work / 'readme-two.md'))
+
+    page.route('**/api/term/list*', probe)
+    try:
+        page.evaluate('loadTermList(true)')
+        page.wait_for_function("Nodes.errors.get('term')?.length > 0")
+        check_candidates(page, editor)
+        if label.startswith('hub-1280'):
+            # An independently opened page has never received this node's capabilities.
+            cold = page.context.new_page()
+            try:
+                cold.route('**/api/term/list*', probe)
+                cold.goto(page.url)
+                cold.wait_for_function("Nodes.errors.get('term')?.length > 0")
+                with cold.expect_response(lambda reply: reply.url.endswith(f'/nodes/{nid}/api/meta')) as meta:
+                    check_candidates(cold, cold.locator('#cinput'))
+                assert meta.value.ok
+            finally:
+                cold.close()
+
+        # A successful inventory explicitly turning completion off takes effect immediately.
+        failed = False
+        page.evaluate('loadTermList(true)')
+        page.wait_for_function("!Nodes.errors.get('term')?.length")
+        editor.fill(' ' + str(work) + '/')
+        editor.press('Tab')
+        expect(editor).to_be_focused()
+        expect(page.get_by_role('listbox', name='路径候选')).to_have_count(0)
+    finally:
+        page.unroute('**/api/term/list*', probe)
+        page.evaluate('loadTermList(true)')
+
+
 def exercise(browser, base, fake, root, width, theme, screenshots, label):
     print(f'{label}: SDK draft/upload recovery, isolation and SEND', flush=True)
     context = browser.new_context(viewport={'width': width, 'height': 900 if width > 500 else 844},
@@ -117,6 +175,8 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         editor.fill('查看 ~/home-n')
         editor.press('Tab')
         expect(editor).to_have_value('查看 ~/home-note.txt')
+        if label.startswith('hub-'):
+            exercise_partial_inventory(page, editor, uid, work, screenshots, label)
         exercise_paths(page, editor, work, screenshots / f'{label}-paths.png' if screenshots else None)
         saved(page, uid, '请检查 ./readme-one.md')
         page.reload(wait_until='domcontentloaded')

@@ -7473,7 +7473,7 @@ function sessionViewRows(m) {
 }
 
 function bugReportsEnabled() {
-  return HUB_MODE ? Object.values(Nodes.capabilities).some(cap => cap.enabled && cap.bug_report === true)
+  return HUB_MODE ? Nodes.list.some(n => n.online !== false && observedNodeCapabilities.get(n.id)?.bug_report === true)
     : SessionDockCapabilities.config.bug_report === true;
 }
 // The native catalog can render before the later deferred terminal script.
