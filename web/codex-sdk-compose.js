@@ -12,6 +12,10 @@ const CodexSdkCompose = {
     state.ready = new Promise(resolve => {
       const start = () => {
         if (this.states.get(view) !== state) { resolve(); return; }
+        if (SdkView.historyOnlyReason(view.uid, view.agent)) {
+          state.input.placeholder = '只读子会话';
+          resolve(); return;
+        }
         if (view.agent || typeof composerDraft !== 'function' || !conversationSendEnabled()
             || (HUB_MODE && Nodes.capabilities[nodeOf(state.uid)]?.conversation_send !== true)) {
           state.input.disabled = !!view.externalObserved;

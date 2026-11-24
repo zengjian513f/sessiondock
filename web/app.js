@@ -7537,6 +7537,8 @@ function head(m, total) {
   h.dataset.uid = m.uid;
   const tmuxLive = S.liveTmux.has(m.uid);
   const hasAgents = (m.agent_items || []).length > 0;
+  const canToggleRun = !m.agent_id
+    || (SdkView.available(m.uid, m.agent_id) && !SdkView.historyOnlyReason(m.uid, m.agent_id));
   const displayTitle = m.title || (m.source === 'kiro' ? '新建 Kiro 会话' : '');
   const titleView = hasAgents ? `
     <button class="session-view-switch" id="a-view-switch" type="button"
@@ -7564,7 +7566,7 @@ function head(m, total) {
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>
         <div class="session-menu-diagnostics session-run-actions">
-          ${m.agent_id && !SdkView.available(m.uid, m.agent_id) ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
+          ${canToggleRun ? '<button class="session-menu-action" id="a-session-toggle" type="button"></button>' : ''}
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
           ${continueSessionButtonMarkup(m)}
         </div>
@@ -7859,6 +7861,8 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
 function sessionStartUnavailable(row, mode) {
   if (sessionTransferFrozen(row?.uid)) return transferFrozenReason;
   if (!row || row.pending) return sessionRunUnavailable(row);
+  const historyOnly = SdkView.historyOnlyReason(row.uid, row.agent_id);
+  if (historyOnly) return historyOnly;
   if (ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
   if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null)
     && (!HUB_MODE || agentSdkAvailable(sessionSourceOf(row.uid), nodeOf(row.uid)))
@@ -7965,6 +7969,7 @@ function composerExternalCli(uid, agent = null) {
 function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   if (!notice || !uid) return;
   const row = agent ? {...sessionRunRow(uid), agent_id:agent} : sessionRunRow(uid);
+  const historyOnly = SdkView.historyOnlyReason(uid, agent);
   const external = composerExternalCli(uid, agent);
   const externalAcp = S.liveExternalSdk.has(uid);
   const busy = ConsoleUI.busy.has(uid);
@@ -7977,7 +7982,7 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
     button.onmousedown = event => event.preventDefault();
     notice.after(button);
   } else notice.after(button);
-  button.hidden = externalAcp || (!external && !idle && !busy);
+  button.hidden = !!historyOnly || externalAcp || (!external && !idle && !busy);
   notice.classList.toggle('external-cli-status', external);
   if (!externalAcp && (external || idle && !busy && !view?.openFailed)) {
     const text = external ? '正在外部CLI运行' : '未运行';
@@ -8005,10 +8010,10 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
       const text = running ? '运行中' : item ? '未运行' : '只读子会话';
       notice.querySelector('[role=status]').textContent = text;
       notice.dataset.state = running ? 'ready' : 'idle';
-      notice.title = text;
+      notice.title = historyOnly ? `${text}。${historyOnly}` : text;
       notice.hidden = false;
       const details = notice.parentElement.querySelector('.sdk-status-menu');
-      if (details) details.textContent = text;
+      if (details) details.textContent = notice.title;
     }
   }
 }

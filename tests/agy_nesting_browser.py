@@ -8,10 +8,13 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+from types import SimpleNamespace
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
 from agy_history_browser import SCHEMA, record, system_record, write_transcript, private_environment, execute
 from history_fixtures import BINARY, REPO, Corpus, isolated_server, encoded, get_json
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
 from spawned_by_fixtures import proc_pid
 from send_browser import initialize
 
@@ -38,6 +41,21 @@ def pending_tasks():
             {**record(4, 'PLANNER_RESPONSE', '训练任务已提交，继续等待后台通知。'),
              'synthetic_padding': 'x' * (600 * 1024)},
             record(5, 'PLANNER_RESPONSE', '已启动后台定时器，等待检查训练进度。')]
+
+
+def expect_read_only_child(page, status_row, state, screenshot=None):
+    row = page.locator(status_row)
+    status = row.locator('.sdk-status')
+    expect(status).to_have_text(state)
+    expect(row.locator('.composer-run-action')).to_be_hidden()
+    expect(page.locator('#a-session-toggle')).to_have_count(0)
+    status.click()
+    details = row.locator('.sdk-status-menu:popover-open')
+    expect(details).to_contain_text('Agy 子代理由主会话管理')
+    if screenshot:
+        page.screenshot(path=str(screenshot))
+    page.keyboard.press('Escape')
+    expect(details).to_have_count(0)
 
 
 def run(binary, screenshots):
@@ -81,8 +99,10 @@ def run(binary, screenshots):
         try:
             with private_environment(root):
                 for restart in (False, True):
+                    node_port = free_port()
                     with isolated_server(Corpus(root), binary, state_dir=root / 'state', host_dir=root / 'host',
-                        extra_env={'SESSIONDOCK_AGY_HOME': str(native), 'SESSIONDOCK_AGY_ROOT': str(root / 'mirror'),
+                        extra_env={**node_env(root, node_port, '127.0.0.0/8'),
+                                   'SESSIONDOCK_AGY_HOME': str(native), 'SESSIONDOCK_AGY_ROOT': str(root / 'mirror'),
                                    'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_LAUNCHER_CONFIG': str(launcher),
                                    'SESSIONDOCK_LIFECYCLE_DIR': str(root / 'ledger'),
                                    'SESSIONDOCK_PROC_ROOT': str(root / 'proc')}) as (base, opener):
@@ -119,15 +139,19 @@ def run(binary, screenshots):
                             expect(page.locator('#msgs')).to_contain_text('History ' + CHILD)
                             assert page.evaluate('S.agent') == CHILD
                             page.wait_for_function('uid => S.live.has(uid)', arg=parent['uid'])
-                            expect(page.locator('#conversation-status .sdk-status')).to_have_text('运行中')
                             page.locator('#a-sdk').click()
                             expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect(page.locator('.sdk-history')).to_contain_text('History ' + CHILD)
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-sdk-child.png'))
+                            expect_read_only_child(page, '#sdk-composer', '运行中')
+                            expect(page.locator('#sdk-input')).to_be_disabled()
                             expect(page.locator('#sdk-send')).to_be_disabled()
                             page.locator('#a-view-switch').click()
                             expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_be_visible()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-running-menu.png'))
                             page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
                             page.locator('#a-chat').click()
+                            expect_read_only_child(page, '#conversation-status', '运行中')
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-child.png'))
                             page.reload()
                             expect(page.locator('#msgs')).to_contain_text('History ' + CHILD)
@@ -163,6 +187,33 @@ def run(binary, screenshots):
                             assert not opens, opens
                             context.close()
                             print(f'PASS native Agy ownership: {theme} {width}, restart={restart}', flush=True)
+                        if not restart:
+                            hub_root = root / 'hub'
+                            hub_root.mkdir()
+                            hub = Hub(binary.resolve().with_name('sessiondock-hub'), hub_root,
+                                      [SimpleNamespace(name='AgyNode', token=TOKEN, port=node_port)])
+                            hub.start()
+                            try:
+                                hub_base = f'http://127.0.0.1:{hub.port}'
+                                context = browser.new_context(viewport={'width': 390, 'height': 844},
+                                                              color_scheme='dark', service_workers='block')
+                                context.route('**/*', lambda route: route.continue_()
+                                              if route.request.url.startswith(hub_base + '/') else route.abort())
+                                page = context.new_page()
+                                opens = []
+                                page.on('request', lambda request: opens.append(request.url)
+                                    if request.method == 'POST' and request.url.endswith('/open') else None)
+                                page.goto(f'{hub_base}/?sid=agy:{PARENT}/agent:{CHILD}')
+                                expect(page.locator('.sdk-history')).to_contain_text('History ' + CHILD)
+                                expect_read_only_child(page, '#sdk-composer', '运行中',
+                                                       screenshots / 'hub-dark-390-sdk-child-details.png')
+                                expect(page.locator('#sdk-send')).to_be_disabled()
+                                page.screenshot(path=str(screenshots / 'hub-dark-390-sdk-child.png'))
+                                assert not opens, opens
+                                context.close()
+                                print('PASS Hub Agy child history and runtime controls', flush=True)
+                            finally:
+                                hub.stop()
                         # Native parent changes must invalidate graph ownership without metadata writes.
                         if restart:
                             context = browser.new_context()
@@ -194,9 +245,10 @@ def run(binary, screenshots):
                             child.click()
                             page.locator('#a-chat').click()
                             expect(page.locator('#msgs')).to_contain_text('Check training progress.')
-                            expect(page.locator('#conversation-status .sdk-status')).to_have_text('未运行')
+                            expect_read_only_child(page, '#conversation-status', '未运行')
                             page.locator('#a-sdk').click()
-                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            expect_read_only_child(page, '#sdk-composer', '未运行')
+                            page.screenshot(path=str(screenshots / 'light-1280-sdk-child-idle.png'))
                             page.locator('#a-view-switch').click()
                             expect(page.locator('#session-view-menu')).to_be_visible()
                             expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_have_count(0)

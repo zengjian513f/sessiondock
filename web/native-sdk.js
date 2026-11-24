@@ -1320,6 +1320,10 @@ const SdkView = new Proxy({
     return this.backgroundTerms || Promise.resolve();
   },
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
+  historyOnlyReason(uid, agent) {
+    return agent && sessionSourceOf(uid) === 'agy'
+      ? 'Agy 子代理由主会话管理。请切回主会话。' : '';
+  },
   views: new Map(),
   selection: null,
   preferredMode(uid, agent) {
@@ -1511,7 +1515,7 @@ const SdkView = new Proxy({
     closeWatch();
   },
   async startSession(uid, agent = null) {
-    if (S.liveExternalSdk.has(uid)) return;
+    if (S.liveExternalSdk.has(uid) || this.historyOnlyReason(uid, agent)) return;
     // An explicit start during ownership discovery replaces the read-only
     // preview with the real view; otherwise discovery completion closes it.
     if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent || this.discovering)
