@@ -2369,11 +2369,25 @@ function paintTurn(uid) {
   if (uid === S.sel) paintHeaderTurn();
 }
 
+function paintAgyAgentHeader(badge, uid, agent, fallbackItems) {
+  const items = indexedSessions().byUid.get(uid)?.agent_items || fallbackItems || [];
+  const item = items.find(item => item.id === agent);
+  const running = !!item && agentRunning(uid, item);
+  badge.classList.toggle('visible', running);
+  badge.classList.toggle('turn-working', running);
+  badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
+}
+
 function paintHeaderTurn() {
   SdkUI.syncTitleRename();
   syncSessionFreezeOverlay();
   const h = $('#dlive');
   if (!h) return;
+  paintTransferAvailability($('#a-clone-group'), S.sel);
+  if (S.agent && sessionSourceOf(S.sel) === 'agy') {
+    paintAgyAgentHeader(h, S.sel, S.agent, cache.get(viewKey(S.sel, S.agent))?.meta.agent_items);
+    return;
+  }
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
   const status = sessionLiveStatus(S.sel);
   const tmux = status.tmux || !!row?.classList.contains('live-tmux');
@@ -2389,7 +2403,6 @@ function paintHeaderTurn() {
   h.classList.toggle('turn-waiting', turn === 'waiting');
   h.title = h.ariaLabel = status.children && !status.sdk ? '原生子代理仍在运行' : status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : liveStatusTitle(tmux)
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
-  paintTransferAvailability($('#a-clone-group'), S.sel);
 }
 
 function addUnread(uid, agent, count) {
@@ -2532,16 +2545,7 @@ function paintLive() {
     n.classList.toggle('live-tmux', n.dataset.tmuxName ? !!pendingRunning : S.liveTmux.has(n.dataset.uid));
     paintItemStatus(n);
   }
-  const h = $('#dlive');
-  if (h) {
-    // 临时会话（还没有 JSONL）按左栏同样的规则算运行中
-    const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
-    const live = row ? row.classList.contains('live') : S.live.has(S.sel);
-    const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
-    h.classList.toggle('visible', live);
-    h.classList.toggle('tmux', tmux);
-    paintHeaderTurn();
-  }
+  if ($('#dlive')) paintHeaderTurn();
   const selected = S.sessions.find(x => x.uid === S.sel);
   if (selected) {
     renderSessionAction(selected);
@@ -2986,7 +2990,10 @@ function refreshSessionMeta() {
     replaceSessionHead(oldHead, current.meta, entryTotal(current));
     auditDetailRendered('meta-refresh');
   }
-  if (S.agent) refreshComposerRunControls();
+  if (S.agent) {
+    if (sessionSourceOf(S.sel) === 'agy') paintHeaderTurn();
+    refreshComposerRunControls();
+  }
 }
 
 function sidebarChildVisible(s) {
@@ -7535,7 +7542,10 @@ function replaceSessionHead(previous, meta, total) {
 function head(m, total) {
   const h = el('div', 'dhead');
   h.dataset.uid = m.uid;
-  const tmuxLive = S.liveTmux.has(m.uid);
+  const agyAgent = m.source === 'agy' && m.agent_id;
+  const titleIcon = agyAgent
+    ? `<span class="ico">${icon(m.source)}<span class="item-status" id="dlive"></span></span>`
+    : sessionIconMarkup(m.source, S.live.has(m.uid), S.liveTmux.has(m.uid), sessionTurn(m.uid));
   const hasAgents = (m.agent_items || []).length > 0;
   const canToggleRun = !m.agent_id
     || (SdkView.available(m.uid, m.agent_id) && !SdkView.historyOnlyReason(m.uid, m.agent_id));
@@ -7550,8 +7560,7 @@ function head(m, total) {
   h.innerHTML = `
     <div class="dtitle">
       <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
-      <h2 class="${hasAgents ? 'has-session-views' : ''}">${sessionIconMarkup(m.source,
-        S.live.has(m.uid), tmuxLive, sessionTurn(m.uid))}${titleView}</h2>
+      <h2 class="${hasAgents ? 'has-session-views' : ''}">${titleIcon}${titleView}</h2>
       ${menuView}
       <div class="dhead-actions" aria-label="会话操作">
         ${consoleButtonMarkup()}
@@ -7588,6 +7597,7 @@ function head(m, total) {
     </div>`)}
       </div>
     </div>`;
+  if (agyAgent) paintAgyAgentHeader(h.querySelector('#dlive'), m.uid, agyAgent, m.agent_items);
   paintHeadDirectory(h);
   if (['agy', 'kiro'].includes(m.source) && Array.isArray(m.migration_warnings)) {
     for (const warning of m.migration_warnings) {

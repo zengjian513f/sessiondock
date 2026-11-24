@@ -23,6 +23,7 @@ CHILD = 'a6000000-0000-4000-8000-000000000012'
 GRANDCHILD = 'a6000000-0000-4000-8000-000000000013'
 MISSING = 'a6000000-0000-4000-8000-000000000014'
 ORPHAN = 'a6000000-0000-4000-8000-000000000015'
+COMPLETED = 'a6000000-0000-4000-8000-000000000016'
 
 
 def task(index, sid=CHILD):
@@ -43,10 +44,20 @@ def pending_tasks():
             record(5, 'PLANNER_RESPONSE', '已启动后台定时器，等待检查训练进度。')]
 
 
+def expect_child_header(page, running):
+    badge = page.locator('#dlive')
+    if running:
+        expect(badge).to_be_visible()
+        expect(badge).to_have_attribute('title', '子代理运行中')
+    else:
+        expect(badge).to_be_hidden()
+
+
 def expect_read_only_child(page, status_row, state, screenshot=None):
     row = page.locator(status_row)
     status = row.locator('.sdk-status')
     expect(status).to_have_text(state)
+    expect_child_header(page, state == '运行中')
     expect(row.locator('.composer-run-action')).to_be_hidden()
     expect(page.locator('#a-session-toggle')).to_have_count(0)
     status.click()
@@ -73,6 +84,7 @@ def run(binary, screenshots):
                 (PARENT, '复核已关闭研报实验 / Agy native parent', '', 'CASCADE_RUN_STATUS_IDLE'),
                 (CHILD, '', PARENT, 'CASCADE_RUN_STATUS_IDLE'),
                 (GRANDCHILD, 'Nested reviewer / 核对实验结果与历史结论', CHILD, 'CASCADE_RUN_STATUS_RUNNING'),
+                (COMPLETED, '已完成的审阅子代理', PARENT, 'CASCADE_RUN_STATUS_IDLE'),
                 (ORPHAN, '暂时缺失的父会话', MISSING, 'CASCADE_RUN_STATUS_IDLE')):
                 connection.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
                     (sid, title, '2026-10-16T14:23:00Z', json.dumps([(root / 'work').as_uri()]),
@@ -119,10 +131,10 @@ def run(binary, screenshots):
                                 if request.method == 'POST' and request.url.split('?')[0].endswith('/open') else None)
                             page.set_default_timeout(15000)
                             page.goto(base)
-                            page.wait_for_function('sid => S.sessions.some(r => r.sid === sid && r.agents === 2)', arg=PARENT)
+                            page.wait_for_function('sid => S.sessions.some(r => r.sid === sid && r.agents === 3)', arg=PARENT)
                             rows = page.evaluate('S.sessions')
                             parent = next(row for row in rows if row['sid'] == PARENT)
-                            assert not any(row['sid'] in (CHILD, GRANDCHILD, ORPHAN) for row in rows)
+                            assert not any(row['sid'] in (CHILD, GRANDCHILD, COMPLETED, ORPHAN) for row in rows)
                             child = page.locator(f'#side .item.agent[data-agent="{CHILD}"]')
                             caret = page.locator(f'#side .item[data-uid="{parent["uid"]}"] .nest-caret')
                             if not child.is_visible():
@@ -149,6 +161,11 @@ def run(binary, screenshots):
                             page.locator('#a-view-switch').click()
                             expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_be_visible()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-running-menu.png'))
+                            page.locator(f'#session-view-menu button[data-agent="{COMPLETED}"]').click()
+                            expect(page.locator('.sdk-history')).to_contain_text('History ' + COMPLETED)
+                            expect_read_only_child(page, '#sdk-composer', '未运行')
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-sdk-sibling-idle.png'))
+                            page.locator('#a-view-switch').click()
                             page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
                             page.locator('#a-chat').click()
                             expect_read_only_child(page, '#conversation-status', '运行中')
@@ -209,6 +226,11 @@ def run(binary, screenshots):
                                                        screenshots / 'hub-dark-390-sdk-child-details.png')
                                 expect(page.locator('#sdk-send')).to_be_disabled()
                                 page.screenshot(path=str(screenshots / 'hub-dark-390-sdk-child.png'))
+                                page.locator('#a-view-switch').click()
+                                page.locator(f'#session-view-menu button[data-agent="{COMPLETED}"]').click()
+                                expect(page.locator('.sdk-history')).to_contain_text('History ' + COMPLETED)
+                                expect_read_only_child(page, '#sdk-composer', '未运行')
+                                page.screenshot(path=str(screenshots / 'hub-dark-390-sdk-sibling-idle.png'))
                                 assert not opens, opens
                                 context.close()
                                 print('PASS Hub Agy child history and runtime controls', flush=True)
@@ -252,21 +274,27 @@ def run(binary, screenshots):
                             page.locator('#a-view-switch').click()
                             expect(page.locator('#session-view-menu')).to_be_visible()
                             expect(page.locator(f'#session-view-menu button[data-agent="{CHILD}"] .view-live')).to_have_count(0)
+                            expect(page.locator(f'#session-view-menu button[data-agent="{GRANDCHILD}"] .view-live')).to_be_visible()
+                            expect(page.locator(f'#side .item[data-uid="{uid}"] .item-status')).to_be_visible()
                             page.screenshot(path=str(screenshots / 'completed-menu.png'))
                             page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
                             append(task(11))
                             activity(True)
                             expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect_child_header(page, True)
                             proc_dir = root / 'proc/100'
                             proc_dir.rename(root / 'paused-proc')
                             page.wait_for_function('uid => !S.live.has(uid)', arg=uid)
                             expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            expect_child_header(page, False)
                             (root / 'paused-proc').rename(proc_dir)
                             page.wait_for_function('uid => S.live.has(uid)', arg=uid)
                             expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect_child_header(page, True)
                             append(system_record(12, '[Notice] Native runtime restarted; background tasks have stopped.'))
                             activity(False)
                             expect(page.locator('#sdk-composer .sdk-status')).to_have_text('未运行')
+                            expect_child_header(page, False)
                             # Rewrites/rewinds replace the task evidence; completed step updates close it.
                             write_transcript(native, CHILD, [record(0, 'PLANNER_RESPONSE', 'agy child live tail'), task(1)])
                             activity(True)
