@@ -2,6 +2,7 @@
 """Agy native parent ownership through Chromium; synthetic catalog, no CLI."""
 from __future__ import annotations
 import argparse
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,8 @@ import tempfile
 from types import SimpleNamespace
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
-from agy_history_browser import SCHEMA, record, system_record, write_transcript, private_environment, execute
+from agy_history_browser import SCHEMA, record as history_record, system_record as history_system_record
+from agy_history_browser import write_transcript, private_environment, execute
 from history_fixtures import BINARY, REPO, Corpus, isolated_server, encoded, get_json
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
@@ -24,12 +26,26 @@ GRANDCHILD = 'a6000000-0000-4000-8000-000000000013'
 MISSING = 'a6000000-0000-4000-8000-000000000014'
 ORPHAN = 'a6000000-0000-4000-8000-000000000015'
 COMPLETED = 'a6000000-0000-4000-8000-000000000016'
+TIMER_WAIT = '后台定时任务等待中'
+HISTORY_START = datetime.now(timezone.utc) - timedelta(minutes=1)
 
 
-def task(index, sid=CHILD):
-    value = record(index, 'GENERIC', 'Created At: 2026-10-16T14:23:00Z\n'
+def stamp(index):
+    return (HISTORY_START + timedelta(seconds=index)).isoformat()
+
+
+def record(index, kind, text):
+    return {**history_record(index, kind, text), 'created_at': stamp(index)}
+
+
+def system_record(index, text, **kwargs):
+    return {**history_system_record(index, text, **kwargs), 'created_at': stamp(index)}
+
+
+def task(index, sid=CHILD, prompt='Check training progress.'):
+    value = record(index, 'GENERIC', f'Created At: {stamp(index)}\n'
         f'Tool is running as a background task with task id: {sid}/task-{index}\n'
-        'Task Description: Timer: 10m, Prompt: Check training progress.')
+        f'Task Description: Timer: 10m, Prompt: {prompt}')
     value['status'] = 'RUNNING'
     return value
 
@@ -53,16 +69,24 @@ def expect_child_header(page, running):
         expect(badge).to_be_hidden()
 
 
-def expect_read_only_child(page, status_row, state, screenshot=None):
+def expect_read_only_child(page, status_row, state, screenshot=None, detail_text=None):
     row = page.locator(status_row)
     status = row.locator('.sdk-status')
-    expect(status).to_have_text(state)
-    expect_child_header(page, state == '运行中')
+    expect(status.locator('[role=status]')).to_have_text(state)
+    expect_child_header(page, state != '未运行')
     expect(row.locator('.composer-run-action')).to_be_hidden()
     expect(page.locator('#a-session-toggle')).to_have_count(0)
     status.click()
     details = row.locator('.sdk-status-menu:popover-open')
     expect(details).to_contain_text('Agy 子代理由主会话管理')
+    if state == TIMER_WAIT:
+        expect(details.locator('.sdk-timer-item')).to_have_count(1)
+        expect(details).to_contain_text('Check training progress.')
+        expect(details).to_contain_text('预计触发')
+        expect(details).to_contain_text('设置于')
+    if detail_text:
+        expect(details).to_contain_text(detail_text)
+        expect(details).to_contain_text('当前步骤已用时')
     if screenshot:
         page.screenshot(path=str(screenshot))
     page.keyboard.press('Escape')
@@ -87,10 +111,12 @@ def run(binary, screenshots):
                 (COMPLETED, '已完成的审阅子代理', PARENT, 'CASCADE_RUN_STATUS_IDLE'),
                 (ORPHAN, '暂时缺失的父会话', MISSING, 'CASCADE_RUN_STATUS_IDLE')):
                 connection.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',
-                    (sid, title, '2026-10-16T14:23:00Z', json.dumps([(root / 'work').as_uri()]),
+                    (sid, title, stamp(0), json.dumps([(root / 'work').as_uri()]),
                      parent, status, 1, 'self'))
                 write_transcript(native, sid, [record(0, 'PLANNER_RESPONSE', 'History ' + sid)])
         write_transcript(native, CHILD, pending_tasks())
+        write_transcript(native, GRANDCHILD, [record(0, 'PLANNER_RESPONSE', 'History ' + GRANDCHILD),
+                                              task(1, GRANDCHILD, 'Check the sibling task.')])
         (native / 'conversations').mkdir()
         parent_db = native / 'conversations' / (PARENT + '.db')
         parent_db.touch()
@@ -152,10 +178,9 @@ def run(binary, screenshots):
                             assert page.evaluate('S.agent') == CHILD
                             page.wait_for_function('uid => S.live.has(uid)', arg=parent['uid'])
                             page.locator('#a-sdk').click()
-                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
                             expect(page.locator('.sdk-history')).to_contain_text('History ' + CHILD)
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-sdk-child.png'))
-                            expect_read_only_child(page, '#sdk-composer', '运行中')
+                            expect_read_only_child(page, '#sdk-composer', TIMER_WAIT)
                             expect(page.locator('#sdk-input')).to_be_disabled()
                             expect(page.locator('#sdk-send')).to_be_disabled()
                             page.locator('#a-view-switch').click()
@@ -168,7 +193,7 @@ def run(binary, screenshots):
                             page.locator('#a-view-switch').click()
                             page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
                             page.locator('#a-chat').click()
-                            expect_read_only_child(page, '#conversation-status', '运行中')
+                            expect_read_only_child(page, '#conversation-status', TIMER_WAIT)
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-child.png'))
                             page.reload()
                             expect(page.locator('#msgs')).to_contain_text('History ' + CHILD)
@@ -222,7 +247,7 @@ def run(binary, screenshots):
                                     if request.method == 'POST' and request.url.endswith('/open') else None)
                                 page.goto(f'{hub_base}/?sid=agy:{PARENT}/agent:{CHILD}')
                                 expect(page.locator('.sdk-history')).to_contain_text('History ' + CHILD)
-                                expect_read_only_child(page, '#sdk-composer', '运行中',
+                                expect_read_only_child(page, '#sdk-composer', TIMER_WAIT,
                                                        screenshots / 'hub-dark-390-sdk-child-details.png')
                                 expect(page.locator('#sdk-send')).to_be_disabled()
                                 page.screenshot(path=str(screenshots / 'hub-dark-390-sdk-child.png'))
@@ -280,7 +305,7 @@ def run(binary, screenshots):
                             page.locator(f'#session-view-menu button[data-agent="{CHILD}"]').click()
                             append(task(11))
                             activity(True)
-                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect_read_only_child(page, '#sdk-composer', TIMER_WAIT)
                             expect_child_header(page, True)
                             proc_dir = root / 'proc/100'
                             proc_dir.rename(root / 'paused-proc')
@@ -289,7 +314,7 @@ def run(binary, screenshots):
                             expect_child_header(page, False)
                             (root / 'paused-proc').rename(proc_dir)
                             page.wait_for_function('uid => S.live.has(uid)', arg=uid)
-                            expect(page.locator('#sdk-composer .sdk-status')).to_have_text('运行中')
+                            expect_read_only_child(page, '#sdk-composer', TIMER_WAIT)
                             expect_child_header(page, True)
                             append(system_record(12, '[Notice] Native runtime restarted; background tasks have stopped.'))
                             activity(False)
@@ -302,6 +327,31 @@ def run(binary, screenshots):
                             activity(False)
                             write_transcript(native, CHILD, [record(0, 'PLANNER_RESPONSE', 'agy child live tail')])
                             activity(False)
+                            # The child has no USER_INPUT and receives no SDK
+                            # stream. Only its own native step establishes a phase.
+                            page.locator('#a-chat').click()
+                            execute(db, 'UPDATE conversation_summaries SET status=? WHERE conversation_id=?',
+                                    ('CASCADE_RUN_STATUS_RUNNING', CHILD))
+                            activity(True)
+                            def active_step(index, text='', **extra):
+                                return {**record(index, 'PLANNER_RESPONSE', text),
+                                        'status': 'ACTIVE', 'created_at': datetime.now(timezone.utc).isoformat(),
+                                        **extra}
+                            append(active_step(1, thinking='分析证据'))
+                            expect_read_only_child(page, '#conversation-status', '思考中',
+                                                   screenshots / 'child-thinking.png', '4 字符思考记录')
+                            page.locator('#a-sdk').click()
+                            append(active_step(2, tool_calls=[{'name': 'view_file', 'args': {}}]))
+                            expect_read_only_child(page, '#sdk-composer', '执行工具',
+                                                   screenshots / 'child-tool.png', 'view_file')
+                            append(active_step(3, '逐项核对'))
+                            expect_read_only_child(page, '#sdk-composer', '生成回复',
+                                                   screenshots / 'child-reply.png', '4 字符回复')
+                            append(record(4, 'PLANNER_RESPONSE', 'agy child live tail'))
+                            execute(db, 'UPDATE conversation_summaries SET status=? WHERE conversation_id=?',
+                                    ('CASCADE_RUN_STATUS_IDLE', CHILD))
+                            activity(False)
+                            expect_read_only_child(page, '#sdk-composer', '未运行')
                             page.locator('#a-chat').click()
                             print('PASS idle catalog with pending tasks, completion, wakeup, quotes, restart and rewrite', flush=True)
                             execute(db, 'UPDATE conversation_summaries SET parent_conversation_id=? WHERE conversation_id=?', ('', CHILD))

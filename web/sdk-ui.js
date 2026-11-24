@@ -578,14 +578,25 @@ const SdkUI = {
     },
     paintTurnProgress() {
       if (!this.connected || !this.turnProgress) return;
-      const {label, tools, finishedTools, replies, summaries, started, summaryName = '摘要', note} = this.turnProgress;
+      const menu = this.pane.querySelector('#sdk-status-menu');
+      this.paintProgressDetail(this.notice, menu, this.turnProgress);
+      if (!this.turnProgressTimer && Number.isFinite(this.turnProgress.started)) {
+        this.turnProgressTimer = setTimeout(() => {
+          this.turnProgressTimer = 0;
+          this.paintTurnProgress();
+        }, 1000);
+      }
+    },
+    paintProgressDetail(notice, menu, progress) {
+      const {label, tools, finishedTools, replies, summaries, started, summaryName = '摘要',
+        scope = '本轮', showCounts = !!finishedTools, note} = progress;
       const seconds = Math.floor((Date.now() - started) / 1000);
       const elapsed = seconds > 0 ? formatDuration(seconds * 1000) : seconds === 0 ? '0 秒' : '';
       const count = value => value.toLocaleString('zh-CN');
       const detail = [label];
-      if (elapsed) detail.push(`本轮已用时 ${elapsed}`);
-      if (label === '思考中' || (finishedTools && summaries)) detail.push(summaries ? `本轮已收到 ${count(summaries)} 字符${summaryName}` : `暂无可见${summaryName}`);
-      if (label === '生成回复' || (finishedTools && replies)) detail.push(`本轮已收到 ${count(replies)} 字符回复`);
+      if (elapsed) detail.push(`${scope}已用时 ${elapsed}`);
+      if (label === '思考中' || (showCounts && summaries)) detail.push(summaries ? `${scope}已收到 ${count(summaries)} 字符${summaryName}` : `暂无可见${summaryName}`);
+      if (label === '生成回复' || (showCounts && replies)) detail.push(`${scope}已收到 ${count(replies)} 字符回复`);
       if (tools.length) detail.push(`正在运行 ${count(tools.length)} 项工具 · ${tools.join('、')}`);
       const finished = finishedTools?.length ? `已结束 ${count(finishedTools.length)} 项工具` : '';
       if (finished) detail.push(`${finished} · 最近一项 ${finishedTools.at(-1)}`);
@@ -594,21 +605,14 @@ const SdkUI = {
         : label === '执行工具' ? `${count(tools.length)} 项`
         : label === '思考中' ? elapsed : finishedTools ? finished || elapsed : '';
       const inline = metric ? ` · ${metric}` : '';
-      const holder = this.notice.querySelector('.sdk-turn-metric');
+      const holder = notice.querySelector('.sdk-turn-metric');
       holder.hidden = !metric;
       if (holder.textContent !== inline) holder.textContent = inline;
       const text = detail.join('\n');
-      const menu = this.pane.querySelector('#sdk-status-menu');
+      if (notice.title !== text) notice.title = text;
       if (menu.textContent !== text) {
         menu.textContent = text;
-        this.notice.title = text;
-        this.updateStatusDisclosure();
-      }
-      if (!this.turnProgressTimer && Number.isFinite(started)) {
-        this.turnProgressTimer = setTimeout(() => {
-          this.turnProgressTimer = 0;
-          this.paintTurnProgress();
-        }, 1000);
+        ConversationUI.updateStatusDisclosure(notice, menu);
       }
     },
     setNotice(text, kind = '', sticky = false, detail = null) {
@@ -623,10 +627,12 @@ const SdkUI = {
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
       const details = this.pane.querySelector('#sdk-status-menu');
-      const changed = detail ? details._statusDetail?.key !== detail.key
-        : !!details._statusDetail || details.textContent !== text;
-      details._statusDetail = detail;
+      const observedAgy = this.readOnly && SdkView.historyOnlyReason(this.uid, this.agent)
+        && ['idle', 'connecting', 'ready', 'neutral'].includes(this.notice.dataset.state);
+      const changed = !observedAgy && (detail ? details._statusDetail?.key !== detail.key
+        : !!details._statusDetail || details.textContent !== text);
       if (changed) {
+        details._statusDetail = detail;
         if (detail) {
           details.dataset.statusLayout = detail.layout;
           detail.render(details);
@@ -722,6 +728,8 @@ const SdkUI = {
 
     useHistory(entry, force = false) {
       if (!this.pane || !entry) return;
+      if (this.readOnly && this.baseNotice && SdkView.historyOnlyReason(this.uid, this.agent))
+        this.setNotice(...this.baseNotice);
       const data = this.historyData;
       const backgroundTimers = entry.meta?.background_timers;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;

@@ -7994,7 +7994,7 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   } else notice.after(button);
   button.hidden = !!historyOnly || externalAcp || (!external && !idle && !busy);
   notice.classList.toggle('external-cli-status', external);
-  if (!externalAcp && (external || idle && !busy && !view?.openFailed)) {
+  if (!historyOnly && !externalAcp && (external || idle && !busy && !view?.openFailed)) {
     const text = external ? '正在外部CLI运行' : '未运行';
     notice.querySelector('[role=status]').textContent = text;
     notice.dataset.state = external ? 'ready' : 'idle';
@@ -8015,12 +8015,17 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
     notice.classList.remove('external-cli-status');
     const item = (row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items || [])
       .find(item => item.id === agent);
+    if (historyOnly) clearTimeout(notice._agyStatusTimer);
     if (['idle', 'connecting', 'ready', 'neutral'].includes(notice.dataset.state)) {
+      if (historyOnly) {
+        paintAgyAgentStatus(notice, uid, agent, item, historyOnly);
+        return;
+      }
       const running = item && agentRunning(uid, item);
       const text = running ? '运行中' : item ? '未运行' : '只读子会话';
       notice.querySelector('[role=status]').textContent = text;
       notice.dataset.state = running ? 'ready' : 'idle';
-      notice.title = historyOnly ? `${text}。${historyOnly}` : text;
+      notice.title = text;
       notice.hidden = false;
       const details = notice.parentElement.querySelector('.sdk-status-menu');
       if (details) details.textContent = notice.title;
@@ -10677,6 +10682,7 @@ function renderActivity(activity) {
     row.append(details);
   }
   let n = row.querySelector(':scope > .sdk-status');
+  const agyChild = SdkView.historyOnlyReason(S.sel, S.agent);
   if (!n) {
     n = el('button', 'sdk-status');
     n.type = 'button';
@@ -10688,6 +10694,12 @@ function renderActivity(activity) {
   } else if (row.firstElementChild !== n) {
     row.prepend(n);
   }
+  if (agyChild && !n.querySelector('.sdk-turn-metric')) {
+    const metric = el('span', 'sdk-turn-metric');
+    metric.hidden = true;
+    metric.setAttribute('aria-hidden', 'true');
+    n.append(metric);
+  }
   n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
   n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
     || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
@@ -10695,7 +10707,12 @@ function renderActivity(activity) {
   n.hidden = false;
   n.querySelector('[role=status]').textContent = label;
   n.title = activity?.error || activity?.reason || label;
-  details.textContent = n.title;
+  if (n.dataset.state !== 'idle' || !agyChild) {
+    delete details.dataset.statusLayout;
+    details._statusDetail = null;
+    details.textContent = n.title;
+    if (agyChild) n.querySelector('.sdk-turn-metric').hidden = true;
+  }
   renderConversationUsage(row, S.sel);
   paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);

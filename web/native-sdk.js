@@ -166,6 +166,68 @@ function nativeSdkTurnProgress(raw, source) {
     note: raw.runtime_error ? `运行实例：${raw.runtime_error}` : ''};
 }
 
+function agyAgentStepProgress(entry, note) {
+  const messages = entry?.msgs;
+  const last = messages?.findLastIndex(item => Number.isInteger(item.native_step_index)) ?? -1;
+  if (last < 0) return null;
+  const step = messages[last];
+  if (step.native_type !== 'PLANNER_RESPONSE'
+      || !['ACTIVE', 'RUNNING'].includes(step.native_step_status)) return null;
+  let first = last;
+  while (first > 0 && messages[first - 1].native_step_index === step.native_step_index) first--;
+  const tools = [];
+  let replies = 0, summaries = 0;
+  for (const item of messages.slice(first, last + 1)) {
+    if (item.role === 'tool') tools.push(item.name || '工具');
+    if (item.role === 'assistant') replies += SdkUI.characterCount(item.text || '');
+    if (item.role === 'thinking') summaries += SdkUI.characterCount(item.text || '');
+  }
+  const label = replies ? '生成回复' : tools.length ? '执行工具' : summaries ? '思考中' : '处理中';
+  return {label, tools, replies, summaries, started: Date.parse(step.ts),
+    scope: '当前步骤', summaryName: '思考记录', showCounts: true, note};
+}
+
+function paintAgyAgentStatus(notice, uid, agent, item, reason) {
+  clearTimeout(notice._agyStatusTimer);
+  const entry = cache.get(viewKey(uid, agent));
+  const running = !!item && agentRunning(uid, item);
+  const progress = running ? agyAgentStepProgress(entry, reason) : null;
+  const recordedTimers = entry?.meta?.background_timers || [];
+  const timers = running && !progress ? NativeSdkControls.pendingTimers(recordedTimers) : [];
+  const label = progress?.label || (timers.length ? '后台定时任务等待中'
+    : running ? recordedTimers.length ? '后台运行' : '处理中' : item ? '未运行' : '只读子会话');
+  const text = label === '后台运行' ? `${label}。定时已到，等待子代理更新记录。${reason}`
+    : `${label}。${reason}`;
+  notice.querySelector('[role=status]').textContent = label;
+  notice.dataset.state = timers.length ? 'scheduled' : running ? 'working' : 'idle';
+  notice.hidden = false;
+  const menu = notice.parentElement.querySelector('.sdk-status-menu');
+  const detail = timers.length ? NativeSdkControls.timerDetails(timers, reason) : null;
+  if (detail) {
+    if (menu._statusDetail?.key !== detail.key) {
+      menu.dataset.statusLayout = detail.layout;
+      detail.render(menu);
+    }
+  } else {
+    delete menu.dataset.statusLayout;
+    if (!progress && menu.textContent !== text) menu.textContent = text;
+  }
+  menu._statusDetail = detail;
+  if (progress) SdkUI.methods.paintProgressDetail(notice, menu, progress);
+  else {
+    notice.title = text;
+    const metric = notice.querySelector('.sdk-turn-metric');
+    metric.hidden = true;
+    metric.textContent = '';
+  }
+  ConversationUI.updateStatusDisclosure(notice, menu);
+  const delay = Number.isFinite(progress?.started) ? 1000 : timers[0]?.due - Date.now();
+  if (Number.isFinite(delay)) notice._agyStatusTimer = setTimeout(() => {
+    if (notice.isConnected && notice.getClientRects().length && S.sel === uid && S.agent === agent)
+      paintAgyAgentStatus(notice, uid, agent, item, reason);
+  }, Math.min(Math.max(1, delay), 0x7fffffff));
+}
+
 const NativeSdkView = {
   ...SdkUI.methods,
   sources: NATIVE_SDK_SOURCES,
