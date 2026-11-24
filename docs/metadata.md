@@ -117,7 +117,15 @@ Hub 按持久化的已完成移动记录解析第三节点的父位置；离线�
 Local process evidence initializes `nest_parent` once for a newly created CLI
 session: its owned process identifies the child, and inherited session identity
 or an owning CLI ancestor identifies the parent. A detached dispatcher retains
-this evidence. For OpenCode, which exposes no per-session file handle, a new
+this evidence if its environment carries the originating session identity.
+On Linux, `@openai/codex-sdk` launches native `codex exec` processes, so these
+sessions use the same process discovery. A transient user service started with
+`systemd-run --user` gets its process environment from the user manager. When
+launching one from Codex, pass `--setenv=CODEX_THREAD_ID="$CODEX_THREAD_ID"`
+on that invocation so the dispatcher retains the parent identity. If the
+launch already happened without that identity, recover an exact child SID
+from the SDK's `thread.started` event and attach through `/api/session/nest`.
+For OpenCode, which exposes no per-session file handle, a new
 top-level row is paired with the OpenCode processes already running in its
 directory at birth; every matching process must identify the same initiator.
 An ambiguous directory, a native OpenCode subagent or a session older than

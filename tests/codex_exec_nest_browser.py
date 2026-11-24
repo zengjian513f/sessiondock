@@ -21,6 +21,12 @@ def stamp(seconds):
     return datetime.fromtimestamp(BTIME + seconds, timezone.utc).isoformat()
 
 
+def open_history(page, item, text):
+    item.click()
+    page.get_by_role('button', name='对话', exact=True).click()
+    expect(page.locator('#msgs')).to_contain_text(text)
+
+
 def first_publication(browser, root, binary):
     """New exec files must carry their parent in the first list and DOM render."""
     corpus = Corpus(root)
@@ -75,8 +81,7 @@ def first_publication(browser, root, binary):
             'first list published a new exec worker without its parent'
         item = page.locator(f'#side .item[data-uid="{uid}"]')
         expect(item).to_have_attribute('data-depth', '1')
-        item.click()
-        expect(page.locator('#msgs')).to_contain_text('Inspect fresh-worker')
+        open_history(page, item, 'Inspect fresh-worker')
         assert page.evaluate('window.workerDepths') and set(page.evaluate('window.workerDepths')) == {'1'}, \
             'exec worker briefly rendered as a root'
         page.evaluate('window.workerObserver.disconnect()')
@@ -98,8 +103,7 @@ def first_publication(browser, root, binary):
             'first automatic list poll published an exec worker without its parent'
         item = page.locator(f'#side .item[data-uid="{corpus.uid("polled-worker")}"]')
         expect(item).to_have_attribute('data-depth', '1')
-        item.click()
-        expect(page.locator('#msgs')).to_contain_text('Inspect polled-worker')
+        open_history(page, item, 'Inspect polled-worker')
         context.close()
     print('PASS first list publication and every Chromium render nest a newly discovered exec worker', flush=True)
 
@@ -135,10 +139,11 @@ def inactive_children(browser, root, binary):
             context = browser.new_context(viewport={'width': width, 'height': 900})
             page = context.new_page()
             page.goto(base)
-            expect(page.locator('#session-total')).to_have_text('6')
-            expect(page.locator('#session-active')).to_have_text('2')
+            page.wait_for_function('T.listLoaded')
             if not page.evaluate('S.nest'):
                 page.locator('#nest-toggle').click()
+            expect(page.locator('#session-total')).to_have_text('6')
+            expect(page.locator('#session-active')).to_have_text('2')
             def item(sid):
                 return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
             parent = item('parent')
@@ -156,7 +161,9 @@ def inactive_children(browser, root, binary):
             parent.locator('.nest-caret').press('Enter')
             expect(hint).to_be_visible()
             # Source exclusions remain exclusions, not inactive children.
+            page.locator('#allcount').click()
             page.locator('#chips button[data-source="claude"]').click()
+            page.locator('#livecount').click()
             expect(hint).to_have_text('有 2 个不活跃会话（已被筛选隐藏）')
             page.locator('#nest-flat').click()
             expect(hint).to_be_hidden()
@@ -181,8 +188,7 @@ def inactive_children(browser, root, binary):
             expect(hint).to_be_hidden()
             for sid in children:
                 expect(item(sid)).to_have_attribute('data-depth', '1')
-                item(sid).click()
-                expect(page.locator('#msgs')).to_contain_text('Inspect ' + sid)
+                open_history(page, item(sid), 'Inspect ' + sid)
                 if page.evaluate('document.body.classList.contains("mobile-detail")'):
                     page.locator('.dhead .mobile-back').first.click()
             context.close()
@@ -234,8 +240,7 @@ def completing_birth(browser, root, binary):
             'partial native row consumed the first completed birth preparation'
         item = page.locator(f'#side .item[data-uid="{corpus.uid("birth-worker")}"]')
         expect(item).to_have_attribute('data-depth', '1')
-        item.click()
-        expect(page.locator('#msgs')).to_contain_text('Inspect completed birth')
+        open_history(page, item, 'Inspect completed birth')
         context.close()
     print('PASS partial native identity completes under its launch parent on first publication', flush=True)
 
@@ -252,11 +257,14 @@ def main():
         inactive_children(browser, root / 'inactive-children', args.binary)
         corpus = Corpus(root)
         children = [f'exec-worker-{i}' for i in range(6)]
+        sdk_exec = {*children, 'standalone'}
         for sid in ['parent', 'other', 'resumed', 'standalone', 'cycle-parent', 'cycle-child', 'imported-detached', 'imported-attached', *children]:
             created = 101 if sid in ('parent', 'cycle-parent') else 150 if sid in ('other', 'resumed') else 401
             corpus.put(sid, 'codex', [
                 codex_row('session_meta', {'id': sid, 'session_id': sid, 'cwd': '/synthetic/work',
-                    'timestamp': stamp(created), 'source': 'exec' if sid in children else 'cli',
+                    'timestamp': stamp(created),
+                    'source': 'exec' if sid in sdk_exec else 'cli',
+                    'originator': 'codex_sdk_ts' if sid in sdk_exec else 'codex',
                     'thread_source': 'user'}),
                 codex_row('response_item', {'type': 'message', 'role': 'user',
                     'content': 'Inspect ' + sid})], [])
@@ -267,18 +275,28 @@ def main():
         inherited = [('CODEX_THREAD_ID', 'parent'), ('CODEX_SESSION_ID', 'parent')]
         # Reparented nohup dispatcher: no live CLI ancestor remains.
         proc_pid(proc, 200, 'python', ['python', 'dispatch.py'], 1, env=inherited)
+        # Transient systemd services share a manager, but only the identified
+        # dispatcher received CODEX_THREAD_ID. Its SDK subprocesses can omit it.
+        fixture.START.update({201: 19_000, 202: 20_000, 203: 20_000})
+        proc_pid(proc, 201, 'systemd', ['systemd', '--user'], 1)
+        proc_pid(proc, 202, 'node', ['node', 'sdk-dispatch.mjs'], 201,
+                 env=[('CODEX_THREAD_ID', 'parent')])
+        proc_pid(proc, 203, 'node', ['node', 'sdk-dispatch.mjs'], 201)
         for i, sid in enumerate(children):
             pid = 900 + i
             fixture.START[pid] = 40_000
-            proc_pid(proc, pid, 'codex', ['codex', 'exec'], 200,
-                     env=inherited, fds={3: corpus.paths[sid]})
+            proc_pid(proc, pid, 'codex', ['codex', 'exec', '--json'],
+                     202 if i >= 2 else 200, env=() if i >= 2 else inherited,
+                     fds={3: corpus.paths[sid]})
         for pid, sid in [(950, 'imported-detached'), (951, 'imported-attached')]:
             fixture.START[pid] = 40_000
             proc_pid(proc, pid, 'codex', ['codex', 'exec'], 200,
                      env=inherited, fds={3: corpus.paths[sid]})
         proc_pid(proc, 400, 'codex', ['codex', 'exec', 'resume', 'resumed'], 200,
                  env=inherited, fds={3: corpus.paths['resumed']})
-        proc_pid(proc, 500, 'codex', ['codex', 'exec'], 1, fds={3: corpus.paths['standalone']})
+        fixture.START[500] = 40_000
+        proc_pid(proc, 500, 'codex', ['codex', 'exec', '--json'], 203,
+                 fds={3: corpus.paths['standalone']})
         fixture.START.update({600: 10_000, 601: 40_000})
         proc_pid(proc, 600, 'codex', ['codex'], 1, fds={3: corpus.paths['cycle-parent']})
         proc_pid(proc, 601, 'codex', ['codex', 'exec'], 600,
@@ -317,19 +335,20 @@ def main():
                 context = browser.new_context(viewport={'width': 1280, 'height': 900})
                 page = context.new_page()
                 page.goto(base)
-                page.wait_for_function('S.sessions.length >= 10')
+                page.wait_for_function('T.listLoaded')
                 if not page.evaluate('S.nest'):
                     page.locator('#nest-toggle').click()
+                page.wait_for_function('S.sessions.length >= 10')
                 def item(sid):
                     return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
                 expect(item('imported-detached')).to_have_attribute('data-depth', '0')
                 expect(item('imported-attached')).to_have_attribute('data-depth', '1')
-                item('imported-detached').click()
-                expect(page.locator('#msgs')).to_contain_text('Inspect imported-detached')
+                open_history(page, item('imported-detached'), 'Inspect imported-detached')
                 for sid in children[2:]:
                     expect(item(sid)).to_have_attribute('data-depth', '1')
-                item(children[2]).click()
-                expect(page.locator('#msgs')).to_contain_text('Inspect ' + children[2])
+                open_history(page, item(children[2]), 'Inspect ' + children[2])
+                expect(item('standalone')).to_have_attribute('data-depth', '0')
+                open_history(page, item('standalone'), 'Inspect standalone')
                 if not restarted:
                     item(children[0]).click(button='right')
                     page.locator('#item-menu [data-act="detach"]').click()
@@ -338,6 +357,11 @@ def main():
                     page.locator('#item-menu [data-act="attach"]').click()
                     item('other').click()
                     page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"', arg=corpus.uid(children[1]))
+                else:
+                    item('standalone').click(button='right')
+                    page.locator('#item-menu [data-act="attach"]').click()
+                    item('parent').click()
+                    expect(item('standalone')).to_have_attribute('data-depth', '1')
                 get_json(opener, base, '/api/live?force=1')
                 page.evaluate('pollSessions()')
                 expect(item(children[0])).to_have_attribute('data-depth', '0')
@@ -353,9 +377,10 @@ def main():
             assert not get_json(opener, base, '/api/live?force=1')['uids']
             rows = {r['sid']: r for r in get_json(opener, base, '/api/sessions?force=1')['sessions']}
             assert rows[children[2]]['nest_parent']['sid'] == 'parent'
+            assert rows['standalone']['nest_parent']['sid'] == 'parent'
             assert 'nest_parent' not in rows[children[0]]
         browser.close()
-    print('PASS six detached codex exec children, background discovery, Chromium open/detach/attach, resume isolation, restart and exit persistence')
+    print('PASS Codex SDK exec via detached dispatchers, explicit recovery, Chromium open/detach/attach, resume isolation, restart and exit persistence')
 
 
 if __name__ == '__main__':

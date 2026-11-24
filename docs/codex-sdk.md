@@ -412,6 +412,11 @@ Validation: [async question browser suite](../tests/codex_sdk_questions_browser.
 
 ## Creation
 
+This section describes SessionDock's SDK create API. The separate
+`@openai/codex-sdk` package starts native `codex exec` processes and uses
+[local process attribution](metadata.md#sidebar-parent) for sidebar attachment,
+including when launched by a background dispatcher.
+
 DELTA (BUG-20261124-132117-e392e5): Codex new-session and report workers offer
 the selected model's advertised service tiers. 配置默认 omits the override.
 Normal explicitly uses the native ID `default`. The browser remembers a choice
