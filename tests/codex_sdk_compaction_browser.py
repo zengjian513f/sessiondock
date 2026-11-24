@@ -24,7 +24,8 @@ class CompactionServer(QueueServer):
             await self.send(writer, {'id': message['id'], 'result': {'turnId': self.turn}})
         elif message.get('method') == 'thread/turns/list' and getattr(self, 'offline_consumed', None):
             cursor = message['params'].get('cursor')
-            if cursor == 'expired':
+            if cursor and cursor in ('expired', getattr(self, 'expire_cursor', None)):
+                self.expire_cursor = None
                 await self.send(writer, {'id':message['id'],'error':{'code':-32602,'message':'expired cursor'}})
                 return
             page = int((cursor or 'receipt-page-0').rsplit('-',1)[-1])
@@ -188,15 +189,32 @@ def main():
                         expect(notice.locator('summary')).to_have_text('回合已中断，未见输入记录')
                         notice.locator('summary').click()
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'async-receipt-{mode}-{width}.png'))
-                        notice.get_by_role('button', name='移除提示').click()
+                        answer_id = answer.get_attribute('data-receipt-id')
+                        next_text = f'继续处理下一条消息 · {mode}-{width}'
+                        fake.compact_next = True
+                        page.locator('#sdk-input').fill(next_text)
+                        page.locator('#sdk-send').click()
+                        next_receipt = page.locator('.sdk-accepted').filter(has_text=next_text)
+                        expect(next_receipt).to_be_visible()
+                        expect(notice).to_have_count(0)
                         expect(answer).to_have_count(0)
+                        receipt = next(row for row in queue_rows(root)[THREAD] if row['id'] == answer_id)
+                        assert receipt['state'] == 'sent' and '是否继续这次修改？' in receipt['text']
+                        assert receipt['turn_status'] == 'interrupted' and receipt['receipt_dismissed']
+                        starts = len(fake.methods('turn/start'))
+                        if args.screenshots: page.screenshot(path=str(args.screenshots/f'next-turn-{mode}-{width}.png'))
                         page.reload(wait_until='networkidle')
                         expect(answer).to_have_count(0)
                         expect(question).to_have_count(0)
+                        expect(next_receipt).to_be_visible()
+                        assert len(fake.methods('turn/start')) == starts
                         assert len(fake.methods('turn/steer')) == steers
+                        fake.consume()
+                        expect(next_receipt).to_have_count(0)
+                        fake.complete()
                         fake.defer_steer = False
                         context.close()
-                        print(f'PASS {width} {theme}: automatic compact/reload/no manual RPC/interrupt without send regression/native consumption/continued turn', flush=True)
+                        print(f'PASS {mode} {width} {theme}: automatic compaction, interrupt, next turn retires the old notice, reload without replay', flush=True)
                     for status in ('completed', 'failed'):
                         context, page = open_page(browser, base, 1280, 'light')
                         fake.compact_next = True; fake.terminal_before_reply = status
@@ -231,7 +249,8 @@ def main():
                     context.close()
                     print('PASS service restart preserves completed delivery without replay', flush=True)
                 # Legacy receipts have no terminal status. Recover the exact
-                # older turn, without inventing consumption or changing sent.
+                # older turn after restart. A persisted hint for a visible
+                # receipt cannot establish that it is still the latest turn.
                 ledger = legacy_queue(root)
                 legacy = json.loads(ledger.read_text())
                 legacy[THREAD] = legacy[THREAD][-1:]
@@ -243,12 +262,16 @@ def main():
                 with server(corpus, args.binary, root/'app.sock', env) as base:
                     context, page = open_page(browser, base, 1280, 'dark')
                     recovered = page.locator('.sdk-queue details').filter(has_text='restart while compacting')
-                    expect(recovered.locator('summary')).to_have_text('回合已中断，未见输入记录')
+                    expect(recovered).to_have_count(0)
+                    receipt = next(row for row in queue_rows(root)[THREAD] if row['id'] == entries[-1]['id'])
+                    assert receipt['state'] == 'sent' and receipt['text'] == 'restart while compacting'
+                    assert receipt['turn_status'] == 'interrupted' and receipt['receipt_dismissed']
                     assert len(fake.methods('turn/start')) == starts_before_restart
                     assert not page.locator('.sdk-queued').count()
                     context.close()
-                    print('PASS legacy terminal receipt recovered without replay', flush=True)
+                    print('PASS legacy terminal receipt retired after recovery finds a newer native turn', flush=True)
                 before_hinted = len(fake.methods('thread/turns/list'))
+                fake.expire_cursor = 'receipt-page-9'
                 fake.offline_consumed = {'id': entries[-1]['turn_id'], 'status': 'completed', 'items': [{
                     'id': 'consumed-while-offline', 'type': 'userMessage',
                     'content': [{'type': 'text', 'text': 'restart while compacting'}]}]}
@@ -258,8 +281,10 @@ def main():
                     assert len(fake.methods('turn/start')) == starts_before_restart
                     context.close()
                     hinted = fake.methods('thread/turns/list')[before_hinted:]
-                    assert hinted and all(m['params']['cursor'] == 'receipt-page-9' for m in hinted), hinted
-                    print('PASS native late consumption reconciles receipt through persisted exact-turn cursor; expired hint falls back to summaries', flush=True)
+                    assert [call['params']['cursor'] for call in hinted[:2]] == ['receipt-page-9', None], hinted
+                    receipt = next(row for row in queue_rows(root)[THREAD] if row['id'] == entries[-1]['id'])
+                    assert receipt['native_item_id'] == 'consumed-while-offline'
+                    print('PASS native late consumption reconciles retired receipt after exact-turn cursor expires', flush=True)
         finally: browser.close()
 
 

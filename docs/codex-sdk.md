@@ -783,9 +783,14 @@ and service restart. Native consumption replaces that receipt; interruption does
 it back into a failed send. DELTA (BUG-20261114-053237-efca19): a native terminal turn
 settles an unconsumed receipt as “回合已中断/结束，未见输入记录”, collapsed by default.
 The user can expand it and remove its notice; the durable receipt retains its text,
-completed delivery and terminal status. This action does not start a session, cancel
-native input or authorize a resend. Live completion and paginated recovery of older
-turns use the same settlement, including completion before the acceptance RPC returns.
+completed delivery and terminal status. DELTA (BUG-20261124-154409-fd7476):
+a subsequent native turn on the same thread also retires the older notice.
+On reconnect, newest-first native turn history establishes whether a recovered
+receipt has been superseded. Retired notices stay cleared across restarts,
+and their receipts still reconcile late native consumption.
+Removing a notice only updates the receipt's display state. Live completion and
+paginated recovery of older turns use the same settlement, including completion
+before the acceptance RPC returns.
 Accepted async answers, including dismissed receipts, suppress the corresponding
 historical question card after reload; removing a notice does not reopen its question.
 Refreshing must not submit it again. See the synthetic

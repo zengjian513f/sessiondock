@@ -877,16 +877,24 @@ impl Inner {
         // The native process can consume an input while this service is down,
         // including in a turn that has already finished by the time we resume.
         let accepted = self.queue.accepted(thread.id());
-        let mut turns: std::collections::HashSet<String> = accepted
+        let mut turns: std::collections::HashSet<&str> = accepted
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|row| row["turn_id"].as_str().map(str::to_owned))
+            .filter_map(|row| row["turn_id"].as_str())
+            .collect();
+        let visible_turns: std::collections::HashSet<&str> = accepted
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["receipt_dismissed"] != true)
+            .filter_map(|row| row["turn_id"].as_str())
             .collect();
         // Opaque page hints survive restart. Validate the native turn ID before
         // using a hint: newest-page cursors can move and native cursors can expire.
+        // Start at the newest page for visible receipts to establish turn order.
         for (id, cursor) in self.queue.recovery_pages(thread.id()) {
-            if !turns.contains(&id) {
+            if !turns.contains(id.as_str()) || visible_turns.contains(id.as_str()) {
                 continue;
             }
             let summary = connection
@@ -905,10 +913,10 @@ impl Inner {
                         .is_some_and(|rows| rows.iter().any(|r| r["id"] == id)) =>
                 {
                     if self
-                        .recover_receipt_at(connection, thread, &cursor, &id)
+                        .recover_receipt_at(connection, thread, &cursor, &id, false)
                         .await?
                     {
-                        turns.remove(&id);
+                        turns.remove(id.as_str());
                     }
                 }
                 Ok(_) | Err(RpcError::Remote { .. }) => {}
@@ -916,6 +924,7 @@ impl Inner {
             }
         }
         let mut cursor = Value::Null;
+        let mut newest_turn: Option<String> = None;
         while !turns.is_empty() {
             let page = connection
                 .request(
@@ -927,14 +936,18 @@ impl Inner {
                 )
                 .await?;
             for turn in page["data"].as_array().into_iter().flatten() {
-                let id = turn["id"].as_str().unwrap_or_default();
+                let Some(id) = turn["id"].as_str().filter(|id| !id.is_empty()) else {
+                    continue;
+                };
+                let superseded = newest_turn.as_deref().is_some_and(|newest| newest != id);
                 if turns.contains(id)
                     && self
-                        .recover_receipt_at(connection, thread, &cursor, id)
+                        .recover_receipt_at(connection, thread, &cursor, id, superseded)
                         .await?
                 {
                     turns.remove(id);
                 }
+                newest_turn.get_or_insert_with(|| id.to_owned());
             }
             cursor = page["nextCursor"].clone();
             if cursor.is_null() {
@@ -950,6 +963,7 @@ impl Inner {
         thread: &LiveThread,
         cursor: &Value,
         id: &str,
+        superseded: bool,
     ) -> Result<bool, RpcError> {
         // Intermediate turns need no tool bodies. Only materialize the exact
         // accepted turn, including possible late consumption after interruption.
@@ -971,6 +985,10 @@ impl Inner {
             self.queue.settle_turn(thread.id(), turn)?;
             for item in turn["items"].as_array().into_iter().flatten() {
                 self.queue.consumed(thread.id(), id, item)?;
+            }
+            if superseded {
+                self.queue
+                    .dismiss_terminal_receipts(thread.id(), |turn| turn == id)?;
             }
             self.queue.remember_page(thread.id(), id, cursor)?;
             return Ok(true);
@@ -1065,6 +1083,18 @@ impl Inner {
             .cloned();
         if let Some(thread) = thread {
             thread.apply(method, params.clone());
+            if method == "turn/started"
+                && let Some(id) = params["turn"]["id"].as_str().filter(|id| !id.is_empty())
+            {
+                match self
+                    .queue
+                    .dismiss_terminal_receipts(&thread_id, |turn| turn != id)
+                {
+                    Ok(true) => self.queue_event(&thread),
+                    Ok(false) => {}
+                    Err(error) => eprintln!("Codex receipt persistence: {error}"),
+                }
+            }
             if method == "turn/completed" {
                 if let Err(error) = self.queue.settle_turn(&thread_id, &params["turn"]) {
                     eprintln!("Codex receipt persistence: {error}");

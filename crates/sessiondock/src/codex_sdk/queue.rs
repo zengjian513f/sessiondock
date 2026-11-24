@@ -186,6 +186,34 @@ impl Queue {
         Ok(())
     }
 
+    pub(super) fn dismiss_terminal_receipts(
+        &self,
+        thread: &str,
+        superseded: impl Fn(&str) -> bool,
+    ) -> Result<bool, RpcError> {
+        let inputs: Vec<_> = self
+            .rows
+            .lock()
+            .expect("queue")
+            .get(thread)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row.state == "sent"
+                    && row.turn_status.is_some()
+                    && !row.receipt_dismissed
+                    && row.turn_id.as_deref().is_some_and(&superseded)
+            })
+            .cloned()
+            .collect();
+        let changed = !inputs.is_empty();
+        for mut input in inputs {
+            input.receipt_dismissed = true;
+            self.update(thread, input)?;
+        }
+        Ok(changed)
+    }
+
     pub(super) fn consumed(&self, thread: &str, turn: &str, item: &Value) -> Result<(), RpcError> {
         if item["type"] != "userMessage" {
             return Ok(());
