@@ -148,16 +148,21 @@ function nativeSdkTurnProgress(raw, source) {
   const label = streaming && isReply(tail) && count(tail) ? '生成回复'
     : tools.length ? '执行工具' : streaming && isThought(tail) ? '思考中' : '处理中';
   let replies = 0, summaries = 0;
+  const finishedTools = source === 'agy' ? [] : null;
   for (const item of body) {
     if (isReply(item)) replies += count(item);
     if (isThought(item)) summaries += count(item);
+    if (finishedTools && item.role === 'tool' && item.status === 'DONE')
+      finishedTools.push(item.name || item.tool_name || '工具');
   }
   // Agy may display the bridge's queued user echo before it is dispatched.
   // OpenCode's user record can likewise predate consumption by its inbox.
-  const firstOutput = body.find(item => isThought(item) || isReply(item) || isTool(item));
-  const begin = source === 'agy' ? prompt.ts || firstOutput?.received_at
+  const firstOutput = body.find(item => source === 'agy'
+    ? (item.ts || item.received_at) && (isThought(item) || isReply(item) || item.role === 'tool')
+    : isThought(item) || isReply(item) || isTool(item));
+  const begin = source === 'agy' ? prompt.ts || firstOutput?.ts || firstOutput?.received_at
     : source === 'opencode' ? firstOutput?.ts : prompt.ts || prompt.received_at;
-  return {label, tools, replies, summaries, started: Date.parse(begin), summaryName: '思考记录',
+  return {label, tools, finishedTools, replies, summaries, started: Date.parse(begin), summaryName: '思考记录',
     note: raw.runtime_error ? `运行实例：${raw.runtime_error}` : ''};
 }
 

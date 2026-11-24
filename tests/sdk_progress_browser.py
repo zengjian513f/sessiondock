@@ -83,6 +83,45 @@ def exercise(browser, base, source, label, screenshots):
 
             update()
             expect(status).to_have_text('处理中')
+            if source == 'agy':
+                # Agy can send only DONE tool steps for minutes before its next
+                # planner response. Replay has their receipts but no prompt ts.
+                prompt.pop('ts')
+                prompt['received_at'] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+                done = [{'id': f'tool-{i}', 'request_id': 'round', 'role': 'tool', 'status': 'DONE',
+                         'name': name, 'received_at': observed} for i, name in enumerate(
+                             ['read_file'] * 22 + ['run_command'])]
+                prior.append({**done[-1], 'id': 'previous-tool', 'request_id': 'previous'})
+                update(*done, queued_input=True)
+                expect(status).to_have_text('处理中')
+                expect(metric).to_have_text('· 已结束 23 项工具')
+                if width == 390:
+                    expect(metric).to_be_hidden()
+                else:
+                    expect(metric).to_be_visible()
+                capture('between-tools')
+                status.click()
+                expect(detail).to_contain_text('已结束 23 项工具 · 最近一项 run_command')
+                expect(detail).to_contain_text('本轮已用时')
+                expect(detail).not_to_contain_text('小时')
+                expect(detail).not_to_contain_text('正在运行')
+                expect(detail).not_to_have_text(detail.text_content(), timeout=4000)
+                capture('between-tools-detail')
+                page.keyboard.press('Escape')
+                page.reload(wait_until='domcontentloaded')
+                if page.locator('#a-sdk').is_visible() and not page.locator('#sdk-input').is_visible():
+                    page.locator('#a-sdk').click()
+                start_sdk(page)
+                expect(metric).to_have_text('· 已结束 23 项工具')
+                update(*done, {'id': 'done-thought', 'role': 'thinking', 'content': '核对完毕'},
+                       {'id': 'done-reply', 'role': 'assistant', 'status': 'DONE', 'content': '已读取'})
+                status.click()
+                expect(detail).to_contain_text('4 字符思考记录')
+                expect(detail).to_contain_text('3 字符回复')
+                page.keyboard.press('Escape')
+                update()
+                expect(metric).to_be_hidden()
+                prompt['ts'] = observed
             thought = {'id': 'thought', 'role': 'thinking', 'text': '先核对历史。', 'ts': observed}
             if source == 'grok':
                 thought['native_content'] = [{'type': 'text', 'text': thought['text']}]

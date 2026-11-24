@@ -578,19 +578,21 @@ const SdkUI = {
     },
     paintTurnProgress() {
       if (!this.connected || !this.turnProgress) return;
-      const {label, tools, replies, summaries, started, summaryName = '摘要', note} = this.turnProgress;
+      const {label, tools, finishedTools, replies, summaries, started, summaryName = '摘要', note} = this.turnProgress;
       const seconds = Math.floor((Date.now() - started) / 1000);
       const elapsed = seconds > 0 ? formatDuration(seconds * 1000) : seconds === 0 ? '0 秒' : '';
       const count = value => value.toLocaleString('zh-CN');
       const detail = [label];
       if (elapsed) detail.push(`本轮已用时 ${elapsed}`);
-      if (label === '思考中') detail.push(summaries ? `本轮已收到 ${count(summaries)} 字符${summaryName}` : `暂无可见${summaryName}`);
-      if (label === '生成回复') detail.push(`本轮已收到 ${count(replies)} 字符回复`);
+      if (label === '思考中' || (finishedTools && summaries)) detail.push(summaries ? `本轮已收到 ${count(summaries)} 字符${summaryName}` : `暂无可见${summaryName}`);
+      if (label === '生成回复' || (finishedTools && replies)) detail.push(`本轮已收到 ${count(replies)} 字符回复`);
       if (tools.length) detail.push(`正在运行 ${count(tools.length)} 项工具 · ${tools.join('、')}`);
+      const finished = finishedTools?.length ? `已结束 ${count(finishedTools.length)} 项工具` : '';
+      if (finished) detail.push(`${finished} · 最近一项 ${finishedTools.at(-1)}`);
       if (note) detail.push(note);
       const metric = label === '生成回复' ? `${count(replies)} 字符`
         : label === '执行工具' ? `${count(tools.length)} 项`
-        : label === '思考中' ? elapsed : '';
+        : label === '思考中' ? elapsed : finishedTools ? finished || elapsed : '';
       const inline = metric ? ` · ${metric}` : '';
       const holder = this.notice.querySelector('.sdk-turn-metric');
       holder.hidden = !metric;
