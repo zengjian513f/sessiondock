@@ -46,6 +46,15 @@ pub struct Model {
     pub efforts: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_tiers: Vec<ServiceTier>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ServiceTier {
+    id: String,
+    name: String,
+    description: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -477,6 +486,7 @@ fn claude(profile: &CliProfile) -> Catalog {
             name: name.to_owned(),
             efforts: efforts.clone(),
             default_effort: effort_for(id),
+            service_tiers: Vec::new(),
         })
         .collect();
     if let Some(id) = default_model
@@ -488,6 +498,7 @@ fn claude(profile: &CliProfile) -> Catalog {
             name: id.clone(),
             efforts: efforts.clone(),
             default_effort: effort_for(id),
+            service_tiers: Vec::new(),
         });
     }
     Catalog {
@@ -575,6 +586,18 @@ fn codex_catalog(home: &Path, catalog: Option<serde_json::Value>) -> Catalog {
                 default_effort: configured_effort
                     .clone()
                     .or_else(|| text(model, "default_reasoning_level")),
+                service_tiers: model["service_tiers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|tier| {
+                        Some(ServiceTier {
+                            id: text(tier, "id")?,
+                            name: text(tier, "name")?,
+                            description: text(tier, "description").unwrap_or_default(),
+                        })
+                    })
+                    .collect(),
                 id,
             })
         })
@@ -643,6 +666,7 @@ fn grok(profile: &CliProfile) -> Catalog {
                 id,
                 efforts,
                 default_effort,
+                service_tiers: Vec::new(),
             })
         })
         .collect();
@@ -724,6 +748,7 @@ pub(crate) fn agy_lines(output: &str) -> Catalog {
                 name: if name.is_empty() { id } else { name }.to_owned(),
                 efforts: if variant { Vec::new() } else { efforts.clone() },
                 default_effort: None,
+                service_tiers: Vec::new(),
             })
         })
         .collect();
@@ -770,6 +795,7 @@ pub(crate) fn codebuddy_help(output: &str) -> Catalog {
                     name: id.to_owned(),
                     efforts: efforts.clone(),
                     default_effort: None,
+                    service_tiers: Vec::new(),
                 })
                 .collect()
         })
@@ -832,6 +858,7 @@ fn droid(profile: &CliProfile) -> Catalog {
             name: name.into(),
             efforts,
             default_effort,
+            service_tiers: Vec::new(),
         });
     }
     catalog
@@ -907,6 +934,7 @@ pub(crate) fn kiro_json(output: &str) -> Catalog {
                 name,
                 efforts: model_efforts,
                 default_effort,
+                service_tiers: Vec::new(),
             })
         })
         .collect();
@@ -956,6 +984,7 @@ pub(super) fn opencode_lines(output: &str) -> Vec<Model> {
             name: line.to_owned(),
             efforts: Vec::new(),
             default_effort: None,
+            service_tiers: Vec::new(),
         })
         .collect()
 }

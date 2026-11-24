@@ -30,6 +30,14 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     page.locator(f'input[name="bug-report-source"][value="{source}"]').check()
     report_type = 'feature' if label == 'node' else 'bug'
     page.locator(f'#bug-report-type label:has(input[value={report_type}])').click()
+    tier_id = None
+    if source == 'codex':
+        tier = page.locator('#bug-report-service-tier')
+        expect(tier).to_have_value('')
+        tier_id = 'ultrafast' if label == 'node' else 'default'
+        tier.select_option(tier_id)
+    else:
+        expect(page.locator('#bug-report-service-tier')).to_be_hidden()
     description = 'Launch preference report '+label+' '+source
     if source == 'kiro' and label == 'node':
         description += ' · SDK模式报告标题持久化检查' * 8
@@ -48,6 +56,9 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
                                   'terminal_capture': 'diagnostic_sentinel'})
             first = route.fetch(post_data=json.dumps(body))
             second = route.fetch(post_data=json.dumps(body))
+            if tier_id:
+                different_tier = route.fetch(post_data=json.dumps({**body, 'service_tier': 'priority'}))
+                assert different_tier.status == 400, different_tier.json()
             replays.extend([first.json(), second.json()])
             route.fulfill(response=second)
         page.route('**/api/bug-report', legacy_fields, times=1)
@@ -56,6 +67,17 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     slow_create = source == 'agy' and label == 'hub'
     if slow_create:
         (root/'init-delay').write_text('12')
+    starts_before = len(peer.methods('thread/start')) if tier_id else 0
+    if tier_id:
+        shots = REPO/'target/validation/report-feature'
+        shots.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(shots / f'{label}-codex-picker.png'))
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.emulate_media(color_scheme='dark')
+        expect(tier).to_be_visible()
+        page.screenshot(path=str(shots / f'{label}-codex-picker-mobile-dark.png'))
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        page.emulate_media(color_scheme='light')
     started = time.monotonic()
     with page.expect_response(lambda r: r.url.endswith('/api/bug-report') and r.request.method=='POST') as response:
         page.locator('#bug-report-go').click()
@@ -63,6 +85,10 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     elapsed = time.monotonic() - started
     if slow_create:
         assert elapsed >= 12, (elapsed, reply)
+    if tier_id:
+        assert response.value.request.post_data_json['service_tier'] == tier_id
+        starts = peer.methods('thread/start')[starts_before:]
+        assert len(starts) == 1 and starts[0]['params']['serviceTier'] == tier_id, starts
 
     if reject:
         assert response.value.status == 500, reply
@@ -171,6 +197,10 @@ def main():
         for source in a.sources.split(','):
             root=Path(tmp)/source;root.mkdir()
             with provider(source,root,a.binary,report=True) as (base,peer,extra):
+                if source == 'codex':
+                    peer.service_tiers['fake-sol'] = [
+                        {'id': 'priority', 'name': 'Fast', 'description': 'Faster responses'},
+                        {'id': 'ultrafast', 'name': 'Ultrafast', 'description': 'Fastest responses'}]
                 exercise(browser,base,source,root,'node',peer)
                 hr=root/'hub';hr.mkdir()
                 hub=Hub(a.binary.resolve().with_name('sessiondock-hub'),hr,[SimpleNamespace(name='Worker',token=TOKEN,port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':',1)[1]))])

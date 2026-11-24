@@ -191,6 +191,8 @@ async fn report_inner(
         |key: &str| Some(text(&body[key], usize::MAX).trim().to_owned()).filter(|v| !v.is_empty());
     let model = chosen("model");
     let effort = chosen("effort").filter(|_| crate::lifecycle::models::supports_effort(source));
+    let service_tier =
+        chosen("service_tier").filter(|_| state.bug_report_worker && source_text == "codex");
     if ![&model, &effort].into_iter().all(|value| {
         value
             .as_deref()
@@ -245,13 +247,15 @@ async fn report_inner(
     if feature {
         payload["report_type"] = json!("feature");
     }
-    // Only a chosen model/effort joins the replay payload, so earlier
-    // receipts without one still match their retried request.
-    if let Some(model) = &model {
-        payload["model"] = json!(model);
-    }
-    if let Some(effort) = &effort {
-        payload["effort"] = json!(effort);
+    // Omit unset overrides so older receipts still match a retried request.
+    for (key, value) in [
+        ("model", &model),
+        ("effort", &effort),
+        ("service_tier", &service_tier),
+    ] {
+        if let Some(value) = value {
+            payload[key] = json!(value);
+        }
     }
     if let Some(old) = conversations.store.report(&identity.key, &request_id) {
         if old["payload"] != payload {
@@ -457,8 +461,7 @@ async fn report_inner(
                 &source_text,
                 &draft_uid,
                 body["draft_revision"].as_u64(),
-                model,
-                effort,
+                (model, effort, service_tier),
             )
             .await
         } else {
@@ -471,7 +474,7 @@ async fn report_inner(
                 conversations.clone(),
                 draft_uid,
                 body["draft_revision"].as_u64(),
-                (model, effort),
+                (model, effort, service_tier),
             )
             .await
         };

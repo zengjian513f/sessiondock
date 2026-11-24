@@ -307,6 +307,8 @@ pub struct CreateRequest {
     #[serde(default)]
     effort: Option<String>,
     #[serde(default)]
+    service_tier: Option<String>,
+    #[serde(default)]
     cols: Option<u16>,
     #[serde(default)]
     rows: Option<u16>,
@@ -713,7 +715,9 @@ pub async fn create(
                 "模型或推理强度名称无效",
             ));
         }
-        spec.with_choice(model, effort).map_err(|_| invalid())?
+        let service_tier = chosen(body.service_tier).filter(|_| entry.source == Source::Codex);
+        spec.with_choice(model, effort, service_tier)
+            .map_err(|_| invalid())?
     } else if resume_model.is_some() {
         spec.with_resume_model(resume_model)
             .map_err(|_| invalid())?

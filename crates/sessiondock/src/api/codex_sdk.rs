@@ -120,6 +120,7 @@ pub struct Create {
     remote_continuation: Option<crate::metadata::Predecessor>,
     model: Option<String>,
     effort: Option<String>,
+    service_tier: Option<String>,
 }
 
 pub async fn create(
@@ -154,6 +155,9 @@ async fn create_owned(
     }
     if let Some(effort) = body.effort.filter(|s| !s.is_empty()) {
         params["config"] = json!({"model_reasoning_effort":effort});
+    }
+    if let Some(tier) = body.service_tier.filter(|s| !s.is_empty()) {
+        params["serviceTier"] = json!(tier);
     }
     let continuation = super::relations::sdk_continuation(
         &state,

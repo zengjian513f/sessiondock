@@ -251,6 +251,8 @@ pub struct LaunchSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<crate::metadata::Predecessor>,
 }
 impl LaunchSpec {
@@ -317,20 +319,22 @@ impl LaunchSpec {
             model: None,
             resume_model: None,
             effort: None,
+            service_tier: None,
             continuation: None,
         };
         spec.validate()?;
         Ok(spec)
     }
-    /// The picker's model and effort for a new session. Only a new CLI
-    /// launch takes them; OpenCode has no effort option.
+    /// Picker overrides for a new CLI session.
     pub fn with_choice(
         mut self,
         model: Option<String>,
         effort: Option<String>,
+        service_tier: Option<String>,
     ) -> Result<Self, Error> {
         self.model = model.filter(|value| !value.is_empty());
         self.effort = effort.filter(|value| !value.is_empty());
+        self.service_tier = service_tier.filter(|value| !value.is_empty());
         self.validate()?;
         Ok(self)
     }
@@ -364,6 +368,9 @@ impl LaunchSpec {
     }
     pub fn effort(&self) -> Option<&str> {
         self.effort.as_deref()
+    }
+    pub fn service_tier(&self) -> Option<&str> {
+        self.service_tier.as_deref()
     }
     pub fn source(&self) -> Source {
         self.source
@@ -400,6 +407,11 @@ impl LaunchSpec {
         {
             return Err(Error::InvalidSpec);
         }
+        if self.service_tier.is_some()
+            && (self.source != Source::Codex || !matches!(self.launch, Launch::NewPending))
+        {
+            return Err(Error::InvalidSpec);
+        }
         self.launch.validate(self.source)
     }
     pub(super) fn verify_directory(&self) -> Result<(), Error> {
@@ -409,7 +421,11 @@ impl LaunchSpec {
             self.cwd(),
             self.launch.clone(),
         )?
-        .with_choice(self.model.clone(), self.effort.clone())?
+        .with_choice(
+            self.model.clone(),
+            self.effort.clone(),
+            self.service_tier.clone(),
+        )?
         .with_resume_model(self.resume_model.clone())?
         .with_continuation(self.continuation.clone());
         checked.codex_socket = self.codex_socket.clone();

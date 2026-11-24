@@ -242,6 +242,12 @@ fn choice_args(spec: &LaunchSpec) -> Vec<String> {
             if let Some(effort) = effort {
                 args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
             }
+            if let Some(tier) = spec.service_tier() {
+                args.extend([
+                    "-c".into(),
+                    format!("service_tier={}", serde_json::json!(tier)),
+                ]);
+            }
         }
         Source::Grok => {
             if let Some(model) = model {

@@ -32,6 +32,7 @@ class FakeAppServer:
         self.thread_id = thread_id
         self.created = {}
         self.settings = {"model": "fake-sol", "effort": "high"}
+        self.service_tiers = {}
         self.rollout_root = rollout.parent
         self.received = []          # every client message, in order
         self.loop = asyncio.new_event_loop()
@@ -207,6 +208,8 @@ class FakeAppServer:
                       "reasoningEffort": params.get("config", {}).get("model_reasoning_effort", "low")}
             self.created[self.thread_id] = result
             self.settings = {"model": result["model"], "effort": result["reasoningEffort"]}
+            if "serviceTier" in params:
+                result["serviceTier"] = self.settings["serviceTier"] = params["serviceTier"]
             await reply(result)
         elif method == "thread/list":
             await reply({"data": [], "nextCursor": None})
@@ -223,9 +226,11 @@ class FakeAppServer:
                 {"id": "fake-sol", "model": "fake-sol", "displayName": "Fake Sol", "hidden": False, "isDefault": True,
                  "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": "fast"},
                                                {"reasoningEffort": "high", "description": "deep"}],
+                 "serviceTiers": self.service_tiers.get("fake-sol", []),
                  "defaultReasoningEffort": "low"},
                 {"id": "fake-luna", "model": "fake-luna", "displayName": "Fake Luna", "hidden": False, "isDefault": False,
                  "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": "mid"}],
+                 "serviceTiers": self.service_tiers.get("fake-luna", []),
                  "defaultReasoningEffort": "medium"}], "nextCursor": None})
         elif method == "account/rateLimits/read":
             bucket = self._bucket()

@@ -67,7 +67,9 @@ model, effort, and model-refresh (`#bug-report-model-refresh`) controls, listing
 (`POST /api/native-sdk/models`, `GET /api/codex-sdk/models`, or `GET /api/term/models`, with explicit refresh via `{refresh:true}` / `?refresh=1`); an optional `model`/`effort` in the body is passed
 to the worker CLI exactly like a new session's
 ([lifecycle-http.md](lifecycle-http.md#model-and-effort)), absent means the
-CLI's own default. A chosen value joins the replay payload, so the same
+CLI's own default. Codex workers also accept an optional `service_tier` for
+the selected model in both launch modes ([Codex SDK](codex-sdk.md),
+[CLI](lifecycle-http.md#model-and-effort)). A chosen value joins the replay payload, so the same
 request ID with a different choice is refused. The model list opens as a
 popover above the dialog rather than inside the form's scroll box, which is
 shorter than the list (`BUG-20260928-123931-9cc8ae`). The description box
@@ -96,7 +98,7 @@ values retain the bug-report behavior. Internal report IDs and storage paths kee
 existing `BUG-…` format for both types; this identifier does not imply diagnostic capture.
 
 Body: `{report_type, description (required, ≤ 50000 chars), uid, page_id|_page_id,
-_trace_id, _build, source ∈ claude|codex|grok|opencode|agy (default codex), model, effort, terminal_name,
+_trace_id, _build, source ∈ claude|codex|grok|opencode|agy (default codex), model, effort, service_tier, terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
 uid}, optional), captured (object, optional)}`; unknown fields are ignored,
@@ -304,8 +306,8 @@ available to legacy callers; it is not the new browser upload path.
 
 ## The worker (`bug_report/worker.rs`)
 
-1. Create the source's ordinary configured CLI with repository cwd. Keep its
-   model/effort defaults. The new frontend view is conversation mode; the PTY
+1. Create the source's ordinary configured CLI with repository cwd and any
+   selected model, effort and Codex service tier. The new frontend view is conversation mode; the PTY
    starts in the backend and can be opened manually.
 2. Bind the processing launch to the report's server draft, retaining original
    text, uploaded references and the diagnostic task prompt.

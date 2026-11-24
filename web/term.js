@@ -1120,6 +1120,8 @@ $('#bug-report-form').onsubmit = async event => {
   }
   const origin = bugReportOrigin(node);
   const remote = HUB_MODE && !!origin.node_id && origin.node_id !== node;
+  const source = bugReportSource();
+  const choice = {...(bugReportWorkerEnabled() ? BugReportModels.choice() : {}), mode: agentStartMode(source)};
   if (typeof staleBuildShown !== 'undefined' && staleBuildShown) {
     error.textContent = '页面已更新，请重新加载后再提交';
     return;
@@ -1139,7 +1141,7 @@ $('#bug-report-form').onsubmit = async event => {
     bugReportDraftObject().text = reportText;
     await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
-    const priorPayload=JSON.stringify({description,report_type,source:bugReportSource(),mode:agentStartMode(bugReportSource()),...BugReportModels.choice(),
+    const priorPayload=JSON.stringify({description,report_type,source,...choice,
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
       const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
@@ -1167,10 +1169,8 @@ $('#bug-report-form').onsubmit = async event => {
       captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
     }
     setSendButtonBusy(button, '提交中');
-    const source = bugReportSource();
     store.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
-    const choice = {...BugReportModels.choice(),mode:agentStartMode(source)};
     const requestText=JSON.stringify({description,report_type,source,...choice,attachments:uploaded,origin});
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
@@ -1619,6 +1619,7 @@ function fetchModelCatalog(node, source, options = {}) {
         if (sdk && Array.isArray(data?.raw?.data)) {
           const models = data.raw.data.filter(row => !row.hidden).map(row => ({id: row.model,
             name: row.displayName || row.model, default_effort: row.defaultReasoningEffort,
+            service_tiers: row.serviceTiers,
             efforts: (row.supportedReasoningEfforts || []).map(value => value.reasoningEffort)}));
           return {models, default_model: data.raw.data.find(row => row.isDefault)?.model,
             efforts: [...new Set(models.flatMap(row => row.efforts))]};
@@ -1633,13 +1634,15 @@ function fetchModelCatalog(node, source, options = {}) {
   return modelCatalogs.get(key);
 }
 
-/** 模型按机器和来源记住；强度按来源和模型共享，不区分机器或弹窗。 */
+/** 模型按机器和来源记住；强度跨机器和弹窗共享，服务档位按弹窗、机器和模型记住。 */
 function createModelPicker(prefix, {source, node, storeKey}) {
   const el = name => document.getElementById(`${prefix}-${name}`);
   const button = el('model'), label = el('model-label'), menu = el('model-menu');
   const search = el('model-search'), box = el('model-options'), select = el('effort');
   const refreshBtn = el('model-refresh');
+  const tierSelect = el('service-tier');
   const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
+  const tierKey = () => `${storeKey}Tier.${picker.key}|${picker.model}`;
   const info = id => picker.catalog?.models.find(model => model.id === id
     || model.variants && Object.values(model.variants).includes(id)) || null;
   const controls = (text, title, enabled) => {
@@ -1688,6 +1691,13 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
+    const tiers = source() === 'codex' && Array.isArray(shown?.service_tiers) ? shown.service_tiers : [];
+    const tierOptions = CodexSdkControls.tierOptions(tiers);
+    tierSelect.parentElement.hidden = tierOptions.length < 2;
+    tierSelect.replaceChildren(new Option('配置默认', ''), ...tierOptions);
+    const savedTier = store.get(tierKey(), '');
+    tierSelect.value = !tierSelect.parentElement.hidden && tierOptions.some(option => option.value === savedTier)
+      ? savedTier : '';
     if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model});
     if (persist && (effort || source() === 'agy') && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
   };
@@ -1734,7 +1744,8 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const variants = info(picker.model)?.variants;
     if (variants) return {model: variants[picker.effort]};
     return {...(picker.model ? {model: picker.model} : {}),
-      ...(picker.effort ? {effort: picker.effort} : {})};
+      ...(picker.effort ? {effort: picker.effort} : {}),
+      ...(tierSelect.value ? {service_tier: tierSelect.value} : {})};
   };
   picker.close = (focus = false) => {
     if (menu.hidden) return;
@@ -1849,6 +1860,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (option) choose(Number(option.dataset.modelOption));
   };
   select.onchange = e => picker.apply(picker.model, e.currentTarget.value, true);
+  tierSelect.onchange = () => store.set(tierKey(), tierSelect.value);
   if (refreshBtn) refreshBtn.onclick = () => picker.refresh({force: true});
   const dialog = button.closest('dialog');
   dialog.addEventListener('pointerdown', e => {
@@ -2314,7 +2326,7 @@ async function resolveNewSession(info) {
 
 let newCreateAttempt = null;
 function newSessionRequestId(source, cwd) {
-  const key = JSON.stringify([newNodeId(), source, agentStartMode(source), cwd, NewModels.model, NewModels.effort]);
+  const key = JSON.stringify([newNodeId(), source, agentStartMode(source), cwd, NewModels.choice()]);
   if (newCreateAttempt?.key !== key) newCreateAttempt = {key,
     rows: termRows(),
     id: requestId()};

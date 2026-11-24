@@ -27,6 +27,7 @@ from session_start_fixtures import choose_mode
 OPENCODE_MODELS = [f"prov/model-{index:02d}" for index in range(12)] + ["prov/zeta-1", "other/deep/nested-2"]
 CODEX_CACHE = {"models": [
     {"slug": "gpt-fake-a", "display_name": "GPT Fake A", "visibility": "list",
+     "service_tiers": [{"id": "priority", "name": "Fast", "description": "Faster responses"}],
      "default_reasoning_level": "low", "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]},
     {"slug": "gpt-fake-b", "display_name": "GPT Fake B", "visibility": "list",
      "default_reasoning_level": "low",
@@ -492,6 +493,7 @@ def main():
             expect(page.locator("#new-effort")).to_have_value("medium")
             body = create(page, work)
             assert body["model"] == "gpt-fake-b" and body["effort"] == "medium", body
+            assert "service_tier" not in body, body
             open_dialog(page)
             page.locator("#new-model").click()
             names = page.locator("#new-model-options [role=option]").all_inner_texts()
@@ -512,25 +514,36 @@ def main():
             expect(page.locator("#new-model")).to_be_focused()
             assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
+            tier = page.locator("#new-service-tier")
+            expect(tier).to_have_value("")
+            tier.select_option("priority")
             hit_select(page.locator("#new-effort"), "low")
             choose_model(page, "GPT Fake B")
             expect(page.locator("#new-effort")).to_have_value("medium")
+            expect(tier).to_be_hidden()
             hit_select(page.locator("#new-effort"), "xhigh")
             choose_model(page, "GPT Fake A")
             expect(page.locator("#new-effort")).to_have_value("low")
+            expect(tier).to_have_value("priority")
+            shot("codex-tier")
             body = create(page, work)
             assert body["model"] == "gpt-fake-a" and body["effort"] == "low", body
+            assert body["service_tier"] == "priority", body
             argv = wait_argv(log, lambda a: "-m" in a and "gpt-fake-a" in a)
-            assert argv[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'], argv
+            assert argv[-6:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"',
+                                 "-c", 'service_tier="priority"'], argv
 
             # Opening refreshes the real catalog. Assert the restored, displayed
             # choice before submitting; the loading state has no concrete effort.
             open_dialog(page)
             expect(page.locator("#new-model-label")).to_have_text("GPT Fake A")
             expect(page.locator("#new-effort")).to_have_value("low")
+            expect(tier).to_have_value("priority")
+            tier.select_option("")
             count = len(argv_lines(log))
             body = create(page, work)
             assert body["effort"] == "low", body
+            assert "service_tier" not in body, body
             wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'])
             assert any(a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'] for a in argv_lines(log)[count:])
 
@@ -541,7 +554,21 @@ def main():
             page.locator("#bug-report-model").click()
             page.locator("#bug-report-model-options [role=option]", has_text="GPT Fake A").click()
             expect(page.locator("#bug-report-effort")).to_have_value("low")
+            report_tier = page.locator("#bug-report-service-tier")
+            expect(report_tier).to_have_value("")
+            report_tier.select_option("default")
             page.locator("#bug-report-dialog .modal-close").click()
+            page.locator('[data-report-bug]:visible').first.click()
+            expect(report_tier).to_have_value("default")
+            page.locator('#bug-report-type label:has(input[value=feature])').click()
+            page.locator("#bug-report-description").fill("Codex CLI worker uses Normal")
+            shot("report-codex-tier")
+            with page.expect_response(lambda r: r.url.endswith("/api/bug-report") and r.request.method == "POST") as report:
+                page.locator("#bug-report-go").click()
+            assert report.value.status == 202, report.value.text()
+            assert report.value.request.post_data_json["service_tier"] == "default"
+            argv = wait_argv(log, lambda a: 'service_tier="default"' in a)
+            assert argv[-2:] == ["-c", 'service_tier="default"'], argv
 
             # Configuration changes do not override remembered model effort.
             (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel_reasoning_effort = "high"\n')

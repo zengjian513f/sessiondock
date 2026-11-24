@@ -79,7 +79,7 @@ pub async fn launch(
     conversations: Arc<crate::conversation::Conversations>,
     draft_uid: String,
     draft_revision: Option<u64>,
-    (model, effort): (Option<String>, Option<String>),
+    (model, effort, service_tier): (Option<String>, Option<String>, Option<String>),
 ) -> Result<Value, String> {
     let label = source_label(source);
     let entry = ctx
@@ -92,7 +92,7 @@ pub async fn launch(
     let spec = tokio::task::spawn_blocking(move || {
         if entry.profile {
             LaunchSpec::profile_new(source, adapter_id, &repository)
-                .and_then(|spec| spec.with_choice(model, effort))
+                .and_then(|spec| spec.with_choice(model, effort, service_tier))
         } else {
             LaunchSpec::new(source, adapter_id, &repository)
         }

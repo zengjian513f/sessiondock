@@ -7,6 +7,18 @@ const CodexSdkControls = {
   sandboxNames: {readOnly: '只读', workspaceWrite: '工作区写入', dangerFullAccess: '完全访问', externalSandbox: '外部沙箱'},
   approvalNames: {'on-request': '按需审批', untrusted: '不可信命令需审批', never: '不请求审批'},
 
+  tierOptions(tiers) {
+    const options = new Map([['default', {name: 'Normal', description: '普通服务档位'}]]);
+    for (const tier of tiers) {
+      if (tier.id && tier.name && !options.has(tier.id)) options.set(tier.id, tier);
+    }
+    return Array.from(options, ([id, {name, description}]) => {
+      const option = new Option(name, id);
+      option.title = description || '';
+      return option;
+    });
+  },
+
   mount(view) {
     view.settingChoices = new Map(); view.nativeSettingValues = new Map();
     const state = {uid: view.uid, generation: view.generation, panel: null};
@@ -86,18 +98,12 @@ const CodexSdkControls = {
     const model = view.models.find(row => row.model === settings.model);
     // Native IDs can differ from their labels (e.g. priority is Fast).
     // Catalog defaults do not establish this thread's effective setting.
-    const tiers = [{id: 'default', name: 'Normal', description: '普通服务档位'}, ...(model?.serviceTiers || [])];
+    const tiers = model?.serviceTiers || [];
     const value = sdkSettingValue(view, 'service_tier', Object.hasOwn(settings, 'serviceTier') ? (settings.serviceTier || 'default') : '');
     select.disabled = view.settingChoices.has('service_tier');
     const signature = JSON.stringify([tiers, value]);
     if (select.dataset.options !== signature) {
-      select.replaceChildren();
-      for (const tier of tiers) {
-        if ([...select.options].some(option => option.value === tier.id)) continue;
-        const option = new Option(tier.name, tier.id);
-        option.title = tier.description || '';
-        select.append(option);
-      }
+      select.replaceChildren(...this.tierOptions(tiers));
       ConversationUI.selectValue(select, value, '档位');
       select.dataset.options = signature;
       if (view.pane) delete view.pane.querySelector('.sdk-status-row')?.dataset.footerLayout;

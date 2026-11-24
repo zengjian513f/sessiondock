@@ -346,7 +346,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 
 | Route | Effect |
 | --- | --- |
-| POST `/api/codex-sdk/create` `{request_id, cwd, create_cwd?, model?, effort?}` | `thread/start`; returns `{uid, session, cwd, thread_id, raw}`; a missing directory returns `needs_create` before starting anything |
+| POST `/api/codex-sdk/create` `{request_id, cwd, create_cwd?, model?, effort?, service_tier?}` | `thread/start`, with `serviceTier` for an explicit tier; returns `{uid, session, cwd, thread_id, raw}`; a missing directory returns `needs_create` before starting anything |
 | POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
@@ -411,6 +411,13 @@ those earlier cards. `accepted: true` is the tool acknowledgment, not an answer.
 Validation: [async question browser suite](../tests/codex_sdk_questions_browser.py).
 
 ## Creation
+
+DELTA (BUG-20261124-132117-e392e5): Codex new-session and report workers offer
+the selected model's advertised service tiers. 配置默认 omits the override.
+Normal explicitly uses the native ID `default`. The browser remembers a choice
+per dialog, machine and model, and restores it while the tier is available.
+SDK creation sends the selected native ID in `thread/start.serviceTier`, before
+any turn, and includes it in the creation replay parameters.
 
 DELTA (SDK default and lazy creation): choosing Codex in 新建会话 uses
 `thread/start` directly, without a PTY or `api/term/create`, on an SDK-enabled

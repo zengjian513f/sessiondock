@@ -68,9 +68,22 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     page.locator("#new-model").click()
     page.locator('[data-model-option]').filter(has_text="Fake Luna").click()
     expect(page.locator("#new-effort")).to_have_value("medium")
+    tier = page.get_by_role("combobox", name="服务档位", exact=True)
+    expect(tier).to_have_value("")
+    assert tier.locator("option").all_text_contents() == ["配置默认", "Normal", "Fast"]
+    tier_id = "priority" if width > 500 else "default"
+    tier.select_option(tier_id)
+    page.locator("#new-model").click()
+    page.locator('[data-model-option]').filter(has_text="Fake Sol").click()
+    expect(page.locator("#new-service-tier")).to_be_hidden()
+    page.locator("#new-model").click()
+    page.locator('[data-model-option]').filter(has_text="Fake Luna").click()
+    expect(tier).to_have_value(tier_id)
     work = root / (label + '-工作目录-with-a-realistic-long-project-name')
     work.mkdir()
     page.locator("#new-cwd").fill(str(work))
+    if screenshots:
+        page.screenshot(path=str(screenshots / f"{label}-picker.png"))
     before = len(fake.methods("thread/start"))
     # The actual node creates the thread, but the browser loses its receipt.
     def lose_response(route):
@@ -92,6 +105,8 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     start = fake.methods("thread/start")[-1]["params"]
     assert start["cwd"] == str(work) and start["model"] == "fake-luna"
     assert start["config"]["model_reasoning_effort"] == "medium"
+    assert start["serviceTier"] == tier_id
+    expect(page.locator("#sdk-tier")).to_have_value(tier_id)
     uid = page.evaluate("S.sel")
     assert uid.startswith("codex:") and not page.evaluate("T.pending.length")
     if width > 500:
@@ -222,6 +237,8 @@ def main():
         if token:
             environment["SESSIONDOCK_CODEX_APP_SERVER_TOKEN"] = token
         with FakeAppServer(app_socket, corpus.paths["sdk"], THREAD, token=token) as fake:
+            fake.service_tiers["fake-luna"] = [
+                {"id": "priority", "name": "Fast", "description": "Faster responses"}]
             with server(corpus, args.binary, fake.socket_path, environment) as base:
                 hub_root = root / "hub"
                 hub_root.mkdir()

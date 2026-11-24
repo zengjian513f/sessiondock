@@ -154,6 +154,12 @@ that is empty, longer than 200 bytes, contains whitespace or control characters,
 or starts with `-` is 400 `launch_model`; the model itself is not checked against
 the catalog, the CLI decides.
 
+DELTA (BUG-20261124-132117-e392e5): new Codex CLI sessions and report workers
+also accept an optional `service_tier`. The picker reads each model's
+`service_tiers` from the same catalog. An explicit tier is saved in the launch
+receipt and passed as `-c 'service_tier="ID"'`. An omitted tier inherits the
+CLI's configuration. Normal uses the explicit ID `default`.
+
 The catalog comes from each CLI's own data, read as its child would see it
 (profile environment over the service's): Codex `$CODEX_HOME/models_cache.json`
 (when `client_version` matches the installed CLI; otherwise its read-only

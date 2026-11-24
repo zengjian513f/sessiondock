@@ -533,9 +533,10 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
   flex: none; margin: 0; padding: 0; border: 0;
 }
-#new-session-dialog { width: min(640px, calc(100vw - 28px)); }
+#new-session-dialog { width: min(calc(640px + var(--launch-tier-space, 0px)), calc(100vw - 28px)); }
 /* 报告问题同一行还要放下模型和强度。 */
-#bug-report-dialog { width: min(600px, calc(100vw - 28px)); }
+#bug-report-dialog { width: min(calc(600px + var(--launch-tier-space, 0px)), calc(100vw - 28px)); }
+:is(#new-session-dialog, #bug-report-dialog):has(.launch-tier:not([hidden])) { --launch-tier-space: 32px; }
 :is(#new-session-form, #bug-report-form) .new-source {
   display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden; background: var(--panel-2);
@@ -568,6 +569,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 :is(#new-session-form, #bug-report-form) .node-select:not([hidden]) { flex: 0 1 132px; min-width: 88px; padding-left: 8px; }
 /* 下拉菜单以模型+强度这一组为宽度，窄屏换行后也不会伸出对话框。 */
 .new-choice { position: relative; display: flex; gap: 7px; flex: 1 1 220px; min-width: 0; }
+.new-choice:has(.launch-tier:not([hidden])) { flex-basis: 296px; }
+.new-choice:has(.launch-tier:not([hidden])) > .new-effort:not(.launch-tier) { flex: 0 1 88px; }
 #bug-report-form .new-choice[hidden], #bug-report-source[hidden] { display: none; }
 .new-model { flex: 1 1 0; min-width: 0; }
 .new-pick {
@@ -619,6 +622,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-effort > select:disabled { opacity: .45; cursor: not-allowed; }
 .new-effort > select option:disabled { color: var(--muted); }
 .new-effort > select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.new-effort.launch-tier { flex: 0 1 88px; }
+.new-effort.launch-tier[hidden] { display: none; }
 .new-model-refresh {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 39px; height: 39px; padding: 0;
@@ -645,6 +650,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 }
 @container (max-width: 300px) {
   :is(#new-session-form, #bug-report-form) .new-source span { min-width: 30px; padding: 6px 4px; }
+  .new-choice:has(.launch-tier:not([hidden])) { flex-wrap: wrap; }
+  .new-choice:has(.launch-tier:not([hidden])) > .new-model { flex-basis: 100%; }
 }
 @container (max-width: 220px) {
   :is(#new-session-form, #bug-report-form) .new-source:has(input[value="agy"]),

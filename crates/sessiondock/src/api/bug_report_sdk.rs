@@ -16,8 +16,7 @@ pub(super) async fn launch(
     source: &str,
     draft_uid: &str,
     revision: Option<u64>,
-    model: Option<String>,
-    effort: Option<String>,
+    (model, effort, service_tier): (Option<String>, Option<String>, Option<String>),
 ) -> Result<Value, String> {
     let conversations = state.conversations.clone().ok_or("服务端草稿不可用")?;
     let identity = conversations
@@ -28,8 +27,11 @@ pub(super) async fn launch(
     if revision.is_some_and(|r| r != previous.revision) {
         return Err("草稿已被另一页面修改；诊断已保存，未发送".into());
     }
-    let body = json!({"source":source,"cwd":state.bug_report.as_ref().unwrap().service.repository(),
+    let mut body = json!({"source":source,"cwd":state.bug_report.as_ref().unwrap().service.repository(),
         "request_id":format!("bug-report-{}",report.report_id),"model":model,"effort":effort});
+    if let Some(tier) = service_tier {
+        body["service_tier"] = json!(tier);
+    }
     let created = if source == "codex" {
         super::codex_sdk::create(
             State(state.clone()),

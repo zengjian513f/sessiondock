@@ -963,6 +963,7 @@ impl Core {
                     normalized.with_choice(
                         spec.model().map(str::to_owned),
                         spec.effort().map(str::to_owned),
+                        spec.service_tier().map(str::to_owned),
                     )
                 })
                 .and_then(|normalized| {
