@@ -155,6 +155,44 @@ def check_startup_interrupt(page, fixture, uid, screenshots=None, *, reject_firs
     return pid
 
 
+def check_writer_admission(page, fixture, screenshots=None):
+    fixture.occupy()
+    before = len(fixture.inputs())
+    blocked = send(page, 'must not take over')['request_id']
+    page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='must not take over' && row.state==='failed')")
+    refused = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='must not take over')")
+    assert 'agy_sdk_session_busy' in refused['error'], refused
+    assert len(fixture.inputs()) == before
+    row = page.locator(f'[data-queue-id="{refused["id"]}"]')
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'agy-writer-busy.png'), full_page=True)
+    fixture.unoccupy()
+    row.get_by_role('button', name='撤销', exact=True).click()
+    expect(row).to_have_count(0)
+    warm = send(page, 'after external writer exits')['request_id']
+    expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: after external writer exits')
+    idle(page)
+    assert len(fixture.inputs('after external writer exits')) == 1
+    assert fixture.inputs()[-1]['pid'] == fixture.inputs()[before - 1]['pid']
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'agy-writer-released.png'), full_page=True)
+    return blocked, warm
+
+
+def exercise_writer_admission(browser, base, fixture, screenshots):
+    with browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block') as context:
+        context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
+        page = context.new_page()
+        page.goto(base, wait_until='domcontentloaded')
+        page.wait_for_function('T.listLoaded')
+        uid = select_sdk(page)
+        watch(page, uid)
+        send(page, 'warm Agy session')
+        expect(page.locator('.sdk-msgs')).to_contain_text('Synthetic Agy reply: warm Agy session')
+        idle(page)
+        return check_writer_admission(page, fixture, screenshots)
+
+
 def exercise(browser, base, fixture, screenshots=None):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
@@ -521,21 +559,7 @@ def exercise(browser, base, fixture, screenshots=None):
                 expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: next round after historical error')
                 idle(page)
                 assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs('next round after historical error')[-1]['pid']
-        fixture.occupy()
-        before = len(fixture.inputs())
-        send(page, 'must not take over')
-        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='must not take over' && ['failed','unknown'].includes(row.state))")
-        refused = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='must not take over')")
-        assert 'busy' in refused['error'] or '占用' in refused['error'], refused
-        assert len(fixture.inputs()) == before
-        fixture.unoccupy()
-        page.locator(f'[data-queue-id="{refused["id"]}"]').get_by_role('button', name='移除记录' if refused['state']=='unknown' else '撤销', exact=True).click()
-        if refused['state']=='unknown':
-            page.get_by_role('button', name='移除记录', exact=True).last.click()
-        expect(page.locator(f'[data-queue-id="{refused["id"]}"]')).to_have_count(0)
-        send(page, 'after external writer exits')
-        expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after external writer exits')
-        idle(page)
+        blocked_input, warm_input = check_writer_admission(page, fixture, screenshots)
 
         print('Agy: create through the real picker, native SID receipt and first SEND', flush=True)
         open_dialog(page)
@@ -593,6 +617,7 @@ def exercise(browser, base, fixture, screenshots=None):
                         page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
                         close_more(page)
         assert not errors, errors
+        return blocked_input, warm_input
     except Exception:
         if screenshots:page.screenshot(path=str(screenshots/'agy-failure.png'),full_page=True)
         raise
@@ -676,12 +701,15 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
         context.close()
 
 
-def check_diagnostic_logs(fixture):
+def diagnostic_events(fixture):
     """Read the real service's persisted trace after its normal shutdown flush."""
     records = [json.loads(line)
-               for path in (fixture.root / 'state/runtime-logs').glob('*.jsonl')
+               for path in sorted((fixture.root / 'state/runtime-logs').glob('*.jsonl'))
                for line in path.read_text().splitlines()]
-    events = [row for row in records if row.get('event', '').startswith(('agy.sdk.', 'native_sdk.input_'))]
+    return [row for row in records if row.get('event', '').startswith(('agy.sdk.', 'native_sdk.input_'))]
+
+
+def check_diagnostic_logs(fixture, events):
     assert events, 'SDK diagnostics were not persisted'
     assert all(row.get('aggregation') == 'none' and 'repeat_count' not in row for row in events)
     encoded = json.dumps(events, ensure_ascii=False)
@@ -743,14 +771,37 @@ def check_diagnostic_logs(fixture):
     print('Agy: persisted request/delivery/runtime/step/result/queue trace and metadata-only logging verified', flush=True)
 
 
+def check_writer_logs(events, blocked_input, warm_input):
+    for delivery, available, finish in [(blocked_input, False, 'native_sdk.input_transition'),
+                                         (warm_input, True, 'agy.sdk.input_written')]:
+        def index(event, state=None):
+            return next(i for i, row in enumerate(events) if row['event'] == event
+                        and row.get('delivery_id') == delivery
+                        and (state is None or row['to'] == state))
+
+        queued = index('native_sdk.input_transition', 'queued')
+        sending = index('native_sdk.input_transition', 'sending')
+        finished = index(finish, None if available else 'failed')
+        checks = [(i, row) for i, row in enumerate(events[queued:finished], queued)
+                  if row['event'] == 'agy.sdk.writer_check' and row['session_id'] == SID]
+        assert len(checks) == 1 and sending < checks[0][0] < finished, checks
+        assert checks[0][1]['available'] is available, checks
+    assert not any(row['event'] == 'agy.sdk.turn_started' and row['delivery_id'] == blocked_input
+                   for row in events)
+    print('Agy: one writer check per warm send, explicit occupancy failure and same-process recovery verified', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--ptyhost', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--frontend', type=Path)
     parser.add_argument('--screenshots', type=Path)
-    parser.add_argument('--rewind-echo-only', action='store_true',
-                        help='Exercise Agy rewind and the next input without a headless echo')
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--rewind-echo-only', action='store_true',
+                       help='Exercise Agy rewind and the next input without a headless echo')
+    scope.add_argument('--writer-check-only', action='store_true',
+                       help='Exercise warm sends and external writer refusal')
     args = parser.parse_args()
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
     if args.frontend:
@@ -776,13 +827,19 @@ def main():
                 try:
                     if args.screenshots:
                         args.screenshots.mkdir(parents=True, exist_ok=True)
-                    if not args.rewind_echo_only:
-                        exercise(browser, base, fixture, args.screenshots)
-                    exercise_rewind_echo(browser, base, fixture, args.screenshots)
+                    if args.writer_check_only:
+                        blocked_input, warm_input = exercise_writer_admission(browser, base, fixture, args.screenshots)
+                    elif not args.rewind_echo_only:
+                        blocked_input, warm_input = exercise(browser, base, fixture, args.screenshots)
+                    if not args.writer_check_only:
+                        exercise_rewind_echo(browser, base, fixture, args.screenshots)
                 finally:
                     browser.close()
         if not args.rewind_echo_only:
-            check_diagnostic_logs(fixture)
+            events = diagnostic_events(fixture)
+            check_writer_logs(events, blocked_input, warm_input)
+            if not args.writer_check_only:
+                check_diagnostic_logs(fixture, events)
     print('PASS Agy native SDK browser', flush=True)
 
 

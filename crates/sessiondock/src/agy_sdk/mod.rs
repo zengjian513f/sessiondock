@@ -204,7 +204,7 @@ fn log_step(live: &Live, turn: &Turn, native: &Native, step: &Value, idle: bool)
 }
 
 enum Command {
-    Turn(Turn),
+    Turn(TurnRequest),
     Steer(
         Steer,
         Option<LaunchSettings>,
@@ -213,6 +213,11 @@ enum Command {
     Interrupt(String, oneshot::Sender<Result<Value, String>>),
     Rename(String, oneshot::Sender<Result<Value, String>>),
     History(String, Value, oneshot::Sender<Result<Value, String>>),
+}
+
+enum TurnRequest {
+    Submit(Value, oneshot::Sender<Result<Value, String>>),
+    Recover(Turn),
 }
 
 pub fn new(
@@ -398,6 +403,10 @@ impl Bridge {
                 let data = live.data.lock().unwrap();
                 Ok(json!({"session_id":live.sid,"cwd":live.cwd,"capabilities":capabilities(),"raw":live.raw(&data)}))
             }
+            "observe_queue" => {
+                self.open(&target).await?;
+                Ok(Value::Null)
+            }
             "reattach" => {
                 let sid = text(&target, "session_id")?;
                 if self.process.host_dir.is_none() || self.read_binding(&sid)?.is_none() {
@@ -417,61 +426,10 @@ impl Bridge {
                 if let Some(request)=choice(&input,"request_id")
                     && let Some(receipt)=live.data.lock().unwrap().receipts.get(&request).cloned()
                 {return Ok(receipt);}
-                // Check again for an independent writer even when this session was already opened.
-                self.process.check_available(live.sid.clone()).await?;
-                let mut data = live.data.lock().unwrap();
-                let request = choice(&input, "request_id").unwrap_or_else(|| format!("local:{}", data.seq + 1));
-                if let Some(receipt) = data.receipts.get(&request) { return Ok(receipt.clone()); }
-                let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?.to_owned();
-                let launch = LaunchSettings::requested(&data, &input);
-                let turn = Turn { id: request.clone(), text: content.clone(),
-                    model: launch.model, effort: launch.effort, mode: launch.mode, recovering: false,
-                    persistent:true, runtime_id:request.clone(), stdout_offset:0, idle_checkpoint:false,
-                    first_native_step:None };
-                let mut turn = turn;
-                if let Some(runtime) = &data.runtime
-                    && runtime.model == turn.model && runtime.effort == turn.effort && runtime.mode == turn.mode
-                {
-                    turn.runtime_id = runtime.runtime_id.clone();
-                    turn.stdout_offset = runtime.stdout_offset;
-                }
-                let carryover: Vec<Steer> = if turn.runtime_id.is_empty() {
-                    Vec::new()
-                } else {
-                    data.steers
-                        .iter()
-                        .filter(|steer| {
-                            data.items.iter().any(|item| {
-                                item["role"] == "user"
-                                    && item["request_id"] == steer.id
-                                    && item["native_id"].is_null()
-                                    && item["status"] != "unknown"
-                            })
-                        })
-                        .cloned()
-                        .collect()
-                };
-                if turn.runtime_id.is_empty() {
-                    for item in &mut data.items {
-                        if item["role"] == "user"
-                            && is_control_input(item)
-                            && item["native_id"].is_null()
-                        {
-                            item["status"] = json!("unknown");
-                        }
-                    }
-                }
-                let receipt = json!({"accepted":true,"sdkhost":self.process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
-                self.save_binding(&live, &turn, &carryover)?;
-                live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
-                data.steers = carryover;
-                data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued","received_at":crate::sdk_message_time::now()}));
-                data.receipts.insert(request, receipt.clone());
-                data.outstanding += 1;
-                data.error = None;
-                data.error_kind = None;
-                live.publish(&mut data);
-                Ok(receipt)
+                let (sender, receiver) = oneshot::channel();
+                live.commands.send(Command::Turn(TurnRequest::Submit(input, sender)))
+                    .map_err(|_| "agy_sdk_shutdown")?;
+                receiver.await.map_err(|_| "agy_sdk_shutdown".to_owned())?
             }
             "steer" | "fifo_turn" => {
                 let live = self.open(&target).await?;
@@ -624,7 +582,7 @@ impl Bridge {
                 }
                 data.outstanding += 1;
                 live.commands
-                    .send(Command::Turn(binding.turn))
+                    .send(Command::Turn(TurnRequest::Recover(binding.turn)))
                     .map_err(|_| "agy_sdk_shutdown")?;
                 live.publish(&mut data);
             }
@@ -650,16 +608,6 @@ impl Bridge {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(format!("agy_sdk_binding: {error}")),
         }
-    }
-
-    fn save_binding(&self, live: &Live, turn: &Turn, steers: &[Steer]) -> Result<(), String> {
-        write_binding(
-            self.process.adapter_dir.as_deref(),
-            &live.sid,
-            &live.cwd,
-            turn,
-            steers,
-        )
     }
 
     fn install(
@@ -880,6 +828,94 @@ struct Runtime {
     transcript: transcript::Pending,
 }
 
+async fn admit_turn(
+    process: &Arc<ProcessConfig>,
+    live: &Live,
+    input: Value,
+    shutdown: &CancellationToken,
+) -> Result<(Option<Turn>, Value), String> {
+    let request = {
+        let data = live.data.lock().unwrap();
+        let request =
+            choice(&input, "request_id").unwrap_or_else(|| format!("local:{}", data.seq + 1));
+        if let Some(receipt) = data.receipts.get(&request) {
+            return Ok((None, receipt.clone()));
+        }
+        request
+    };
+    let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?;
+    // Check when the serialized actor is ready to deliver, before persisting
+    // its acceptance. A queued turn may wait behind another native operation.
+    tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return Err("agy_sdk_shutdown".into()),
+        _ = live.stop.cancelled() => return Err("agy_sdk_stopped".into()),
+        checked = process.check_available(live.sid.clone()) => checked?,
+    }
+    let mut data = live.data.lock().unwrap();
+    let launch = LaunchSettings::requested(&data, &input);
+    let mut turn = Turn {
+        id: request.clone(),
+        text: content.to_owned(),
+        model: launch.model,
+        effort: launch.effort,
+        mode: launch.mode,
+        recovering: false,
+        persistent: true,
+        runtime_id: request.clone(),
+        stdout_offset: 0,
+        idle_checkpoint: false,
+        first_native_step: None,
+    };
+    if let Some(runtime) = &data.runtime
+        && runtime.model == turn.model
+        && runtime.effort == turn.effort
+        && runtime.mode == turn.mode
+    {
+        turn.runtime_id = runtime.runtime_id.clone();
+        turn.stdout_offset = runtime.stdout_offset;
+    }
+    let carryover: Vec<Steer> = if turn.runtime_id.is_empty() {
+        Vec::new()
+    } else {
+        data.steers
+            .iter()
+            .filter(|steer| {
+                data.items.iter().any(|item| {
+                    item["role"] == "user"
+                        && item["request_id"] == steer.id
+                        && item["native_id"].is_null()
+                        && item["status"] != "unknown"
+                })
+            })
+            .cloned()
+            .collect()
+    };
+    write_binding(
+        process.adapter_dir.as_deref(),
+        &live.sid,
+        &live.cwd,
+        &turn,
+        &carryover,
+    )?;
+    if turn.runtime_id.is_empty() {
+        for item in &mut data.items {
+            if item["role"] == "user" && is_control_input(item) && item["native_id"].is_null() {
+                item["status"] = json!("unknown");
+            }
+        }
+    }
+    let receipt = json!({"accepted":true,"sdkhost":process.host_dir.is_some(),"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
+    data.steers = carryover;
+    data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued","received_at":crate::sdk_message_time::now()}));
+    data.receipts.insert(request, receipt.clone());
+    data.outstanding += 1;
+    data.error = None;
+    data.error_kind = None;
+    live.publish(&mut data);
+    Ok((Some(turn), receipt))
+}
+
 async fn actor(
     process: Arc<ProcessConfig>,
     live: Arc<Live>,
@@ -1055,7 +1091,23 @@ async fn actor(
             Command::Interrupt(_, reply) => {
                 let _ = reply.send(Err("agy_sdk_idle".into()));
             }
-            Command::Turn(mut turn) => {
+            Command::Turn(request) => {
+                let mut turn = match request {
+                    TurnRequest::Submit(input, reply) => {
+                        match admit_turn(&process, &live, input, &shutdown).await {
+                            Ok((turn, receipt)) => {
+                                let _ = reply.send(Ok(receipt));
+                                let Some(turn) = turn else { continue };
+                                turn
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                                continue;
+                            }
+                        }
+                    }
+                    TurnRequest::Recover(turn) => turn,
+                };
                 {
                     let mut data = live.data.lock().unwrap();
                     data.active = Some(turn.id.clone());
@@ -1207,7 +1259,7 @@ async fn execute(
     live: &Arc<Live>,
     turn: &mut Turn,
     receiver: &mut mpsc::UnboundedReceiver<Command>,
-    pending: &mut std::collections::VecDeque<Turn>,
+    pending: &mut std::collections::VecDeque<TurnRequest>,
     runtime: &mut Runtime,
     shutdown: CancellationToken,
 ) -> Result<(), String> {
@@ -1223,7 +1275,9 @@ async fn execute(
         json!({"persistent":turn.persistent,"replay_offset":turn.stdout_offset,
             "runtime_attached":slot.is_some()}),
     );
-    process.check_available(live.sid.clone()).await?;
+    if turn.recovering {
+        process.check_available(live.sid.clone()).await?;
+    }
     let runtime = if turn.runtime_id.is_empty() {
         &turn.id
     } else {

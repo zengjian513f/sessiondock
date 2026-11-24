@@ -151,9 +151,19 @@ impl ProcessConfig {
     /// Only inspect fd links, never other processes' environment or credentials.
     pub async fn check_available(self: &Arc<Self>, sid: String) -> Result<(), String> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.check_holders(&sid))
-            .await
-            .map_err(|_| "agy_sdk_process_scan_failed".to_owned())?
+        tokio::task::spawn_blocking(move || {
+            let started = std::time::Instant::now();
+            let result = this.check_holders(&sid);
+            crate::log::transition(
+                "info",
+                "agy.sdk.writer_check",
+                json!({"source":"agy","session_id":sid,"ms":started.elapsed().as_millis(),
+                    "available":result.is_ok()}),
+            );
+            result
+        })
+        .await
+        .map_err(|_| "agy_sdk_process_scan_failed".to_owned())?
     }
 
     fn check_holders(&self, sid: &str) -> Result<(), String> {

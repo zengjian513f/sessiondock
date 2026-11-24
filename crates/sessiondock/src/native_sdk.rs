@@ -1478,8 +1478,9 @@ impl NativeSdks {
         let observing_host = matches!(source, "kiro" | "claude" | "codebuddy" | "droid")
             && !first.runtime_state.is_empty();
         if !observing_host {
+            let method = if source == "agy" { "observe_queue" } else { "open" };
             if let Err(error) = self
-                .provider_call(source, "open", target.clone(), json!({}))
+                .provider_call(source, method, target.clone(), json!({}))
                 .await
             {
                 let _ = self.input_queue.change(key, &first.id, |row| {
