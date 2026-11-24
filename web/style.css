@@ -1156,10 +1156,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .session-view-menu .view-kind { display: inline-flex; align-items: center; gap: 5px; }
 .session-view-menu .view-span { white-space: nowrap; font-variant-numeric: tabular-nums; }
-/* 还在跑的子代理：种类前挂一个和左栏一样的绿点 */
+/* 子代理状态点沿用侧栏的直接运行与受管 SDK 颜色。 */
 .session-view-menu .view-live {
   flex: none; width: 7px; height: 7px; border-radius: 999px; background: var(--live-direct);
 }
+.session-view-menu .view-live.sdk { background: var(--live-tmux); }
 .session-view-menu button.running .view-span { color: var(--live-direct); }
 .session-view-menu b { overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.35; }
 /* 回退父会话链：挂在标题栏右侧操作区下方，每级一行，右侧是显示/隐藏 */

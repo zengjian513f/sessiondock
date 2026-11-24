@@ -284,16 +284,20 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         .unwrap_or_default();
     if let Some(sdk) = &state.codex_sdk {
         let loaded = sdk.live_threads().await;
+        let attached = sdk.loaded_threads().await;
         let retained = sdk.retained_threads().await;
         // A closed parent can leave native spawned threads loaded. Keep this
         // separate from exact SDK ownership: observation must not reopen it.
-        sdk_child_uids.extend(
-            rows.iter()
-                .filter(|row| {
-                    row.source == "codex" && row.agent_ids.iter().any(|id| loaded.contains(id))
-                })
-                .map(|row| row.uid.clone()),
-        );
+        for row in rows.iter().filter(|row| row.source == "codex") {
+            for id in row.agent_ids.iter().filter(|id| loaded.contains(id)) {
+                sdk_child_uids.insert(row.uid.clone());
+                let child = format!("{}:{id}", row.uid);
+                if attached.contains(id) {
+                    sdk_uids.insert(child.clone());
+                }
+                sdk_child_uids.insert(child);
+            }
+        }
         retained_sdk_uids.extend(
             rows.iter()
                 .filter(|row| {

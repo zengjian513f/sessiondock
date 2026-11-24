@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Live progress across the seven native SDK views on a node and through Hub."""
 import argparse
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 import tempfile
 from types import SimpleNamespace
 
@@ -11,6 +13,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
+from opencode_sdk_fixtures import SID as OPENCODE_PARENT
 from sdk_mode_fixtures import provider
 from sdk_selection_fixtures import snapshots
 from sdk_ui_fixtures import start_sdk
@@ -182,6 +185,19 @@ def exercise(browser, base, source, label, screenshots):
             update(thought, tool, reply, running=False, last_turn={'status': 'completed'})
             expect(status).to_have_text('就绪')
             expect(metric).to_be_hidden()
+            if source == 'grok':
+                update(running=False, native_tasks=['subagent_id:child-a', 'subagent_id:child-b'])
+                expect(status).to_have_text('后台运行')
+                status.click()
+                expect(detail).to_contain_text('子代理运行中 · child-a')
+                expect(detail).to_contain_text('子代理运行中 · child-b')
+                update(running=False, native_tasks=['subagent_id:child-b'])
+                expect(detail).not_to_contain_text('child-a')
+                expect(detail).to_contain_text('child-b')
+                capture('child-background')
+                page.keyboard.press('Escape')
+                update(running=False, native_tasks=[])
+                expect(status).to_have_text('就绪')
             update(thought, tool, reply, progress=None)
             expect(status).to_have_text('处理中')
             expect(metric).to_be_hidden()
@@ -190,13 +206,20 @@ def exercise(browser, base, source, label, screenshots):
             print(f'PASS {label} {source} {width}/{theme}: phase, counts, approval, reload, completion', flush=True)
 
 
-def native_reply(browser, base, source):
+def native_reply(browser, base, source, sid=None, screenshot=None):
     context = browser.new_context(viewport={'width': 1280, 'height': 760}, service_workers='block')
+    if sid:
+        context.add_init_script("localStorage.setItem('sessiondock.childMode', JSON.stringify('flat'))")
     page = context.new_page()
     try:
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
-        page.locator(f'#side .item[data-uid^="{source}:"]').first.click()
+        if sid:
+            page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=sid)
+            uid = page.evaluate('sid => S.sessions.find(row => row.sid === sid).uid', sid)
+            page.locator(f'#side .item[data-uid="{uid}"]').click()
+        else:
+            page.locator(f'#side .item[data-uid^="{source}:"]').first.click()
         if not page.locator('#sdk-input').is_visible():
             page.locator('#a-sdk').click()
         start_sdk(page)
@@ -206,6 +229,13 @@ def native_reply(browser, base, source):
         expect(page.locator('.sdk-live')).to_contain_text(reply.strip(), timeout=15000)
         expect(page.locator('.native-sdk-pane .sdk-status [role=status]')).to_have_text('生成回复')
         expect(page.locator('.native-sdk-pane .sdk-turn-metric')).to_have_text(f'· {len(reply)} 字符')
+        if sid:
+            assert page.evaluate('NativeSdkView.raw.session_id') == sid
+        if screenshot:
+            page.locator('.native-sdk-pane .sdk-status').click()
+            expect(page.locator('#sdk-status-menu:popover-open')).to_contain_text(f'{len(reply)} 字符回复')
+            page.screenshot(path=str(screenshot))
+            page.keyboard.press('Escape')
         page.locator('#sdk-stop').click()
         expect(page.locator('#sdk-stop')).to_be_hidden(timeout=15000)
         print(f'PASS {source}: browser SEND through native protocol, reply count and stop', flush=True)
@@ -229,7 +259,7 @@ def main():
         for source in args.sources.split(','):
             root = Path(tmp) / source
             root.mkdir()
-            with provider(source, root, args.binary) as (base, _, extra):
+            with provider(source, root, args.binary) as (base, peer, extra):
                 exercise(browser, base, source, 'node', args.screenshots)
                 hub_root = root / 'hub'
                 hub_root.mkdir()
@@ -238,10 +268,19 @@ def main():
                                     port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':', 1)[1]))])
                 hub.start()
                 try:
-                    exercise(browser, f'http://127.0.0.1:{hub.port}', source, 'hub', args.screenshots)
+                    hub_base = f'http://127.0.0.1:{hub.port}'
+                    exercise(browser, hub_base, source, 'hub', args.screenshots)
+                    if source == 'opencode':
+                        child = 'ses_sessiondock_sdk_child'
+                        peer.create(child, str(peer.cwd))
+                        with closing(sqlite3.connect(peer.db)) as connection, connection:
+                            connection.execute('UPDATE session_v2 SET parent_id=? WHERE id=?',
+                                               (OPENCODE_PARENT, child))
+                        native_reply(browser, hub_base, source, child, args.screenshots / 'hub-opencode-child.png'
+                                     if args.screenshots else None)
                 finally:
                     hub.stop()
-                native_reply(browser, base, source)
+                native_reply(browser, base, source, OPENCODE_PARENT if source == 'opencode' else None)
         browser.close()
 
 

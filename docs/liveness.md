@@ -164,10 +164,11 @@ services on one machine.
 
 ## SDK ownership
 
-`/api/live.sdk_child_uids` separately names parent rows with loaded native spawned
-descendants. Nodes and Hub preserve this evidence for stop actions and blue
-markers, without adding the unloaded parent to `uids` or `sdk_uids` or opening it.
-Stopped descendants awaiting native unload contribute to `retained_sdk_uids`.
+`/api/live.sdk_child_uids` lists parent rows with loaded native spawned
+descendants and the exact `uid:agent` identities of those descendants. Nodes and
+Hub use the parent identity for stop actions and the parent marker. The child
+identity supports its own status before a bridge attachment. Stopped descendants
+awaiting native unload contribute to `retained_sdk_uids`.
 
 `/api/live.sdk_uids` lists threads already loaded on the configured shared Codex
 daemon, observed with read-only `thread/loaded/list`, plus exact live bridge

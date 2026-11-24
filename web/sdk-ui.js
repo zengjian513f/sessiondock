@@ -627,9 +627,9 @@ const SdkUI = {
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
       const details = this.pane.querySelector('#sdk-status-menu');
-      const observedAgy = this.readOnly && SdkView.historyOnlyReason(this.uid, this.agent)
+      const observedAgent = this.readOnly && this.agent
         && ['idle', 'connecting', 'ready', 'neutral'].includes(this.notice.dataset.state);
-      const changed = !observedAgy && (detail ? details._statusDetail?.key !== detail.key
+      const changed = !observedAgent && (detail ? details._statusDetail?.key !== detail.key
         : !!details._statusDetail || details.textContent !== text);
       if (changed) {
         details._statusDetail = detail;
@@ -728,7 +728,7 @@ const SdkUI = {
 
     useHistory(entry, force = false) {
       if (!this.pane || !entry) return;
-      if (this.readOnly && this.baseNotice && SdkView.historyOnlyReason(this.uid, this.agent))
+      if (this.readOnly && this.baseNotice && this.agent)
         this.setNotice(...this.baseNotice);
       const data = this.historyData;
       const backgroundTimers = entry.meta?.background_timers;

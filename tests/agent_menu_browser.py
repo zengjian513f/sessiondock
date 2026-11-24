@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from history_fixtures import BINARY, Corpus, claude_row, encoded, get_json, isolated_server
 
@@ -40,6 +40,11 @@ def agent_records(agent, title, start, end, stop, finished=None):
             claude_row(SID, "assistant", f"{agent}-a", f"{agent}-u", f"{title} answer", isSidechain=True,
                        agentId=agent, timestamp=today(*end))]
     rows[-1]["message"]["stop_reason"] = stop
+    if stop == "tool_use":
+        rows[-1]["message"]["content"] = [
+            {"type": "text", "text": f"{title} answer"},
+            {"type": "tool_use", "id": f"{agent}-lookup", "name": "Read", "input": {"file_path": "fixture.txt"}},
+        ]
     if finished:
         rows.append(claude_row(SID, "assistant", f"{agent}-done", f"{agent}-a", f"{title} done", isSidechain=True,
                                agentId=agent, timestamp=today(*finished)))
@@ -124,7 +129,7 @@ def reload_rows(page, predicate):
     page.wait_for_function(predicate)
 
 
-def check_page(page, uid, data):
+def check_page(page, uid, data, screenshot=None):
     page.evaluate("uid => openSession(uid)", uid)
     page.locator("#a-view-switch").wait_for()
     page.wait_for_function('document.querySelector("#msgs .msg")')
@@ -160,21 +165,34 @@ def check_page(page, uid, data):
 
     # A list refresh reaches the next open: the worker's transcript closes with an end_turn at 10:05.
     worker(data, finished=(10, 5))
-    reload_rows(page, "S.sessions[0].agent_items.every(a => !a.active)")
+    reload_rows(page, "S.sessions.find(row => row.sid === 'menu-owner')?.agent_items?.every(a => !a.active)")
     menu = open_menu(page)
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu
     assert [r["dot"] for r in menu] == [0, 0, 0, 0], menu
     assert menu[1]["span"] == "今天 09:20 → 10:05", menu
     worker(data)
-    reload_rows(page, "S.sessions[0].agent_items.some(a => a.active)")
+    reload_rows(page, "S.sessions.find(row => row.sid === 'menu-owner')?.agent_items?.some(a => a.active)")
 
     # Switching into a subagent view moves the mark; the order stays.
     page.locator('#session-view-menu button[data-agent="late"]').click()
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("Late finished")')
     page.wait_for_function("uid => _es && _esUid === uid && S.agent === 'late'", arg=uid)
+    expect(page.locator('#dlive')).to_be_hidden()
+    expect(page.locator('#conversation-status [role=status]')).to_have_text('未运行')
     menu = open_menu(page)
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu
     assert [r["on"] for r in menu] == [False, False, True, False], menu
+    page.locator('#session-view-menu button[data-agent="worker"]').click()
+    footer = page.locator('#conversation-status .sdk-status')
+    expect(footer.locator('[role=status]')).to_have_text('执行工具')
+    expect(page.locator('#dlive')).to_have_attribute('title', '子代理运行中')
+    expect(page.locator('#a-session-toggle')).to_have_count(0)
+    footer.click()
+    expect(page.locator('#conversation-status-menu:popover-open')).to_contain_text('正在运行 1 项工具 · Read')
+    if screenshot:
+        page.screenshot(path=str(screenshot))
+    page.keyboard.press('Escape')
+    open_menu(page)
     page.locator('#session-view-menu button[data-agent=""]').click()
     page.wait_for_function('!document.querySelector(".dhead h2")?.textContent.includes("Late finished")')
 
@@ -182,7 +200,10 @@ def check_page(page, uid, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sessiondock-agent-menu-") as directory:
         data = corpus(Path(directory))
         with isolated_server(data, args.binary) as (base, opener), sync_playwright() as playwright:
@@ -199,6 +220,7 @@ def main():
                     context = browser.new_context(viewport={"width": width, "height": height},
                                                   service_workers="block",
                                                   color_scheme="dark" if width < 720 else "light")
+                    context.add_init_script("localStorage.setItem('sessiondock.childMode', JSON.stringify('flat'))")
                     page = context.new_page()
                     errors, failed = [], []
                     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -208,7 +230,8 @@ def main():
                             if "/api/watch?" not in request.url and "ERR_ABORTED" not in str(request.failure) else None)
                     page.goto(base, wait_until="networkidle")
                     page.wait_for_function("S.sessions.length > 0")
-                    check_page(page, row["uid"], data)
+                    check_page(page, row["uid"], data,
+                               args.screenshots / f'claude-child-{width}.png' if args.screenshots else None)
                     assert not errors, errors
                     assert not failed, failed
                     context.close()

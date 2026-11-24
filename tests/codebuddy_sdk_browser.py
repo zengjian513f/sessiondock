@@ -147,6 +147,15 @@ def browser_check(fixture, base, screenshots):
         expect(messages.get_by_text("Synthetic experiment 1 progress", exact=True)).to_be_visible()
         expect(messages.get_by_text("notes-1.md")).to_be_visible()
         expect(messages.get_by_text("Synthetic experiment 1 tool output", exact=True)).to_be_visible()
+        status = page.locator('#conversation-status .sdk-status')
+        expect(status.locator('[role=status]')).to_have_text('只读子会话')
+        expect(page.locator('#dlive')).to_be_hidden()
+        status.click()
+        details = page.locator('#conversation-status-menu:popover-open')
+        expect(details).to_contain_text('最近记录')
+        expect(details).to_contain_text('CodeBuddy 子代理由主会话管理')
+        capture(page, "codebuddy-subagent-status-wide-light.png")
+        page.keyboard.press('Escape')
         capture(page, "codebuddy-subagent-wide-light.png")
 
         child = fixture.path.with_suffix("") / "subagents" / f"agent-{agent}.jsonl"

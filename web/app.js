@@ -197,7 +197,7 @@ const S = {
   live: new Set(),    // 仍在运行的会话 uid
   liveExternalSdk: new Set(), // observed external ACP owners, no control authority
   retainedSdk: new Set(), // stopped native threads awaiting unload; display only
-  liveSdkChildren: new Set(), // parents with loaded native spawned descendants
+  liveSdkChildren: new Set(), // loaded Codex descendants and their owners
   liveSdk: new Set(), // threads loaded on the node’s live SDK bridge
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
@@ -2369,13 +2369,41 @@ function paintTurn(uid) {
   if (uid === S.sel) paintHeaderTurn();
 }
 
-function paintAgyAgentHeader(badge, uid, agent, fallbackItems) {
+function observedAgentItem(uid, agent, fallbackItems) {
   const items = indexedSessions().byUid.get(uid)?.agent_items || fallbackItems || [];
-  const item = items.find(item => item.id === agent);
-  const running = !!item && agentRunning(uid, item);
-  badge.classList.toggle('visible', running);
-  badge.classList.toggle('turn-working', running);
-  badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
+  return items.find(item => item.id === agent);
+}
+
+function agentSdkActive(uid, agent) {
+  return S.liveSdk.has(`${uid}:${agent}`)
+    || (SdkView.uid === uid && SdkView.agent === agent && SdkView.connected === true);
+}
+
+function codexAgentLoaded(uid, agent) {
+  return !!agent && S.liveSdkChildren.has(`${uid}:${agent}`);
+}
+
+function paintAgentBadge(badge, uid, agent, item, count = 0) {
+  const sdk = agentSdkActive(uid, agent);
+  const running = sdk || agentRunning(uid, item);
+  const selectedSdk = SdkView.uid === uid && SdkView.agent === agent && SdkView.connected;
+  const working = selectedSdk ? !!(sessionSourceOf(uid) === 'codex' ? SdkView.turn : SdkView.running)
+    : !!item?.active && running;
+  paintStatusMarker(badge, false, count);
+  badge.classList.toggle('visible', running || count > 0);
+  badge.classList.toggle('counted', count > 0);
+  badge.classList.toggle('idle', !running && count > 0);
+  badge.classList.toggle('sdk', sdk);
+  badge.classList.toggle('turn-working', working);
+  const status = sdk ? '子代理受管 SDK 实例已连接' : running ? '子代理运行中' : '子代理未运行';
+  badge.title = badge.ariaLabel = count ? `${count} 条新内容，${status}` : running ? status : '';
+}
+
+function paintSelectedAgentStatus(uid, agent) {
+  if (!agent || uid !== S.sel || agent !== S.agent) return;
+  paintHeaderTurn();
+  const row = sidebarRowNode(uid, agent);
+  if (row) paintAgentStatus(row);
 }
 
 function paintHeaderTurn() {
@@ -2384,8 +2412,9 @@ function paintHeaderTurn() {
   const h = $('#dlive');
   if (!h) return;
   paintTransferAvailability($('#a-clone-group'), S.sel);
-  if (S.agent && sessionSourceOf(S.sel) === 'agy') {
-    paintAgyAgentHeader(h, S.sel, S.agent, cache.get(viewKey(S.sel, S.agent))?.meta.agent_items);
+  if (S.agent) {
+    const item = observedAgentItem(S.sel, S.agent, cache.get(viewKey(S.sel, S.agent))?.meta.agent_items);
+    paintAgentBadge(h, S.sel, S.agent, item);
     return;
   }
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
@@ -2991,7 +3020,7 @@ function refreshSessionMeta() {
     auditDetailRendered('meta-refresh');
   }
   if (S.agent) {
-    if (sessionSourceOf(S.sel) === 'agy') paintHeaderTurn();
+    paintHeaderTurn();
     refreshComposerRunControls();
   }
 }
@@ -5088,7 +5117,7 @@ function patchSide(list) {
 }
 
 /* ---------- 子代理行 ---------- */
-const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) ? null : a.updated)}`
+const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) || agentSdkActive(uid, a.id) ? null : a.updated)}`
   + (S.term && a.hits > 0 ? ` · 命中 ${a.hits}${a.hits_capped ? '+' : ''}` : '');
 
 /** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
@@ -5130,22 +5159,12 @@ function agentRow(s, a, depth) {
 /** 子代理行的运行、未读和选中态。 */
 function paintAgentStatus(node) {
   const uid = node.dataset.owner, id = node.dataset.agent;
-  const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
-  const droidSdk = uid.startsWith('droid:') && (S.liveSdk.has(`${uid}:${id}`) || (SdkView.uid===uid && SdkView.agent===id && SdkView.connected));
-  const running = droidSdk || (!!item && agentRunning(uid, item));
-  node.classList.toggle('live', running);
+  const item = observedAgentItem(uid, id);
+  node.classList.toggle('live', agentRunning(uid, item) || agentSdkActive(uid, id));
   node.classList.toggle('sel', S.sel === uid && S.agent === id);
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
-  const count = unreadCount(uid, id);
-  paintStatusMarker(badge, false, count);
-  badge.classList.toggle('visible', running || count > 0);
-  badge.classList.toggle('counted', count > 0);
-  badge.classList.toggle('idle', !running);
-  badge.classList.toggle('sdk', droidSdk);
-  badge.classList.toggle('turn-working', droidSdk ? (SdkView.uid===uid && SdkView.agent===id && SdkView.running) : running);
-  const status = droidSdk ? '子代理受管 SDK 实例已连接' : running ? '子代理运行中' : '子代理未运行';
-  badge.title = badge.ariaLabel = count ? `${count} 条新内容，${status}` : running ? status : '';
+  paintAgentBadge(badge, uid, id, item, unreadCount(uid, id));
 }
 
 /** Move `.sel` without rebuilding `#side`. Clicking a row used to call
@@ -7481,14 +7500,16 @@ function layoutHeader() {
   layoutHeader();
 }
 
-/** 子代理是否仍在跑：服务端按 transcript 与父会话的停止通知判断，父进程不在则一律不算。 */
-const agentRunning = (uid, item) => !!item.active && S.live.has(uid);
+/** 将子代理自己的开放回合与原生线程加载或主会话进程证据结合。 */
+const agentRunning = (uid, item) => !!item?.active && (uid.startsWith('codex:')
+  ? codexAgentLoaded(uid, item.id) || S.live.has(uid) && !S.liveSdk.has(uid)
+  : S.live.has(uid));
 
 /** 主会话/子代理下拉的行：主会话固定在前，子代理按结束时间倒序，还在跑的没有结束时间、排最前并带绿点。 */
 function sessionViewRows(m) {
   const row = S.sessions.find(s => s.uid === m.uid);
   const items = [...(row?.agent_items || m.agent_items || [])];
-  const running = a => agentRunning(m.uid, a);
+  const running = a => agentRunning(m.uid, a) || agentSdkActive(m.uid, a.id);
   const when = value => Date.parse(value || '') || 0;
   items.sort((a, b) => (running(b) - running(a)) || (when(b.updated) - when(a.updated)));
   const mainTitle = m.parent_title || m.title;
@@ -7499,7 +7520,7 @@ function sessionViewRows(m) {
       ${items.map(a => `<button type="button" data-agent="${esc(a.id)}"
         class="${m.agent_id === a.id ? 'on' : ''}${running(a) ? ' running' : ''}" role="menuitem">
         <small><span class="view-kind">${running(a)
-          ? '<i class="view-live" title="运行中" aria-label="运行中"></i>' : ''}子代理 · ${esc(a.type)}</span>
+          ? `<i class="view-live${agentSdkActive(m.uid, a.id) ? ' sdk' : ''}" title="运行中" aria-label="运行中"></i>` : ''}子代理 · ${esc(a.type)}</span>
           <span class="view-span">${esc(fmtSpan(a.created, running(a) ? null : a.updated))}</span></small>
         <b>${esc(a.title)}</b>
       </button>`).join('')}`;
@@ -7542,8 +7563,7 @@ function replaceSessionHead(previous, meta, total) {
 function head(m, total) {
   const h = el('div', 'dhead');
   h.dataset.uid = m.uid;
-  const agyAgent = m.source === 'agy' && m.agent_id;
-  const titleIcon = agyAgent
+  const titleIcon = m.agent_id
     ? `<span class="ico">${icon(m.source)}<span class="item-status" id="dlive"></span></span>`
     : sessionIconMarkup(m.source, S.live.has(m.uid), S.liveTmux.has(m.uid), sessionTurn(m.uid));
   const hasAgents = (m.agent_items || []).length > 0;
@@ -7597,7 +7617,10 @@ function head(m, total) {
     </div>`)}
       </div>
     </div>`;
-  if (agyAgent) paintAgyAgentHeader(h.querySelector('#dlive'), m.uid, agyAgent, m.agent_items);
+  if (m.agent_id) {
+    const item = observedAgentItem(m.uid, m.agent_id, m.agent_items);
+    paintAgentBadge(h.querySelector('#dlive'), m.uid, m.agent_id, item);
+  }
   paintHeadDirectory(h);
   if (['agy', 'kiro'].includes(m.source) && Array.isArray(m.migration_warnings)) {
     for (const warning of m.migration_warnings) {
@@ -7884,7 +7907,7 @@ function sessionRunRow(uid) {
     || (typeof sessionTermMeta === 'function' ? sessionTermMeta(uid) : null);
 }
 function sessionRunActive(row) {
-  if (row?.agent_id) return SdkView.uid === row.uid && SdkView.agent === row.agent_id && !SdkView.readOnly;
+  if (row?.agent_id) return agentSdkActive(row.uid, row.agent_id);
   return !!row && (row.pending ? !!row.running && !row.stale : sessionStoppable(row.uid));
 }
 function sessionStopUnavailable(row) {
@@ -7949,10 +7972,11 @@ function paintSessionRunMenu(row) {
 function paintSessionRunControl(button, row) {
   if (!button) return;
   const mode = currentSessionRunMode(row), running = sessionModeActive(row, mode);
-  const intent = running ? 'stop' : 'start', label = running ? '停止会话' : '启动会话';
+  const intent = running ? 'stop' : 'start';
+  const action = running ? '停止' : mode === 'sdk' && codexAgentLoaded(row?.uid, row?.agent_id) ? '连接' : '启动';
   setControlUnavailable(button, '');
-  button.title = `${running ? '停止' : '启动'}${mode.toUpperCase()}模式`;
-  button.ariaLabel = label;
+  button.title = `${action}${mode.toUpperCase()}模式`;
+  button.ariaLabel = `${action}会话`;
   button.innerHTML = uiIcon('power');
   button.classList.toggle('danger', running);
   button.dataset.runMode = mode;
@@ -7980,6 +8004,7 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   if (!notice || !uid) return;
   const row = agent ? {...sessionRunRow(uid), agent_id:agent} : sessionRunRow(uid);
   const historyOnly = SdkView.historyOnlyReason(uid, agent);
+  const observingAgent = agent && (mode === 'cli' || view?.readOnly);
   const external = composerExternalCli(uid, agent);
   const externalAcp = S.liveExternalSdk.has(uid);
   const busy = ConsoleUI.busy.has(uid);
@@ -7992,16 +8017,16 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
     button.onmousedown = event => event.preventDefault();
     notice.after(button);
   } else notice.after(button);
-  button.hidden = !!historyOnly || externalAcp || (!external && !idle && !busy);
+  button.hidden = !!historyOnly || !!(agent && mode === 'cli') || externalAcp || (!external && !idle && !busy);
   notice.classList.toggle('external-cli-status', external);
-  if (!historyOnly && !externalAcp && (external || idle && !busy && !view?.openFailed)) {
+  if (!observingAgent && !externalAcp && (external || idle && !busy && !view?.openFailed)) {
     const text = external ? '正在外部CLI运行' : '未运行';
     notice.querySelector('[role=status]').textContent = text;
     notice.dataset.state = external ? 'ready' : 'idle';
     notice.classList.remove('blocked');
     notice.hidden = false;
   }
-  const action = external ? '接管' : '启动';
+  const action = external ? '接管' : mode === 'sdk' && codexAgentLoaded(uid, agent) ? '连接' : '启动';
   button.textContent = action;
   button.setAttribute('aria-label', action);
   button.setAttribute('aria-busy', String(busy));
@@ -8011,25 +8036,12 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   button.disabled = busy || !!reason || (mode === 'sdk' && SdkView.discovering);
   button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
   button.onclick = () => runComposerSession(uid, agent, mode, external);
-  if (agent && (mode === 'cli' || view?.readOnly)) {
+  if (observingAgent) {
     notice.classList.remove('external-cli-status');
-    const item = (row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items || [])
-      .find(item => item.id === agent);
-    if (historyOnly) clearTimeout(notice._agyStatusTimer);
-    if (['idle', 'connecting', 'ready', 'neutral'].includes(notice.dataset.state)) {
-      if (historyOnly) {
-        paintAgyAgentStatus(notice, uid, agent, item, historyOnly);
-        return;
-      }
-      const running = item && agentRunning(uid, item);
-      const text = running ? '运行中' : item ? '未运行' : '只读子会话';
-      notice.querySelector('[role=status]').textContent = text;
-      notice.dataset.state = running ? 'ready' : 'idle';
-      notice.title = text;
-      notice.hidden = false;
-      const details = notice.parentElement.querySelector('.sdk-status-menu');
-      if (details) details.textContent = notice.title;
-    }
+    clearTimeout(notice._agentStatusTimer);
+    if (['idle', 'connecting', 'ready', 'neutral'].includes(notice.dataset.state))
+      paintAgentHistoryStatus(notice, uid, agent, observedAgentItem(uid, agent,
+        row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items), historyOnly);
   }
 }
 function refreshComposerRunControls() {
@@ -10667,8 +10679,8 @@ function renderActivity(activity) {
   for (const stale of document.querySelectorAll('#activity, #conversation-idle-status')) {
     if (stale.parentElement !== row) stale.remove();
   }
-  row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
-  const observed = observedConversationActivity(activity, S.sel, S.agent);
+  row.classList.toggle('hidden', !!SessionContentView.kind || !S.agent && $('#composer').classList.contains('hidden'));
+  const observed = observedConversationActivity(S.agent ? null : activity, S.sel, S.agent);
   activity = observed.activity;
   const compacting = observed.compacting;
   const labels = {working: '处理中', waiting: '待回答', aborted: '已中断', failed: '执行失败'};
@@ -10682,7 +10694,6 @@ function renderActivity(activity) {
     row.append(details);
   }
   let n = row.querySelector(':scope > .sdk-status');
-  const agyChild = SdkView.historyOnlyReason(S.sel, S.agent);
   if (!n) {
     n = el('button', 'sdk-status');
     n.type = 'button';
@@ -10694,7 +10705,7 @@ function renderActivity(activity) {
   } else if (row.firstElementChild !== n) {
     row.prepend(n);
   }
-  if (agyChild && !n.querySelector('.sdk-turn-metric')) {
+  if (S.agent && !n.querySelector('.sdk-turn-metric')) {
     const metric = el('span', 'sdk-turn-metric');
     metric.hidden = true;
     metric.setAttribute('aria-hidden', 'true');
@@ -10707,11 +10718,12 @@ function renderActivity(activity) {
   n.hidden = false;
   n.querySelector('[role=status]').textContent = label;
   n.title = activity?.error || activity?.reason || label;
-  if (n.dataset.state !== 'idle' || !agyChild) {
+  if (!S.agent) {
+    clearTimeout(n._agentStatusTimer);
+    n.querySelector('.sdk-turn-metric')?.remove();
     delete details.dataset.statusLayout;
     details._statusDetail = null;
     details.textContent = n.title;
-    if (agyChild) n.querySelector('.sdk-turn-metric').hidden = true;
   }
   renderConversationUsage(row, S.sel);
   paintComposerRunControl(n, S.sel, S.agent, 'cli');

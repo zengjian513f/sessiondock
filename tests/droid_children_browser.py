@@ -92,6 +92,11 @@ def check(page, base, fixture, output, hub=False):
     if not page.locator('#sdk-input').is_visible():page.locator('#a-sdk').click()
     start_sdk_if_needed(page)
     expect(page.locator('#sdk-input')).to_be_visible()
+    expect(page.locator('#dlive')).to_have_class('item-status visible sdk')
+    page.locator('#a-view-switch').click()
+    expect(page.locator(f'#session-view-menu [data-agent="{fixture.child}"] .view-live.sdk')).to_be_visible()
+    expect(page.locator(f'#session-view-menu [data-agent="{fixture.nested}"] .view-live')).to_have_count(0)
+    page.locator('#a-view-switch').click()
     send(page,'independent child prompt')
     expect(page.locator('.sdk-live')).to_contain_text('Droid final independent child prompt')
     assert page.evaluate('NativeSdkView.raw.session_id') == fixture.child

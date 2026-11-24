@@ -108,6 +108,8 @@ pub struct Target {
     uid: String,
     #[serde(default)]
     agent: String,
+    #[serde(default)]
+    observe: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -227,7 +229,12 @@ pub async fn events(
 ) -> Result<Response, ApiError> {
     let sdk = service(&state)?;
     let thread = thread_id(&state, &query.uid, &query.agent).await?;
-    let attached = sdk.attach(&thread).await.map_err(rpc)?;
+    let attached = if query.observe.as_deref() == Some("1") {
+        sdk.attach_existing(&thread).await
+    } else {
+        sdk.attach(&thread).await
+    }
+    .map_err(rpc)?;
     let shutdown = state.shutdown.clone();
     let stream = async_stream::stream! {
         let guard = attached.guard;

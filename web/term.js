@@ -4996,7 +4996,7 @@ function renderComposer() {
     && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending))));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);
-  $('#conversation-status')?.classList.toggle('hidden', !show);
+  $('#conversation-status')?.classList.toggle('hidden', !show && !S.agent);
   const first = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
   $('#right')?.classList.toggle('shell-session', !!shell);
   $('#right')?.classList.toggle('terminal-first', !!first);

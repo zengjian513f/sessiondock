@@ -1932,6 +1932,9 @@ fn view_meta(request: &ViewRequest, parsed: &Parsed) -> Result<Value, SessionErr
     meta["agent_id"] = item["id"].clone();
     meta["agent_type"] = item["type"].clone();
     meta["title"] = item["title"].clone();
+    if request.owner.source == "kiro" {
+        meta["subagent_status"] = parsed.meta["subagent_status"].clone();
+    }
     for field in [
         "path",
         "cwd",

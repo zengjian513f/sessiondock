@@ -497,12 +497,27 @@ impl CodexSdk {
     /// duplicate between the two.
     pub async fn attach(&self, thread_id: &str) -> Result<Attached, RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
+        Ok(Self::observe(thread))
+    }
+
+    pub async fn attach_existing(&self, thread_id: &str) -> Result<Attached, RpcError> {
+        let stopped = self.inner.stopped.lock().expect("stopped").contains(thread_id);
+        if stopped || !self.loaded_threads().await.iter().any(|id| id == thread_id) {
+            return Err(RpcError::Unavailable("原生线程当前未连接".into()));
+        }
+        let thread = self.inner.threads.lock().expect("threads")
+            .get(thread_id).cloned()
+            .ok_or_else(|| RpcError::Unavailable("原生线程当前未连接".into()))?;
+        Ok(Self::observe(thread))
+    }
+
+    fn observe(thread: Arc<LiveThread>) -> Attached {
         let (snapshot, events) = thread.attach();
-        Ok(Attached {
+        Attached {
             snapshot,
             events,
             guard: SubscriberGuard { thread },
-        })
+        }
     }
 
     pub async fn interrupt(&self, thread_id: &str) -> Result<Value, RpcError> {

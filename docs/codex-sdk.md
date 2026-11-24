@@ -872,6 +872,15 @@ DELTA (subagent SDK views): SDK selection, persisted history, live events, sendi
 steering, interrupt and request replies follow the selected child thread. Switching
 views never substitutes the owner thread. Explicit chat/terminal selection is kept
 per `(uid, agent)`. Browser coverage: [codex_sdk_subagent_browser.py](../tests/codex_sdk_subagent_browser.py).
+An attached child has its own `uid:agent` membership in `/api/live.sdk_uids`,
+using the owner's node-scoped UID on the Hub. Opening that child in another
+page observes the existing stream by exact thread. The observation endpoint
+returns unavailable if its bridge attachment ended before the request.
+`/api/live.sdk_child_uids` also includes the exact `uid:agent` for native loaded
+children. When the child has no bridge attachment, its open turn and progress
+come from its own history and selecting it does not resume it.
+[Child observation](../tests/codex_sdk_child_observation_browser.py) covers
+passive attachment and separation from the owner and siblings.
 
 Quiet runtime and restart coverage: [codex_sdk_retention_browser.py](../tests/codex_sdk_retention_browser.py).
 

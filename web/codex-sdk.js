@@ -132,6 +132,7 @@ const CodexSdkView = {
 
   async start(generation, reconnecting = false, observing = false) {
     if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
+    if (!reconnecting) this.observeOnly = observing && !!this.agent;
     clearTimeout(this.openRetryTimer);
     this.openRetryTimer = 0;
     const read = new AbortController();
@@ -177,7 +178,9 @@ const CodexSdkView = {
 
   connectEvents(generation) {
     const uid = this.uid;
-    const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
+    const query = new URLSearchParams({uid, agent: this.agent || ''});
+    if (this.observeOnly) query.set('observe', '1');
+    const es = new EventSource(appUrl(`api/codex-sdk/events?${query}`));
     this.es = es;
     es.addEventListener('sdk', event => {
       if (!this.current(generation) || this.es !== es) return;
@@ -197,7 +200,12 @@ const CodexSdkView = {
       this.setConnected(false);
       this.setNotice('载入中', 'connecting');
       if (es.readyState === EventSource.CLOSED) {
-        this.scheduleReconnect();
+        if (this.observeOnly) {
+          this.es = null;
+          this.readOnly = true;
+          this.setNotice('未运行', 'idle');
+          void refreshLive(true).catch(() => {});
+        } else this.scheduleReconnect();
       }
     };
   },
@@ -940,6 +948,7 @@ const CodexSdkView = {
 
   paintStatus() {
     if (!this.pane) return;
+    paintSelectedAgentStatus(this.uid, this.agent);
     if (this.stopped) {
       this.pane.querySelector('#sdk-send').disabled = true;
       this.pane.querySelector('#sdk-stop').hidden = true;

@@ -187,19 +187,79 @@ function agyAgentStepProgress(entry, note) {
     scope: '当前步骤', summaryName: '思考记录', showCounts: true, note};
 }
 
-function paintAgyAgentStatus(notice, uid, agent, item, reason) {
-  clearTimeout(notice._agyStatusTimer);
+function agentHistoryProgress(entry, reason, wholeTask) {
+  const messages = entry?.msgs || [];
+  const relevant = item => ['thinking', 'assistant', 'assistant·subagent', 'tool', 'tool_result'].includes(item.role)
+    && !item.error;
+  const input = messages.findLastIndex(item => item.role === 'user' || item.role === 'user·subagent');
+  const turn = input >= 0 ? messages.slice(input + 1) : messages;
+  const tail = turn.findLast(relevant);
+  if (!tail) return null;
+  const body = input >= 0 || wholeTask ? turn : tail.turn_id ? turn.filter(item => item.turn_id === tail.turn_id) : [tail];
+  const results = new Set(body.filter(item => item.role === 'tool_result' && item.call_id).map(item => item.call_id));
+  const runningTools = body.filter(item => item.role === 'tool' && (
+    ['running', 'in_progress', 'inProgress'].includes(item.status)
+    || item === tail && !item.status && item.call_id && !item.result && !results.has(item.call_id)
+  ));
+  const name = item => item.name || item.tool_name || '工具';
+  const finishedTools = body.filter(item => item.role === 'tool' && (
+    item.result || results.has(item.call_id) || ['completed', 'failed'].includes(item.status)
+  )).map(name);
+  let replies = 0, summaries = 0;
+  for (const item of body) {
+    if (item.error || typeof item.text !== 'string') continue;
+    if (item.role === 'thinking') summaries += SdkUI.characterCount(item.text);
+    if (['assistant', 'assistant·subagent'].includes(item.role) && item.phase !== 'commentary')
+      replies += SdkUI.characterCount(item.text);
+  }
+  const tools = runningTools.map(name);
+  const reply = ['assistant', 'assistant·subagent'].includes(tail.role) && tail.phase !== 'final' && replies;
+  const label = tools.length ? '执行工具' : tail.role === 'thinking' ? '思考中' : reply ? '生成回复' : '处理中';
+  const lastRecord = tail.role === 'tool' || tail.role === 'tool_result' ? name(tail)
+    : tail.role === 'thinking' ? '思考记录' : '回复';
+  const start = messages[input] || body[0];
+  return {label, tools, finishedTools, replies, summaries, summaryName: '思考记录',
+    started: Date.parse(start.ts || start.timestamp || start.received_at),
+    scope: input >= 0 ? '从已载入的输入起' : wholeTask ? '从子任务首条可见记录起' : '当前记录',
+    note: reason, lastRecord};
+}
+
+function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
+  clearTimeout(notice._agentStatusTimer);
   const entry = cache.get(viewKey(uid, agent));
-  const running = !!item && agentRunning(uid, item);
-  const progress = running ? agyAgentStepProgress(entry, reason) : null;
-  const recordedTimers = entry?.meta?.background_timers || [];
+  const source = sessionSourceOf(uid);
+  const sdk = agentSdkActive(uid, agent);
+  const outcome = entry?.meta?.subagent_status;
+  const terminal = ['completed', 'failed', 'interrupted', 'cancelled', 'canceled'].includes(outcome);
+  const running = !terminal && (agentRunning(uid, item) || sdk && !!item?.active);
+  const history = source === 'agy' ? null : agentHistoryProgress(entry, reason, source === 'kiro');
+  const progress = running && outcome !== 'pending'
+    ? source === 'agy' ? agyAgentStepProgress(entry, reason) : history : null;
+  const recordedTimers = source === 'agy' ? entry?.meta?.background_timers || [] : [];
   const timers = running && !progress ? NativeSdkControls.pendingTimers(recordedTimers) : [];
+  const failure = entry?.msgs?.findLast(message => message.subtask_outcome && message.event_status === 'failed');
+  const activity = entry?.activity;
+  const failed = outcome ? outcome === 'failed' : !!failure || activity?.state === 'failed';
+  const interrupted = outcome ? ['interrupted', 'cancelled', 'canceled'].includes(outcome) : activity?.state === 'aborted';
   const label = progress?.label || (timers.length ? '后台定时任务等待中'
-    : running ? recordedTimers.length ? '后台运行' : '处理中' : item ? '未运行' : '只读子会话');
-  const text = label === '后台运行' ? `${label}。定时已到，等待子代理更新记录。${reason}`
-    : `${label}。${reason}`;
+    : running ? recordedTimers.length ? '后台运行' : outcome === 'pending' ? '等待执行' : '处理中'
+    : sdk ? 'SDK 已运行' : failed ? '执行失败' : interrupted ? '已中断'
+    : outcome === 'completed' ? '已完成' : item && source !== 'codebuddy' ? '未运行' : '只读子会话');
+  const lines = [label];
+  if (label === '后台运行') lines.push('定时已到，等待子代理更新记录。');
+  if (failed && !running) lines.push(failure?.text || activity?.error || '原生子代理已返回失败。');
+  if (interrupted && !running && activity?.reason) lines.push(activity.reason);
+  if (!progress && history) {
+    lines.push(`最近记录 · ${history.lastRecord}`);
+    if (history.summaries) lines.push(`可见思考记录 ${history.summaries.toLocaleString('zh-CN')} 字符`);
+    if (history.replies) lines.push(`可见回复 ${history.replies.toLocaleString('zh-CN')} 字符`);
+  }
+  if (reason) lines.push(reason);
+  const text = lines.join('\n');
   notice.querySelector('[role=status]').textContent = label;
-  notice.dataset.state = timers.length ? 'scheduled' : running ? 'working' : 'idle';
+  notice.dataset.state = timers.length ? 'scheduled' : label === '等待执行' ? 'waiting'
+    : running ? 'working' : sdk || outcome === 'completed' ? 'ready' : interrupted ? 'warning' : 'idle';
+  notice.classList.toggle('blocked', label === '执行失败');
   notice.hidden = false;
   const menu = notice.parentElement.querySelector('.sdk-status-menu');
   const detail = timers.length ? NativeSdkControls.timerDetails(timers, reason) : null;
@@ -222,9 +282,9 @@ function paintAgyAgentStatus(notice, uid, agent, item, reason) {
   }
   ConversationUI.updateStatusDisclosure(notice, menu);
   const delay = Number.isFinite(progress?.started) ? 1000 : timers[0]?.due - Date.now();
-  if (Number.isFinite(delay)) notice._agyStatusTimer = setTimeout(() => {
+  if (Number.isFinite(delay)) notice._agentStatusTimer = setTimeout(() => {
     if (notice.isConnected && notice.getClientRects().length && S.sel === uid && S.agent === agent)
-      paintAgyAgentStatus(notice, uid, agent, item, reason);
+      paintAgentHistoryStatus(notice, uid, agent, item, reason);
   }, Math.min(Math.max(1, delay), 0x7fffffff));
 }
 
@@ -874,6 +934,7 @@ const NativeSdkView = {
 
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
+    paintSelectedAgentStatus(this.uid, this.agent);
     const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
     sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
@@ -905,6 +966,11 @@ const NativeSdkView = {
     const error = raw.error || (compactFailed ? raw.compact.error || '上下文压缩失败' : null)
       || (failed ? raw.last_turn?.error || observed.activity?.error || '上一回合失败' : null);
     const warning = uncertain || raw.error_kind === 'interrupted' || incomplete;
+    const grokAgents = this.uid.startsWith('grok:') && Array.isArray(raw.native_tasks)
+      ? raw.native_tasks.filter(key => typeof key === 'string' && key.startsWith('subagent_id:'))
+        .map(key => key.slice('subagent_id:'.length)).filter(Boolean).sort() : [];
+    const grokBackground = grokAgents.length > 0 || (this.uid.startsWith('grok:')
+      && Array.isArray(raw.native_tasks) && raw.native_tasks.includes('unknown-subagent_id'));
     const agy = this.uid.startsWith('agy:');
     const cancelError = agy && this.running && raw.cancel_error;
     const awaitingInput = agy && this.running && raw.cancel_pending === true;
@@ -917,9 +983,10 @@ const NativeSdkView = {
       : `等待回执\n${receiptDetails}`;
     const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
-      : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
+      : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting'
+      : grokBackground ? 'working' : 'ready';
     clearTimeout(this.timerStatusRefresh);
-    if (kind === 'working' && this.connected && !raw.cancel_requested) {
+    if (kind === 'working' && this.running && this.connected && !raw.cancel_requested) {
       const progress = nativeSdkTurnProgress(raw, this.uid.split(':', 1)[0]);
       if (progress) {
         this.setTurnProgress(progress);
@@ -942,7 +1009,10 @@ const NativeSdkView = {
       : awaitingCancel ? '停止已受理\n等待 Agy 回传本回合的结束回执。子代理和后台任务会继续运行。收到回执前暂不能回退对话。'
       : awaitingResult ? waitingText
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
-      : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成' : '就绪';
+      : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成'
+      : grokBackground ? ['后台运行', ...grokAgents.map(id => `子代理运行中 · ${id}`),
+        ...(raw.native_tasks.includes('unknown-subagent_id') ? ['子代理运行中，原生通知未提供任务 ID。'] : [])].join('\n')
+      : '就绪';
     if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
     if(this.nativeActionResult && !this.running && !this.requests.size && !error){
       this.setNotice(this.nativeActionResult.text,this.nativeActionResult.failed?'warning':'ready');
@@ -1383,8 +1453,9 @@ const SdkView = new Proxy({
   },
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   historyOnlyReason(uid, agent) {
-    return agent && sessionSourceOf(uid) === 'agy'
-      ? 'Agy 子代理由主会话管理。请切回主会话。' : '';
+    const source = sessionSourceOf(uid);
+    return agent && ['agy', 'claude', 'kiro', 'codebuddy'].includes(source)
+      ? `${SOURCES[source].name} 子代理由主会话管理。请切回主会话。` : '';
   },
   views: new Map(),
   selection: null,
@@ -1526,7 +1597,7 @@ const SdkView = new Proxy({
     const external = view.observeExternal?.();
     if (view.pane && !view.connected) view.paintHistory?.();
     if (external) return;
-    const childSdk = view.agent && String(view.uid).startsWith('droid:') && view.agent===S.agent && S.liveSdk.has(`${view.uid}:${view.agent}`);
+    const childSdk = view.agent && view.agent === S.agent && this.runningFor(view.uid, view.agent);
     if (this.discovering || !this.awaitingRunning || !view.pane || !view.readOnly || (!childSdk && (view.agent || S.agent)) || view.uid !== S.sel
         || SessionContentView.kind !== 'sdk' || !(childSdk || S.liveSdk.has(view.uid))) return;
     // Discovery can arrive after history was opened read-only on reload.
@@ -1540,7 +1611,7 @@ const SdkView = new Proxy({
     this.active.retryOpen();
   },
   runningFor(uid, agent) {
-    return (agent && String(uid).startsWith('droid:') && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
+    return (agent && /^(codex|droid):/.test(uid) && S.liveSdk.has(`${uid}:${agent}`)) || !agent && ((String(uid).startsWith('kiro:') && S.liveSdk.has(uid))
       || (this.selection?.key === viewKey(uid,agent)
         ? this.selection.runningSdk ?? S.liveSdk.has(uid) : S.liveSdk.has(uid)));
   },
@@ -1591,7 +1662,8 @@ const SdkView = new Proxy({
     refreshSessionRunControls();
   },
   stopped(uid, selectedAgent = null) {
-    if (!selectedAgent) { S.liveSdk.delete(uid); S.live.delete(uid); }
+    const key = selectedAgent ? `${uid}:${selectedAgent}` : uid;
+    S.liveSdk.delete(key); S.live.delete(key);
     if (this.selection?.key === viewKey(uid, selectedAgent)) this.selection.runningSdk = false;
     if (this.uid === uid && this.agent === selectedAgent && this.pane) {
       // This is an intentional stop, not initial discovery still in flight.

@@ -59,6 +59,8 @@ class SubagentPeer(FakeKiroAcp):
             self.update('tool_call', toolCallId='same-tool-id', title='Read File',
                         status='failed' if aid == 'review-a' else 'completed',
                         rawOutput=aid + ' 独立工具结果', _meta={'kiro': {'agentSubtaskId': aid}})
+            self.update('agent_thought_chunk', content={'type': 'text', 'text': '核对结果'},
+                        _meta={'kiro': {'agentSubtaskId': aid}})
         gate = self.sessions_root / 'finish-subtasks'
         deadline = time.monotonic() + 120
         while not gate.exists() and time.monotonic() < deadline:
@@ -139,7 +141,7 @@ def run(args):
                         const row = S.sessions.find(r => r.uid === uid);
                         return row?.agent_items?.length === 2 && row.agent_items.every(a => a.active === active);
                     }''', arg={'uid': uid, 'active': active}, polling=300)
-                def verify_views():
+                def verify_views(active=True):
                     open_menu(page)
                     for aid, other in [('review-a', 'review-b'), ('review-b', 'review-a')]:
                         page.locator(f'#session-view-menu button[data-agent="{aid}"]').click()
@@ -151,6 +153,18 @@ def run(args):
                         expect(page.locator('#msgs')).not_to_contain_text(other + ':')
                         expect(page.locator('#msgs')).not_to_contain_text('主代理等待审查结果。')
                         expect(page.locator('#sdk-input')).not_to_be_visible()
+                        if active:
+                            status = page.locator('#conversation-status .sdk-status')
+                            expect(status.locator('[role=status]')).to_have_text('思考中')
+                            status.click()
+                            details = page.locator('#conversation-status-menu:popover-open')
+                            expect(details).to_contain_text('4 字符思考记录')
+                            expect(details).to_contain_text(f'{len(aid + ":独立审查开始。" + aid + ":并行审查完成。")} 字符回复')
+                            expect(details).to_contain_text('已结束 1 项工具 · 最近一项 Read File')
+                            expect(details).to_contain_text('Kiro 子代理由主会话管理')
+                            if args.screenshots:
+                                page.screenshot(path=str(args.screenshots / f'kiro-live-{aid}.png'))
+                            page.keyboard.press('Escape')
                         open_menu(page)
                     if args.screenshots:
                         page.screenshot(path=str(args.screenshots / 'kiro-subagents-desktop.png'), full_page=True)
@@ -165,12 +179,20 @@ def run(args):
                     expect(failure).to_contain_text(reason)
                     assert failure.evaluate('(n) => n.scrollWidth <= n.clientWidth + 1')
                     expect(page.locator('#sdk-input')).not_to_be_visible()
+                    status = page.locator('#conversation-status .sdk-status')
+                    expect(status.locator('[role=status]')).to_have_text('执行失败')
+                    status.click()
+                    expect(page.locator('#conversation-status-menu:popover-open')).to_contain_text(reason)
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / f'kiro-status-failure-{label}.png'))
+                    page.keyboard.press('Escape')
                     if args.screenshots:
                         failure.scroll_into_view_if_needed()
                         page.screenshot(path=str(args.screenshots / f'kiro-failure-{label}.png'), full_page=True)
                     open_menu(page)
                     page.locator('#session-view-menu button[data-agent="review-a"]').click()
                     expect(page.locator('#msgs .subtask-outcome .tool-out.err')).to_have_count(0)
+                    expect(page.locator('#conversation-status [role=status]')).to_have_text('已完成')
                     open_menu(page)
                     page.locator('#session-view-menu button[data-agent=""]').click()
                 uid = boot()
@@ -214,7 +236,7 @@ def run(args):
                 open_menu(page)
                 page.locator('#session-view-menu button[data-agent=""]').click()
                 refresh_agents(False)
-                verify_views()
+                verify_views(active=False)
                 verify_failure('Invalid model ID', 'desktop')
                 page.reload(wait_until='domcontentloaded')
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
