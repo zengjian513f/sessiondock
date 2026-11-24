@@ -204,7 +204,7 @@ const S = {
   liveStarted: new Map(), // uid → 当前 CLI 主进程启动时间（Unix 秒）
   activeOnly: SessionDockCapabilities.allows('live') && store.get('activeOnly', false), // 未探测时不按空集合筛选
   compactTurns: store.get('compactTurns', true), // 已完成回合只保留过程合集与最终结论
-  unread: new Map(store.get('unread', [])),   // uid → {count, tmux}; 只计代理产生的新内容
+  unread: new Map(store.get('unread', [])),   // viewKey(uid, agent) → {count}
   cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
   starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
   picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
@@ -1909,7 +1909,7 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   const incoming = incomingCount(data.messages);
   const detailVisible = S.sel === uid && S.agent === agent
     && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
-  if (incoming && !detailVisible) addUnread(uid, incoming);
+  if (incoming && !detailVisible) addUnread(uid, agent, incoming);
   if (S.sel !== uid || S.agent !== agent) return data.messages.length;
   const box = $('#msgs');
   if (!box) return data.messages.length;
@@ -2250,12 +2250,9 @@ function closeWatch() {
   }
 }
 
-function unreadRow(uid) {
-  const value = S.unread.get(uid);
-  if (typeof value === 'number') return { count: value };
-  return value && typeof value === 'object'
-    ? { count: Math.max(0, +value.count || 0) }    // 旧记录里的 tmux 标志不再使用
-    : { count: 0 };
+function unreadCount(uid, agent = null) {
+  const value = S.unread.get(viewKey(uid, agent));
+  return Math.max(0, (typeof value === 'number' ? value : +value?.count) || 0);
 }
 
 function saveUnread() {
@@ -2318,7 +2315,7 @@ function paintItemStatus(node) {
   if (!node) return;
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
-  const row = unreadRow(node.dataset.uid);
+  const count = unreadCount(node.dataset.uid);
   // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
   const isPending = !!node.dataset.tmuxName;
   const pending = isPending && node.classList.contains('live');
@@ -2327,9 +2324,9 @@ function paintItemStatus(node) {
   const tmux = isPending ? pending : status.tmux;
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
-  paintStatusMarker(badge, frozen, row.count, attention);
-  badge.classList.toggle('visible', frozen || active || row.count > 0);
-  badge.classList.toggle('counted', row.count > 0);
+  paintStatusMarker(badge, frozen, count, attention);
+  badge.classList.toggle('visible', frozen || active || count > 0);
+  badge.classList.toggle('counted', count > 0);
   badge.classList.toggle('tmux', tmux);
   badge.classList.toggle('sdk', status.sdk || status.children || status.retained);
   badge.classList.toggle('idle', !active);
@@ -2338,8 +2335,8 @@ function paintItemStatus(node) {
   badge.classList.toggle('turn-waiting', turn === 'waiting');
   const running = status.children && !status.sdk ? '原生子代理仍在运行' : status.retained ? '已停止，等待原生卸载' : frozen ? '会话已暂停' : (S.liveExternalSdk.has(node.dataset.uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
-  badge.title = badge.ariaLabel = row.count
-    ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
+  badge.title = badge.ariaLabel = count
+    ? `${count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
     : running;
 }
 
@@ -2395,19 +2392,23 @@ function paintHeaderTurn() {
   paintTransferAvailability($('#a-clone-group'), S.sel);
 }
 
-function addUnread(uid, count) {
+function addUnread(uid, agent, count) {
   if (!uid || count <= 0) return;
-  const row = unreadRow(uid);
-  S.unread.set(uid, { count: row.count + count });
-  saveUnread();
-  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+  setUnread(uid, agent, unreadCount(uid, agent) + count);
 }
 
-function clearUnread(uid) {
-  if (!uid || !S.unread.has(uid)) return;
-  S.unread.delete(uid);
+function clearUnread(uid, agent = null) {
+  setUnread(uid, agent, 0);
+}
+
+function setUnread(uid, agent, count) {
+  if (!uid) return;
+  const key = viewKey(uid, agent);
+  if (count > 0) S.unread.set(key, {count});
+  else if (!S.unread.delete(key)) return;
   saveUnread();
-  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+  const row = sidebarRowNode(uid, agent);
+  if (row) (agent ? paintAgentStatus : paintItemStatus)(row);
 }
 
 /** 兜底轮询: SSE 连着的时候只是很慢地对一下账, 断了才回到自适应的快节奏。 */
@@ -2871,12 +2872,12 @@ async function syncSidebarView(row, base, latest, attempt = 0) {
     if (data.unsupported) {
       // Old nodes cannot give an exact count without downloading history. Show
       // at least one unread item and defer the actual content until selection.
-      if (!unreadRow(row.uid).count) addUnread(row.uid, 1);
+      if (!unreadCount(row.uid, row.agent)) addUnread(row.uid, row.agent, 1);
       S.cursors.set(key, latest);
       return;
     }
     if (data.reset) cache.delete(key);
-    else if (data.incoming) addUnread(row.uid, data.incoming);
+    else if (data.incoming) addUnread(row.uid, row.agent, data.incoming);
     S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
                                    anchor: data.anchor}) || latest);
   } catch (error) {
@@ -5119,7 +5120,7 @@ function agentRow(s, a, depth) {
   return it;
 }
 
-/** 子代理行的绿点和选中态：跑没跑由服务端按 transcript 判断，父进程不在则一律不算。 */
+/** 子代理行的运行、未读和选中态。 */
 function paintAgentStatus(node) {
   const uid = node.dataset.owner, id = node.dataset.agent;
   const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
@@ -5129,10 +5130,15 @@ function paintAgentStatus(node) {
   node.classList.toggle('sel', S.sel === uid && S.agent === id);
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
-  badge.classList.toggle('visible', running);
+  const count = unreadCount(uid, id);
+  paintStatusMarker(badge, false, count);
+  badge.classList.toggle('visible', running || count > 0);
+  badge.classList.toggle('counted', count > 0);
+  badge.classList.toggle('idle', !running);
   badge.classList.toggle('sdk', droidSdk);
   badge.classList.toggle('turn-working', droidSdk ? (SdkView.uid===uid && SdkView.agent===id && SdkView.running) : running);
-  badge.title = badge.ariaLabel = droidSdk ? '子代理受管 SDK 实例已连接' : running ? '子代理运行中' : '';
+  const status = droidSdk ? '子代理受管 SDK 实例已连接' : running ? '子代理运行中' : '子代理未运行';
+  badge.title = badge.ariaLabel = count ? `${count} 条新内容，${status}` : running ? status : '';
 }
 
 /** Move `.sel` without rebuilding `#side`. Clicking a row used to call
@@ -6188,7 +6194,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   SessionContentView.sync();
   renderNetworkNotice();
   syncSessionNotices();
-  clearUnread(uid);
+  clearUnread(uid, selectedAgent);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
   revealSessionInSidebar(uid, selectedAgent, sidebarCatalog);

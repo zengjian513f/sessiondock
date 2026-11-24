@@ -239,7 +239,7 @@ DELTA（BUG-20261031-074340-d55bcb）：第三段首项「停止会话树」只�
 
 ### 未读
 
-未选中的会话用未读摘要，不拉已缓存的消息正文。`POST api/sessions/unread`（Hub 为 `api/nodes/{id}/api/sessions/unread`），`fetchUnreadSummary` / `flushUnreadBatch`。只计代理产生的新内容。存 `unread`：`uid → {count, tmux}`，计数为 0 的项不写回。打开会话 `clearUnread`。
+未选中的会话用未读摘要，不拉已缓存的消息正文。`POST api/sessions/unread`（Hub 为 `api/nodes/{id}/api/sessions/unread`），`fetchUnreadSummary` / `flushUnreadBatch`。只计代理产生的新内容。主会话与各子代理分别以 `viewKey(uid, agent)` 存储未读，数字显示在各自的侧栏角标上。折叠后仍保留已跟踪的子代理计数，展开时显示。打开详情只清除当前视图的未读。已有主会话计数继续读取，打开主会话时清除。
 
 [`tests/sidebar_unread_browser.py`](../tests/sidebar_unread_browser.py) 覆盖节点和 Hub。
 

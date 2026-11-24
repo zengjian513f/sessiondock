@@ -94,8 +94,10 @@ No message bodies, media grants or prompt probes are produced.
 
 The `unread_batch` capability enables this for all background views, including
 previously opened views whose history remains cached. Background updates advance
-an independent unread checkpoint; cached message bodies stay unchanged until the
-user selects that view, when the normal incremental history read catches up.
+an independent unread checkpoint for each `(uid, agent)`; cached message bodies
+stay unchanged until the user selects that view, when the normal incremental
+history read catches up. DELTA (BUG-20261124-120928-e93d2d): the count is stored and
+shown on that view's own sidebar row. Opening a view clears only its own count.
 Hub browsers group by node and POST local UIDs to
 `/api/nodes/{nid}/api/sessions/unread`; the existing explicit-node
 authentication/proxy rules apply. Old nodes returning 404/405/501 show an unread
