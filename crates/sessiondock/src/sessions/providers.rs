@@ -326,7 +326,7 @@ fn parse_context<'a>(
             "codex" => parser.codex(record, *end),
             "grok" => parser.grok(record, *end),
             "opencode" => parser.opencode(record, *end),
-            "agy" => parser.agy(record, *end),
+            "agy" => parser.agy(record, *end, summary),
             "kiro" => parser.kiro(record, *end),
             "codebuddy" => parser.codebuddy(record, *end),
             "droid" => parser.droid(record, *end),

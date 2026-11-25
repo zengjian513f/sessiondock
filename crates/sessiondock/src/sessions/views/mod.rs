@@ -1913,6 +1913,9 @@ fn view_meta(request: &ViewRequest, parsed: &Parsed) -> Result<Value, SessionErr
     if !meta.is_object() {
         return Err(SessionError::new(500, "会话行不是对象"));
     }
+    if let Some(logs) = parsed.meta.get("background_logs") {
+        meta["background_logs"] = logs.clone();
+    }
     if request.agent.is_empty() {
         if parsed.meta["timeline_pin"].is_object() {
             meta["timeline_pin"] = parsed.meta["timeline_pin"].clone();

@@ -117,10 +117,52 @@ pub(crate) struct BackgroundTimer {
     created_at: Option<String>,
 }
 
+fn task_header<'a>(text: &'a str, id: &str) -> Option<std::str::Lines<'a>> {
+    let mut lines = text.lines();
+    let header = lines.find(|line| !line.starts_with("Created At: "))?;
+    (header.strip_prefix("Tool is running as a background task with task id: ") == Some(id))
+        .then_some(lines)
+}
+
+fn command_log(mut lines: std::str::Lines<'_>, index: u64, transcript: &Path) -> Option<Value> {
+    let description = lines.next()?.strip_prefix("Task Description: ")?;
+    if description.starts_with("Timer: ") {
+        return None;
+    }
+    let task = format!("task-{index}");
+    let expected = transcript
+        .parent()?
+        .parent()?
+        .join("tasks")
+        .join(format!("{task}.log"));
+    let uri = lines
+        .take_while(|line| *line != "Log output:")
+        .filter_map(|line| line.strip_prefix("Task logs are available at: "))
+        .find(|uri| {
+            uri.starts_with("file://")
+                && crate::files::clean_ref(uri).is_ok_and(|path| Path::new(&path) == expected)
+        })?;
+    Some(json!({"task":task,"ref":uri}))
+}
+
+pub(super) fn record_command_log(record: &Value, summary: &Value) -> Option<Value> {
+    if record["status"] != "RUNNING" || record["type"] != "GENERIC" {
+        return None;
+    }
+    let index = record["step_index"].as_u64()?;
+    let sid = summary["session"]["id"].as_str()?;
+    let lines = task_header(record["content"].as_str()?, &format!("{sid}/task-{index}"))?;
+    command_log(
+        lines,
+        index,
+        Path::new(summary["native_transcript"].as_str()?),
+    )
+}
+
 /// The catalog can be IDLE while a background command or schedule still owns
 /// work. Native task steps remain RUNNING even after their completion notice;
 /// reconcile by task identity, including timers whose notice is just a prompt.
-fn background_tasks(sid: &str, bytes: &[u8]) -> (usize, Vec<BackgroundTimer>) {
+fn project_background_tasks(session: &mut Value, sid: &str, transcript: &Path, bytes: &[u8]) {
     let mut tasks = BTreeMap::new();
     for record in bytes
         .split_inclusive(|byte| *byte == b'\n')
@@ -135,33 +177,28 @@ fn background_tasks(sid: &str, bytes: &[u8]) -> (usize, Vec<BackgroundTimer>) {
             let id = format!("{sid}/task-{index}");
             // Only the native task header, before arbitrary command/log text.
             if record["status"] == "RUNNING" {
-                let mut lines = text.lines();
-                let header = lines.find(|line| !line.starts_with("Created At: "));
-                if header
-                    != Some(
-                        format!("Tool is running as a background task with task id: {id}").as_str(),
-                    )
-                {
+                let Some(mut lines) = task_header(text, &id) else {
                     continue;
-                }
-                let timer = lines.next().and_then(|line| {
-                    let (delay, first_line) = line
-                        .strip_prefix("Task Description: Timer: ")?
-                        .split_once(", Prompt: ")?;
-                    let prompt =
-                        std::iter::once(first_line)
+                };
+                let log = command_log(lines.clone(), index, transcript);
+                let description = lines.next().unwrap_or_default();
+                let timer = description
+                    .strip_prefix("Task Description: Timer: ")
+                    .and_then(|text| text.split_once(", Prompt: "))
+                    .map(|(delay, first_line)| {
+                        let prompt = std::iter::once(first_line)
                             .chain(lines.take_while(|line| {
                                 !line.starts_with("Task logs are available at:")
                             }))
                             .collect::<Vec<_>>()
                             .join("\n");
-                    Some(BackgroundTimer {
-                        delay: delay.to_owned(),
-                        prompt: prompt.trim().to_owned(),
-                        created_at: record["created_at"].as_str().map(str::to_owned),
-                    })
-                });
-                tasks.insert(id, timer);
+                        BackgroundTimer {
+                            delay: delay.to_owned(),
+                            prompt: prompt.trim().to_owned(),
+                            created_at: record["created_at"].as_str().map(str::to_owned),
+                        }
+                    });
+                tasks.insert(id, (timer, log));
             } else if matches!(record["status"].as_str(), Some("DONE" | "ERROR")) {
                 tasks.remove(&id);
             }
@@ -177,7 +214,10 @@ fn background_tasks(sid: &str, bytes: &[u8]) -> (usize, Vec<BackgroundTimer>) {
             }
         }
     }
-    (tasks.len(), tasks.into_values().flatten().collect())
+    session["background_tasks"] = json!(tasks.len());
+    let (timers, logs): (Vec<_>, Vec<_>) = tasks.into_values().unzip();
+    session["background_timers"] = json!(timers.into_iter().flatten().collect::<Vec<_>>());
+    session["background_logs"] = json!(logs.into_iter().flatten().collect::<Vec<_>>());
 }
 
 #[cfg(unix)]
@@ -436,7 +476,7 @@ impl Mirror {
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
         // Recompute existing mirrors once when this derived field is introduced.
-        cache_session["activity_projection"] = json!(2);
+        cache_session["activity_projection"] = json!(3);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -537,14 +577,12 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
-        value["background_tasks"] = previous
-            .as_ref()
-            .map(|v| v["session"]["background_tasks"].clone())
-            .unwrap_or(Value::Null);
-        value["background_timers"] = previous
-            .as_ref()
-            .map(|v| v["session"]["background_timers"].clone())
-            .unwrap_or(Value::Null);
+        for field in ["background_tasks", "background_timers", "background_logs"] {
+            value[field] = previous
+                .as_ref()
+                .map(|v| v["session"][field].clone())
+                .unwrap_or(Value::Null);
+        }
         let transcript_changed = cached.is_none_or(|(last_session, last_stamp, last_path)| {
             last_session["native_database_version"] != database_version
                 || last_session["activity_projection"] != cache_session["activity_projection"]
@@ -579,15 +617,14 @@ impl Mirror {
             value["model"] = transcript_model(&bytes[..complete])
                 .map(|name| json!({"id":name}))
                 .unwrap_or(Value::Null);
-            let (count, timers) = background_tasks(sid, &bytes[..complete]);
-            value["background_tasks"] = json!(count);
-            value["background_timers"] = json!(timers);
+            project_background_tasks(&mut value, sid, &native, &bytes[..complete]);
             publish(&messages, &bytes[..complete], true)?;
         }
-        if value["background_tasks"].is_null() || value["background_timers"].is_null() {
-            let (count, timers) = background_tasks(sid, &fs::read(&messages)?);
-            value["background_tasks"] = json!(count);
-            value["background_timers"] = json!(timers);
+        if ["background_tasks", "background_timers", "background_logs"]
+            .iter()
+            .any(|field| value[field].is_null())
+        {
+            project_background_tasks(&mut value, sid, &native, &fs::read(&messages)?);
         }
         if value["time_created"].is_null() || zero_time(&value["time_created"]) {
             value["time_created"] = value["time_updated"].clone();

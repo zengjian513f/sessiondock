@@ -1720,6 +1720,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.pending_delete,
     ['agy', 'kiro'].includes(m.source) ? (m.migration_warnings || []) : null,
+    m.background_logs,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
@@ -1733,6 +1734,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
     // the selected conversation, until a list response updates them.
     const rowMeta = {...meta};
     delete rowMeta.background_timers;
+    delete rowMeta.background_logs;
     if (listed && Object.hasOwn(listed, 'child_count')) rowMeta.child_count = listed.child_count;
     if (S.childMode === 'hidden' && !S.lazyOpen.has(uid)) delete rowMeta.agent_items;
     // Cursor/size updates do not change membership, ordering, nesting or
@@ -7630,6 +7632,19 @@ function head(m, total) {
     }
   }
   h.querySelector('.mobile-back').onclick = showMobileList;
+  const menu = h.querySelector('#session-actions-menu [role="menu"]');
+  for (const log of m.background_logs || []) {
+    const button = el('button', 'session-menu-action');
+    button.type = 'button';
+    button.dataset.menuOnly = '';
+    button.id = 'a-output-' + log.task;
+    button.title = button.ariaLabel = '查看后台输出 · ' + log.task;
+    button.innerHTML = uiIcon('terminal');
+    button.onclick = () => {
+      window.open(taskOutputUrl(log, m.uid, m.agent_id), '_blank', 'noopener,noreferrer');
+    };
+    menu.insertBefore(button, menu.querySelector('.session-run-actions'));
+  }
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
@@ -11323,9 +11338,19 @@ function trimReference(raw) {
   return ref;
 }
 
+function taskOutputUrl(log, uid, agent) {
+  const query = new URLSearchParams({uid, ref: log.ref, task: log.task});
+  if (agent) query.set('agent', agent);
+  return appUrl('file.html') + '?' + query;
+}
+
 function nativeFileLinks(files, context = {uid: S.sel, agent: S.agent}) {
   return (files || []).map(file => {
     if (typeof file.ref !== 'string') return '';
+    if (file.task && context.uid) {
+      const href = taskOutputUrl(file, context.uid, context.agent);
+      return `<div class="mb native-file"><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">查看后台输出 · ${esc(file.task)}</a></div>`;
+    }
     let name = file.ref.split(/[/\\]/).pop() || file.ref;
     if (/^file:\/\//i.test(file.ref)) {
       try { name = decodeURIComponent(name); } catch { /* 保留原始文件名 */ }

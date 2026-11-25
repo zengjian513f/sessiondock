@@ -33,6 +33,7 @@ order; `--jobs 1` runs everything serially in that order.
 [quota_sync_browser.py](../tests/quota_sync_browser.py) covers quota updates across open SDK views, dialogs and tabs on node/Hub.
 [agy_sdk_history_join_browser.py](../tests/agy_sdk_history_join_browser.py) covers delayed connection, sparse replay behind persisted answers, native step identity, pagination, history catchup, reload and actual fake-CLI transport on node/Hub.
 [agy_task_notice_browser.py](../tests/agy_task_notice_browser.py) covers compact background-command completion notices in Agy history and live SDK views on node/Hub, success/failure, full output disclosure, literal fallbacks, subsequent turns, wide/narrow and light/dark layouts.
+[agy_task_output_browser.py](../tests/agy_task_output_browser.py) opens running command logs from the Agy session menu on node and Hub, checks the selected subagent, follows new output, and recovers from missing, empty and replaced logs.
 [sdk_progress_browser.py](../tests/sdk_progress_browser.py) covers all seven native SDKs through the provider fixtures, and node/Hub phase transitions, counts, approvals, refresh, and thinking disclosures in wide/light and narrow/dark views.
 [readonly_quota_browser.py](../tests/readonly_quota_browser.py) covers missing/unknown/known model quota groups, compact labels, delayed history, warm re-entry and narrow scrolling for Droid/Agy/Codex on node/Hub.
 [external_quota_browser.py](../tests/external_quota_browser.py) covers external Codex account refresh and shared snapshots on node/Hub.

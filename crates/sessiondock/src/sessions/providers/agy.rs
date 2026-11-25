@@ -88,7 +88,7 @@ pub(in crate::sessions) fn parse_append(
         media_free &= !record["media"]
             .as_array()
             .is_some_and(|media| !media.is_empty());
-        if let Err(reason) = parser.agy(record, *end) {
+        if let Err(reason) = parser.agy(record, *end, summary) {
             // A suffix error invalidates the whole projection, including its
             // otherwise valid prefix. Never publish a partial successful view.
             return (meta, Vec::new(), Some(reason), None);
@@ -131,6 +131,7 @@ pub(super) fn metadata(summary: &Value, records: &[(Value, u64)], fallback: &str
     json!({"sid": session["id"], "title": clip(&title), "cwd": session["directory"],
         "created": stamp(&session["time_created"]), "updated": stamp(&session["time_updated"]),
         "model": session["model"]["id"], "branch": session["agent"],
+        "background_logs": session["background_logs"],
         "_is_subagent": session["parent_id"].as_str().is_some_and(|id| !id.trim().is_empty())})
 }
 
@@ -232,7 +233,12 @@ fn command_exit_code(content: &str) -> Option<i64> {
 }
 
 impl Parser<'_> {
-    pub(super) fn agy(&mut self, record: &Value, end: u64) -> Result<(), String> {
+    pub(super) fn agy(
+        &mut self,
+        record: &Value,
+        end: u64,
+        summary: Option<&Value>,
+    ) -> Result<(), String> {
         let first_event = self.events.len();
         let ts = normalized(&record["created_at"]);
         // The native format references media files by URI; it never embeds
@@ -373,6 +379,11 @@ impl Parser<'_> {
                 }
             }
             other => {
+                if let Some(log) =
+                    summary.and_then(|meta| crate::sessions::agy::record_command_log(record, meta))
+                {
+                    files.push(log);
+                }
                 let mut content = string(&record["content"]);
                 if content.trim().is_empty()
                     && let Some(error) = record["error"].as_str()
