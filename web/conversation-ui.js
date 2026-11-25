@@ -113,7 +113,8 @@ const ConversationUI = {
   placePopover(menu, button, preferredWidth = 300) {
     const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
     const timers = menu.dataset.statusLayout === 'timers';
-    const edge = 8, gap = 6, limit = Math.min(timers ? 400 : preferredWidth, innerWidth - edge * 2);
+    const taskList = timers || menu.classList.contains('background-command-list');
+    const edge = 8, gap = 6, limit = Math.min(taskList ? 400 : preferredWidth, innerWidth - edge * 2);
     const status = menu.classList.contains('sdk-status-menu');
     menu.style.width = status && !timers ? 'max-content' : `${limit / zoom}px`;
     if (status) menu.style.maxWidth = `${limit / zoom}px`;
@@ -121,8 +122,8 @@ const ConversationUI = {
     const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
     const up = above > below;
     const height = Math.max(0, up ? above : below) / zoom;
-    menu.style.maxHeight = `${timers ? Math.min(420, height) : height}px`;
-    const left = timers || menu.classList.contains('background-command-list') ? box.left : box.right - width;
+    menu.style.maxHeight = `${taskList ? Math.min(420, height) : height}px`;
+    const left = taskList ? box.left : box.right - width;
     menu.style.left = `${Math.max(edge, Math.min(left, innerWidth - edge - width)) / zoom}px`;
     menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
   },

@@ -31,69 +31,17 @@
     return value;
   }
   function watchTaskOutput(uid, ref, task) {
-    title('后台输出 · ' + task + ' · SessionDock');
-    document.body.classList.add('task-output');
-    const target = new URL('api/session/file', base);
-    target.search = new URLSearchParams({uid, ref, agent: context.get('agent') || '', download: '1'});
-    const download = document.getElementById('file-download');
-    download.href = target.href;
-    download.textContent = '下载完整日志';
-    download.hidden = false;
-    const refresh = document.getElementById('file-retry');
-    refresh.hidden = false;
-    const follow = document.createElement('input');
-    follow.type = 'checkbox';
-    follow.checked = true;
-    const label = document.createElement('label');
-    label.append(follow, '自动刷新');
-    refresh.before(label);
-    const status = document.createElement('div');
-    status.setAttribute('role', 'status');
-    status.textContent = '正在读取输出…';
-    const pre = document.createElement('pre');
+    document.title = '后台输出 · ' + TaskOutput.number(task) + ' · SessionDock';
+    document.getElementById('file-style').sheet.disabled = true;
+    document.getElementById('task-theme').disabled = false;
+    document.getElementById('task-font').disabled = false;
+    let theme;
+    try { theme = JSON.parse(SessionDockCapabilities.stored('theme')); } catch {}
+    document.documentElement.dataset.theme = ['light', 'dark'].includes(theme) ? theme
+      : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.body.classList.add('task-output-page');
     host.removeAttribute('role');
-    host.replaceChildren(status, pre);
-    let timer;
-    function schedule() {
-      clearTimeout(timer);
-      if (follow.checked && !document.hidden) timer = setTimeout(read, 3000);
-    }
-    async function read() {
-      if (refresh.disabled) return;
-      refresh.disabled = true;
-      clearTimeout(timer);
-      try {
-        const response = await fetch(target, {cache: 'no-store', headers: {Range: 'bytes=-65536'}});
-        const range = response.headers.get('Content-Range') || '';
-        const empty = response.status === 416 && range === 'bytes */0';
-        if (!empty && response.status !== 206) {
-          if (response.headers.get('Content-Type')?.includes('application/json')) await json(response);
-          await response.body?.cancel();
-          throw new Error('无法读取日志，请检查连接或登录状态');
-        }
-        const bytes = empty ? new Uint8Array() : new Uint8Array(await response.arrayBuffer());
-        const clipped = !empty && !range.startsWith('bytes 0-');
-        let first = 0;
-        while (clipped && (bytes[first] & 0xc0) === 0x80) first++;
-        const output = new TextDecoder().decode(bytes.subarray(first));
-        const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight <= 2;
-        status.textContent = empty ? '暂时没有输出' : clipped ? '显示最近 64 KiB' : '';
-        if (pre.textContent !== output) pre.textContent = output;
-        if (atEnd) pre.scrollTop = pre.scrollHeight;
-      } catch (error) {
-        status.textContent = '读取失败 · ' + error.message;
-      } finally {
-        refresh.disabled = false;
-        schedule();
-      }
-    }
-    refresh.onclick = read;
-    follow.onchange = () => follow.checked ? read() : clearTimeout(timer);
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && follow.checked) read();
-      else clearTimeout(timer);
-    });
-    read();
+    TaskOutput.mount(host, {uid, ref, task, agent: context.get('agent')});
   }
   try {
     const uid = context.get('uid'), ref = context.get('ref');

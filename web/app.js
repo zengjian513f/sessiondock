@@ -10607,10 +10607,52 @@ function renderConversationBalances(holder, quota) {
   }
 }
 
+function backgroundCommandNames(entry) {
+  const names = new Map();
+  for (const message of entry?.msgs || []) {
+    for (const file of message.native_files || []) {
+      if (!file.task) continue;
+      const description = /^Task Description: ([\s\S]*?)\r?\nTask logs are available at: /m.exec(message.text);
+      if (description) names.set(file.ref, description[1].trim());
+    }
+  }
+  return names;
+}
+
+function openTaskOutput(log, meta, command, trigger, menu) {
+  const dialog = el('dialog', 'app-dialog task-output-dialog');
+  dialog.id = 'task-output-dialog';
+  dialog.setAttribute('aria-label', '后台输出');
+  const panel = el('div');
+  dialog.append(panel);
+  document.body.append(dialog);
+  const close = () => dialog.close();
+  const stop = TaskOutput.mount(panel, {...log, uid: meta.uid, agent: meta.agent_id, command}, {
+    close,
+    back: menu ? () => dialog.close('list') : null,
+  });
+  if (menu) menu._returnButton = panel.querySelector('.task-output-back');
+  if (trigger?.getAttribute('aria-controls') === dialog.id) trigger.setAttribute('aria-expanded', 'true');
+  dialog.addEventListener('close', () => {
+    if (menu) delete menu._returnButton;
+    if (trigger?.getAttribute('aria-controls') === dialog.id) trigger.setAttribute('aria-expanded', 'false');
+    stop();
+    dialog.remove();
+    if (!trigger?.isConnected || !trigger.getClientRects().length) return;
+    trigger.focus({preventScroll: true});
+    if (dialog.returnValue === 'list' && menu?._entry.meta.background_logs?.length > 1) {
+      trigger.click();
+      [...menu.querySelectorAll('button[data-ref]')].find(button => button.dataset.ref === log.ref)?.focus();
+    }
+  }, {once: true});
+  dialog.showModal();
+}
+
 function paintBackgroundCommands(row, entry) {
   const logs = entry?.meta?.background_logs;
   let trigger = row.querySelector('.background-commands');
   let menu = row.querySelector('.background-command-list');
+  if (menu?._returnButton) menu._returnButton.hidden = (logs?.length || 0) < 2;
   if (!logs?.length) {
     if (!trigger) return false;
     if (menu.matches(':popover-open')) menu.hidePopover();
@@ -10619,29 +10661,38 @@ function paintBackgroundCommands(row, entry) {
     return true;
   }
   if (!trigger) {
-    trigger = el('button', 'btn background-commands');
+    trigger = el('button', 'btn background-commands', uiIcon('terminal') + '<span>后台命令</span> <b></b>');
     trigger.type = 'button';
     menu = el('div', 'new-model-menu sdk-toolbar-menu background-command-list');
     menu.id = (row.id || 'sdk') + '-background-commands';
+    menu.innerHTML = '<h3>运行中的后台命令</h3><div class="sdk-timer-body"><div class="sdk-timer-list"></div></div>';
     menu.setAttribute('popover', 'auto');
     menu.setAttribute('role', 'dialog');
-    menu.setAttribute('aria-label', '后台命令');
-    trigger.setAttribute('aria-controls', menu.id);
-    trigger.setAttribute('aria-haspopup', 'dialog');
+    menu.setAttribute('aria-label', '运行中的后台命令');
     trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-haspopup', 'dialog');
     row.querySelector('.sdk-gauges').before(trigger, menu);
     ConversationUI.bindPopover(trigger, menu, row);
+    const toggleList = trigger.onclick;
+    trigger.onclick = event => {
+      const {meta} = menu._entry;
+      if (meta.background_logs.length > 1) { toggleList(event); return; }
+      const log = meta.background_logs[0];
+      openTaskOutput(log, meta, backgroundCommandNames(menu._entry).get(log.ref), trigger);
+    };
     menu.addEventListener('beforetoggle', event => {
       if (event.newState === 'open') paintBackgroundCommandList(menu);
     });
-    menu.addEventListener('click', event => {
-      if (event.target.closest('a')) menu.hidePopover();
-    });
   }
   menu._entry = entry;
-  const label = '后台命令 ' + logs.length;
-  const resized = trigger.textContent !== label;
-  if (resized) trigger.textContent = label;
+  const count = String(logs.length);
+  const resized = trigger.querySelector('b').textContent !== count;
+  if (resized) {
+    trigger.querySelector('b').textContent = count;
+    trigger.setAttribute('aria-label', '后台命令 ' + count);
+    trigger.setAttribute('aria-controls', logs.length === 1 ? 'task-output-dialog' : menu.id);
+    trigger.title = logs.length === 1 ? '查看后台命令输出' : '查看运行中的后台命令';
+  }
   const key = JSON.stringify([entry.meta.uid, entry.meta.agent_id, logs]);
   if (key !== menu._logKey && menu.matches(':popover-open')) {
     paintBackgroundCommandList(menu);
@@ -10652,34 +10703,27 @@ function paintBackgroundCommands(row, entry) {
 }
 
 function paintBackgroundCommandList(menu) {
-  const {meta, msgs} = menu._entry;
-  // A paged-out tool record can still have an active log. Its native task
-  // number remains available even when the command text is outside the window.
-  const names = new Map(meta.background_logs.map(log => [log.ref, '']));
-  for (const message of msgs) {
-    for (const file of message.native_files || []) {
-      if (file.task && names.has(file.ref)) {
-        names.set(file.ref, /^Task Description: ([^\r\n]+)/m.exec(message.text)?.[1] || '');
-      }
-    }
-  }
-  const previous = new Map([...menu.children].map(link => [link.href, link]));
+  const {meta} = menu._entry, names = backgroundCommandNames(menu._entry);
+  const list = menu.querySelector('.sdk-timer-list');
+  const previous = new Map([...list.children].map(button => [button.dataset.ref, button]));
   for (const log of meta.background_logs) {
-    const href = new URL(taskOutputUrl(log, meta.uid, meta.agent_id), location.href).href;
-    let link = previous.get(href);
-    if (!link) {
-      link = el('a', 'new-model-option');
-      link.href = href;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.append(el('span'), el('small', '', '查看输出'));
-      menu.append(link);
+    let button = previous.get(log.ref);
+    if (!button) {
+      button = el('button', 'sdk-timer-item command-option',
+        '<span class="command-name"></span><small class="sdk-timer-origin"></small><i aria-hidden="true">›</i>');
+      button.type = 'button';
+      button.dataset.ref = log.ref;
+      button.onclick = () => {
+        menu.hidePopover();
+        openTaskOutput(log, menu._entry.meta, backgroundCommandNames(menu._entry).get(log.ref), menu._trigger, menu);
+      };
+      list.append(button);
     }
-    previous.delete(href);
-    const command = names.get(log.ref);
-    const label = command ? log.task + ' · ' + command : log.task;
-    if (link.firstChild.textContent !== label) link.firstChild.textContent = label;
-    link.title = label;
+    previous.delete(log.ref);
+    const command = names.get(log.ref), number = TaskOutput.number(log.task);
+    const lines = command?.split(/\r?\n/);
+    button.firstChild.textContent = lines ? lines.slice(0, 3).join('\n') : number;
+    button.querySelector('small').textContent = !lines ? '' : lines.length > 3 ? number + ' · 共 ' + lines.length + ' 行' : number;
   }
   for (const stale of previous.values()) stale.remove();
 }
@@ -11408,12 +11452,22 @@ function taskOutputUrl(log, uid, agent) {
   return appUrl('file.html') + '?' + query;
 }
 
+document.addEventListener('click', event => {
+  const link = event.target.closest?.('a.task-output-link');
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  event.preventDefault();
+  const query = new URL(link.href).searchParams;
+  const uid = query.get('uid'), agent = query.get('agent'), ref = query.get('ref');
+  const command = backgroundCommandNames(cache.get(viewKey(uid, agent))).get(ref);
+  openTaskOutput({ref, task: query.get('task')}, {uid, agent_id: agent}, command, link);
+});
+
 function nativeFileLinks(files, context = {uid: S.sel, agent: S.agent}) {
   return (files || []).map(file => {
     if (typeof file.ref !== 'string') return '';
     if (file.task && context.uid) {
       const href = taskOutputUrl(file, context.uid, context.agent);
-      return `<div class="mb native-file"><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">查看后台输出 · ${esc(file.task)}</a></div>`;
+      return `<div class="mb native-file"><a class="task-output-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${uiIcon('terminal')}查看后台输出 · ${esc(TaskOutput.number(file.task))}</a></div>`;
     }
     let name = file.ref.split(/[/\\]/).pop() || file.ref;
     if (/^file:\/\//i.test(file.ref)) {

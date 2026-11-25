@@ -2659,7 +2659,12 @@ header .btn[data-session-docked] { display: none; }
 }
 .sdk-status-row > .sdk-status.external-cli-status { max-width: none; }
 .sdk-status-row > :is(.composer-run-action, .background-commands) { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
-.sdk-status-row > .background-commands { white-space: nowrap; }
+.sdk-status-row > .background-commands { display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap; color: var(--muted); background: transparent; border-color: transparent; }
+.sdk-status-row > .background-commands:is(:hover, [aria-expanded="true"]) { color: var(--text); background: var(--hover); }
+.background-commands:focus-visible, .command-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.background-commands .ui-icon { width: 14px; height: 14px; }
+.background-commands b { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-credits { flex: none; font-size: 12px; }
 .sdk-status-row > .sdk-gauges { flex: 0 1 auto; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
@@ -2738,8 +2743,51 @@ header .btn[data-session-docked] { display: none; }
 }
 
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
-.background-command-list .new-model-option { box-sizing: border-box; text-decoration: none; }
-.background-command-list .new-model-option > small { color: var(--accent); }
+.background-command-list { padding: 0; gap: 0; overflow: hidden; }
+.background-command-list h3 { flex: none; margin: 0; padding: 12px 14px 10px; border-bottom: 1px solid var(--border);
+  color: var(--text); font: 600 14px/1.4 var(--sans); }
+.background-command-list .command-option { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px;
+  padding: 10px 12px; text-align: left; color: var(--text); cursor: pointer; }
+.command-option .command-name { grid-column: 1; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--terminal-font); }
+.command-option small { grid-column: 1; }
+.command-option small:empty { display: none; }
+.command-option i { grid-column: 2; grid-row: 1 / span 2; font: 20px/1 var(--sans); color: var(--muted); }
+.background-command-list .command-option:is(:hover, :focus-visible) { background: var(--hover); border-color: var(--accent); }
+.task-output-dialog { width: min(700px, calc(100vw - 28px)); }
+.task-output-page { display: grid; place-items: center; padding: 14px; }
+.task-output-page > header[hidden] { display: none; }
+.task-output-page .task-output-panel { width: min(700px, 100%); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 13px; }
+.task-output-panel { display: flex; flex-direction: column; max-height: calc(100dvh - 32px);
+  overflow: auto; color: var(--text); font: 14px/1.5 var(--sans); }
+.task-output-head { align-items: center; flex: none; padding: 14px 16px 12px; }
+.task-output-head > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.task-output-number { color: var(--muted); font-size: 12px; }
+.task-output-command { flex: none; margin: 0 16px 12px; max-height: 18dvh; overflow: auto; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--terminal-font); }
+.task-output-command:has(+ .task-script) { margin-bottom: 3px; }
+.task-script { flex: none; margin: 0 16px 10px; }
+.task-script summary { width: fit-content; color: var(--muted); font-size: 12px; cursor: pointer; padding-block: 3px; }
+.task-script summary:hover { color: var(--text); }
+.task-script .task-output-command { margin: 4px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--panel-2); }
+.task-output-console { display: flex; flex-direction: column; min-height: min(120px, 18dvh); margin: 0 16px;
+  overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--terminal-bg); }
+.task-output-console [role="status"] { margin: auto; padding: 10px 12px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.task-output-console [data-error] { color: var(--diff-del-fg); }
+.task-output-console [role="status"]:empty { display: none; }
+.task-output-console:has(pre:not([hidden])) [role="status"]:not(:empty) { margin: 0; padding-block: 6px;
+  border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.task-output-text { margin: 0; padding: 12px; min-height: 0; max-height: min(400px, 48dvh); overflow: auto;
+  overscroll-behavior: contain; scrollbar-width: thin; white-space: pre-wrap; overflow-wrap: anywhere;
+  color: var(--terminal-fg); font: var(--tool-font-size)/1.55 var(--terminal-font); }
+.task-output-controls { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px 14px; }
+.task-output-controls label { display: inline-flex; align-items: center; gap: 6px; min-height: 34px;
+  margin-right: auto; color: var(--text); font-size: 13px; cursor: pointer; }
+.task-output-controls input { margin: 0; accent-color: var(--accent); }
+.task-output-controls .btn { display: inline-flex; align-items: center; min-height: 34px; text-decoration: none; }
+.native-file .task-output-link { display: inline-flex; align-items: center; gap: 5px; }
+.task-output-link .ui-icon { width: 14px; height: 14px; }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-status-menu[data-status-layout="timers"] { gap: 0; padding: 0; overflow: hidden; white-space: normal; }
 .sdk-status-menu .sdk-timer-heading { flex: none; gap: 3px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
