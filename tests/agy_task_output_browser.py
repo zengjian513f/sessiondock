@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Open and follow a running Agy task's native log on the node and Hub."""
 import argparse
+import json
 import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,11 @@ def task(sid, index, uri, description='python report.py'):
             f'Task Description: {description}\nTask logs are available at: {uri}\n'
             'Log output:\n旧输出快照')
     return {**record(index, 'GENERIC', body), 'status': 'RUNNING'}
+
+
+def progress(sid, step, index, command):
+    body = f'Background command is still running after 1800s: {command}'
+    return record(step, 'SYSTEM_MESSAGE', notice(f'{sid}/task-{index}', body))
 
 
 def open_footer(page, footer, tasks, screenshots, label, extra=0):
@@ -191,7 +197,7 @@ def check_completion(page, chat, native, log, screenshots, label):
     sender = f'{CHILD}/task-9'
     with transcript(native, CHILD).open('ab') as stream:
         stream.write(encoded(record(10, 'SYSTEM_MESSAGE', notice(sender,
-            f'Task id "{sender}" finished with result:\nCommand exited with code 0.'))))
+            f'Task id "{sender}" was canceled with result:\nTool execution was canceled'))))
     expect(chat.locator('.background-commands')).to_have_count(0, timeout=20000)
 
 
@@ -216,6 +222,7 @@ def check_foreground(page, sdk, fixture, log, screenshots, label):
     page.locator('#session-view-menu [data-agent=""]').click()
     page.locator('#a-sdk').click()
     start_sdk(page)
+    (fixture.peer.root / 'native-echo-store').touch()
     page.locator('#sdk-input').fill('hold:foreground')
     page.locator('#sdk-send').click()
     expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground', timeout=20000)
@@ -224,12 +231,37 @@ def check_foreground(page, sdk, fixture, log, screenshots, label):
     active_log.write_text('正在生成合并报告\n')
     with transcript(native, parent).open('ab') as stream:
         stream.write(encoded(task(parent, 20, active_log.as_uri(), 'python merge.py')))
+        stream.write(encoded(progress(parent, 21, 20, 'python merge.py')))
+    with sqlite3.connect(native / 'conversations' / f'{parent}.db') as db:
+        db.executemany('INSERT INTO steps VALUES (?,1,3,0,?)', [(20, b''), (21, b'')])
+    (fixture.peer.root / 'foreground-status').write_text('IDLE')
+    expect(sdk.locator('.sdk-status').get_by_role('status')).to_have_text('等待回执', timeout=20000)
+    expect(sdk.get_by_role('button', name='后台任务 1', exact=True)).to_be_visible(timeout=20000)
+    page.screenshot(path=str(screenshots / f'{label}-waiting-with-task.png'))
     viewer = open_footer(page, sdk, {20: 'python merge.py'}, screenshots, label + '-active')
     assert page.evaluate('NativeSdkView.running')
     expect(viewer.locator('.task-output-text')).to_have_text('正在生成合并报告')
     page.keyboard.press('Escape')
     fixture.peer.release('foreground')
     page.wait_for_function('!NativeSdkView.running', timeout=20000)
+
+
+def seed_old_mirrors(browser, fixture):
+    with fixture.server() as base:
+        page = browser.new_page()
+        page.goto(base)
+        page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=fixture.sid)
+        page.close()
+    for sid in (fixture.sid, CHILD):
+        directory = fixture.peer.mirror / 'cli' / sid
+        summary = directory / 'summary.json'
+        data = json.loads(summary.read_text())
+        data['session'].update(background_commands=[], background_logs=[], background_tasks=len(data['session']['background_timers']))
+        summary.write_text(json.dumps(data))
+        version = directory / 'mirror-version.json'
+        data = json.loads(version.read_text())
+        data['catalog_session']['activity_projection'] = 4
+        version.write_text(json.dumps(data))
 
 
 def run(args):
@@ -270,6 +302,11 @@ def run(args):
                 records.append(task(parent, 5, log.with_name('task-5.log').as_uri(), parent_tasks[5]))
                 own_timer = task(parent, 6, log.with_name('task-6.log').as_uri(), 'Timer: 1h, Prompt: 检查主会话队列')
                 records.append({**own_timer, 'created_at': now.isoformat()})
+                records.extend([progress(parent, 7, 4, parent_tasks[4]), progress(parent, 8, 5, parent_tasks[5]),
+                                record(9, 'SYSTEM_MESSAGE', notice(f'{parent}/task-4',
+                                    f'Task id "{parent}/task-5" finished with result:\nCommand exited with code 0.'))])
+            else:
+                records.append(progress(CHILD, 11, index, child_tasks[index]))
             write_transcript(native, sid, records)
         with sqlite3.connect(native / 'conversations' / f'{parent}.db') as db:
             db.execute('UPDATE fixture_steps SET next_index=10')
@@ -277,6 +314,10 @@ def run(args):
         fixture.extra.update(node_env(fixture.root, port, '127.0.0.0/8'))
         browser = pw.chromium.launch(headless=True)
         try:
+            seed_old_mirrors(browser, fixture)
+            # Upgrade the parent from its unchanged native transcript and the child from its cached copy.
+            child_transcript = transcript(native, CHILD)
+            saved = child_transcript.rename(child_transcript.with_suffix('.saved'))
             with fixture.server() as base:
                 hub_root = root / 'hub'
                 hub_root.mkdir()
@@ -319,12 +360,14 @@ def run(args):
                             page.locator('#a-chat').click()
                             menu = open_footer(page, chat, child_tasks, args.screenshots, label + '-child-chat')
                             check_view(page, menu, logs[CHILD], 7, args.screenshots, label + '-child-chat')
+                            if saved.exists():
+                                saved.rename(child_transcript)
                             if target == 'hub' and width == 390:
                                 check_completion(page, chat, native, logs[CHILD], args.screenshots, label)
-                                check_foreground(page, sdk, fixture, logs[parent], args.screenshots, label)
                                 select_agent(page, SCHEDULER)
                                 page.locator('#a-sdk').click()
                                 check_timer_receipts(page, sdk, native, args.screenshots, label)
+                                check_foreground(page, sdk, fixture, logs[parent], args.screenshots, label)
                             context.close()
                             print('PASS', label, 'parent/child footers in SDK and chat, scoped log and follow/retry', flush=True)
                 finally:

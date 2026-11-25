@@ -218,7 +218,22 @@ fn project_background_tasks(session: &mut Value, sid: &str, transcript: &Path, b
         } else if record["type"] == "SYSTEM_MESSAGE" && record["status"] == "DONE" {
             let (body, meta) = system_message(text);
             if let Some(sender) = meta["system_sender"].as_str() {
-                tasks.remove(sender);
+                // A command also sends periodic progress notices with the same sender.
+                // Only its own completion header closes it. Timer wakeups carry the prompt.
+                let outcome = body
+                    .lines()
+                    .next()
+                    .and_then(|line| line.strip_prefix("Task id \"")?.split_once("\" "));
+                if outcome.is_some_and(|(id, status)| {
+                    id == sender
+                        && matches!(
+                            status,
+                            "finished with result:" | "was canceled with result:"
+                        )
+                }) || tasks.get(sender).is_some_and(|(timer, _)| timer.is_some())
+                {
+                    tasks.remove(sender);
+                }
                 if sender == "system"
                     && body == "[Notice] Native runtime restarted; background tasks have stopped."
                 {
@@ -497,7 +512,7 @@ impl Mirror {
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
         // Recompute existing mirrors once when this derived field is introduced.
-        cache_session["activity_projection"] = json!(4);
+        cache_session["activity_projection"] = json!(5);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -609,12 +624,15 @@ impl Mirror {
                 .map(|v| v["session"][field].clone())
                 .unwrap_or(Value::Null);
         }
-        let transcript_changed = cached.is_none_or(|(last_session, last_stamp, last_path)| {
-            last_session["native_database_version"] != database_version
-                || last_session["activity_projection"] != cache_session["activity_projection"]
-                || *last_stamp != current
-                || *last_path != native
+        let projection_changed = cached.is_none_or(|(last_session, _, _)| {
+            last_session["activity_projection"] != cache_session["activity_projection"]
         });
+        let transcript_changed = projection_changed
+            || cached.is_none_or(|(last_session, last_stamp, last_path)| {
+                last_session["native_database_version"] != database_version
+                    || *last_stamp != current
+                    || *last_path != native
+            });
         if (current.is_some() && transcript_changed) || !messages.is_file() {
             let bytes = if current.is_some() {
                 active_transcript(&database, &fs::read(&native)?)
@@ -646,16 +664,26 @@ impl Mirror {
             project_background_tasks(&mut value, sid, &native, &bytes[..complete]);
             publish(&messages, &bytes[..complete], true)?;
         }
-        if [
-            "background_tasks",
-            "background_timers",
-            "background_logs",
-            "background_commands",
-        ]
-        .iter()
-        .any(|field| value[field].is_null())
+        if (current.is_none() && projection_changed)
+            || [
+                "background_tasks",
+                "background_timers",
+                "background_logs",
+                "background_commands",
+            ]
+            .iter()
+            .any(|field| value[field].is_null())
         {
-            project_background_tasks(&mut value, sid, &native, &fs::read(&messages)?);
+            let recorded_path = previous
+                .as_ref()
+                .and_then(|v| v["native_transcript"].as_str())
+                .map(Path::new);
+            project_background_tasks(
+                &mut value,
+                sid,
+                recorded_path.unwrap_or(&native),
+                &fs::read(&messages)?,
+            );
         }
         if value["time_created"].is_null() || zero_time(&value["time_created"]) {
             value["time_created"] = value["time_updated"].clone();
