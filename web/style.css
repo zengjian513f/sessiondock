@@ -2658,7 +2658,8 @@ header .btn[data-session-docked] { display: none; }
   .sdk-turn-metric:not([hidden]) { display: inline; }
 }
 .sdk-status-row > .sdk-status.external-cli-status { max-width: none; }
-.sdk-status-row > .composer-run-action { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
+.sdk-status-row > :is(.composer-run-action, .background-commands) { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
+.sdk-status-row > .background-commands { white-space: nowrap; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-credits { flex: none; font-size: 12px; }
 .sdk-status-row > .sdk-gauges { flex: 0 1 auto; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
@@ -2737,6 +2738,8 @@ header .btn[data-session-docked] { display: none; }
 }
 
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
+.background-command-list .new-model-option { box-sizing: border-box; text-decoration: none; }
+.background-command-list .new-model-option > small { color: var(--accent); }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-status-menu[data-status-layout="timers"] { gap: 0; padding: 0; overflow: hidden; white-space: normal; }
 .sdk-status-menu .sdk-timer-heading { flex: none; gap: 3px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }

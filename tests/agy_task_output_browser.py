@@ -19,24 +19,34 @@ from sdk_ui_fixtures import start_sdk
 CHILD = 'a7600000-0000-4000-8000-000000000002'
 
 
-def task(sid, index, uri):
+def task(sid, index, uri, description='python report.py'):
     body = (f'Created At: 2026-11-25T12:04:56Z\n'
             f'Tool is running as a background task with task id: {sid}/task-{index}\n'
-            f'Task Description: python report.py\nTask logs are available at: {uri}\n'
+            f'Task Description: {description}\nTask logs are available at: {uri}\n'
             'Log output:\n旧输出快照')
     return {**record(index, 'GENERIC', body), 'status': 'RUNNING'}
 
 
-def check_view(page, log, index, screenshots, label):
+def open_list(page, footer, tasks, screenshots, label):
+    button = footer.get_by_role('button', name=f'后台命令 {len(tasks)}', exact=True)
+    expect(button).to_be_visible(timeout=20000)
+    button.focus()
+    button.press('Enter')
+    menu = footer.get_by_role('dialog', name='后台命令')
+    expect(menu).to_be_visible()
+    expect(menu.get_by_role('link')).to_have_count(len(tasks))
+    for index, description in tasks.items():
+        expect(menu.get_by_role('link', name=f'task-{index} · {description} 查看输出')).to_be_visible()
+    assert menu.bounding_box()['y'] + menu.bounding_box()['height'] <= button.bounding_box()['y']
+    assert footer.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
+    page.screenshot(path=str(screenshots / f'{label}-list.png'))
+    return menu
+
+
+def check_view(page, menu, log, index, screenshots, label):
     log.unlink(missing_ok=True)
-    page.get_by_role('button', name='更多会话操作').click()
-    menu = page.locator('#session-actions-menu')
-    expect(menu.locator('[id^="a-output-"]')).to_have_count(1)
-    button = menu.get_by_role('menuitem', name=f'查看后台输出 · task-{index}')
-    expect(button).to_be_visible()
-    page.screenshot(path=str(screenshots / f'{label}-menu.png'))
     with page.expect_popup() as opened:
-        button.click()
+        menu.get_by_role('link', name=f'task-{index} · python report.py 查看输出').click()
     viewer = opened.value
     query = parse_qs(urlsplit(viewer.url).query)
     assert query['ref'] == [log.as_uri()] and query.get('agent', []) == ([CHILD] if index == 7 else [])
@@ -73,6 +83,54 @@ def check_view(page, log, index, screenshots, label):
     viewer.close()
 
 
+def check_completion(page, chat, native, log, screenshots, label):
+    open_list(page, chat, {7: 'python report.py'}, screenshots, label + '-before-finish')
+    sender = f'{CHILD}/task-7'
+    with transcript(native, CHILD).open('ab') as stream:
+        stream.write(encoded(record(8, 'SYSTEM_MESSAGE', notice(sender,
+            f'Task id "{sender}" finished with result:\nCommand exited with code 0.'))))
+    expect(chat.locator('.background-commands')).to_have_count(0, timeout=20000)
+    for name in ['展开本轮过程', '展开工具调用组']:
+        buttons = page.get_by_role('button', name=name, exact=True)
+        while buttons.count():
+            buttons.first.click()
+    link = page.locator('#msgs').get_by_role('link', name='查看后台输出 · task-7')
+    with page.expect_popup() as opened:
+        link.click()
+    viewer = opened.value
+    expect(viewer.locator('pre')).to_have_text('日志已重新创建')
+    viewer.close()
+    next_log = log.with_name('task-9.log')
+    with transcript(native, CHILD).open('ab') as stream:
+        stream.write(encoded(task(CHILD, 9, next_log.as_uri())))
+    open_list(page, chat, {9: 'python report.py'}, screenshots, label + '-new')
+    page.keyboard.press('Escape')
+
+
+def check_foreground(page, sdk, fixture, log, screenshots, label):
+    native, parent = fixture.peer.native, fixture.sid
+    page.locator('#a-view-switch').click()
+    page.locator('#session-view-menu [data-agent=""]').click()
+    page.locator('#a-sdk').click()
+    start_sdk(page)
+    page.locator('#sdk-input').fill('hold:foreground')
+    page.locator('#sdk-send').click()
+    expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground', timeout=20000)
+    active_log = log.with_name('task-20.log')
+    active_log.write_text('正在生成合并报告\n')
+    with transcript(native, parent).open('ab') as stream:
+        stream.write(encoded(task(parent, 20, active_log.as_uri(), 'python merge.py')))
+    menu = open_list(page, sdk, {20: 'python merge.py'}, screenshots, label + '-active')
+    assert page.evaluate('NativeSdkView.running')
+    with page.expect_popup() as opened:
+        menu.get_by_role('link').click()
+    viewer = opened.value
+    expect(viewer.locator('pre')).to_have_text('正在生成合并报告')
+    viewer.close()
+    fixture.peer.release('foreground')
+    page.wait_for_function('!NativeSdkView.running', timeout=20000)
+
+
 def run(args):
     args.screenshots.mkdir(exist_ok=True, parents=True)
     with tempfile.TemporaryDirectory(prefix='sd-task-output-') as tmp, sync_playwright() as pw:
@@ -82,14 +140,21 @@ def run(args):
         fixture.peer.seed(CHILD)
         with sqlite3.connect(native / 'conversation_summaries.db') as db:
             db.execute('UPDATE conversation_summaries SET parent_conversation_id=? WHERE conversation_id=?', (parent, CHILD))
+        parent_tasks = {4: 'python report.py', 5: 'python reconcile.py --input pending-records.jsonl --output reports/summary.json'}
+        child_tasks = {7: 'python report.py'}
         logs = {}
         for sid, index in [(parent, 4), (CHILD, 7)]:
             log = logs[sid] = native / 'brain' / sid / '.system_generated/tasks' / f'task-{index}.log'
             log.parent.mkdir()
             wrong_log = task(sid, 2, log.as_uri())
             quoted = task(sid, 3, log.with_name('task-3.log').as_uri())
-            write_transcript(native, sid, [record(0, 'USER_INPUT', '查看后台任务'),
-                wrong_log, {**quoted, 'type': 'PLANNER_RESPONSE'}, task(sid, index, log.as_uri())])
+            records = [record(0, 'USER_INPUT', '查看后台任务'), wrong_log,
+                       {**quoted, 'type': 'PLANNER_RESPONSE'}, task(sid, index, log.as_uri())]
+            if sid == parent:
+                records.append(task(parent, 5, log.with_name('task-5.log').as_uri(), parent_tasks[5] + '\necho done'))
+            write_transcript(native, sid, records)
+        with sqlite3.connect(native / 'conversations' / f'{parent}.db') as db:
+            db.execute('UPDATE fixture_steps SET next_index=10')
         port = free_port()
         fixture.extra.update(node_env(fixture.root, port, '127.0.0.0/8'))
         browser = pw.chromium.launch(headless=True)
@@ -112,36 +177,29 @@ def run(args):
                             page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=parent)
                             uid = page.evaluate('sid => S.sessions.find(row => row.sid === sid).uid', parent)
                             page.locator(f'#side .item[data-uid="{uid}"]').click()
+                            sdk = page.locator('#sdk-composer .sdk-status-row')
+                            chat = page.locator('#conversation-status')
+                            page.locator('#a-chat').click()
+                            menu = open_list(page, chat, parent_tasks, args.screenshots, label + '-chat')
+                            page.keyboard.press('Escape')
+                            expect(menu).not_to_be_visible()
                             page.locator('#a-sdk').click()
                             start_sdk(page)
-                            check_view(page, logs[parent], 4, args.screenshots, label + '-sdk')
+                            menu = open_list(page, sdk, parent_tasks, args.screenshots, label + '-sdk')
+                            check_view(page, menu, logs[parent], 4, args.screenshots, label + '-sdk')
                             page.locator('#a-view-switch').click()
                             page.locator(f'#session-view-menu [data-agent="{CHILD}"]').click()
+                            page.locator('#a-sdk').click()
+                            menu = open_list(page, sdk, child_tasks, args.screenshots, label + '-child-sdk')
+                            page.keyboard.press('Escape')
                             page.locator('#a-chat').click()
-                            check_view(page, logs[CHILD], 7, args.screenshots, label + '-child-chat')
+                            menu = open_list(page, chat, child_tasks, args.screenshots, label + '-child-chat')
+                            check_view(page, menu, logs[CHILD], 7, args.screenshots, label + '-child-chat')
                             if target == 'hub' and width == 390:
-                                sender = f'{CHILD}/task-7'
-                                with transcript(native, CHILD).open('ab') as stream:
-                                    stream.write(encoded(record(8, 'SYSTEM_MESSAGE', notice(sender,
-                                        f'Task id "{sender}" finished with result:\nCommand exited with code 0.'))))
-                                expect(page.locator('#a-output-task-7')).to_have_count(0, timeout=20000)
-                                for name in ['展开本轮过程', '展开工具调用组']:
-                                    buttons = page.get_by_role('button', name=name, exact=True)
-                                    while buttons.count():
-                                        buttons.first.click()
-                                link = page.locator('#msgs').get_by_role('link', name='查看后台输出 · task-7')
-                                with page.expect_popup() as opened:
-                                    link.click()
-                                viewer = opened.value
-                                expect(viewer.locator('pre')).to_have_text('日志已重新创建')
-                                viewer.close()
-                                next_log = logs[CHILD].with_name('task-9.log')
-                                with transcript(native, CHILD).open('ab') as stream:
-                                    stream.write(encoded(task(CHILD, 9, next_log.as_uri())))
-                                page.locator('#a-more').click()
-                                expect(page.get_by_role('menuitem', name='查看后台输出 · task-9')).to_be_visible(timeout=20000)
+                                check_completion(page, chat, native, logs[CHILD], args.screenshots, label)
+                                check_foreground(page, sdk, fixture, logs[parent], args.screenshots, label)
                             context.close()
-                            print('PASS', label, 'SDK/child chat, scoped log, missing/empty/append/tail/retry', flush=True)
+                            print('PASS', label, 'parent/child footers in SDK and chat, scoped log and follow/retry', flush=True)
                 finally:
                     hub.stop()
         finally:

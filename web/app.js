@@ -1720,7 +1720,6 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.pending_delete,
     ['agy', 'kiro'].includes(m.source) ? (m.migration_warnings || []) : null,
-    m.background_logs,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
@@ -7632,19 +7631,6 @@ function head(m, total) {
     }
   }
   h.querySelector('.mobile-back').onclick = showMobileList;
-  const menu = h.querySelector('#session-actions-menu [role="menu"]');
-  for (const log of m.background_logs || []) {
-    const button = el('button', 'session-menu-action');
-    button.type = 'button';
-    button.dataset.menuOnly = '';
-    button.id = 'a-output-' + log.task;
-    button.title = button.ariaLabel = '查看后台输出 · ' + log.task;
-    button.innerHTML = uiIcon('terminal');
-    button.onclick = () => {
-      window.open(taskOutputUrl(log, m.uid, m.agent_id), '_blank', 'noopener,noreferrer');
-    };
-    menu.insertBefore(button, menu.querySelector('.session-run-actions'));
-  }
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
@@ -10621,6 +10607,83 @@ function renderConversationBalances(holder, quota) {
   }
 }
 
+function paintBackgroundCommands(row, entry) {
+  const logs = entry?.meta?.background_logs;
+  let trigger = row.querySelector('.background-commands');
+  let menu = row.querySelector('.background-command-list');
+  if (!logs?.length) {
+    if (!trigger) return false;
+    if (menu.matches(':popover-open')) menu.hidePopover();
+    trigger.remove();
+    menu.remove();
+    return true;
+  }
+  if (!trigger) {
+    trigger = el('button', 'btn background-commands');
+    trigger.type = 'button';
+    menu = el('div', 'new-model-menu sdk-toolbar-menu background-command-list');
+    menu.id = (row.id || 'sdk') + '-background-commands';
+    menu.setAttribute('popover', 'auto');
+    menu.setAttribute('role', 'dialog');
+    menu.setAttribute('aria-label', '后台命令');
+    trigger.setAttribute('aria-controls', menu.id);
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    row.querySelector('.sdk-gauges').before(trigger, menu);
+    ConversationUI.bindPopover(trigger, menu, row);
+    menu.addEventListener('beforetoggle', event => {
+      if (event.newState === 'open') paintBackgroundCommandList(menu);
+    });
+    menu.addEventListener('click', event => {
+      if (event.target.closest('a')) menu.hidePopover();
+    });
+  }
+  menu._entry = entry;
+  const label = '后台命令 ' + logs.length;
+  const resized = trigger.textContent !== label;
+  if (resized) trigger.textContent = label;
+  const key = JSON.stringify([entry.meta.uid, entry.meta.agent_id, logs]);
+  if (key !== menu._logKey && menu.matches(':popover-open')) {
+    paintBackgroundCommandList(menu);
+    ConversationUI.placePopover(menu, trigger);
+  }
+  menu._logKey = key;
+  return resized;
+}
+
+function paintBackgroundCommandList(menu) {
+  const {meta, msgs} = menu._entry;
+  // A paged-out tool record can still have an active log. Its native task
+  // number remains available even when the command text is outside the window.
+  const names = new Map(meta.background_logs.map(log => [log.ref, '']));
+  for (const message of msgs) {
+    for (const file of message.native_files || []) {
+      if (file.task && names.has(file.ref)) {
+        names.set(file.ref, /^Task Description: ([^\r\n]+)/m.exec(message.text)?.[1] || '');
+      }
+    }
+  }
+  const previous = new Map([...menu.children].map(link => [link.href, link]));
+  for (const log of meta.background_logs) {
+    const href = new URL(taskOutputUrl(log, meta.uid, meta.agent_id), location.href).href;
+    let link = previous.get(href);
+    if (!link) {
+      link = el('a', 'new-model-option');
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.append(el('span'), el('small', '', '查看输出'));
+      menu.append(link);
+    }
+    previous.delete(href);
+    const command = names.get(log.ref);
+    const label = command ? log.task + ' · ' + command : log.task;
+    if (link.firstChild.textContent !== label) link.firstChild.textContent = label;
+    link.title = label;
+  }
+  for (const stale of previous.values()) stale.remove();
+}
+
 function renderConversationUsage(row, uid) {
   const source = String(uid || '').split(':')[0];
   const paint = agent => {
@@ -10740,6 +10803,7 @@ function renderActivity(activity) {
     details._statusDetail = null;
     details.textContent = n.title;
   }
+  paintBackgroundCommands(row, cache.get(viewKey(S.sel, S.agent)));
   renderConversationUsage(row, S.sel);
   paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);

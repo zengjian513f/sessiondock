@@ -731,6 +731,8 @@ const SdkUI = {
       if (this.readOnly && this.baseNotice && this.agent)
         this.setNotice(...this.baseNotice);
       const data = this.historyData;
+      if (this.uid.startsWith('agy:') && paintBackgroundCommands(this.notice.parentElement, entry))
+        this.layoutToolbar();
       const backgroundTimers = entry.meta?.background_timers;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
       if (!force && this.historyEntry === entry && data?.end === entry.end
@@ -845,7 +847,8 @@ const SdkUI = {
       [...menu.querySelectorAll('.sdk-control-note, .sdk-reset, .sdk-other-quotas')].map(n => [n.hidden, n.textContent]),
       list.map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
     const signature = JSON.stringify([view.notice.textContent, gauges.textContent,
-      row.querySelector(':scope > .sdk-credits')?.textContent, controlsMetaKey]);
+      row.querySelector(':scope > .sdk-credits')?.textContent,
+      row.querySelector('.background-commands')?.textContent, controlsMetaKey]);
     const hadLayout = Boolean(row.dataset.footerLayout);
     if (row.dataset.footerLayout === signature) return;
     row.dataset.footerLayout = signature;
