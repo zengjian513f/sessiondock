@@ -166,13 +166,49 @@ pub(super) fn record_command_log(record: &Value, summary: &Value) -> Option<Valu
 /// reconcile by task identity, including timers whose notice is just a prompt.
 fn project_background_tasks(session: &mut Value, sid: &str, transcript: &Path, bytes: &[u8]) {
     let mut tasks = BTreeMap::new();
+    let mut cancellations = BTreeSet::new();
     for record in bytes
         .split_inclusive(|byte| *byte == b'\n')
         .filter(|line| line.ends_with(b"\n"))
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
     {
         let text = record["content"].as_str().unwrap_or_default();
+        if matches!(
+            record["type"].as_str(),
+            Some("PLANNER_RESPONSE" | "USER_INPUT")
+        ) {
+            cancellations.clear();
+            if record["type"] == "PLANNER_RESPONSE" {
+                for call in record["tool_calls"].as_array().into_iter().flatten() {
+                    if call["name"] == "manage_task" && call["args"]["Action"] == "kill" {
+                        if let Some(id) = call["args"]["TaskId"].as_str() {
+                            cancellations.insert(id.to_owned());
+                        }
+                    }
+                }
+            }
+        }
         if record["type"] == "GENERIC" {
+            // manage_task returns a separate DONE step, not a task-sender notice
+            // or an update to the original RUNNING step. Require its native
+            // result and matching kill request, never quoted output or intent alone.
+            if record["status"] == "DONE" {
+                let body = text
+                    .lines()
+                    .skip_while(|line| {
+                        line.starts_with("Created At: ") || line.starts_with("Completed At: ")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if let Some(id) = body
+                    .strip_prefix("Task \"")
+                    .and_then(|v| v.strip_suffix("\" cancelled."))
+                {
+                    if cancellations.remove(id) {
+                        tasks.remove(id);
+                    }
+                }
+            }
             let Some(index) = record["step_index"].as_u64() else {
                 continue;
             };
@@ -512,7 +548,7 @@ impl Mirror {
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
         // Recompute existing mirrors once when this derived field is introduced.
-        cache_session["activity_projection"] = json!(5);
+        cache_session["activity_projection"] = json!(6);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")

@@ -236,17 +236,18 @@ function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
   const progress = running && outcome !== 'pending'
     ? source === 'agy' ? agyAgentStepProgress(entry, reason) : history : null;
   const recordedTimers = source === 'agy' ? entry?.meta?.background_timers || [] : [];
+  const commands = source === 'agy' ? entry?.meta?.background_commands || entry?.meta?.background_logs || [] : [];
   const timers = running && !progress ? NativeSdkControls.pendingTimers(recordedTimers) : [];
   const failure = entry?.msgs?.findLast(message => message.subtask_outcome && message.event_status === 'failed');
   const activity = entry?.activity;
   const failed = outcome ? outcome === 'failed' : !!failure || activity?.state === 'failed';
   const interrupted = outcome ? ['interrupted', 'cancelled', 'canceled'].includes(outcome) : activity?.state === 'aborted';
   const label = progress?.label || (timers.length ? '后台定时任务等待中'
-    : running ? recordedTimers.length ? '后台运行' : outcome === 'pending' ? '等待执行' : '处理中'
+    : running ? commands.length ? '后台运行' : recordedTimers.length ? '等待回执' : outcome === 'pending' ? '等待执行' : '处理中'
     : sdk ? 'SDK 已运行' : failed ? '执行失败' : interrupted ? '已中断'
     : outcome === 'completed' ? '已完成' : item && source !== 'codebuddy' ? '未运行' : '只读子会话');
   const lines = [label];
-  if (label === '后台运行') lines.push('定时已到，等待子代理更新记录。');
+  if (label === '等待回执') lines.push('定时已到，尚未收到触发或结束回执，无法确认任务仍在运行。');
   if (failed && !running) lines.push(failure?.text || activity?.error || '原生子代理已返回失败。');
   if (interrupted && !running && activity?.reason) lines.push(activity.reason);
   if (!progress && history) {
@@ -257,7 +258,7 @@ function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
   if (reason) lines.push(reason);
   const text = lines.join('\n');
   notice.querySelector('[role=status]').textContent = label;
-  notice.dataset.state = timers.length ? 'scheduled' : label === '等待执行' ? 'waiting'
+  notice.dataset.state = timers.length ? 'scheduled' : ['等待执行', '等待回执'].includes(label) ? 'waiting'
     : running ? 'working' : sdk || outcome === 'completed' ? 'ready' : interrupted ? 'warning' : 'idle';
   notice.classList.toggle('blocked', label === '执行失败');
   notice.hidden = false;

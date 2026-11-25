@@ -20,6 +20,7 @@ from sdk_ui_fixtures import start_sdk
 
 CHILD = 'a7600000-0000-4000-8000-000000000002'
 SCHEDULER = 'a7600000-0000-4000-8000-000000000003'
+OVERDUE = 'a7600000-0000-4000-8000-000000000004'
 
 
 def task(sid, index, uri, description='python report.py'):
@@ -33,6 +34,16 @@ def task(sid, index, uri, description='python report.py'):
 def progress(sid, step, index, command):
     body = f'Background command is still running after 1800s: {command}'
     return record(step, 'SYSTEM_MESSAGE', notice(f'{sid}/task-{index}', body))
+
+
+def cancel_request(sid, step, index):
+    return {**record(step, 'PLANNER_RESPONSE', ''), 'tool_calls': [
+        {'name': 'manage_task', 'args': {'Action': 'kill', 'TaskId': f'{sid}/task-{index}'}}]}
+
+
+def cancel_result(sid, step, index):
+    timestamps = 'Created At: 2026-11-25T00:50:30+08:00\nCompleted At: 2026-11-25T00:50:58+08:00\n'
+    return record(step, 'GENERIC', timestamps * 2 + f'Task "{sid}/task-{index}" cancelled.')
 
 
 def open_footer(page, footer, tasks, screenshots, label, extra=0):
@@ -77,6 +88,7 @@ def select_agent(page, agent):
 
 
 def check_scheduler(page, footer, screenshots, label):
+    expect(footer.locator('.sdk-status [role=status]')).to_have_text('后台定时任务等待中')
     menu = open_footer(page, footer, {}, screenshots, label, extra=2)
     expect(menu.locator('.task-commands')).to_be_hidden()
     expect(menu.locator('.task-timers')).to_contain_text('检查分片进度')
@@ -90,6 +102,25 @@ def check_scheduler(page, footer, screenshots, label):
     page.screenshot(path=str(screenshots / f'{label}-receipts.png'))
     page.keyboard.press('Escape')
     return menu
+
+
+def check_overdue(page, footer, screenshots, label):
+    expect(footer.locator('.sdk-status [role=status]')).to_have_text('等待回执')
+    expect(footer.locator('.sdk-status')).to_have_attribute('data-state', 'waiting')
+    menu = open_footer(page, footer, {}, screenshots, label, extra=1)
+    expect(menu.locator('.task-timers')).to_be_hidden()
+    menu.locator('.task-overdue summary').click()
+    expect(menu).to_contain_text('等待导出完成后核对结果和任务回执')
+    page.wait_for_function('''id => {
+        const menu = document.getElementById(id);
+        return menu.getBoundingClientRect().bottom <= menu._trigger.getBoundingClientRect().top;
+    }''', arg=menu.get_attribute('id'))
+    page.screenshot(path=str(screenshots / f'{label}-expanded.png'))
+    page.keyboard.press('Escape')
+    footer.locator('.sdk-status').click()
+    expect(footer.locator('.sdk-status-menu:popover-open')).to_contain_text('无法确认任务仍在运行')
+    page.screenshot(path=str(screenshots / f'{label}-status.png'))
+    page.keyboard.press('Escape')
 
 
 def check_view(page, panel, log, index, screenshots, label):
@@ -194,10 +225,9 @@ def check_completion(page, chat, native, log, screenshots, label):
         stream.write(encoded(task(CHILD, 9, next_log.as_uri())))
     open_footer(page, chat, {9: 'python report.py'}, screenshots, label + '-new')
     page.keyboard.press('Escape')
-    sender = f'{CHILD}/task-9'
     with transcript(native, CHILD).open('ab') as stream:
-        stream.write(encoded(record(10, 'SYSTEM_MESSAGE', notice(sender,
-            f'Task id "{sender}" was canceled with result:\nTool execution was canceled'))))
+        stream.write(encoded(cancel_request(CHILD, 12, 9)))
+        stream.write(encoded(cancel_result(CHILD, 13, 9)))
     expect(chat.locator('.background-commands')).to_have_count(0, timeout=20000)
 
 
@@ -210,10 +240,35 @@ def check_timer_receipts(page, footer, native, screenshots, label):
     expect(footer.get_by_role('button', name='后台任务 1', exact=True)).to_be_visible(timeout=20000)
     expect(menu.locator('.task-timers')).to_be_hidden()
     expect(menu.locator('.task-overdue summary')).to_be_visible()
+    page.keyboard.press('Escape')
+    # Elapsed time is not evidence that the scheduled work is executing.
+    for view, selector in [('chat', '#conversation-status'), ('sdk', '#sdk-composer .sdk-status-row')]:
+        page.locator('#a-' + view).click()
+        row = page.locator(selector)
+        expect(row.locator('.sdk-status [role=status]')).to_have_text('等待回执')
+        expect(row.locator('.sdk-status')).to_have_attribute('data-state', 'waiting')
+        row.locator('.sdk-status').click()
+        expect(row.locator('.sdk-status-menu:popover-open')).to_contain_text('无法确认任务仍在运行')
+        page.screenshot(path=str(screenshots / f'{label}-{view}-awaiting-receipt.png'))
+        page.keyboard.press('Escape')
+    # A kill request, an error, quoted text and another SID's result do not close it.
     with transcript(native, SCHEDULER).open('ab') as stream:
-        stream.write(encoded(record(7, 'SYSTEM_MESSAGE', notice(f'{SCHEDULER}/task-5', 'Timer fired'))))
+        stream.write(encoded(cancel_request(SCHEDULER, 20, 5)))
+        stream.write(encoded({**cancel_result(SCHEDULER, 21, 5), 'status': 'ERROR'}))
+        stream.write(encoded({**cancel_result(SCHEDULER, 22, 5), 'content': 'Command output:\n' + cancel_result(SCHEDULER, 22, 5)['content']}))
+        stream.write(encoded(cancel_result(CHILD, 23, 5)))
+        stream.write(encoded(record(24, 'PLANNER_RESPONSE', '取消尚未确认')))
+    expect(page.locator('.sdk-history')).to_contain_text('取消尚未确认', timeout=20000)
+    expect(footer.get_by_role('button', name='后台任务 1', exact=True)).to_be_visible()
+    menu = open_footer(page, footer, {}, screenshots, label + '-cancel-pending', extra=1)
+    with transcript(native, SCHEDULER).open('ab') as stream:
+        stream.write(encoded(cancel_request(SCHEDULER, 25, 5)))
+        stream.write(encoded(cancel_result(SCHEDULER, 26, 5)))
     expect(footer.locator('.background-commands')).to_have_count(0, timeout=20000)
     expect(menu).not_to_be_visible()
+    expect(footer.locator('.sdk-status [role=status]')).to_have_text('未运行')
+    expect(page.locator('#dlive')).to_be_hidden()
+    page.screenshot(path=str(screenshots / f'{label}-cancelled.png'))
 
 
 def check_foreground(page, sdk, fixture, log, screenshots, label):
@@ -252,15 +307,21 @@ def seed_old_mirrors(browser, fixture):
         page.goto(base)
         page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=fixture.sid)
         page.close()
-    for sid in (fixture.sid, CHILD):
+    for sid in (fixture.sid, CHILD, SCHEDULER):
         directory = fixture.peer.mirror / 'cli' / sid
         summary = directory / 'summary.json'
         data = json.loads(summary.read_text())
         data['session'].update(background_commands=[], background_logs=[], background_tasks=len(data['session']['background_timers']))
+        if sid == SCHEDULER:
+            data['session']['background_timers'] = [timer for timer in data['session']['background_timers']
+                                                    if timer['task'] != 'task-6']
+            data['session']['background_timers'].append({'task': 'task-6', 'delay': '13m',
+                'prompt': '已取消的旧提醒', 'created_at': '2026-11-24T16:48:40Z'})
+            data['session']['background_tasks'] = len(data['session']['background_timers'])
         summary.write_text(json.dumps(data))
         version = directory / 'mirror-version.json'
         data = json.loads(version.read_text())
-        data['catalog_session']['activity_projection'] = 4
+        data['catalog_session']['activity_projection'] = 5 if sid == SCHEDULER else 4
         version.write_text(json.dumps(data))
 
 
@@ -272,10 +333,16 @@ def run(args):
         parent, native = fixture.sid, fixture.peer.native
         fixture.peer.seed(CHILD)
         fixture.peer.seed(SCHEDULER)
+        fixture.peer.seed(OVERDUE)
         with sqlite3.connect(native / 'conversation_summaries.db') as db:
             db.executemany('UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
-                           [(parent, '报告生成', CHILD), (CHILD, '分片调度', SCHEDULER)])
+                           [(parent, '报告生成', CHILD), (CHILD, '分片调度', SCHEDULER),
+                            (parent, '导出核对', OVERDUE)])
         now = datetime.now(timezone.utc)
+        write_transcript(native, OVERDUE, [
+            {**task(OVERDUE, 1, 'file:///synthetic/task-1.log', 'Timer: 13m, Prompt: 等待导出完成后核对结果和任务回执'),
+             'created_at': (now - timedelta(hours=2)).isoformat()},
+            record(2, 'PLANNER_RESPONSE', '已设置提醒，等待后续通知。')])
         reminders = []
         for index, prompt, created in [(4, '检查分片进度', now), (5, '检查上一次导出', now - timedelta(hours=2))]:
             native_log = native / 'brain' / SCHEDULER / '.system_generated/tasks' / f'task-{index}.log'
@@ -284,6 +351,11 @@ def run(args):
             reminders.append({**task(SCHEDULER, index, native_log.as_uri(), 'Timer: 12m, Prompt: ' + prompt),
                               'created_at': created.isoformat()})
         write_transcript(native, SCHEDULER, reminders)
+        cancelled = task(SCHEDULER, 6, native_log.with_name('task-6.log').as_uri(), 'Timer: 13m, Prompt: 已取消的旧提醒')
+        with transcript(native, SCHEDULER).open('ab') as stream:
+            for value in [cancelled, cancel_request(SCHEDULER, 7, 6), cancel_result(SCHEDULER, 8, 6),
+                          record(9, 'PLANNER_RESPONSE', '提醒已取消，其他任务继续等待。')]:
+                stream.write(encoded(value))
         parent_tasks = {4: 'python report.py', 5: 'python reconcile.py --input pending-records.jsonl --output reports/summary.json\n'
                         + '\n'.join(f'python verify.py --partition {i}' for i in range(24)) + '\necho done'}
         child_tasks = {7: 'python report.py'}
@@ -318,6 +390,8 @@ def run(args):
             # Upgrade the parent from its unchanged native transcript and the child from its cached copy.
             child_transcript = transcript(native, CHILD)
             saved = child_transcript.rename(child_transcript.with_suffix('.saved'))
+            scheduler_transcript = transcript(native, SCHEDULER)
+            scheduler_saved = scheduler_transcript.rename(scheduler_transcript.with_suffix('.saved'))
             with fixture.server() as base:
                 hub_root = root / 'hub'
                 hub_root.mkdir()
@@ -353,8 +427,14 @@ def run(args):
                             check_scheduler(page, sdk, args.screenshots, label + '-scheduler-sdk')
                             page.locator('#a-chat').click()
                             check_scheduler(page, chat, args.screenshots, label + '-scheduler-chat')
+                            select_agent(page, OVERDUE)
+                            page.locator('#a-chat').click()
+                            check_overdue(page, chat, args.screenshots, label + '-overdue-chat')
+                            page.locator('#a-sdk').click()
+                            check_overdue(page, sdk, args.screenshots, label + '-overdue-sdk')
                             select_agent(page, CHILD)
                             page.locator('#a-sdk').click()
+                            expect(sdk.locator('.sdk-status [role=status]')).to_have_text('后台运行')
                             menu = open_footer(page, sdk, child_tasks, args.screenshots, label + '-child-sdk')
                             page.keyboard.press('Escape')
                             page.locator('#a-chat').click()
@@ -362,11 +442,17 @@ def run(args):
                             check_view(page, menu, logs[CHILD], 7, args.screenshots, label + '-child-chat')
                             if saved.exists():
                                 saved.rename(child_transcript)
+                            if scheduler_saved.exists():
+                                scheduler_saved.rename(scheduler_transcript)
                             if target == 'hub' and width == 390:
                                 check_completion(page, chat, native, logs[CHILD], args.screenshots, label)
                                 select_agent(page, SCHEDULER)
                                 page.locator('#a-sdk').click()
                                 check_timer_receipts(page, sdk, native, args.screenshots, label)
+                                # End the extra overdue fixture before checking the parent's
+                                # existing no-child-tasks foreground receipt state.
+                                with transcript(native, OVERDUE).open('ab') as stream:
+                                    stream.write(encoded(record(3, 'SYSTEM_MESSAGE', notice(f'{OVERDUE}/task-1', 'Timer fired'))))
                                 check_foreground(page, sdk, fixture, logs[parent], args.screenshots, label)
                             context.close()
                             print('PASS', label, 'parent/child footers in SDK and chat, scoped log and follow/retry', flush=True)
