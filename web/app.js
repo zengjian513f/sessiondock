@@ -2726,14 +2726,19 @@ function pendingNativeKey(t) {
   return declared ? JSON.stringify([t.node_id || '', t.source, String(declared)]) : '';
 }
 
-// Deleting native rows also discards the launch receipts they hid on the
-// server. Drop those receipts here too: otherwise the stale T.pending brings
-// the session back as a pending row until the next terminal list.
+// A recorded row can hide older launch receipts in the terminal list.
+// Remove those receipts as soon as native deletion is confirmed.
 function forgetDeletedReceipts(rows) {
-  if (typeof T === 'undefined' || !Array.isArray(T.pending)) return;
+  if (typeof T === 'undefined') return;
   const keys = new Set(rows.filter(row => row.sid)
     .map(row => JSON.stringify([row.node_id || '', row.source, String(row.sid)])));
   if (keys.size) T.pending = T.pending.filter(t => !keys.has(pendingNativeKey(t)));
+  const uids = new Set(rows.map(row => row.uid));
+  const sdkSessions = T.sdkSessions.filter(row => !uids.has(row.uid) && !keys.has(pendingNativeKey(row)));
+  if (sdkSessions.length !== T.sdkSessions.length) {
+    T.sdkSessions = sdkSessions;
+    void loadTermList(true);
+  }
 }
 
 let sessionIndexRows = null, sessionIndex = null;

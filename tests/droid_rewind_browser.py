@@ -2,6 +2,7 @@
 """Droid selective native file rewind through the real browser controls."""
 import argparse
 import json
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
@@ -10,6 +11,7 @@ from droid_sdk_fixtures import DroidFixture, native_records
 from history_fixtures import BINARY
 from sdk_usage_fixtures import reveal
 from claude_sdk_browser import open_sdk, receipt
+from trash_interactions_browser import confirm, open_trash
 
 
 def check(f, base, screenshots):
@@ -161,20 +163,108 @@ def check_long_history(f, base, screenshots, label):
         browser.close()
 
 
+def check_deleted_branch(f, branch, cached_list, extra, screenshots):
+    ledger = f.root / 'state/native-sdk-sessions.json'
+    receipts = json.loads(ledger.read_text())
+    branch_path = f.path.with_name(receipts[branch]['sid'] + '.jsonl')
+    title = next(row['title'] for row in cached_list['sessions'] if row['uid'] == branch)
+    receipts[branch].pop('sdk_persisted', None)
+    ledger.write_text(json.dumps(receipts))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        with f.server(BINARY, extra) as base:
+            page = browser.new_page(viewport={'width': 1440, 'height': 900}, color_scheme='light')
+            # The frontend can already know the native row from a cached list
+            # while the node has only its pending SDK receipt.
+            list_url = re.compile(r'/api/sessions(?:\?|$)')
+            page.route(list_url, lambda route: route.fulfill(json=cached_list))
+            page.goto(base, wait_until='networkidle')
+            pending = page.request.get(base + '/api/term/list?force=1').json()['sdk_sessions']
+            assert any(row['uid'] == branch for row in pending)
+            open_sdk(page, f, expect, uid=branch)
+            stop = page.locator('#a-session-toggle')
+            expect(stop).to_have_attribute('data-run-intent', 'stop')
+            if not stop.is_visible():
+                page.locator('#a-more').click()
+            with page.expect_response('**/api/native-sdk/stop') as stopped:
+                stop.click()
+                popup = page.locator('dialog.app-popup[open]')
+                if popup.is_visible():
+                    confirm(page, True)
+            assert stopped.value.ok and stopped.value.json()['stopped'], stopped.value.text()
+
+            page.wait_for_function('uid => T.sdkSessions.some(row => row.uid === uid)', arg=branch)
+            term_url = re.compile(r'/api/term/list(?:\?|$)')
+            page.route(term_url, lambda route: route.fulfill(status=503, json={'error': 'synthetic unavailable'}))
+            delete = page.locator('#a-session-action')
+            if not delete.is_visible():
+                page.locator('#a-more').click()
+            expect(delete).to_have_text('删除当前会话')
+            delete.click()
+            with page.expect_response(
+                lambda response: response.request.method == 'DELETE' and '/api/session/' in response.url
+            ) as deleted:
+                confirm(page, True)
+            assert deleted.value.ok, deleted.value.text()
+            expect(page.locator('#detail')).to_contain_text('已移入回收站')
+            assert not branch_path.exists()
+            pending = page.request.get(base + '/api/term/list?force=1').json()['sdk_sessions']
+            assert all(row['uid'] != branch for row in pending), pending
+            assert json.loads(ledger.read_text())[branch]['sdk_persisted'] is True
+            assert not page.evaluate('uid => T.sdkSessions.some(row => row.uid === uid)', branch)
+            page.unroute(list_url)
+            expect(page.locator(f'#side .item[data-uid="{branch}"]')).to_have_count(0)
+            page.unroute(term_url)
+            page.reload(wait_until='networkidle')
+            expect(page.locator(f'#side .item[data-uid="{branch}"]')).to_have_count(0)
+            open_trash(page)
+            expect(page.locator('#trash-list')).to_contain_text(title)
+            if screenshots:
+                page.screenshot(path=str(screenshots / 'droid-deleted-branch-wide-light.png'), full_page=True)
+            page.close()
+
+        # Simulate a node upgraded after the original bug had already occurred.
+        receipts = json.loads(ledger.read_text())
+        receipts[branch].pop('sdk_persisted')
+        ledger.write_text(json.dumps(receipts))
+        with f.server(BINARY, extra) as base:
+            page = browser.new_page(viewport={'width': 390, 'height': 844}, color_scheme='dark')
+            page.goto(base, wait_until='networkidle')
+            pending = page.request.get(base + '/api/term/list?force=1').json()['sdk_sessions']
+            assert all(row['uid'] != branch for row in pending), pending
+            expect(page.locator(f'#side .item[data-uid="{branch}"]')).to_have_count(0)
+            open_trash(page)
+            expect(page.locator('#trash-list')).to_contain_text(title)
+            if screenshots:
+                page.screenshot(path=str(screenshots / 'droid-deleted-branch-mobile-dark.png'), full_page=True)
+            page.locator('#trash-list .trash-item [data-act=restore]').click()
+            expect(page.locator('#trash-list')).to_contain_text('没有已删除的会话')
+            expect(page.locator(f'#side .item[data-uid="{branch}"]')).to_be_attached()
+            assert branch_path.is_file()
+        browser.close()
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--screenshots',type=Path);args=parser.parse_args()
     if args.screenshots:args.screenshots.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-droid-rewind-') as root:
         f=DroidFixture(root)
-        with f.server(BINARY,preserve_sdkhosts=True) as base:replay,successor=check(f,base,args.screenshots)
+        trash = f.root / 'trash'
+        trash.mkdir()
+        extra = {'SESSIONDOCK_TRASH_DIR': str(trash)}
+        with f.server(BINARY,extra,preserve_sdkhosts=True) as base:replay,successor=check(f,base,args.screenshots)
         attempts=len([v for v in f.frames() if v.get('method')=='droid.execute_rewind'])
-        with f.server(BINARY) as base,sync_playwright() as p:
+        with f.server(BINARY,extra,preserve_sdkhosts=True) as base,sync_playwright() as p:
             browser=p.chromium.launch(headless=True);page=browser.new_page();page.goto(base,wait_until='networkidle')
             result=page.request.post(base+'/api/native-sdk/rewind',data=replay)
             assert result.ok,result.text()
             assert receipt(result.json())['uid']==successor
             assert len([v for v in f.frames() if v.get('method')=='droid.execute_rewind'])==attempts,'restart replay executed native rewind again'
+            cached_list = page.request.get(base + '/api/sessions?force=1').json()
+            assert any(row['uid'] == successor for row in cached_list['sessions'])
             browser.close()
+        check_deleted_branch(f, successor, cached_list, extra, args.screenshots)
     from node_auth_fixtures import node_env,free_port,TOKEN
     from hub_fixtures import Hub
     from types import SimpleNamespace

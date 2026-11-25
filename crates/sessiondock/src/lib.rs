@@ -383,6 +383,17 @@ fn build_app(
         .map(|directory| trash::TrashService::open(directory, config.roots.clone()))
         .transpose()?
         .map(Arc::new);
+    if let Some(trash) = &trash
+        && let Err(error) = trash
+            .trashed_sessions()
+            .map_err(|error| error.to_string())
+            .and_then(|rows| native_sdks.observe_inventory(&rows))
+    {
+        crate::log::warn(
+            "native_sdk.trash_receipts_reconcile_failed",
+            serde_json::json!({"error": error}),
+        );
+    }
     capabilities["trash"] = serde_json::json!(trash.is_some());
     // Native CLI liveness is always discovered on supported platforms.
     // Explicit proc paths remain injectable for isolated tests.

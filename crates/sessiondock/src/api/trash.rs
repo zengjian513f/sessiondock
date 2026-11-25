@@ -176,6 +176,24 @@ async fn run_delete(
     force: bool,
 ) -> Result<DeleteOutcome, ApiError> {
     let (rows, liveness) = frozen_liveness(state).await?;
+    let native_sdks = state.native_sdks.clone();
+    let requested: HashSet<_> = uids.iter().cloned().collect();
+    let rows = state
+        .reader
+        .run_wait(&state.shutdown, move |_| {
+            let selected: Vec<_> = rows
+                .iter()
+                .filter(|row| {
+                    row["uid"]
+                        .as_str()
+                        .is_some_and(|uid| requested.contains(uid))
+                })
+                .cloned()
+                .collect();
+            observe_delete_inventory(&native_sdks, &selected)?;
+            Ok(rows)
+        })
+        .await?;
     let catalog = rows.clone();
     // Native database sessions use their CLI deletion adapters, not the file recycle bin.
     let (native, uids): (Vec<String>, Vec<String>) = uids.into_iter().partition(|uid| {
@@ -202,6 +220,20 @@ async fn run_delete(
         state.ui_events.publish_sessions();
     }
     Ok(outcome)
+}
+
+pub(super) fn observe_delete_inventory(
+    native_sdks: &crate::native_sdk::NativeSdks,
+    rows: &[Value],
+) -> Result<(), crate::sessions::SessionError> {
+    // The deletion inventory already proves these native sessions exist.
+    // Persist that fact before the files disappear, even without a list poll.
+    native_sdks
+        .observe_inventory(rows)
+        .map_err(|message| crate::sessions::SessionError {
+            status: 503,
+            message,
+        })
 }
 
 /// Delete native database sessions through the configured CLI profile.

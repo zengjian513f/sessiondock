@@ -146,10 +146,12 @@ async fn execute(
     progress.set(25);
     let tr = trash.clone();
     let id = request.request_id.clone();
+    let native_sdks = state.native_sdks.clone();
     let deleted = state
         .reader
         .run_wait(&state.shutdown, move |store| {
             let _scope = tr.tree_progress.enter(&id);
+            super::trash::observe_delete_inventory(&native_sdks, &plan.sessions)?;
             let deleted = tr.move_tree(&id, &plan);
             let _ = store.list(true);
             Ok(deleted)

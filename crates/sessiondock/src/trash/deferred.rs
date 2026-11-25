@@ -29,6 +29,20 @@ fn native_member(row: &Value, rows: &[Value]) -> bool {
 }
 
 impl TrashService {
+    /// A completed recycle-bin entry proves that its native sessions existed
+    /// even when an older node did not retire their SDK creation receipts.
+    pub(crate) fn trashed_sessions(&self) -> Result<Vec<Value>, TrashError> {
+        let _guard = self.guard();
+        Ok(self
+            .scan()?
+            .0
+            .into_iter()
+            .filter_map(|(_, manifest)| manifest.ok())
+            .filter(|manifest| manifest.state == EntryState::Trashed)
+            .flat_map(|manifest| members(&manifest))
+            .collect())
+    }
+
     pub fn pending_deletions(&self) -> Result<BTreeSet<(String, String)>, TrashError> {
         let _guard = self.guard();
         self.pending_deletions_inner()
