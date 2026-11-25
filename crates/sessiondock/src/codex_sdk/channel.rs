@@ -366,14 +366,13 @@ fn observe_subscription(subscriptions: &mut BTreeMap<String, Value>, frame: &Val
                 }
             }
         }
-        Some("turn/completed") => {
+        Some("turn/completed")
             if subscriptions
                 .get(&id)
                 .and_then(|summary| summary["thread"]["path"].as_str())
-                .is_some_and(|path| Path::new(path).is_file())
-            {
-                subscriptions.remove(&id);
-            }
+                .is_some_and(|path| Path::new(path).is_file()) =>
+        {
+            subscriptions.remove(&id);
         }
         _ => {}
     }
