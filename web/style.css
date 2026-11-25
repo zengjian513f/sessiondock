@@ -2741,18 +2741,30 @@ header .btn[data-session-docked] { display: none; }
   .sdk-gauges { gap: 8px; }
   .sdk-bar { width: 24px; }
 }
+@container sdk-footer (max-width: 400px) {
+  .sdk-status-row > .background-commands { padding-inline: 3px; }
+  .background-commands .ui-icon { display: none; }
+}
 
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
-.background-command-list { padding: 0; gap: 0; overflow: hidden; }
+.background-command-list { padding: 0; gap: 0; overflow: hidden; overflow-wrap: anywhere; }
 .background-command-list h3 { flex: none; margin: 0; padding: 12px 14px 10px; border-bottom: 1px solid var(--border);
   color: var(--text); font: 600 14px/1.4 var(--sans); }
 .background-command-list .command-option { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px;
   padding: 10px 12px; text-align: left; color: var(--text); cursor: pointer; }
+.background-command-list h4, .sdk-task-agents h4, .task-overdue summary { margin: 0 0 6px; color: var(--muted); font: 600 12px/1.45 var(--sans); }
+.sdk-task-agents { display: grid; gap: 4px; }
+.sdk-timer-list + .sdk-task-agents { margin-top: 10px; }
+.sdk-task-agents button { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; overflow-wrap: anywhere; }
+.sdk-task-agents button span { color: var(--muted); }
+.background-command-list section:not([hidden]) ~ :not([hidden]) { margin-top: 10px; }
+.task-overdue summary { width: fit-content; padding-block: 4px; cursor: pointer; }
+.background-command-list div.command-option { cursor: default; }
 .command-option .command-name { grid-column: 1; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--terminal-font); }
 .command-option small { grid-column: 1; }
 .command-option small:empty { display: none; }
 .command-option i { grid-column: 2; grid-row: 1 / span 2; font: 20px/1 var(--sans); color: var(--muted); }
-.background-command-list .command-option:is(:hover, :focus-visible) { background: var(--hover); border-color: var(--accent); }
+.background-command-list button.command-option:is(:hover, :focus-visible) { background: var(--hover); border-color: var(--accent); }
 .task-output-dialog { width: min(700px, calc(100vw - 28px)); }
 .task-output-page { display: grid; place-items: center; padding: 14px; }
 .task-output-page > header[hidden] { display: none; }

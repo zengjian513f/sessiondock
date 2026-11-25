@@ -134,6 +134,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             .and_then(|end| input.data.as_ref().and_then(|data| cursor_head(data, end))),
         background: 0,
         background_timers: Vec::new(),
+        background_commands: Vec::new(),
         turn: None,
     }
 }

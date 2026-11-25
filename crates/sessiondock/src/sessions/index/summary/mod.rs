@@ -185,6 +185,7 @@ pub struct RowSummary {
     /// ended; the main turn waits on them (docs/read-model.md).
     pub background: usize,
     pub(crate) background_timers: Vec<crate::sessions::agy::BackgroundTimer>,
+    pub(crate) background_commands: Vec<Value>,
 }
 
 impl RowSummary {
@@ -214,6 +215,7 @@ impl RowSummary {
             cursor_head: None,
             background: 0,
             background_timers: Vec::new(),
+            background_commands: Vec::new(),
             turn: None,
         }
     }

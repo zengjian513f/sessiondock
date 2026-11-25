@@ -97,6 +97,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         cursor_head: committed.and_then(|end| cursor_head(data, end)),
         background: 0,
         background_timers: Vec::new(),
+        background_commands: Vec::new(),
         turn: None,
     }
 }

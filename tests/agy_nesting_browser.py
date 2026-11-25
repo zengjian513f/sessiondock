@@ -366,6 +366,7 @@ def run(binary, screenshots):
                         # Simulate a persisted pre-fix mirror with unchanged native files.
                         directory = root / 'mirror/cli' / CHILD
                         for filename, field, key in [('summary.json', 'session', 'background_tasks'),
+                                                     ('summary.json', 'session', 'background_commands'),
                                                      ('mirror-version.json', 'catalog_session', 'activity_projection')]:
                             path = directory / filename
                             value = json.loads(path.read_text())

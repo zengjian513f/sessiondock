@@ -62,6 +62,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             .and_then(|end| input.data.as_ref().and_then(|data| cursor_head(data, end))),
         background: 0,
         background_timers: Vec::new(),
+        background_commands: Vec::new(),
         turn: match info["native_status"].as_str() {
             Some("in_progress") => Some("working"),
             Some("idle" | "completed") => Some("idle"),

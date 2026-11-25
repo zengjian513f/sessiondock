@@ -48,7 +48,7 @@ def check_pending_cancel(page, base, fixture, uid, shots, label, restart_server)
     earlier_events = len(fixture.events())
     mode.write_text('pending')
 
-    expect(notice).to_have_text('处理中')
+    expect(notice.get_by_role('status')).to_have_text('生成回复')
     capture(page, shots, f'{label}-before-cancel')
     with page.expect_response('**/api/native-sdk/interrupt') as stopped:
         stop.click()
@@ -103,10 +103,18 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     status.write_text('RUNNING')
     (root / 'native-echo-store').touch()
     child = 'a6000000-0000-4000-8000-000000000060'
+    worker = 'b6700000-0000-4000-8000-000000000067'
     fixture.seed(child)
+    fixture.seed(worker)
     execute(fixture.native / 'conversation_summaries.db',
             'UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
             (SID, 'Training monitor', child))
+    execute(fixture.native / 'conversation_summaries.db',
+            'UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
+            (SID, 'Training monitor', worker))
+    write_transcript(fixture.native, worker, [{**record(1, 'GENERIC',
+        f'Tool is running as a background task with task id: {worker}/task-1\nTask Description: python train.py'),
+        'status': 'RUNNING'}])
 
     def timer(index, delay, prompt, created_at=None):
         value = record(index, 'GENERIC',
@@ -137,67 +145,89 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
         for item in raw['items']))
     pid = fixture.inputs('hold:foreground')[0]['pid']
     details = page.locator('#sdk-status-menu')
-    expect(notice).to_have_text('处理中')
+    expect(notice.get_by_role('status')).to_have_text('处理中')
     status.write_text('IDLE')
-    expect(notice).to_have_text('后台定时任务等待中', timeout=20000)
+    expect(notice).to_have_text('子代理有后台任务', timeout=20000)
     raw = wait_snapshot(page, uid, lambda raw: raw['foreground_idle'])['raw']
     assert all(item['content'].strip() for item in raw['items'] if item['role'] == 'assistant')
     expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground')
+    footer = page.locator('#sdk-composer .sdk-status-row')
+    def return_to_parent():
+        page.locator('#a-view-switch').click()
+        page.locator('#session-view-menu [data-agent=""]').click()
+        page.locator('#a-sdk').click()
+        expect(notice).to_have_text('子代理有后台任务', timeout=20000)
+
     for width, theme in ((1280, 'light'), (390, 'dark')):
         page.emulate_media(color_scheme=theme)
         resize_sdk(page, uid, width)
-        expect(notice).to_be_enabled()
+        expect(footer.locator('.background-commands')).to_have_count(0)
         capture(page, shots, f'{label}-foreground-waiting-{width}-{theme}')
-        if width == 1280:
-            notice.click()
-        else:
-            notice.press('Enter')
-        expect(details).to_be_visible()
+        notice.press('Enter')
         expect(details).to_contain_text('Agy 前台已空闲')
-        expect(details).to_contain_text('35 分')
-        expect(details).to_contain_text(training)
-        expect(details).to_contain_text('1 小时 30 分')
-        expect(details).to_contain_text(replay)
-        expect(details).not_to_contain_text('already completed')
-        expect(details).not_to_contain_text('file:///')
-        expect(details.locator('.sdk-timer-body > .sdk-timer-list > li')).to_have_count(2)
-        expect(details.get_by_text(older, exact=True)).to_have_count(0)
-        bounds = details.bounding_box()
+        expect(details).not_to_contain_text(training)
+        expect(details).not_to_contain_text(replay)
+        expect(details).not_to_contain_text('python train.py')
+        expect(details.get_by_role('button', name='Training monitor · b6700000')).to_be_visible()
+        link = details.get_by_role('button', name='Training monitor · a6000000')
+        expect(link).to_be_visible()
+        capture(page, shots, f'{label}-task-agents-{width}-{theme}')
+        link.click()
+        page.wait_for_function('id => S.agent === id', arg=child)
+        page.locator('#a-sdk').click()
+        footer.get_by_role('button', name='后台任务 14', exact=True).click()
+        tasks_menu = footer.get_by_role('dialog', name='后台任务')
+        expect(tasks_menu.locator('.task-timers li')).to_have_count(2)
+        expect(tasks_menu.locator('.task-timers')).to_contain_text(training)
+        expect(tasks_menu.locator('.task-timers')).to_contain_text('35 分')
+        expect(tasks_menu.locator('.task-timers')).to_contain_text('1 小时 30 分')
+        expect(tasks_menu.locator('.task-timers')).to_contain_text(replay)
+        expect(tasks_menu.locator('.task-overdue summary')).to_have_text('已到期，待回执 · 12')
+        expect(tasks_menu.get_by_text(older, exact=True)).to_be_hidden()
+        expect(tasks_menu).not_to_contain_text('already completed')
+        expect(tasks_menu).not_to_contain_text('file:///')
+        expect(tasks_menu.get_by_role('link')).to_have_count(0)
+        bounds = tasks_menu.bounding_box()
         assert bounds['x'] >= 7 and bounds['x'] + bounds['width'] <= width - 7, bounds
-        if width == 1280:
-            assert abs(bounds['x'] - notice.bounding_box()['x']) <= 2, bounds
-        capture(page, shots, f'{label}-foreground-timers-{width}-{theme}')
+        capture(page, shots, f'{label}-waiting-tasks-{width}-{theme}')
         page.keyboard.press('Escape')
-        expect(details).to_be_hidden()
+        expect(tasks_menu).to_be_hidden()
+        if width == 1280:
+            return_to_parent()
     expiring = '即将到期的巡检任务。'
     many = [timer(20, '15s', expiring, datetime.now(timezone.utc).isoformat()),
             *(timer(step, '2h10m', f'第 {step} 项巡检：核对训练节点与导出任务进度。', now)
               for step in range(21, 30))]
-    notice.click()
+    task_button = footer.locator('.background-commands')
+    task_button.click()
+    details = footer.get_by_role('dialog', name='后台任务')
+    upcoming = details.locator('.task-timers')
     write_transcript(fixture.native, child, [*tasks, *elapsed, *many])
-    expect(details.get_by_text(expiring, exact=True)).to_be_visible(timeout=12000)
+    expect(upcoming.get_by_text(expiring, exact=True)).to_be_visible(timeout=12000)
     assert details.bounding_box()['height'] <= 421
     assert details.locator('.sdk-timer-body').evaluate('body => body.scrollHeight > body.clientHeight')
-    details.get_by_text('第 29 项巡检：核对训练节点与导出任务进度。', exact=True).scroll_into_view_if_needed()
-    expect(details.get_by_role('heading', name='后台定时任务')).to_be_in_viewport()
-    capture(page, shots, f'{label}-foreground-timers-scroll-390-dark')
-    expect(details.get_by_text(expiring, exact=True)).to_have_count(0, timeout=18000)
-    expect(details.get_by_text(older, exact=True)).to_have_count(0)
+    upcoming.get_by_text('第 29 项巡检：核对训练节点与导出任务进度。', exact=True).scroll_into_view_if_needed()
+    expect(details.get_by_role('heading', name='后台任务')).to_be_in_viewport()
+    capture(page, shots, f'{label}-timers-scroll-390-dark')
+    expect(upcoming.get_by_text(expiring, exact=True)).to_have_count(0, timeout=18000)
+    expect(details.locator('.task-overdue summary')).to_have_text('已到期，待回执 · 13')
     page.keyboard.press('Escape')
+    return_to_parent()
     page.emulate_media(color_scheme='light')
     resize_sdk(page, uid, 1280)
     notice.click()
+    details = page.locator('#sdk-status-menu')
+    write_transcript(fixture.native, worker, [system_record(2, 'Command exited', sender=f'{worker}/task-1')])
+    expect(details.get_by_role('button', name='Training monitor', exact=True)).to_be_visible(timeout=20000)
     write_transcript(fixture.native, child, [*tasks, *elapsed, *many,
-        system_record(30, 'Timer fired', sender=f'{child}/task-3'),
-        system_record(31, 'Timer fired', sender=f'{child}/task-4'),
-        *(system_record(step + 12, 'Timer fired', sender=f'{child}/task-{step}') for step in range(21, 30))])
+        *(system_record(n, 'Timer fired', sender=f'{child}/task-{step}')
+          for n, step in enumerate([3, 4, *range(8, 30)], start=30))])
     expect(notice).to_have_text('等待回执', timeout=20000)
     expect(details).to_be_visible()
-    expect(details).not_to_contain_text(training)
-    expect(details).not_to_contain_text(replay)
+    expect(details.get_by_role('button', name='Training monitor')).to_have_count(0)
     page.keyboard.press('Escape')
     status.write_text('RUNNING')
-    expect(notice).to_have_text('处理中', timeout=10000)
+    expect(notice.get_by_role('status')).to_have_text('处理中', timeout=10000)
     echo = root / 'steer-echo-delay'
     echo.touch()
     consume = root / 'steer-consume-delay'

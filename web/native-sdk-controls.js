@@ -19,11 +19,11 @@ const NativeSdkControls = {
     if (Number.isFinite(parsed)) return UsageUI.reset(Math.round(parsed / 1000));
     return str.startsWith('·') ? ` ${str}` : ` · ${str}${str.includes('重置') ? '' : ' 后重置'}`;
   },
-  timerDetails(timers, receipt, runtimeError) {
+  timerDetails(timers, receipt, runtimeError, agents = [], uid) {
     return {
       layout: 'timers',
-      key: JSON.stringify([timers, receipt, runtimeError]),
-      render: menu => this.paintTimerDetails(menu, timers, receipt, runtimeError),
+      key: JSON.stringify([timers, receipt, runtimeError, agents, uid]),
+      render: menu => this.paintTimerDetails(menu, timers, receipt, runtimeError, agents, uid),
     };
   },
   timerDelay(delay) {
@@ -33,23 +33,51 @@ const NativeSdkControls = {
     if (!input || parts.map(part => part[0]).join('') !== input) return NaN;
     return parts.reduce((total, [, amount, unit]) => total + Number(amount) * units[unit], 0);
   },
-  pendingTimers(timers) {
-    const now = Date.now();
+  scheduledTimers(timers) {
     const deadline = timer => Number.isFinite(timer.due) ? timer.due : Number.MAX_VALUE;
     return timers.map(timer => {
       const delay = this.timerDelay(timer.delay);
       const created = Date.parse(timer.created_at);
       const due = new Date(created + delay).getTime();
       return {...timer, created, due, delayMs: delay};
-    }).filter(timer => !Number.isFinite(timer.due) || timer.due > now)
-      .sort((left, right) => deadline(left) - deadline(right));
+    }).sort((left, right) => deadline(left) - deadline(right));
   },
-  paintTimerDetails(menu, timers, receipt, runtimeError) {
+  pendingTimers(timers) {
+    const now = Date.now();
+    return this.scheduledTimers(timers).filter(timer => !Number.isFinite(timer.due) || timer.due > now);
+  },
+  paintTimerDetails(menu, timers, receipt, runtimeError, agents, uid) {
     const list = el('ul', 'sdk-timer-list');
     const header = el('div', 'sdk-control-section sdk-timer-heading');
-    header.append(el('h3', '', '后台定时任务'), el('p', 'sdk-control-note', receipt));
+    header.append(el('h3', '', timers.length ? '后台定时任务' : '子代理有后台任务'), el('p', 'sdk-control-note', receipt));
     if (runtimeError) header.append(el('p', 'sdk-control-note', runtimeError));
 
+    for (const timer of timers) list.append(this.timerItem(timer));
+    const scrollTop = menu.querySelector('.sdk-timer-body')?.scrollTop || 0;
+    const body = el('div', 'sdk-timer-body');
+    if (timers.length) body.append(list);
+    if (agents.length) {
+      const links = el('div', 'sdk-task-agents');
+      if (timers.length) links.append(el('h4', '', '子代理有后台任务'));
+      for (const agent of agents) {
+        const button = el('button', 'btn');
+        button.type = 'button';
+        const namesakes = agents.filter(other => other.id !== agent.id && other.title === agent.title);
+        const shortId = agent.id.slice(0, 8);
+        const id = namesakes.some(other => other.id.startsWith(shortId)) ? agent.id : shortId;
+        button.textContent = agent.title && !namesakes.length ? agent.title : [agent.title, id].filter(Boolean).join(' · ');
+        button.title = '查看子代理 · ' + agent.id;
+        button.append(el('span', '', '›'));
+        button.lastChild.setAttribute('aria-hidden', 'true');
+        button.onclick = () => { menu.hidePopover(); openSession(uid, agent.id); };
+        links.append(button);
+      }
+      body.append(links);
+    }
+    menu.replaceChildren(header, body);
+    body.scrollTop = scrollTop;
+  },
+  timerItem(timer, showTask = false) {
     const time = (stamp, compact = false) => {
       const formatted = ConversationUI.messageTimeFormatter.format(stamp);
       const node = el('time', '', compact ? formatted.slice(5, 16) : formatted);
@@ -57,30 +85,30 @@ const NativeSdkControls = {
       node.title = formatted;
       return node;
     };
-    for (const timer of timers) {
-      const item = el('li', 'sdk-timer-item');
-      if (timer.prompt) item.append(el('p', 'sdk-timer-prompt', timer.prompt));
-      const timing = el('div', 'sdk-timer-timing');
-      if (Number.isFinite(timer.due)) {
-        const due = el('span', 'sdk-timer-due', '预计触发 ');
-        due.append(time(timer.due, true));
-        timing.append(due);
-      }
-      const delay = Number.isFinite(timer.delayMs) ? formatDuration(timer.delayMs) : timer.delay;
-      if (delay) timing.append(el('span', '', `延时 ${delay}`));
-      if (timing.childElementCount) item.append(timing);
-      if (Number.isFinite(timer.created)) {
-        const origin = el('div', 'sdk-timer-origin', '设置于 ');
-        origin.append(time(timer.created));
-        item.append(origin);
-      }
-      list.append(item);
+    const item = el('li', 'sdk-timer-item');
+    if (timer.prompt) {
+      const prompt = el('p', 'sdk-timer-prompt');
+      prompt.textContent = timer.prompt;
+      item.append(prompt);
     }
-    const scrollTop = menu.querySelector('.sdk-timer-body')?.scrollTop || 0;
-    const body = el('div', 'sdk-timer-body');
-    body.append(list);
-    menu.replaceChildren(header, body);
-    body.scrollTop = scrollTop;
+    const timing = el('div', 'sdk-timer-timing');
+    if (Number.isFinite(timer.due)) {
+      const due = el('span', 'sdk-timer-due', '预计触发 ');
+      due.append(time(timer.due, true));
+      timing.append(due);
+    }
+    const delay = Number.isFinite(timer.delayMs) ? formatDuration(timer.delayMs) : timer.delay;
+    if (delay) {
+      const span = el('span');
+      span.textContent = '延时 ' + delay;
+      timing.append(span);
+    }
+    if (timing.childElementCount) item.append(timing);
+    const origin = el('div', 'sdk-timer-origin');
+    if (showTask && timer.task) origin.textContent = TaskOutput.number(timer.task);
+    if (Number.isFinite(timer.created)) origin.append(origin.textContent ? ' · 设置于 ' : '设置于 ', time(timer.created));
+    if (origin.textContent) item.append(origin);
+    return item;
   },
   mount(view) {
     view.settingChoices = new Map(); view.nativeSettingValues = new Map();

@@ -977,12 +977,13 @@ const NativeSdkView = {
     const awaitingCancel = agy && this.running && raw.cancel_requested === true;
     const awaitingResult = agy && this.running && raw.foreground_idle === true && !awaitingCancel;
     const timers = awaitingResult ? NativeSdkControls.pendingTimers(this.historyData?.backgroundTimers || []) : [];
+    const taskAgents = awaitingResult ? this.historyData?.taskAgents || [] : [];
     const receiptDetails = 'Agy 前台已空闲，仍在等待回合结束回执。';
     const waitingText = timers.length
       ? '后台定时任务等待中'
-      : `等待回执\n${receiptDetails}`;
+      : taskAgents.length ? '子代理有后台任务' : `等待回执\n${receiptDetails}`;
     const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
-      : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length ? 'scheduled' : 'waiting')
+      : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length || taskAgents.length ? 'scheduled' : 'waiting')
       : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting'
       : grokBackground ? 'working' : 'ready';
     clearTimeout(this.timerStatusRefresh);
@@ -993,7 +994,7 @@ const NativeSdkView = {
         return;
       }
     }
-    if (kind === 'scheduled' && Number.isFinite(timers[0].due)) {
+    if (kind === 'scheduled' && Number.isFinite(timers[0]?.due)) {
       const generation = this.generation;
       const wait = Math.min(Math.max(1, timers[0].due - Date.now()), 0x7fffffff);
       this.timerStatusRefresh = setTimeout(() => {
@@ -1017,7 +1018,7 @@ const NativeSdkView = {
     if(this.nativeActionResult && !this.running && !this.requests.size && !error){
       this.setNotice(this.nativeActionResult.text,this.nativeActionResult.failed?'warning':'ready');
     }else this.setNotice(text, kind, false, kind === 'scheduled'
-      ? NativeSdkControls.timerDetails(timers, receiptDetails, raw.runtime_error) : null);
+      ? NativeSdkControls.timerDetails(timers, receiptDetails, raw.runtime_error, taskAgents, this.uid) : null);
   },
 
   paintHistory() {

@@ -3,6 +3,7 @@
 import argparse
 import sqlite3
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -17,6 +18,7 @@ from node_auth_fixtures import TOKEN, node_env
 from sdk_ui_fixtures import start_sdk
 
 CHILD = 'a7600000-0000-4000-8000-000000000002'
+SCHEDULER = 'a7600000-0000-4000-8000-000000000003'
 
 
 def task(sid, index, uri, description='python report.py'):
@@ -27,20 +29,21 @@ def task(sid, index, uri, description='python report.py'):
     return {**record(index, 'GENERIC', body), 'status': 'RUNNING'}
 
 
-def open_footer(page, footer, tasks, screenshots, label):
-    button = footer.get_by_role('button', name=f'后台命令 {len(tasks)}', exact=True)
+def open_footer(page, footer, tasks, screenshots, label, extra=0):
+    count = len(tasks) + extra
+    button = footer.get_by_role('button', name=f'后台任务 {count}', exact=True)
     expect(button).to_be_visible(timeout=20000)
     assert footer.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
     button.focus()
     button.press('Enter')
-    if len(tasks) == 1:
+    if len(tasks) == 1 and not extra:
         panel = page.get_by_role('dialog', name='后台输出')
         index, description = next(iter(tasks.items()))
         expect(panel.locator('.task-output-number')).to_have_text(f'任务 {index}')
         expect(panel.locator('.task-output-command')).to_have_text(description)
     else:
-        panel = footer.get_by_role('dialog', name='运行中的后台命令')
-        options = panel.get_by_role('button')
+        panel = footer.get_by_role('dialog', name='后台任务')
+        options = panel.locator('.task-commands').get_by_role('button')
         expect(options).to_have_count(len(tasks))
         for index, description in tasks.items():
             option = options.filter(has_text=f'任务 {index}')
@@ -52,6 +55,35 @@ def open_footer(page, footer, tasks, screenshots, label):
     expect(panel).to_be_visible()
     page.screenshot(path=str(screenshots / f'{label}-open.png'))
     return panel
+
+
+def check_parent_menu(menu):
+    expect(menu.get_by_text('未登记输出日志', exact=False)).to_be_visible()
+    expect(menu.locator('.task-timers')).to_contain_text('检查主会话队列')
+    expect(menu).not_to_contain_text('检查分片进度')
+    expect(menu).not_to_contain_text('任务 7')
+    expect(menu.locator('.task-overdue')).to_be_hidden()
+
+
+def select_agent(page, agent):
+    page.locator('#a-view-switch').click()
+    page.locator(f'#session-view-menu [data-agent="{agent}"]').click()
+
+
+def check_scheduler(page, footer, screenshots, label):
+    menu = open_footer(page, footer, {}, screenshots, label, extra=2)
+    expect(menu.locator('.task-commands')).to_be_hidden()
+    expect(menu.locator('.task-timers')).to_contain_text('检查分片进度')
+    expect(menu).not_to_contain_text('检查主会话队列')
+    overdue = menu.locator('.task-overdue')
+    expect(overdue.locator('summary')).to_have_text('已到期，待回执 · 1')
+    expect(overdue.get_by_text('检查上一次导出')).to_be_hidden()
+    overdue.locator('summary').click()
+    expect(overdue.get_by_text('检查上一次导出')).to_be_visible()
+    expect(menu.get_by_role('link')).to_have_count(0)
+    page.screenshot(path=str(screenshots / f'{label}-receipts.png'))
+    page.keyboard.press('Escape')
+    return menu
 
 
 def check_view(page, panel, log, index, screenshots, label):
@@ -156,6 +188,26 @@ def check_completion(page, chat, native, log, screenshots, label):
         stream.write(encoded(task(CHILD, 9, next_log.as_uri())))
     open_footer(page, chat, {9: 'python report.py'}, screenshots, label + '-new')
     page.keyboard.press('Escape')
+    sender = f'{CHILD}/task-9'
+    with transcript(native, CHILD).open('ab') as stream:
+        stream.write(encoded(record(10, 'SYSTEM_MESSAGE', notice(sender,
+            f'Task id "{sender}" finished with result:\nCommand exited with code 0.'))))
+    expect(chat.locator('.background-commands')).to_have_count(0, timeout=20000)
+
+
+def check_timer_receipts(page, footer, native, screenshots, label):
+    menu = open_footer(page, footer, {}, screenshots, label + '-timers-only', extra=2)
+    expect(menu.locator('.task-timers')).to_contain_text('检查分片进度')
+    # The open list follows receipts for the selected grandchild.
+    with transcript(native, SCHEDULER).open('ab') as stream:
+        stream.write(encoded(record(6, 'SYSTEM_MESSAGE', notice(f'{SCHEDULER}/task-4', 'Timer fired'))))
+    expect(footer.get_by_role('button', name='后台任务 1', exact=True)).to_be_visible(timeout=20000)
+    expect(menu.locator('.task-timers')).to_be_hidden()
+    expect(menu.locator('.task-overdue summary')).to_be_visible()
+    with transcript(native, SCHEDULER).open('ab') as stream:
+        stream.write(encoded(record(7, 'SYSTEM_MESSAGE', notice(f'{SCHEDULER}/task-5', 'Timer fired'))))
+    expect(footer.locator('.background-commands')).to_have_count(0, timeout=20000)
+    expect(menu).not_to_be_visible()
 
 
 def check_foreground(page, sdk, fixture, log, screenshots, label):
@@ -167,6 +219,7 @@ def check_foreground(page, sdk, fixture, log, screenshots, label):
     page.locator('#sdk-input').fill('hold:foreground')
     page.locator('#sdk-send').click()
     expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground', timeout=20000)
+    expect(sdk.locator('.background-commands')).to_have_count(0, timeout=20000)
     active_log = log.with_name('task-20.log')
     active_log.write_text('正在生成合并报告\n')
     with transcript(native, parent).open('ab') as stream:
@@ -186,8 +239,19 @@ def run(args):
         fixture = NativeQueueFixture(root / 'node', 'agy', args.binary.resolve(), REPO / 'target/debug/ptyhost')
         parent, native = fixture.sid, fixture.peer.native
         fixture.peer.seed(CHILD)
+        fixture.peer.seed(SCHEDULER)
         with sqlite3.connect(native / 'conversation_summaries.db') as db:
-            db.execute('UPDATE conversation_summaries SET parent_conversation_id=? WHERE conversation_id=?', (parent, CHILD))
+            db.executemany('UPDATE conversation_summaries SET parent_conversation_id=?, title=? WHERE conversation_id=?',
+                           [(parent, '报告生成', CHILD), (CHILD, '分片调度', SCHEDULER)])
+        now = datetime.now(timezone.utc)
+        reminders = []
+        for index, prompt, created in [(4, '检查分片进度', now), (5, '检查上一次导出', now - timedelta(hours=2))]:
+            native_log = native / 'brain' / SCHEDULER / '.system_generated/tasks' / f'task-{index}.log'
+            native_log.parent.mkdir(exist_ok=True)
+            native_log.touch()
+            reminders.append({**task(SCHEDULER, index, native_log.as_uri(), 'Timer: 12m, Prompt: ' + prompt),
+                              'created_at': created.isoformat()})
+        write_transcript(native, SCHEDULER, reminders)
         parent_tasks = {4: 'python report.py', 5: 'python reconcile.py --input pending-records.jsonl --output reports/summary.json\n'
                         + '\n'.join(f'python verify.py --partition {i}' for i in range(24)) + '\necho done'}
         child_tasks = {7: 'python report.py'}
@@ -197,11 +261,15 @@ def run(args):
             log.parent.mkdir()
             wrong_log = task(sid, 2, log.as_uri())
             quoted = task(sid, 3, log.with_name('task-3.log').as_uri())
-            records = [record(0, 'USER_INPUT', '查看后台任务'), wrong_log,
+            log.write_text('正在检查进度\n')
+            records = [record(0, 'USER_INPUT', '查看后台任务'),
                        {**quoted, 'type': 'PLANNER_RESPONSE'}, task(sid, index, log.as_uri())]
             if sid == parent:
+                records.insert(1, wrong_log)
                 log.with_name('task-5.log').write_text('已读取待处理记录\n正在核对分区 1 / 24\n')
                 records.append(task(parent, 5, log.with_name('task-5.log').as_uri(), parent_tasks[5]))
+                own_timer = task(parent, 6, log.with_name('task-6.log').as_uri(), 'Timer: 1h, Prompt: 检查主会话队列')
+                records.append({**own_timer, 'created_at': now.isoformat()})
             write_transcript(native, sid, records)
         with sqlite3.connect(native / 'conversations' / f'{parent}.db') as db:
             db.execute('UPDATE fixture_steps SET next_index=10')
@@ -230,15 +298,21 @@ def run(args):
                             sdk = page.locator('#sdk-composer .sdk-status-row')
                             chat = page.locator('#conversation-status')
                             page.locator('#a-chat').click()
-                            menu = open_footer(page, chat, parent_tasks, args.screenshots, label + '-chat')
+                            menu = open_footer(page, chat, parent_tasks, args.screenshots, label + '-chat', extra=2)
+                            check_parent_menu(menu)
                             page.keyboard.press('Escape')
                             expect(menu).not_to_be_visible()
                             page.locator('#a-sdk').click()
                             start_sdk(page)
-                            menu = open_footer(page, sdk, parent_tasks, args.screenshots, label + '-sdk')
+                            menu = open_footer(page, sdk, parent_tasks, args.screenshots, label + '-sdk', extra=2)
+                            check_parent_menu(menu)
                             check_view(page, menu, logs[parent], 4, args.screenshots, label + '-sdk')
-                            page.locator('#a-view-switch').click()
-                            page.locator(f'#session-view-menu [data-agent="{CHILD}"]').click()
+                            select_agent(page, SCHEDULER)
+                            page.locator('#a-sdk').click()
+                            check_scheduler(page, sdk, args.screenshots, label + '-scheduler-sdk')
+                            page.locator('#a-chat').click()
+                            check_scheduler(page, chat, args.screenshots, label + '-scheduler-chat')
+                            select_agent(page, CHILD)
                             page.locator('#a-sdk').click()
                             menu = open_footer(page, sdk, child_tasks, args.screenshots, label + '-child-sdk')
                             page.keyboard.press('Escape')
@@ -248,6 +322,9 @@ def run(args):
                             if target == 'hub' and width == 390:
                                 check_completion(page, chat, native, logs[CHILD], args.screenshots, label)
                                 check_foreground(page, sdk, fixture, logs[parent], args.screenshots, label)
+                                select_agent(page, SCHEDULER)
+                                page.locator('#a-sdk').click()
+                                check_timer_receipts(page, sdk, native, args.screenshots, label)
                             context.close()
                             print('PASS', label, 'parent/child footers in SDK and chat, scoped log and follow/retry', flush=True)
                 finally:

@@ -734,6 +734,7 @@ const SdkUI = {
       if (this.uid.startsWith('agy:') && paintBackgroundCommands(this.notice.parentElement, entry))
         this.layoutToolbar();
       const backgroundTimers = entry.meta?.background_timers;
+      const taskAgents = entry.meta?.background_task_agents;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
       if (!force && this.historyEntry === entry && data?.end === entry.end
           && data.model === entry.meta?.model
@@ -746,8 +747,10 @@ const SdkUI = {
         // Keep the text nodes (and an ongoing native drag selection) intact.
         const activityChanged = data.activity !== entry.activity;
         data.activity = entry.activity;
-        const timersChanged = JSON.stringify(data.backgroundTimers) !== JSON.stringify(backgroundTimers);
+        const timersChanged = JSON.stringify(data.backgroundTimers) !== JSON.stringify(backgroundTimers)
+          || JSON.stringify(data.taskAgents) !== JSON.stringify(taskAgents);
         data.backgroundTimers = backgroundTimers;
+        data.taskAgents = taskAgents;
         // CLI-only updates can close a native turn whose ending was never
         // written. They must refresh status even when history is unchanged.
         const observedChanged = data.observedActivity?.state !== observed?.state
@@ -759,7 +762,7 @@ const SdkUI = {
       }
       this.historyEntry = entry;
       this.historyData = {messages: entry.msgs, partial: entry.partial, model: entry.meta?.model,
-        activity: entry.activity, observedActivity: observed, backgroundTimers, end: entry.end, length: entry.msgs.length};
+        activity: entry.activity, observedActivity: observed, backgroundTimers, taskAgents, end: entry.end, length: entry.msgs.length};
       measureBrowserWork('sdk.history', () => this.paintHistory(),
         {source: this.uid.split(':')[0], messages: entry.msgs.length});
       if(this.connected)this.paintStatus();

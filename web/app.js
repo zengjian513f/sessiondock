@@ -1734,6 +1734,8 @@ function applyMigrationMeta(uid, agent, entry, meta) {
     const rowMeta = {...meta};
     delete rowMeta.background_timers;
     delete rowMeta.background_logs;
+    delete rowMeta.background_commands;
+    delete rowMeta.background_task_agents;
     if (listed && Object.hasOwn(listed, 'child_count')) rowMeta.child_count = listed.child_count;
     if (S.childMode === 'hidden' && !S.lazyOpen.has(uid)) delete rowMeta.agent_items;
     // Cursor/size updates do not change membership, ordering, nesting or
@@ -10640,7 +10642,7 @@ function openTaskOutput(log, meta, command, trigger, menu) {
     dialog.remove();
     if (!trigger?.isConnected || !trigger.getClientRects().length) return;
     trigger.focus({preventScroll: true});
-    if (dialog.returnValue === 'list' && menu?._entry.meta.background_logs?.length > 1) {
+    if (dialog.returnValue === 'list' && menu?._isList) {
       trigger.click();
       [...menu.querySelectorAll('button[data-ref]')].find(button => button.dataset.ref === log.ref)?.focus();
     }
@@ -10649,11 +10651,15 @@ function openTaskOutput(log, meta, command, trigger, menu) {
 }
 
 function paintBackgroundCommands(row, entry) {
-  const logs = entry?.meta?.background_logs;
+  const meta = entry?.meta;
+  const commands = meta?.background_commands || meta?.background_logs || [];
+  const timers = meta?.background_timers || [];
+  const count = commands.length + timers.length;
+  const direct = count === 1 && !!commands[0]?.ref;
   let trigger = row.querySelector('.background-commands');
   let menu = row.querySelector('.background-command-list');
-  if (menu?._returnButton) menu._returnButton.hidden = (logs?.length || 0) < 2;
-  if (!logs?.length) {
+  if (menu?._returnButton) menu._returnButton.hidden = !count || direct;
+  if (!count) {
     if (!trigger) return false;
     if (menu.matches(':popover-open')) menu.hidePopover();
     trigger.remove();
@@ -10661,71 +10667,106 @@ function paintBackgroundCommands(row, entry) {
     return true;
   }
   if (!trigger) {
-    trigger = el('button', 'btn background-commands', uiIcon('terminal') + '<span>后台命令</span> <b></b>');
+    trigger = el('button', 'btn background-commands', uiIcon('list') + '<span>后台任务</span> <b></b>');
     trigger.type = 'button';
     menu = el('div', 'new-model-menu sdk-toolbar-menu background-command-list');
-    menu.id = (row.id || 'sdk') + '-background-commands';
-    menu.innerHTML = '<h3>运行中的后台命令</h3><div class="sdk-timer-body"><div class="sdk-timer-list"></div></div>';
+    menu.id = (row.id || 'sdk') + '-background-tasks';
+    menu.innerHTML = '<h3>后台任务</h3><div class="sdk-timer-body"><section class="task-commands"><h4>后台命令</h4><div class="sdk-timer-list"></div></section><section class="task-timers"><h4>定时提醒</h4><ul class="sdk-timer-list"></ul></section><details class="task-overdue"><summary></summary><ul class="sdk-timer-list"></ul></details></div>';
     menu.setAttribute('popover', 'auto');
     menu.setAttribute('role', 'dialog');
-    menu.setAttribute('aria-label', '运行中的后台命令');
+    menu.setAttribute('aria-label', '后台任务');
     trigger.setAttribute('aria-expanded', 'false');
     trigger.setAttribute('aria-haspopup', 'dialog');
     row.querySelector('.sdk-gauges').before(trigger, menu);
     ConversationUI.bindPopover(trigger, menu, row);
     const toggleList = trigger.onclick;
     trigger.onclick = event => {
-      const {meta} = menu._entry;
-      if (meta.background_logs.length > 1) { toggleList(event); return; }
-      const log = meta.background_logs[0];
-      openTaskOutput(log, meta, backgroundCommandNames(menu._entry).get(log.ref), trigger);
+      if (menu._isList) { toggleList(event); return; }
+      const log = menu._commands[0], {meta} = menu._entry;
+      openTaskOutput(log, meta, log.command || backgroundCommandNames(menu._entry).get(log.ref), trigger);
     };
     menu.addEventListener('beforetoggle', event => {
-      if (event.newState === 'open') paintBackgroundCommandList(menu);
+      clearTimeout(menu._dueTimer);
+      if (event.newState === 'open') paintBackgroundTaskList(menu);
+    });
+    menu.querySelector('details').addEventListener('toggle', () => {
+      if (menu.matches(':popover-open')) ConversationUI.placePopover(menu, trigger);
     });
   }
   menu._entry = entry;
-  const count = String(logs.length);
-  const resized = trigger.querySelector('b').textContent !== count;
+  menu._commands = commands;
+  menu._isList = !direct;
+  const resized = trigger.querySelector('b').textContent !== String(count);
   if (resized) {
     trigger.querySelector('b').textContent = count;
-    trigger.setAttribute('aria-label', '后台命令 ' + count);
-    trigger.setAttribute('aria-controls', logs.length === 1 ? 'task-output-dialog' : menu.id);
-    trigger.title = logs.length === 1 ? '查看后台命令输出' : '查看运行中的后台命令';
+    trigger.setAttribute('aria-label', '后台任务 ' + count);
   }
-  const key = JSON.stringify([entry.meta.uid, entry.meta.agent_id, logs]);
+  trigger.setAttribute('aria-controls', direct ? 'task-output-dialog' : menu.id);
+  trigger.title = direct ? '查看后台命令输出' : '查看后台任务';
+  const key = JSON.stringify([meta.uid, meta.agent_id, commands, timers]);
   if (key !== menu._logKey && menu.matches(':popover-open')) {
-    paintBackgroundCommandList(menu);
+    paintBackgroundTaskList(menu);
     ConversationUI.placePopover(menu, trigger);
   }
   menu._logKey = key;
   return resized;
 }
 
-function paintBackgroundCommandList(menu) {
-  const {meta} = menu._entry, names = backgroundCommandNames(menu._entry);
-  const list = menu.querySelector('.sdk-timer-list');
-  const previous = new Map([...list.children].map(button => [button.dataset.ref, button]));
-  for (const log of meta.background_logs) {
-    let button = previous.get(log.ref);
-    if (!button) {
-      button = el('button', 'sdk-timer-item command-option',
-        '<span class="command-name"></span><small class="sdk-timer-origin"></small><i aria-hidden="true">›</i>');
-      button.type = 'button';
-      button.dataset.ref = log.ref;
-      button.onclick = () => {
-        menu.hidePopover();
-        openTaskOutput(log, menu._entry.meta, backgroundCommandNames(menu._entry).get(log.ref), menu._trigger, menu);
-      };
-      list.append(button);
+function paintBackgroundTaskList(menu) {
+  const {meta} = menu._entry, commands = menu._commands;
+  const names = commands.some(c => !c.command) ? backgroundCommandNames(menu._entry) : null;
+  const section = menu.querySelector('.task-commands'), list = section.querySelector('.sdk-timer-list');
+  const previous = new Map([...list.children].map(item => [item.dataset.key, item]));
+  for (const log of commands) {
+    const key = JSON.stringify([log.task, log.ref]);
+    let item = previous.get(key);
+    if (!item) {
+      item = el(log.ref ? 'button' : 'div', 'sdk-timer-item command-option',
+        '<span class="command-name"></span><small class="sdk-timer-origin"></small>');
+      item.dataset.key = key;
+      if (log.ref) {
+        item.type = 'button';
+        item.dataset.ref = log.ref;
+        item.append(el('i', '', '›'));
+        item.lastChild.setAttribute('aria-hidden', 'true');
+        item.onclick = () => {
+          menu.hidePopover();
+          openTaskOutput(item._log, menu._entry.meta, item._command, menu._trigger, menu);
+        };
+      }
+      list.append(item);
     }
-    previous.delete(log.ref);
-    const command = names.get(log.ref), number = TaskOutput.number(log.task);
+    previous.delete(key);
+    const command = log.command || names?.get(log.ref), number = TaskOutput.number(log.task);
+    item._log = log;
+    item._command = command;
     const lines = command?.split(/\r?\n/);
-    button.firstChild.textContent = lines ? lines.slice(0, 3).join('\n') : number;
-    button.querySelector('small').textContent = !lines ? '' : lines.length > 3 ? number + ' · 共 ' + lines.length + ' 行' : number;
+    item.firstChild.textContent = lines ? lines.slice(0, 3).join('\n') : number;
+    item.querySelector('small').textContent = [lines ? number : '',
+      lines?.length > 3 ? '共 ' + lines.length + ' 行' : '', log.ref ? '' : '未登记输出日志'].filter(Boolean).join(' · ');
   }
   for (const stale of previous.values()) stale.remove();
+  section.hidden = !commands.length;
+  const timers = NativeSdkControls.scheduledTimers(meta.background_timers || []);
+  const now = Date.now(), upcoming = [], overdue = [];
+  for (const timer of timers) (timer.due <= now ? overdue : upcoming).push(timer);
+  section.querySelector('h4').hidden = !timers.length;
+  const paintTimers = (group, entries) => {
+    group.hidden = !entries.length;
+    group.querySelector('ul').replaceChildren(...entries.map(timer => NativeSdkControls.timerItem(timer, true)));
+  };
+  paintTimers(menu.querySelector('.task-timers'), upcoming);
+  const older = menu.querySelector('details');
+  older.querySelector('summary').textContent = '已到期，待回执 · ' + overdue.length;
+  paintTimers(older, overdue);
+  clearTimeout(menu._dueTimer);
+  if (Number.isFinite(upcoming[0]?.due)) {
+    menu._dueTimer = setTimeout(() => {
+      if (!menu.matches(':popover-open')) return;
+      paintBackgroundTaskList(menu);
+      ConversationUI.placePopover(menu, menu._trigger);
+    }, Math.min(upcoming[0].due - now, 0x7fffffff));
+  }
 }
 
 function renderConversationUsage(row, uid) {

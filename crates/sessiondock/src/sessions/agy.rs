@@ -112,6 +112,8 @@ pub(crate) fn system_message(text: &str) -> (String, Value) {
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct BackgroundTimer {
+    #[serde(default)]
+    task: String,
     delay: String,
     prompt: String,
     created_at: Option<String>,
@@ -181,24 +183,35 @@ fn project_background_tasks(session: &mut Value, sid: &str, transcript: &Path, b
                     continue;
                 };
                 let log = command_log(lines.clone(), index, transcript);
-                let description = lines.next().unwrap_or_default();
-                let timer = description
-                    .strip_prefix("Task Description: Timer: ")
-                    .and_then(|text| text.split_once(", Prompt: "))
-                    .map(|(delay, first_line)| {
-                        let prompt = std::iter::once(first_line)
+                let task = format!("task-{index}");
+                let description = lines
+                    .next()
+                    .and_then(|line| line.strip_prefix("Task Description: "))
+                    .map(|first| {
+                        std::iter::once(first)
                             .chain(lines.take_while(|line| {
-                                !line.starts_with("Task logs are available at:")
+                                *line != "Log output:"
+                                    && !line.starts_with("Task logs are available at:")
                             }))
                             .collect::<Vec<_>>()
-                            .join("\n");
-                        BackgroundTimer {
-                            delay: delay.to_owned(),
-                            prompt: prompt.trim().to_owned(),
-                            created_at: record["created_at"].as_str().map(str::to_owned),
-                        }
+                            .join("\n")
                     });
-                tasks.insert(id, (timer, log));
+                let timer = description
+                    .as_deref()
+                    .and_then(|text| text.strip_prefix("Timer: "))
+                    .and_then(|text| text.split_once(", Prompt: "))
+                    .map(|(delay, prompt)| BackgroundTimer {
+                        task: task.clone(),
+                        delay: delay.to_owned(),
+                        prompt: prompt.trim().to_owned(),
+                        created_at: record["created_at"].as_str().map(str::to_owned),
+                    });
+                let command = timer.is_none().then(|| {
+                    json!({
+                        "task": task, "command": description, "ref": log.as_ref().map(|v| &v["ref"])
+                    })
+                });
+                tasks.insert(id, (timer, command));
             } else if matches!(record["status"].as_str(), Some("DONE" | "ERROR")) {
                 tasks.remove(&id);
             }
@@ -215,9 +228,17 @@ fn project_background_tasks(session: &mut Value, sid: &str, transcript: &Path, b
         }
     }
     session["background_tasks"] = json!(tasks.len());
-    let (timers, logs): (Vec<_>, Vec<_>) = tasks.into_values().unzip();
+    let (timers, commands): (Vec<_>, Vec<_>) = tasks.into_values().unzip();
     session["background_timers"] = json!(timers.into_iter().flatten().collect::<Vec<_>>());
-    session["background_logs"] = json!(logs.into_iter().flatten().collect::<Vec<_>>());
+    let commands: Vec<_> = commands.into_iter().flatten().collect();
+    session["background_logs"] = json!(
+        commands
+            .iter()
+            .filter(|c| c["ref"].is_string())
+            .map(|c| json!({"task": c["task"], "ref": c["ref"]}))
+            .collect::<Vec<_>>()
+    );
+    session["background_commands"] = Value::Array(commands);
 }
 
 #[cfg(unix)]
@@ -476,7 +497,7 @@ impl Mirror {
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
         // Recompute existing mirrors once when this derived field is introduced.
-        cache_session["activity_projection"] = json!(3);
+        cache_session["activity_projection"] = json!(4);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -577,7 +598,12 @@ impl Mirror {
             .as_ref()
             .map(|v| v["session"]["model"].clone())
             .unwrap_or(Value::Null);
-        for field in ["background_tasks", "background_timers", "background_logs"] {
+        for field in [
+            "background_tasks",
+            "background_timers",
+            "background_logs",
+            "background_commands",
+        ] {
             value[field] = previous
                 .as_ref()
                 .map(|v| v["session"][field].clone())
@@ -620,9 +646,14 @@ impl Mirror {
             project_background_tasks(&mut value, sid, &native, &bytes[..complete]);
             publish(&messages, &bytes[..complete], true)?;
         }
-        if ["background_tasks", "background_timers", "background_logs"]
-            .iter()
-            .any(|field| value[field].is_null())
+        if [
+            "background_tasks",
+            "background_timers",
+            "background_logs",
+            "background_commands",
+        ]
+        .iter()
+        .any(|field| value[field].is_null())
         {
             project_background_tasks(&mut value, sid, &native, &fs::read(&messages)?);
         }

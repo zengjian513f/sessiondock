@@ -122,6 +122,10 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         cursor_head: committed
             .and_then(|end| input.data.as_ref().and_then(|data| cursor_head(data, end))),
         background: 0,
+        background_commands: session["background_commands"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
         background_timers: serde_json::from_value(session["background_timers"].clone())
             .unwrap_or_default(),
         turn: None,

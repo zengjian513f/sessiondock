@@ -1226,22 +1226,27 @@ fn prepare(published: &Arc<Published>, uid: &str, agent: &str) -> Result<Prepare
         .cloned()
         .ok_or_else(|| SessionError::new(503, "会话行尚未发布，请重试"))?;
     if owner.source == "agy" {
-        let timers = if let Some(selected) = selected {
-            json!(selected.summary.background_timers)
-        } else {
+        let leaf = selected.unwrap_or(owner);
+        row["background_timers"] = json!(leaf.summary.background_timers);
+        row["background_commands"] = json!(leaf.summary.background_commands);
+        if selected.is_none() {
             let agents = row["agent_items"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|item| index.agent(uid, item["id"].as_str()?));
-            json!(
-                std::iter::once(owner)
-                    .chain(agents)
-                    .flat_map(|entry| &entry.summary.background_timers)
-                    .collect::<Vec<_>>()
-            )
-        };
-        row["background_timers"] = timers;
+                .filter(|item| {
+                    item["id"]
+                        .as_str()
+                        .and_then(|id| index.agent(uid, id))
+                        .is_some_and(|child| {
+                            !child.summary.background_timers.is_empty()
+                                || !child.summary.background_commands.is_empty()
+                        })
+                })
+                .map(|item| json!({"id": item["id"], "title": item["title"]}))
+                .collect::<Vec<_>>();
+            row["background_task_agents"] = json!(agents);
+        }
     }
     let owner_candidate = Candidate::of(owner);
     Ok(Prepared {
