@@ -67,6 +67,10 @@ pub struct Connection {
 }
 
 impl Connection {
+    pub(super) fn subscription(&self, thread: &str) -> Option<Value> {
+        self.channel.subscription(thread)
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }

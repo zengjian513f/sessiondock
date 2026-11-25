@@ -90,6 +90,7 @@ def main():
                 assert (root/'state/codex-sdk-queue.json').is_file()
                 seed_legacy_reads(root, native)
                 record = json.loads(checkpoint.read_text())
+                record.pop('subscriptions', None)  # Pre-upgrade checkpoint schema.
                 record['outbox'] = legacy_outbox(native.received)
                 prior_id = max(f['id'] for f in native.received if isinstance(f.get('id'), int) and 'method' in f)
                 checkpoint.write_text(json.dumps(record))

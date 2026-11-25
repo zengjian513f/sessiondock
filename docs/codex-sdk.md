@@ -79,6 +79,16 @@ browser ─HTTP/SSE─▶ SessionDock adapter ─local IPC─▶ sdkhost channel
   restore the removed subscription.
   Hosted listeners survive ordinary SessionDock restarts; observations and
   subscription recovery discover them without starting historical sessions.
+  DELTA (BUG-20261125-093448-6d0632): an empty loaded thread has no rollout
+  for native `thread/resume`. Its surviving sdkhost channel retains acknowledged
+  subscription metadata and settings; after a fresh native read confirms the
+  loaded thread, recovery reuses that exact subscription without resume or input.
+  Older channel checkpoints recover this metadata once from their consumed
+  sdkhost output, without replaying notifications or RPCs. An unloaded thread,
+  replaced channel or creation receipt alone does not authorize this reuse.
+  [Creation/restart coverage](../tests/sdk_creation_retention_browser.py) checks
+  current and older checkpoints, node/Hub entry, drafts, settings and one first
+  SEND on the original native identity.
   A connection failure resets only that connection's threads; generations are
   unique across listeners. Model lists are cached per connection.
 - An explicit socket remains operator-managed: no extra processes are started,

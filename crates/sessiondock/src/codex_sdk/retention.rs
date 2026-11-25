@@ -43,7 +43,7 @@ impl Retention {
         })
     }
 
-    fn ids(&self) -> HashSet<String> {
+    pub(super) fn ids(&self) -> HashSet<String> {
         self.record.lock().expect("subscriptions").threads.clone()
     }
 

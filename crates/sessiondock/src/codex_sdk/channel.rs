@@ -23,6 +23,8 @@ struct Record {
     initialized: Option<Value>,
     outbox: Vec<Entry>,
     requests: BTreeMap<String, Value>,
+    #[serde(default)]
+    subscriptions: Option<BTreeMap<String, Value>>,
 }
 pub(super) struct Channel {
     pub client: Client,
@@ -76,6 +78,7 @@ impl Channel {
                 initialized: None,
                 outbox: vec![],
                 requests: BTreeMap::new(),
+                subscriptions: Some(BTreeMap::new()),
             }
         };
         save_atomic(&path, &record).map_err(failure)?;
@@ -95,12 +98,72 @@ impl Channel {
                 .await
                 .map_err(failure)?
         };
-        Ok(Arc::new(Self {
+        let channel = Arc::new(Self {
             client,
             path,
             state: Mutex::new(record),
             wake: Notify::new(),
-        }))
+        });
+        channel.restore_subscription_checkpoint().await?;
+        Ok(channel)
+    }
+
+    // Older checkpoints predate subscription summaries. Read their already
+    // consumed output once, without dispatching notifications or replaying RPCs.
+    // sdkhost serves compressed segments too; never inspect its files directly.
+    async fn restore_subscription_checkpoint(&self) -> Result<(), RpcError> {
+        let end = {
+            let state = self.state.lock().unwrap();
+            if state.subscriptions.is_some() {
+                return Ok(());
+            }
+            state.offset
+        };
+        let mut subscriptions = BTreeMap::new();
+        let mut offset = 0;
+        let mut buffer = Vec::new();
+        let mut scanned = 0;
+        while offset < end {
+            let chunk = self
+                .client
+                .read(sdkhost_client::Stream::Stdout, offset)
+                .await
+                .map_err(failure)?;
+            if chunk.bytes.is_empty() {
+                return Err(failure("subscription checkpoint output unavailable"));
+            }
+            let take = (end - offset).min(chunk.bytes.len() as u64) as usize;
+            buffer.extend_from_slice(&chunk.bytes[..take]);
+            offset += take as u64;
+            let mut consumed = 0;
+            for (index, byte) in buffer.iter().enumerate().skip(scanned) {
+                if *byte != b'\n' {
+                    continue;
+                }
+                let record: Value =
+                    serde_json::from_slice(&buffer[consumed..=index]).map_err(failure)?;
+                if let Some(text) = record.as_str() {
+                    let frame = serde_json::from_str(text).map_err(failure)?;
+                    observe_subscription(&mut subscriptions, &frame);
+                }
+                consumed = index + 1;
+            }
+            buffer.drain(..consumed);
+            scanned = buffer.len();
+        }
+        let mut state = self.state.lock().unwrap();
+        state.subscriptions = Some(subscriptions);
+        save_atomic(&self.path, &*state).map_err(failure)
+    }
+
+    pub fn subscription(&self, thread: &str) -> Option<Value> {
+        self.state
+            .lock()
+            .unwrap()
+            .subscriptions
+            .as_ref()?
+            .get(thread)
+            .cloned()
     }
     pub fn next_id(&self) -> i64 {
         self.state
@@ -214,6 +277,7 @@ impl Channel {
         let mut next = state.clone();
         next.offset = offset;
         for frame in frames {
+            observe_subscription(next.subscriptions.get_or_insert_default(), frame);
             if frame.get("method").is_some() && frame.get("id").is_some() {
                 next.requests.insert(frame["id"].to_string(), frame.clone());
             }
@@ -260,5 +324,57 @@ impl Channel {
     }
     pub fn initialize_frame() -> Value {
         json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"sessiondock","title":"SessionDock","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}})
+    }
+}
+
+fn observe_subscription(subscriptions: &mut BTreeMap<String, Value>, frame: &Value) {
+    // start/resume/fork replies carry settings alongside thread metadata.
+    // A thread/read reply or a loaded/list observation is not a subscription.
+    let result = &frame["result"];
+    if frame.get("method").is_none()
+        && frame.get("error").is_none()
+        && result.get("model").is_some()
+        && let Some(id) = result["thread"]["id"].as_str()
+        && result["thread"]["path"]
+            .as_str()
+            .is_some_and(|path| !Path::new(path).is_file())
+    {
+        let mut summary = result.clone();
+        if let Some(thread) = summary["thread"].as_object_mut() {
+            thread.remove("turns");
+        }
+        subscriptions.insert(id.to_owned(), summary);
+    }
+    let params = &frame["params"];
+    let Some(id) = super::thread_of(params) else {
+        return;
+    };
+    match frame["method"].as_str() {
+        Some("thread/closed" | "thread/archived" | "thread/deleted") => {
+            subscriptions.remove(&id);
+        }
+        Some("thread/settings/updated") => {
+            if let Some(summary) = subscriptions.get_mut(&id)
+                && let Some(settings) = params["threadSettings"].as_object()
+            {
+                for (key, value) in settings {
+                    summary[if key == "effort" {
+                        "reasoningEffort"
+                    } else {
+                        key
+                    }] = value.clone();
+                }
+            }
+        }
+        Some("turn/completed") => {
+            if subscriptions
+                .get(&id)
+                .and_then(|summary| summary["thread"]["path"].as_str())
+                .is_some_and(|path| Path::new(path).is_file())
+            {
+                subscriptions.remove(&id);
+            }
+        }
+        _ => {}
     }
 }

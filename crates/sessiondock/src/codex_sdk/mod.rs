@@ -815,6 +815,30 @@ impl Inner {
                     json!({"threadId": thread_id, "includeTurns": false}),
                 )
                 .await?;
+            // A hosted socket survives the web service. An empty native thread
+            // is readable but cannot resume from a rollout that does not exist.
+            // Reuse only this exact channel's acknowledged subscription, with
+            // retained intent and fresh native loaded status; never infer it
+            // from a creation receipt or loaded/list membership alone.
+            if self.retention.ids().contains(thread_id)
+                && native["thread"]["id"] == thread_id
+                && matches!(
+                    native["thread"]["status"]["type"].as_str(),
+                    Some("idle" | "active" | "systemError")
+                )
+                && native["thread"]["path"]
+                    .as_str()
+                    .is_some_and(|path| !std::path::Path::new(path).is_file())
+                && let Some(mut retained) = connection.subscription(thread_id)
+            {
+                for field in ["model", "modelProvider", "reasoningEffort", "cwd"] {
+                    if let Some(value) = native["thread"].get(field) {
+                        retained[field] = value.clone();
+                    }
+                }
+                retained["thread"] = native["thread"].clone();
+                return Ok(retained);
+            }
             let mut params = json!({"threadId": thread_id, "excludeTurns": true});
             if let Some(provider) = native["thread"]["modelProvider"]
                 .as_str()

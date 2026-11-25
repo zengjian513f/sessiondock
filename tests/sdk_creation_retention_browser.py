@@ -43,6 +43,76 @@ def replay(page, body):
     }""", body)
 
 
+def legacy_empty_restart(browser, binary, mode, screenshots):
+    """Upgrade a live pre-checkpoint channel without resuming its empty thread."""
+    with tempfile.TemporaryDirectory(prefix='sd-empty-upgrade-') as temporary:
+        root = Path(temporary)
+        corpus = build(root)
+        state = root / 'state'; state.mkdir(mode=0o700)
+        socket = root / 'app.sock'
+        port, peer_port = free_port(), free_port()
+        env = node_env(root, peer_port, '127.0.0.0/8')
+        context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        hub = None
+        try:
+            with UnloadedCreationServer(socket, corpus.paths['sdk'], THREAD) as fake:
+                with node(corpus, binary, socket, port, state, env) as base:
+                    if mode == 'hub':
+                        hub_root = root / 'hub'; hub_root.mkdir()
+                        hub = Hub(binary.with_name('sessiondock-hub').resolve(), hub_root,
+                                  [SimpleNamespace(name='EmptyNode', token=TOKEN, port=peer_port)])
+                        hub.start()
+                        base = f'http://127.0.0.1:{hub.port}'
+                    page.goto(base, wait_until='domcontentloaded')
+                    receipt, _ = create(page, root)
+                    uid = page.evaluate('S.sel')
+                    page.wait_for_function('CodexSdkView.connected')
+                    page.locator('#sdk-input').fill('更新后继续编辑的草稿')
+                    fake.set_settings('fake-sol', 'low')
+                    expect(page.locator('#sdk-effort')).to_have_value('low')
+                    # Finish saving before simulating an ordinary service update.
+                    saved(page, uid, '更新后继续编辑的草稿')
+                    page.goto('about:blank')
+                checkpoints = list((state / 'sdk-adapters/codex-channels').rglob('channel.json'))
+                assert checkpoints
+                for path in checkpoints:
+                    record = json.loads(path.read_text())
+                    record.pop('subscriptions', None)
+                    path.write_text(json.dumps(record))
+                before = len(fake.methods('thread/resume'))
+                with node(corpus, binary, socket, port, state, env) as base:
+                    if mode == 'hub': base = f'http://127.0.0.1:{hub.port}'
+                    for width, theme in ((1280, 'light'), (390, 'dark')):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        page.emulate_media(color_scheme=theme)
+                        page.goto(base, wait_until='domcontentloaded')
+                        page.locator(f'#side .item[data-uid="{uid}"]').click()
+                        page.wait_for_function('CodexSdkView.connected', timeout=10000)
+                        expect(page.locator('#sdk-send')).to_be_enabled()
+                        expect(page.locator('#sdk-input')).to_have_value('更新后继续编辑的草稿')
+                        expect(page.locator('#sdk-effort')).to_have_value('low')
+                        if screenshots:
+                            page.screenshot(path=str(screenshots / f'{mode}-legacy-empty-{width}.png'), full_page=True)
+                    assert not fake.rollout.exists()
+                    assert len(fake.methods('thread/resume')) == before, 'empty thread attempted disk resume'
+                    assert len(fake.methods('thread/start')) == 1 and not fake.methods('turn/start')
+                    page.locator('#sdk-input').fill('approve 首条消息只发送一次')
+                    page.locator('#sdk-send').click()
+                    expect(page.locator('.sdk-request')).to_contain_text('需要批准执行命令')
+                    page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
+                    expect(page.locator('.sdk-history')).to_contain_text('All done after approval')
+                    assert len(fake.methods('turn/start')) == 1
+                    assert fake.methods('turn/start')[0]['params']['threadId'] == receipt['thread_id']
+                    assert not errors, errors
+                print(f'PASS {mode}: legacy channel restores empty subscription/settings/draft; first SEND once on original thread', flush=True)
+        finally:
+            if hub: hub.stop()
+            context.close()
+
+
 def unloaded_creation(browser, binary, mode):
     with tempfile.TemporaryDirectory(prefix='sd-unloaded-create-') as temporary:
         root = Path(temporary)
@@ -165,6 +235,8 @@ def main():
                     expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible()
                     assert page.evaluate('S.sel') == uid
                     expect(page.locator('#sdk-input')).to_have_value('approve 保留更新前尚未发送的新会话草稿')
+                    page.wait_for_function('CodexSdkView.connected', timeout=10000)
+                    expect(page.locator('#sdk-send')).to_be_enabled()
                     again = replay(page, request)
                     assert again['status'] == 200 and again['body']['uid'] == uid, again
                     assert len(fake.methods('thread/start')) == 1, 'restart retry spawned another thread'
@@ -212,6 +284,7 @@ def main():
                     assert not errors, errors
                     print('PASS explicit discard survives restart without recreation', flush=True)
             for mode in ('node', 'hub'):
+                legacy_empty_restart(browser, args.binary, mode, args.screenshots)
                 unloaded_creation(browser, args.binary, mode)
         finally:
             context.close()

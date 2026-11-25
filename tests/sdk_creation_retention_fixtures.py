@@ -39,8 +39,15 @@ class UnloadedCreationServer(FakeAppServer):
             await self.send(writer, {'id': mid, 'error': {
                 'code': -32602, 'message': 'no rollout found for unloaded thread'}})
             return
+        elif method == 'thread/resume' and not self.rollout.exists():
+            # Native 0.166 can read the loaded empty thread, but resume still
+            # requires its not-yet-created rollout, even on the owning socket.
+            await self.send(writer, {'id': mid, 'error': {
+                'code': -32600, 'message': 'no rollout found for thread id ' + params['threadId']}})
+            return
         elif method == 'thread/read':
-            result = {'thread': {'id': params['threadId'], 'modelProvider': 'openai',
+            result = {'thread': {'id': params['threadId'], 'modelProvider': 'openai', 'path': str(self.rollout),
+                                 'model': self.settings['model'], 'reasoningEffort': self.settings['effort'],
                                  'status': {'type': 'idle'}}}
         else:
             await super()._handle(writer, message)
