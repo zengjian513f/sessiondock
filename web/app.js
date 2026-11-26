@@ -5949,7 +5949,7 @@ function markMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement.closest('.msg');
-      return n.parentElement.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toggle')
+      return n.parentElement.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toolbar')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -5987,7 +5987,7 @@ async function markRegexMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toggle')
+      return n.parentElement?.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toolbar')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -11556,8 +11556,11 @@ function md(text, full, media = [], context = {}, cache = null) {
     const language = info.match(/^[\w+.-]+/)?.[0] || '';
     const code = fenceContent(lines, i + 1, close);
     const fence = `<pre><code class="code-block" data-code-lang="${esc(language)}">${code}</code></pre>`;
-    output.push(close < lines.length && language.toLowerCase() === 'mermaid'
-      ? `<sd-mermaid>${fence}</sd-mermaid>` : fence);
+    if (close < lines.length && language.toLowerCase() === 'mermaid') {
+      const vertical = /^\s*(?:flowchart|graph)\s+(?:TD|TB|BT)\b/i.test(lines[i + 1] || '');
+      const height = Math.min(220, Math.max(84, 50 + (close - i - 1) * (vertical ? 27 : 11)));
+      output.push(`<sd-mermaid style="--diagram-height:${height}px">${fence}</sd-mermaid>`);
+    } else output.push(fence);
     if (canCache && !hadUnclosedFence && close < lines.length - 1) {
       cache.prefix = text.slice(0, lineStarts[close + 1]);
       cache.html = output.join('');

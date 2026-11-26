@@ -412,7 +412,7 @@ DELTA（BUG-20261126-135117-0033ca）：普通对话和 SDK 的正文气泡按�
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
-DELTA（BUG-20261126-135344-8db5d6）：普通对话和 SDK 共用的 Markdown 将进入可视区域的闭合 `mermaid` 围栏渲染为图形。随前端分发的 Mermaid Tiny 12.3.0 按需加载，超宽图可横向滚动。可切换查看原始代码，全文搜索命中时显示源码及高亮。库加载失败、语法错误或不支持的图形保留代码块。节点与 Hub 的 Chromium 验收见 [Mermaid 围栏](../tests/mermaid_browser.py)。
+DELTA（BUG-20261126-135344-8db5d6）：普通对话和 SDK 共用的 Markdown 使用随前端分发的 Mermaid Tiny 按需渲染闭合的 `mermaid` 围栏。图表区域在绘制前即占好位置，默认整图适应窗口，缩放和滚动只作用于图表。图中 SVG 文字可选择，节点、连线和分组颜色随页面主题切换。全文搜索命中时优先显示高亮源码，仍可手动切回图形。库加载失败、语法错误或不支持的图形时显示源码。节点与 Hub 的 Chromium 验收见 [Mermaid 围栏](../tests/mermaid_browser.py)。
 
 DELTA（BUG-20261126-063413-4c1ccb）：用户输入、命令与回答的绿色气泡在明暗主题中各用同色系行内代码衬底，文件路径和普通链接使用对应主题的链接颜色。代码围栏沿用面板底色。宽窄屏、节点／Hub 的普通对话与 SDK 历史见[气泡间距](../tests/bubble_spacing_browser.py)。
 
