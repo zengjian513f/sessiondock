@@ -745,8 +745,9 @@
   // 同站点进程里启动——旧页面主线程卡死时，新标签页跟着挂到 60 s 启动超时。离线壳
   // 缓存不值这个代价。这里把早先装上的注销掉，并清掉它的缓存。
   if ('serviceWorker' in navigator) {
+    const scope = new URL('.', location.href).href;
     navigator.serviceWorker.getRegistrations()
-      .then(list => Promise.all(list.map(item => item.unregister())))
+      .then(list => Promise.all(list.filter(item => item.scope === scope).map(item => item.unregister())))
       .catch(() => {});
     if (window.caches) {
       caches.keys().then(keys => Promise.all(keys

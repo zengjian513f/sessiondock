@@ -22,6 +22,14 @@ def exercise(browser, base, project, width, theme, screenshots):
                             service_workers='block')
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
+    page.add_init_script("""(() => {
+      window.removedWorkerScopes = [];
+      navigator.serviceWorker.getRegistrations = async () =>
+        ['/', '/other-app/'].map(path => ({
+          scope: new URL(path, location.origin).href,
+          unregister: async () => window.removedWorkerScopes.push(path),
+        }));
+    })()""")
     project_url = base + '/?' + urlencode({'embedded_project': str(project)})
     page.route(base + '/embed-fixture', lambda route: route.fulfill(
         content_type='text/html',
@@ -30,6 +38,7 @@ def exercise(browser, base, project, width, theme, screenshots):
     page.goto(base + '/embed-fixture')
     frame = page.frame_locator('iframe')
     expect(frame.locator('html')).to_have_class('project-view')
+    assert frame.locator('html').evaluate('() => window.removedWorkerScopes') == ['/']
     expect(frame.locator('#side .item[data-uid^="claude:"]').first).to_be_visible()
     expect(frame.locator('#side .item').filter(has_text='Not this project')).to_have_count(0)
     expect(frame.locator('#side .cwd-path').first).not_to_be_visible()
