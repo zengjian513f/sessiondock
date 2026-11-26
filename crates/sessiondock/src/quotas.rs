@@ -44,6 +44,17 @@ fn epoch(value: &Value) -> Value {
 fn snapshot(source: &str, buckets: Vec<Value>) -> Value {
     json!({"source":source,"captured_at":now(),"buckets":buckets,"error":null})
 }
+async fn read_snapshot(path: &Path, source: &str) -> Option<Value> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    let mut value: Value = serde_json::from_slice(&bytes).ok()?;
+    if source == "codex"
+        && let Some(snapshot) = value.as_object_mut()
+    {
+        // Existing installations may still have the withdrawn date in their cache.
+        snapshot.remove("subscription");
+    }
+    Some(value)
+}
 pub fn save(path: &Path, value: &Value) -> std::io::Result<()> {
     use std::io::Write;
     std::fs::create_dir_all(path.parent().unwrap())?;
@@ -93,8 +104,8 @@ impl Quotas {
         for source in ["codex", "claude", "agy", "kiro", "droid"] {
             let mut value = empty(source);
             if let Some(dir) = &self.directory
-                && let Ok(bytes) = tokio::fs::read(dir.join(format!("{source}.json"))).await
-                && let Ok(saved) = serde_json::from_slice::<Value>(&bytes)
+                && let Some(saved) =
+                    read_snapshot(&dir.join(format!("{source}.json")), source).await
             {
                 value = saved;
             }
@@ -119,10 +130,7 @@ impl Quotas {
         value["captured_at"] = json!(captured_at);
         let mut completed = self.refresh[0].lock().await;
         let path = dir.join("codex.json");
-        let previous = tokio::fs::read(&path)
-            .await
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let previous = read_snapshot(&path, "codex").await;
         // A failed collector retains its old capture time. It must not discard
         // a successful SDK read merely because the failed attempt ended later.
         if let Some(previous) = previous
@@ -165,10 +173,8 @@ impl Quotas {
             let slot = COLLECTED.iter().position(|name| *name == source)?;
             let mut completed = self.refresh[slot].lock().await;
             let path = dir.join(format!("{source}.json"));
-            let previous = tokio::fs::read(&path)
+            let previous = read_snapshot(&path, source)
                 .await
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
                 .unwrap_or_else(|| empty(source));
             // Share in-flight queries across settings and every SDK session.
             // Automatic reads also reuse recent persisted successes or failures.

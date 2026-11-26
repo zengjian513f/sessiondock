@@ -68,7 +68,9 @@ def main():
         # A callback without limits must not turn an existing snapshot into zero usage.
         subprocess.run([str(binary),'quota-statusline',str(root/'state')],input='{}',text=True,capture_output=True,check=True)
         # Yesterday's snapshot must be replaced merely by opening the page.
-        (root/'state/quotas/codex.json').write_text(json.dumps({'source':'codex','captured_at':'2020-10-17T03:02:16Z','buckets':[{'id':'codex:primary','group':'codex','window':10080,'remaining_percent':9}]}))
+        codex_snapshot=root/'state/quotas/codex.json'
+        old_subscription={'active_until':'2031-12-15T08:00:00Z'}
+        codex_snapshot.write_text(json.dumps({'source':'codex','captured_at':'2020-10-17T03:02:16Z','subscription':old_subscription,'buckets':[{'id':'codex:primary','group':'codex','window':10080,'remaining_percent':9}]}))
         # A fresh snapshot from an earlier service process is already usable.
         (root/'state/quotas/agy.json').write_text(json.dumps({'source':'agy','captured_at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'buckets':[
             {'id':'gemini-weekly','group':'Gemini Models','window':'weekly','remaining_percent':85},
@@ -94,7 +96,10 @@ def main():
             link=page.get_by_role('link',name='Agent 用量 →')
             assert link.evaluate("n => !!(document.querySelector('#client-matrix').compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)")
             page.screenshot(path=str(out/'settings-entry.png'))
-            link.click()
+            with page.expect_response(re.compile(r'/api/quotas$')) as cached:
+                link.click()
+            codex=next(row for row in cached.value.json()['agents'] if row['source']=='codex')
+            assert 'subscription' not in codex
             assert page.url.rstrip('/')==hubbase
             machine=page.locator('#quota-dialog')
             expect(machine).to_be_visible()
@@ -186,7 +191,10 @@ def main():
                         assert scroll.evaluate('n => n.scrollLeft > 0')
                         page.screenshot(path=str(out/f'{theme}-390-scrolled.png'),full_page=True)
             assert (root/'calls').read_text().count('query')==3, 'fresh openings must reuse the cache'
+            saved=json.loads(codex_snapshot.read_text())
+            codex_snapshot.write_text(json.dumps({**saved,'subscription':old_subscription}))
             (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('25%');expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
+            assert 'subscription' not in json.loads(codex_snapshot.read_text())
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
             executable.unlink();page.get_by_role('button',name='刷新').click()
             expect(machine.locator('section[data-source=codex] .quota-error')).to_have_text('CLI 文件缺失')
