@@ -243,10 +243,11 @@ starts the daemon, resumes threads or grants terminal coexistence authority;
 unload or failed observation withdraws discovered evidence. Destructive migration/trash
 checks freshly query native loaded threads and retain stopped-but-loaded writers;
 an unsubscribe reply does not prove that delayed native writes have finished.
-DELTA: stopped threads still observed in native loaded/list are carried separately in
-`/api/live.retained_sdk_uids` through nodes and Hub. Sidebar/header retain a blue
-“已停止，等待原生卸载” marker until native observation confirms unload. This is
-display evidence only; it does not reopen the SDK or make the thread runnable.
+DELTA (BUG-20261126-030145-19ff02): stopped threads still observed in native loaded/list
+are carried separately in `/api/live.retained_sdk_uids` through nodes and Hub.
+The sidebar and header show a gray “已停止，等待原生卸载” marker until native
+observation confirms unload. The sidebar preserves any unread count. A CLI, SDK
+or native child still running on the row takes precedence over pending unload.
 Explicit stop already removes bridge retention and unsubscribes; the installed
 protocol offers no immediate unload request, and other clients may retain subscriptions.
 DELTA (BUG-20261117-022739-f304d7): `/api/live.sdk_child_uids` identifies list

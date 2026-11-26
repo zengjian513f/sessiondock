@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 from types import SimpleNamespace
@@ -28,6 +29,7 @@ CHILD = '01a1adc0-0000-7000-8000-000000000090'
 GRANDCHILD = '01a1adc0-0000-7000-8000-000000000091'
 LATE_CHILD = '01a1adc0-0000-7000-8000-000000000092'
 LATER = '分支点之后的第三轮 Later question'
+UNREAD = '停止会话树之前收到的最后一条回复'
 
 
 class StopServer(MessageServer):
@@ -185,6 +187,10 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     assert page.evaluate('S.sel') == source
     # SDK power leaves the coexisting CLI host alive; stop CLI separately.
     assert page.evaluate('uid => T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', source)
+    live = page.evaluate('refreshLive(true)')
+    assert source in live['retained_sdk_uids'] and source in live['tmux_uids'], live
+    expect(page.locator('#dlive')).to_have_class(re.compile(r'\btmux\b'))
+    expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bidle\b'))
     if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
     page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
     with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as cli_stopped:
@@ -199,17 +205,22 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     page.evaluate('refreshLive(true)')
     badge = page.locator(f'#side .item[data-uid="{source}"] > .ico > .item-status')
     expect(badge).to_have_attribute('title', '已停止，等待原生卸载')
-    expect(badge).to_have_class(__import__('re').compile('sdk'))
-    expect(page.locator('#dlive') if 'narrow' in label else badge).to_be_visible()
+    expect(badge).to_have_class(re.compile(r'\bidle\b'))
+    expect(badge).not_to_have_class(re.compile(r'\bsdk\b'))
+    header = page.locator('#dlive')
+    expect(header).to_be_visible()
+    expect(header).to_have_class(re.compile(r'\bidle\b'))
+    expect(header).not_to_have_class(re.compile(r'\bsdk\b'))
+    expect(header).to_have_attribute('title', '已停止，等待原生卸载')
     if 'narrow' not in label:
-        expect(page.locator('#dlive')).to_have_attribute('title', '已停止，等待原生卸载')
         expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('未运行')
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-retained.png'))
     fake.loaded.discard(THREAD)
     page.wait_for_timeout(2100)
     page.evaluate('refreshLive(true)')
     page.wait_for_function('uid => !S.retainedSdk.has(uid)', arg=source)
-    expect(badge).not_to_have_class(__import__('re').compile('visible'))
+    expect(badge).not_to_have_class(re.compile(r'\bvisible\b'))
+    expect(header).to_be_hidden()
     fake.loaded.add(THREAD)
 
     assert not errors, errors
@@ -369,9 +380,7 @@ def orphaned_tree(browser, base, fake, screenshots, label):
     nested = page.request.post(base + '/api/session/nest', data={'uid': source, 'parent_uid': outer})
     assert nested.ok, nested.text()
     page.reload(wait_until='networkidle')
-    page.evaluate('refreshLive(true)')
-    page.wait_for_function('uid => S.liveSdkChildren.has(uid)', arg=source)
-    live = page.request.get(base + '/api/live?force=1').json()
+    live = page.evaluate('refreshLive(true)')
     assert source in live['sdk_child_uids'] and source not in live['sdk_uids'], live
     assert source not in live['uids'], 'child evidence must not claim a running parent'
     runtime = page.request.get(base + '/api/session/runtime', params={'uid': source}).json()
@@ -389,12 +398,19 @@ def orphaned_tree(browser, base, fake, screenshots, label):
     expect(page.locator('#dlive')).to_have_attribute('title', '原生子代理仍在运行')
     assert not fake.methods('thread/resume'), 'viewing an unloaded parent resumed it'
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-children.png'), full_page=True)
+    page.wait_for_function('uid => S.cursors.get(uid)?.anchor', arg=source)
     if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    outer_row = page.locator(f'#side .item[data-uid="{outer}"]')
+    outer_row.click()
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    with fake.source_path.open('ab') as rollout:
+        rollout.write(encoded(codex_message('assistant', UNREAD, ordinal=100)))
+    expect(badge).to_have_text('1', timeout=10000)
+    expect(badge).to_have_class(re.compile(r'\bsdk\b'))
     page.get_by_role('button', name='按需展开', exact=True).click()
     # A cold, collapsed tree must stop the hidden parent through the normal
     # lifecycle endpoint even though only its native descendants remain loaded.
-    row = page.locator(f'#side .item[data-uid="{outer}"]')
-    row.click(button='right')
+    outer_row.click(button='right')
     stop = page.locator('#item-menu [data-act="stop-tree"]')
     expect(stop).to_be_visible()
     expect(stop).not_to_have_attribute('aria-disabled', 'true')
@@ -415,19 +431,29 @@ def orphaned_tree(browser, base, fake, screenshots, label):
     # waiting marker after successful stop. Migration still waits for unload.
     page.get_by_role('button', name='分层显示', exact=True).click()
     badge = page.locator(f'#side .item[data-uid="{source}"] .item-status')
-    expect(badge).to_have_attribute('title', '已停止，等待原生卸载')
+    expect(badge).to_have_text('1')
+    expect(badge).to_have_attribute('title', '1 条新内容，已停止，等待原生卸载')
     if screenshots: page.screenshot(path=str(screenshots / f'{label}-retained.png'), full_page=True)
+    expect(badge).to_have_class(re.compile(r'\bidle\b'))
+    expect(badge).not_to_have_class(re.compile(r'\bsdk\b'))
     tree = page.request.post(base + '/api/session/transfer/tree', data={'uid': source}).json()
     assert any('尚未卸载' in row.get('disabled_reason', '') for row in tree['sessions']), tree
     fake.loaded.difference_update({CHILD, GRANDCHILD, LATE_CHILD})
     page.wait_for_timeout(2100)
     page.evaluate('refreshLive(true)')
     page.wait_for_function('uid => !S.retainedSdk.has(uid)', arg=source)
+    expect(badge).to_have_text('1')
+    expect(badge).to_have_attribute('title', '1 条新内容，会话已退出')
+    expect(badge).to_have_class(re.compile(r'\bidle\b'))
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-unloaded.png'), full_page=True)
     tree = page.request.post(base + '/api/session/transfer/tree', data={'uid': source}).json()
     assert all(row['selectable'] for row in tree['sessions']), tree
     assert not fake.methods('thread/resume'), 'observation reopened stopped parent'
+    page.locator(f'#side .item[data-uid="{source}"]').click()
+    expect(page.locator('.sdk-history')).to_contain_text(UNREAD)
+    expect(badge).not_to_have_class(re.compile(r'\bvisible\b'))
     context.close()
-    print(f'PASS {label}: unloaded parent/loaded descendants, collapsed tree stop, independent fork, retained writer then unload', flush=True)
+    print(f'PASS {label}: collapsed tree stop, independent fork, blue unread becomes gray, retained writer then unload and read', flush=True)
 
 
 def main():

@@ -266,7 +266,7 @@ def main():
                     expect(page.locator('#session-freeze-overlay')).to_be_hidden()
                     expect(page.locator('#dlive.frozen')).to_have_count(0)
                     # The paused session retains its own marker and unread count.
-                    page.evaluate('uid => addUnread(uid, 3)', uid)
+                    page.evaluate('uid => addUnread(uid, null, 3)', uid)
                     paused_side = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
                     expect(paused_side).to_have_class(re.compile(r'\bfrozen\b'))
                     expect(paused_side).to_have_text('')
