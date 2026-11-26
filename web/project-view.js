@@ -21,7 +21,7 @@ const PROJECT_VIEW = (() => {
   function setListOpen(open, restoreFocus = true) {
     if (!cwd || (open && !narrow.matches)
         || document.body.classList.contains('project-list-open') === open) return;
-    const toggle = document.querySelector('#detail .mobile-back');
+    const toggle = document.getElementById('project-list-toggle');
     document.body.classList.toggle('project-list-open', open);
     document.getElementById('right').inert = open;
     document.getElementById('project-list-scrim').hidden = !open;
@@ -29,16 +29,12 @@ const PROJECT_VIEW = (() => {
     close.hidden = !open;
     toggle?.setAttribute('aria-expanded', String(open));
     if (open) close.focus();
-    else if (restoreFocus) requestAnimationFrame(() => {
-      if (!narrow.matches || document.body.classList.contains('project-list-open')) return;
-      if (document.activeElement === document.body || document.activeElement === close) {
-        document.querySelector('#detail .mobile-back')?.focus();
-      }
-    });
+    else if (restoreFocus) toggle?.focus({preventScroll: true});
   }
 
   function bindListButton(button, fallback) {
     if (!cwd) { button.onclick = fallback; return; }
+    button.id = 'project-list-toggle';
     button.innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="#i-list"/></svg>';
     button.title = button.ariaLabel = '会话列表';
     button.setAttribute('aria-controls', 'left');
