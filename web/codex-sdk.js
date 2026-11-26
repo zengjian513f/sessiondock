@@ -1115,7 +1115,8 @@ const CodexSdkView = {
       if (!steer && await this.command(text)) {
         return;
       }
-      if (!steer && (text.startsWith('/') || text.startsWith('!'))) {
+      // A leading slash can be part of a path or ordinary prose.
+      if (!steer && /^\/[a-z][a-z0-9_-]*(?:\s|$)/i.test(text)) {
         this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
         return;
       }

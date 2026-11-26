@@ -144,8 +144,10 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     send.click(); expect(box).to_have_value('')
     expect(page.locator('.sdk-queued')).to_have_count(1)
     submit('立即引导当前工作 ' + label)
-    submit('FIFO first · 中文与 realistic-long-project-path ' + label)
-    submit('FIFO second ' + label)
+    first = '/tmp开头的路径请从结果中排除 · ' + label
+    second = '/tmp/fixture-notes.txt 请检查这份文件 · ' + label
+    submit(first)
+    submit(second)
     expect(page.locator('.sdk-queued')).to_have_count(4)
     assert len(fake.methods('turn/start')) == starts + 1
     assert len(fake.methods('turn/steer')) == steers
@@ -157,16 +159,18 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     assert fake.methods('turn/steer')[-1]['params']['expectedTurnId'] == fake.turn
     page.reload(wait_until='networkidle')
     page.wait_for_function('CodexSdkView.connected')
-    expect(page.locator('.sdk-queued')).to_have_count(2)
+    expect(row(first)).to_be_visible()
+    expect(row(second)).to_be_visible()
     if screenshots:
         page.screenshot(path=str(screenshots / f'{label}-queue.png'))
     fake.complete()
-    expect(page.locator('.sdk-live')).to_contain_text('FIFO first')
+    expect(page.locator('.sdk-live')).to_contain_text(first)
     expect(page.locator('.sdk-queued')).to_have_count(1)
-    assert 'FIFO first' in fake.methods('turn/start')[-1]['params']['input'][0]['text']
+    assert fake.methods('turn/start')[-1]['params']['input'][0]['text'] == first
     fake.complete()
-    expect(page.locator('.sdk-live')).to_contain_text('FIFO second')
+    expect(page.locator('.sdk-live')).to_contain_text(second)
     expect(page.locator('.sdk-queued')).to_have_count(0)
+    assert fake.methods('turn/start')[-1]['params']['input'][0]['text'] == second
     fake.rejected = False
     submit('reject once ' + label)
     fake.complete()

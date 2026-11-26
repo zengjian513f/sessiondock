@@ -866,10 +866,13 @@ scheduling owns subsequent execution. Coverage:
 The composer recognizes `/rename`, `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
 `/default`, `/permissions`, `/approval`, `/sandbox`, `/goal`, `/shell` and
 `!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
-corresponding SDK controls. Unrecognized slash commands stay in the draft and
-show an explanation rather than becoming a model prompt. These are explicit
-SDK mappings, not a PTY command parser. CLI account/plugin management commands
-remain outside this view.
+corresponding SDK controls. An unknown slash command stays in the draft with
+an explanation when its name starts with an ASCII letter, contains only ASCII
+letters, digits, underscores or hyphens, and ends at whitespace or the end of
+the input. Leading paths such as `/tmp/notes.txt` and prose such as
+`/tmp开头的路径请排除` are submitted as ordinary messages, including through Queue.
+Use a leading space to send a literal command-shaped prefix such as `/tmp 请检查`.
+CLI account/plugin management commands remain outside this view.
 
 Validation:
 SDK 实时流启用时暂停额外的历史 watch，落盘历史仍由增量轮询追上；
