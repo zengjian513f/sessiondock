@@ -3,7 +3,8 @@ use super::*;
 
 pub(super) fn history_busy(data: &Data) -> String {
     if data.cancelling {
-        "agy_sdk_history_busy: Agy 已接受中断请求。请等本回合的结束回执到达后再操作会话历史。".into()
+        "agy_sdk_history_busy: Agy 已接受中断请求。请等本回合的结束回执到达后再操作会话历史。"
+            .into()
     } else {
         "agy_sdk_history_busy: 请等待当前任务结束后操作会话历史。".into()
     }
@@ -12,7 +13,7 @@ pub(super) fn history_busy(data: &Data) -> String {
 impl Live {
     fn check_history_idle(&self) -> Result<(), String> {
         let data = self.data.lock().unwrap();
-        if data.outstanding > 0 {
+        if data.outstanding > 0 || data.compact["state"] == "compacting" {
             return Err(history_busy(&data));
         }
         Ok(())
@@ -60,6 +61,15 @@ impl Bridge {
             return Err(previous["error"].as_str().unwrap_or("agy_sdk_action_unknown: 操作已尝试但结果未确认；请核对原生会话，不能自动重试。").to_owned());
         }
         let live = self.open(&target).await?;
+        let _compaction = if method == "compact" {
+            Some(
+                live.compact_operation
+                    .try_lock()
+                    .map_err(|_| "agy_sdk_compact_busy: 此会话已有压缩操作正在进行。")?,
+            )
+        } else {
+            None
+        };
         self.process.check_available(live.sid.clone()).await?;
         live.check_history_idle()?;
         actions.insert(key.clone(), json!({"input":input}));
@@ -67,6 +77,9 @@ impl Bridge {
             crate::sdk_common::save_atomic(path, &*actions)
                 .map_err(|e| format!("agy_sdk_action_receipt: {e}"))?;
         }
+        // Native summary generation can take a full model round. Keep other
+        // sessions' history actions independent once the attempt is recorded.
+        let actions = (method != "compact").then_some(actions);
         let outcome = async {
             let (sender, receiver) = oneshot::channel();
             live.commands
@@ -104,6 +117,10 @@ impl Bridge {
             Ok::<_, String>(result)
         }
         .await;
+        let mut actions = match actions {
+            Some(actions) => actions,
+            None => self.history_actions.lock().await,
+        };
         match &outcome {
             Ok(receipt) => actions.get_mut(&key).unwrap()["receipt"] = receipt.clone(),
             Err(error) => actions.get_mut(&key).unwrap()["error"] = json!(error),
@@ -125,6 +142,13 @@ pub(super) async fn execute(
     shutdown: CancellationToken,
 ) -> Result<Value, String> {
     live.check_history_idle()?;
+    if method == "compact" {
+        let native = runtime
+            .native
+            .as_mut()
+            .ok_or("agy_sdk_compact_unavailable: 此会话还没有 Agy SDK 运行实例。")?;
+        return compact(process, live, native, input).await;
+    }
     let before = input
         .get(if method == "fork" {
             "before"
@@ -246,5 +270,38 @@ pub(super) async fn execute(
             live.diagnostic(diagnostics);
         }
     }
+    result
+}
+
+async fn compact(
+    process: &ProcessConfig,
+    live: &Live,
+    native: &mut Native,
+    input: &Value,
+) -> Result<Value, String> {
+    let request = text(input, "request_id")?;
+    let first = echo::first_native_step(process, live)
+        .await
+        .ok_or("agy_sdk_compact_unavailable: 无法读取原生会话的当前检查点。")?;
+    {
+        let mut data = live.data.lock().unwrap();
+        data.compact = json!({"state":"compacting"});
+        live.publish(&mut data);
+    }
+    let result = async {
+        native.compact(&request).await?;
+        if !echo::compacted_since(process, live, first).await {
+            return Err("agy_sdk_compact_no_checkpoint: Agy 未写入新的压缩检查点。".into());
+        }
+        context::refresh(process, live).await;
+        Ok(json!({"session_id":live.sid,"compact":{"state":"success"}}))
+    }
+    .await;
+    let mut data = live.data.lock().unwrap();
+    data.compact = match &result {
+        Ok(_) => json!({"state":"success"}),
+        Err(error) => json!({"state":"failed","error":error}),
+    };
+    live.publish(&mut data);
     result
 }

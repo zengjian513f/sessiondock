@@ -198,12 +198,13 @@ const UsageUI = {
       note.title=error;section.append(note);
     }
   },
-  gauge(label,used,title) {
+  gauge(label,used,title,showOverflow=false) {
     const node=el('span','sdk-gauge');this.title(node,title);
     const value=Math.max(0,Math.min(100,used)),bar=el('i','sdk-bar'),fill=el('u','');
     fill.style.width=`${value}%`;bar.append(fill);
     for(const [key,text] of Object.entries({role:'progressbar','aria-label':`${label} 已用`,'aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':String(value)}))bar.setAttribute(key,text);
-    const display=value>0 && value<0.1 ? '<0.1%' : value<100 && value>99.9 ? '>99.9%' : `${this.percent(value)}%`;
+    const display=value>0 && value<0.1 ? '<0.1%' : value<100 && value>99.9 ? '>99.9%' : `${this.percent(showOverflow && used>100 ? used : value)}%`;
+    if(showOverflow && used>100)bar.setAttribute('aria-valuetext',display);
     node.append(el('span','',this.shortLabel(label)),bar,el('b','',display));node.classList.toggle('low',value>=80);
     return node;
   },

@@ -21,6 +21,68 @@ from send_browser import initialize
 from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, refresh_usage
 
 
+def compact_button(page):
+    button=page.get_by_role('button',name='压缩上下文')
+    if not button.is_visible():
+        page.locator('#sdk-more').click()
+    expect(button).to_be_visible()
+    return button
+
+
+def exercise_compaction(page, fixture, footer, screenshots):
+    inputs=len(fixture.inputs())
+    pid=fixture.inputs()[-1]['pid']
+    uid=page.evaluate('S.sel')
+    usage=fixture.root/'context-usage.json'
+    usage.write_text(json.dumps({'estimatedTokensUsed':520257,'maxContextTokens':512000}))
+    expect(footer).to_have_attribute('title',re.compile(r'已用 101\.6%.*压缩时机由 Agy 决定'),timeout=15000)
+    expect(footer.locator('.sdk-gauge').first.locator('b')).to_have_text('101.6%')
+    expect(footer.get_by_role('progressbar',name='上下文 已用')).to_have_attribute('aria-valuetext','101.6%')
+    assert not any(row['kind']=='compact' for row in fixture.events())
+    for width,theme in [(1280,'light'),(390,'dark')]:
+        page.set_viewport_size({'width':width,'height':900})
+        page.emulate_media(color_scheme=theme)
+        if not page.locator('#sdk-input').is_visible():
+            page.locator(f'#side .item[data-uid="{uid}"]').click()
+        expect(compact_button(page)).to_be_enabled()
+        page.screenshot(path=str(screenshots/f'agy-over-context-{width}-{theme}.png'),full_page=True)
+        page.keyboard.press('Escape')
+    page.locator('#sdk-input').fill('压缩时保留草稿')
+    (fixture.root/'compact-hold').touch()
+    with page.expect_response('**/api/native-sdk/compact') as compacted:
+        compact_button(page).click()
+        expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('压缩中')
+        expect(compact_button(page)).to_be_disabled()
+        page.screenshot(path=str(screenshots/'agy-compacting-390-dark.png'),full_page=True)
+        page.keyboard.press('Escape')
+        (fixture.root/'compact-hold').unlink()
+    assert compacted.value.ok,compacted.value.text()
+    expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('压缩完成')
+    expect(footer).to_have_attribute('title',re.compile('已用 12.5%'))
+    expect(page.locator('#sdk-input')).to_have_value('压缩时保留草稿')
+    page.screenshot(path=str(screenshots/'agy-compacted-390-dark.png'),full_page=True)
+    replay=page.request.post(compacted.value.url,data=compacted.value.request.post_data_json)
+    assert replay.ok,replay.text()
+    assert len([row for row in fixture.events() if row['kind']=='compact'])==1
+    (fixture.root/'compact-no-checkpoint').touch()
+    page.locator('#sdk-input').fill('/compact')
+    with page.expect_response('**/api/native-sdk/compact') as failed:
+        page.locator('#sdk-send').click()
+    assert not failed.value.ok
+    expect(page.locator('.native-sdk-pane .sdk-status')).to_have_attribute('title',re.compile('Agy 未写入新的压缩检查点'))
+    expect(page.locator('#sdk-input')).to_have_value('/compact')
+    (fixture.root/'compact-no-checkpoint').unlink()
+    with page.expect_response('**/api/native-sdk/compact') as retried:
+        page.locator('#sdk-send').click()
+    assert retried.value.ok,retried.value.text()
+    expect(page.locator('#sdk-input')).to_have_value('')
+    assert page.evaluate('S.sel')==uid and len(fixture.inputs())==inputs
+    compactions=[row for row in fixture.events() if row['kind']=='compact']
+    assert len(compactions)==3 and {row['pid'] for row in compactions}=={pid},compactions
+    page.set_viewport_size({'width':1280,'height':900})
+    page.emulate_media(color_scheme='light')
+
+
 def exercise(browser, base, fixture, screenshots):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
@@ -60,6 +122,7 @@ def exercise(browser, base, fixture, screenshots):
         page.locator('#sdk-composer .composer-run-action').click()
     footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
     expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+    expect(page.locator('[data-sdk-action="compact"]')).to_be_hidden()
     assert held_open,'cold quota must render while native open is blocked'
     for route in held_open:route.continue_()
     context.unroute('**/api/native-sdk/open')
@@ -180,6 +243,7 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function('!NativeSdkView.loadingUsage')
     refresh_usage(page)
     expect(footer).not_to_have_attribute('title',re.compile('Delayed native quota diagnostic.'))
+    exercise_compaction(page,fixture,footer,screenshots)
     # Native state updates independently of cumulative result.usage, including
     # compaction, missing estimates, native errors and identity mismatches.
     page.set_viewport_size({'width':1280,'height':900})
@@ -227,6 +291,8 @@ def main():
         cleanup.callback(stop_private_sdkhosts, root)
         port = free_port()
         fixture = AgyFixture(root, (REPO/'target/debug/ptyhost').resolve())
+        (fixture.root/'native-echo-store').touch()
+        (fixture.root/'foreground-status').write_text('IDLE')
         (fixture.root/'init-model').write_text('gemini-synthetic')
         (fixture.root/'models.tsv').write_text('gemini-synthetic\tGemini Synthetic\nclaude-synthetic\tClaude Synthetic\nunknown-synthetic\tUnknown Synthetic')
         with patch.dict(os.environ, fixture.env):
@@ -277,6 +343,12 @@ def main():
                     page.wait_for_function('!NativeSdkView.running')
                     page.reload(wait_until='domcontentloaded')
                     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('已用 50.0%'),timeout=15000)
+                    with page.expect_response('**/api/native-sdk/compact') as compacted:
+                        compact_button(page).click()
+                    assert compacted.value.ok,compacted.value.text()
+                    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('已用 12.5%'))
+                    expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('压缩完成')
+                    page.screenshot(path=str(args.screenshots/'agy-compacted-hub-390-dark.png'),full_page=True)
                     page.close()
                     print('PASS Agy context through Hub: busy refresh, slash, cancellation and reload',flush=True)
                 finally:

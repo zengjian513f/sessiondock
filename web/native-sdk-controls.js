@@ -205,9 +205,12 @@ const NativeSdkControls = {
   },
   paint(view) {
     if (!view.pane) return;
+    const source=view.uid.split(':')[0];
     for (const button of view.pane.querySelectorAll('[data-sdk-action]')) {
       button.hidden=!this.supportsAction(view,button.dataset.sdkAction);
-      if(view.uid.startsWith('droid:'))button.disabled=!!view.nativeActionPending;
+      if(source==='droid')button.disabled=!!view.nativeActionPending;
+      if(source==='agy' && button.dataset.sdkAction==='compact')
+        button.disabled=!!view.nativeActionPending || view.running || view.raw?.compact?.state==='compacting';
     }
     this.paintSettings(view);this.paintUsage(view);this.paintQueue(view);this.layout(view);
   },
@@ -219,6 +222,7 @@ const NativeSdkControls = {
     // Permission requests do not imply OpenCode's permission-rule settings API.
     if(method==='permissions')return view.uid.startsWith('opencode:') && (view.capabilities.permissions===true || view.capabilities.settings===true);
     if(method==='unrevert' || method==='revert_commit')return view.capabilities[method]===true && this.hasStagedRevert(view);
+    if(method==='compact' && view.uid.startsWith('agy:'))return view.capabilities.compact===true && view.raw?.compact_available===true;
     return view.capabilities[method]===true;
   },
   rememberUsage(view) {
@@ -238,16 +242,16 @@ const NativeSdkControls = {
     const creditCount=value=>value.toLocaleString(undefined,{maximumFractionDigits:2});
     const lines=[];
     const text=(label,value)=>{lines.push(()=>`${label}：${typeof value==='function' ? value() : value}`);};
-    const gauge=(label,used,title)=>{
+    const gauge=(label,used,title,showOverflow=false)=>{
       if (!Number.isFinite(used)) return;
-      gauges.append(UsageUI.gauge(label,used,title));text(label,title);
+      gauges.append(UsageUI.gauge(label,used,title,showOverflow));text(label,title);
     };
     const context=usage.context || view.raw?.context_usage || view.usageData?.context_usage || {};
-    const percent=number(context.percent,context.percentage);if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens) ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}`);
+    const source=view.uid.split(':')[0],percent=number(context.percent,context.percentage);
+    if(percent!=null)gauge('上下文',percent,`已用 ${percent.toFixed(1)}%${Number.isFinite(context.used_tokens) && Number.isFinite(context.max_tokens) ? `（${count(context.used_tokens)} / ${count(context.max_tokens)} tokens）`:''}；${context.basis || '原生估计'}${source==='agy' && percent>100 ? '；估计已超过原生窗口，压缩时机由 Agy 决定' : ''}`,source==='agy');
     UsageUI.rememberQuota(view.uid,view.usageData?.quota);
     const quota=UsageUI.quota(view.uid) || view.usageData?.quota;
     view.usageData.quota=quota;
-    const source=view.uid.split(':')[0];
     const model=sdkSettingValue(view,'model',view.nativeModel || view.historyData?.model || '');
     const selection=UsageUI.quotaSelection(quota,source,model);
     UsageUI.appendQuotas(gauges,quota,source,selection.inline);
@@ -452,11 +456,18 @@ const NativeSdkControls = {
   },
   async action(view,method,body={}) {
     const generation=view.generation,droid=view.uid.startsWith('droid:');
+    const agyCompact=method==='compact' && view.uid.startsWith('agy:');
+    if(agyCompact && (view.nativeActionPending || view.running || view.raw?.compact?.state==='compacting')){
+      view.setNotice('请等待当前 Agy 操作结束后压缩。','blocked');return false;
+    }
+    if(agyCompact && view.capabilities.compact===true && view.raw?.compact_available!==true){
+      view.setNotice('压缩需要此会话已有 Agy SDK 运行实例。','blocked');return false;
+    }
     if(droid && view.nativeActionPending){view.setNotice('会话操作正在进行，请稍候。');return false;}
     if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setNotice('当前原生接口尚未提供按消息分支，输入已保留。','blocked');return false;}
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
     if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
-    if(droid){view.nativeActionPending=true;this.paint(view);}
+    if(droid || agyCompact){view.nativeActionPending=true;this.paint(view);}
     try{
       if(droid && method==='compact' && view.capabilities.compact_creates_session && !await appConfirm('压缩当前上下文？原生将压缩会话记录；若生成新会话，将切换到新会话继续。',{ok:'压缩'}))return false;
       if(method==='fork'){
@@ -506,7 +517,7 @@ const NativeSdkControls = {
       if(!droid && method==='rewind' && body.prompt_index==null){const response=await view.request('api/native-sdk/rewind_points',{uid:view.uid});const points=response.rewind_points || response.raw?.rewind_points || response.raw?.points || [];const modal=CodexSdkActions.form('回退对话','仅回退会话历史，不回滚工作区文件。','回退');const select=document.createElement('select');select.setAttribute('aria-label','回退消息');for(const point of points)select.add(new Option(point.prompt_preview || point.preview || String(point.prompt_index),point.prompt_index));modal.fields.append(select);modal.form.onsubmit=event=>{event.preventDefault();if(select.value!=='')modal.finish(Number(select.value));};body.prompt_index=await modal.answer;if(body.prompt_index==null)return false;}
       if(method==='revert_commit' && !await appConfirm('提交回退会永久移除被回退的对话记录；工作区文件不会回滚。',{ok:'提交回退'}))return false;
       if(!view.current(generation))return false;
-      if(method==='compact'){
+      if(method==='compact' && !agyCompact){
         view.raw={...(view.raw || {}),status:'compacting',compact:{state:'compacting'}};
         view.paintStatus();
       }
@@ -560,18 +571,19 @@ const NativeSdkControls = {
         if(body.restore_text && view.current(generation))await CodexSdkActions.restoreInput(view,body.restore_text);
       }
       if(method==='compact'){
+        if(agyCompact){await view.refreshHistory(generation,true);return true;}
         if(droid){await view.refreshHistory(generation,true);if(!view.current(generation))return true;void this.loadUsage(view,false);}
         if(view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:response.raw?.compact || response.compact || {state:'success'}};
         view.paintStatus();
       }else view.setNotice('原生操作已接受');return true;
     }catch(error){
       if(view.current(generation)){
-        if(method==='compact' && view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:{state:'failed',error:error.message}};
+        if(method==='compact' && !agyCompact && view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:{state:'failed',error:error.message}};
         view.setNotice(`操作失败：${error.message}`,'blocked');
       }
       return false;
     }finally{
-      if(droid && view.current(generation)){view.nativeActionPending=false;this.paint(view);}
+      if((droid || agyCompact) && view.current(generation)){view.nativeActionPending=false;this.paint(view);}
     }
   },
   async command(view,text) {
@@ -598,6 +610,8 @@ const NativeSdkControls = {
     }else if(command==='plan'){
       await this.settings(view,{mode:arg || (view.uid.startsWith('droid:')?'spec':'plan')});
       success=true;
+    }else if(command==='compact' && arg && view.uid.startsWith('agy:')){
+      view.setNotice('用法：/compact（无需参数）','blocked');
     }else if(['fork','compact','revert','rewind','shell'].includes(command))success=await this.action(view,command,{...(command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{}),...(view.uid.startsWith('droid:')?{command_text:text}:{})});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}

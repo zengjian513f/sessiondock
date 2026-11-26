@@ -178,6 +178,19 @@ class ControlHandler(BaseHTTPRequestHandler):
             assert payload.get('deliveryStrategy')=='MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION',payload
             assert isinstance(payload.get('clientMessageId'),str) and payload['clientMessageId'],payload
             assert isinstance(payload.get('items'),list) and len(payload['items'])==1,payload
+            if 'item' in payload['items'][0]:
+                command={'item':{'slashCommand':{'info':{'name':'compact','type':'SLASH_COMMAND_TYPE_SYSTEM'}}}}
+                assert payload['items']==[command] and payload['blocking'] and payload['propagateError'],payload
+                record({'kind':'compact','sid':sid,'pid':os.getpid(),'request_id':payload['clientMessageId']})
+                until=time.monotonic()+20
+                while (root/'compact-hold').exists() and time.monotonic()<until:
+                    threading.Event().wait(0.02)
+                if not (root/'compact-no-checkpoint').exists():
+                    connection.execute('INSERT INTO steps (idx,step_type,status,step_format) VALUES (?,23,3,0)',(index,))
+                    advance()
+                    (root/'context-usage.json').write_text(json.dumps({
+                        'estimatedTokensUsed':32000,'maxContextTokens':256000,'estimatedAfterCompaction':True}))
+                self.send_response(200);self.end_headers();self.wfile.write(b'{}');return
             steer_text=payload['items'][0]['text']
             mode=(root/'steer-mode').read_text().strip() if (root/'steer-mode').exists() else ''
             record({'kind':'steer','sid':sid,'pid':os.getpid(),'text':steer_text,

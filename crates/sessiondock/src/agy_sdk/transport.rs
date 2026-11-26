@@ -609,6 +609,23 @@ impl Native {
             .is_some_and(|control| control.cancelled(turn))
     }
 
+    pub async fn compact(&mut self, request_id: &str) -> Result<(), String> {
+        let control = self
+            .control
+            .as_ref()
+            .ok_or("agy_sdk_control_unavailable: 此运行实例没有原生管理接口授权。")?;
+        let state = control
+            .state(self.pid, &self.sid, "sessiondock-compact")
+            .await?;
+        if !super::control::foreground_idle(&state["update"], &self.sid) {
+            return Err("agy_sdk_compact_busy: 请等待 Agy 前台空闲后再压缩。".into());
+        }
+        control
+            .compact(self.pid, &self.sid, request_id)
+            .await
+            .map_err(|error| self.process.redact(&error))
+    }
+
     pub async fn history_action(&mut self, method: &str, body: Value) -> Result<Value, String> {
         let control = self
             .control

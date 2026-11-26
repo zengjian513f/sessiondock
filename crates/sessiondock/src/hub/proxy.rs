@@ -699,6 +699,9 @@ pub async fn proxy(
     let websocket = matches!(forward.path, "/api/term/attach" | "/api/voice/realtime");
     let idle = if forward.path == "/api/watch" {
         WATCH_TIMEOUT
+    } else if forward.path == "/api/native-sdk/compact" {
+        // Agy's native request waits for summary generation and a checkpoint.
+        Duration::from_secs(135)
     } else if forward.path.starts_with("/api/session/clone")
         || matches!(
             forward.path,

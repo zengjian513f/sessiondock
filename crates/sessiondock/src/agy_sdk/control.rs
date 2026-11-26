@@ -123,6 +123,26 @@ impl Control {
         .map(|_| ())
     }
 
+    pub async fn compact(&self, pid: u32, sid: &str, request_id: &str) -> Result<(), String> {
+        self.request_with_timeout(
+            pid,
+            "SendUserCascadeMessage",
+            json!({
+                "cascadeId": sid,
+                "items": [{"item": {"slashCommand": {"info": {
+                    "name": "compact", "type": "SLASH_COMMAND_TYPE_SYSTEM"
+                }}}}],
+                "deliveryStrategy": "MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION",
+                "clientMessageId": request_id,
+                "blocking": true,
+                "propagateError": true,
+            }),
+            Duration::from_secs(120),
+        )
+        .await
+        .map(|_| ())
+    }
+
     pub async fn state(
         &self,
         pid: u32,
@@ -149,6 +169,17 @@ impl Control {
         pid: u32,
         method: &str,
         body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.request_with_timeout(pid, method, body, Duration::from_secs(5))
+            .await
+    }
+
+    async fn request_with_timeout(
+        &self,
+        pid: u32,
+        method: &str,
+        body: serde_json::Value,
+        timeout: Duration,
     ) -> Result<serde_json::Value, String> {
         let port = super::control_log::port(&self.log, pid).await?;
         let target = Target {
@@ -183,9 +214,9 @@ impl Control {
             headers: &headers,
             body: Some(&body),
             connect: Duration::from_secs(5),
-            idle: Duration::from_secs(5),
+            idle: timeout,
         };
-        let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let outcome = tokio::time::timeout(timeout, async {
             let client = Client::default();
             let response = client.open(&target, request()).await?;
             let mut status = response.status;

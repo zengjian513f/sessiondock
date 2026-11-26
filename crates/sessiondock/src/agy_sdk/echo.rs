@@ -37,6 +37,22 @@ pub(super) async fn first_native_step(process: &ProcessConfig, live: &Live) -> O
     .ok()
 }
 
+pub(super) async fn compacted_since(process: &ProcessConfig, live: &Live, first: u64) -> bool {
+    let path = process.native_path(&live.sid);
+    // Agy's completed CONVERSATION_HISTORY step is a native compaction checkpoint.
+    tokio::task::spawn_blocking(move || {
+        read_steps(&path)?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM steps WHERE idx>=?1 AND step_type=23 AND status=3)",
+            [first],
+            |row| row.get(0),
+        )
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
 // The native uncompressed CascadeStep stores UserInput at field 19, whose
 // fields 2 and 19 are userResponse and clientMessageId (Agy 1.5.9).
 pub(super) async fn refresh(process: &ProcessConfig, live: &Live, turn: &Turn) {

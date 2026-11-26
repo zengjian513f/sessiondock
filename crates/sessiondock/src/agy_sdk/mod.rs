@@ -43,6 +43,7 @@ struct Live {
     stop: CancellationToken,
     done: CancellationToken,
     context_read: tokio::sync::Mutex<()>,
+    compact_operation: tokio::sync::Mutex<()>,
 }
 
 struct Data {
@@ -69,6 +70,7 @@ struct Data {
     usage: Value,
     step_usage: Value,
     context_usage: Value,
+    compact: Value,
     usage_errors: Value,
     mode: Option<String>,
     runtime: Option<Turn>,
@@ -257,7 +259,7 @@ pub fn new(
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
         "rename":true,"interrupt":true,"steer":true,"respond":false,"approvals":false,"questions":false,
-        "fork":true,"fork_before":true,"revert":true,
+        "fork":true,"fork_before":true,"revert":true,"compact":true,
         "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
@@ -387,7 +389,7 @@ impl Bridge {
         match method {
             "models" => self.process.models(self.shutdown.clone()).await,
             "create" => self.create(target, input).await,
-            "fork" | "revert" => self.history_action(method, target, input).await,
+            "fork" | "revert" | "compact" => self.history_action(method, target, input).await,
             "usage" => { let live=self.open(&target).await?;context::refresh(&self.process, &live).await;let data=live.data.lock().unwrap();Ok(json!({"usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors})) },
             "settings" => {
                 let live=self.open(&target).await?;let mut data=live.data.lock().unwrap();
@@ -635,6 +637,7 @@ impl Bridge {
             stop: CancellationToken::new(),
             done: CancellationToken::new(),
             context_read: tokio::sync::Mutex::new(()),
+            compact_operation: tokio::sync::Mutex::new(()),
             events,
             data: Mutex::new(Data {
                 seq: 0,
@@ -646,6 +649,7 @@ impl Bridge {
                 active: None,
                 active_launch: None,
                 foreground_idle: false,
+                compact: Value::Null,
                 cancel_pending: false,
                 cancel_error: None,
                 cancelling: false,
@@ -796,10 +800,11 @@ impl Live {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0 || waiting,
             "progress":data.active.as_ref().map(|id|json!({"request_id":id})),
             "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
+            "compact_available":data.runtime.is_some(),
             "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling,"cancel_error":data.cancel_error,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
-            "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
+            "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"compact":data.compact,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
     fn snapshot(&self, data: &Data) -> Value {
@@ -1116,6 +1121,7 @@ async fn actor(
                     data.cancelling = false;
                     data.error = None;
                     data.error_kind = None;
+                    data.compact = Value::Null;
                     data.model = turn.model.clone();
                     data.effort = turn.effort.clone();
                     if let Some(item) = data

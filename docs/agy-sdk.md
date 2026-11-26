@@ -61,6 +61,7 @@ DELTA：对话中的原生思考正文以无边框的「思考记录」显示一
 | rename | 本实例的 `UpdateConversationAnnotations`，`annotations.title`、`mergeAnnotations=true`；等待读取原生摘要确认标题 |
 | fork | 本实例 Connect `ForkConversation`，整会话或原生 `step:N` 用户消息之前分支，保留源会话与文件 |
 | revert | 本实例 `RevertToCascadeStep`，显式 `conversationOnly:true`，保留 SID 与工作区文件 |
+| compact | 已有运行实例时，底栏按钮和 `/compact` 通过本实例 Connect 接口请求原生压缩 |
 | respond / 审批 / 问题卡 | capability 为 false，respond 明确报 unsupported |
 | models | profile 环境中执行原生 `agy models`，解析 TSV；失败不填猜测模型 |
 | discard | 仅确认可丢弃网页创建回执；保留原生文件及已经接受的任务 |
@@ -298,9 +299,18 @@ Connect `StreamAgentStateUpdates` 初始快照读取 `contextWindowUsage`，
 不发送模型回合、不取累计 Token 推算。原生压缩后的估计按新测量更新；
 字段缺失、窗口未知或实例退出时隐藏，查询失败显示用量错误并撤下旧百分比。
 原生 NDJSON 与 transcript 不含这个测量，不能从它们替代读取。
+[原生自动压缩](https://antigravity.google/docs/commands/compact/)由 Agy 在执行期间决定。
+底栏保留可能超过 100% 的原生估计，并在用量提示里说明压缩时机由 Agy 决定。读取用量不会触发模型请求。
+
+DELTA（BUG-20261126-155708-c3adac）：已有 Agy SDK 运行实例的会话可用
+「压缩上下文」或无参数的 `/compact`。桥接在确认原生前台和普通回合均空闲后，
+向本实例的 `SendUserCascadeMessage` 发送结构化系统命令，复用原 PID、SID 和模型。
+原生完成回执与新增压缩检查点均确认后刷新用量和历史。同一请求 ID 不重复提交。
+操作保留已有草稿。缺少运行实例时没有压缩按钮，运行中禁用压缩。
+
 [Agy 用量浏览器](../tests/agy_usage_browser.py)覆盖刷新、压缩估计、缺失、错误与身份不匹配；
 [真实上下文浏览器](../tests/agy_context_real_browser.py)使用隔离 HOME 与 loopback 合成模型，
-核对原生测量、同 PID/SID、刷新及零额外模型回合。
+核对原生测量、压缩检查点、同 PID/SID 与显式模型、刷新及继续对话。
 
 
 模型目录与新建会话共用解析：带强度后缀的原生模型已固定 effort。SDK 模型框将这些

@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Operator-only real Agy context via Chromium, private HOME and synthetic gateway."""
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import argparse
 import json
-import os
 from pathlib import Path
 import sqlite3
-import subprocess
 import tempfile
 from playwright.sync_api import sync_playwright,expect
 from agy_real_browser import installed_agy
 from agy_test_gateway import gateway, MODELS
-from agy_sdk_browser import select_sdk,send,watch
+from agy_sdk_browser import idle,open_dialog,send,watch
+from agy_usage_browser import compact_button
 MODEL = MODELS[0]
 from history_fixtures import BINARY,REPO,Corpus,isolated_server
 from sdkhost_fixtures import stop_private_sdkhosts
@@ -36,11 +35,6 @@ def main():
             'AGY_LLM_GATEWAY_API_KEY':'synthetic-local-fixture','AGY_LLM_GATEWAY_WIRE_PROTOCOL':'openai',
             'HTTP_PROXY':url,'HTTPS_PROXY':url,'ALL_PROXY':url,'NO_PROXY':'127.0.0.1,localhost,::1'}
         for key,folder in [('XDG_CONFIG_HOME','config'),('XDG_DATA_HOME','data'),('XDG_CACHE_HOME','cache'),('XDG_STATE_HOME','state'),('TMPDIR','tmp')]:env[key]=str(root/folder)
-        argv=[str(args.agy),'--model',MODEL,'--input-format','stream-json','--output-format','stream-json']
-        seed=subprocess.run(argv,input='',capture_output=True,text=True,cwd=root/'work',env=env,timeout=20)
-        assert seed.returncode==0,seed.stderr
-        init=json.loads(seed.stdout.splitlines()[0]);sid=init['conversation_id']
-        assert init['init']['model']==MODEL
         launcher=root/'launcher.json'
         launcher.write_text(json.dumps({'schema':2,'host_binary':str(REPO/'target/debug/ptyhost'),
             'host_dir':str(root/'host'),'adapters':[],'profiles':[{'id':'agy-context-real','source':'agy',
@@ -53,10 +47,15 @@ def main():
             page=browser.new_page(viewport={'width':1280,'height':900});page.set_default_timeout(20000)
             try:
                 page.goto(base,wait_until='domcontentloaded')
-                page.wait_for_function('sid=>S.sessions.some(r=>r.sid===sid)',arg=sid)
-                uid=page.evaluate('sid=>S.sessions.find(r=>r.sid===sid).uid',sid)
-                select_sdk(page,uid,connected=False)
-                page.locator('#sdk-composer .composer-run-action').click()
+                page.wait_for_function('T.listLoaded')
+                open_dialog(page)
+                page.locator('input[name="new-source"][value="agy"]').check()
+                page.locator('#new-cwd').fill(str(root/'work'))
+                with page.expect_response('**/api/native-sdk/create') as created:
+                    page.locator('#new-session-go').click()
+                assert created.value.ok,created.value.text()
+                session=created.value.json()
+                uid,sid=session['uid'],session['session_id']
                 page.wait_for_function('NativeSdkView.connected')
                 watch(page,uid)
                 send(page,'Private context measurement fixture')
@@ -65,20 +64,37 @@ def main():
                 assert measurement['used_tokens']>0 and measurement['percent']>0,measurement
                 footer=page.locator('.native-sdk-pane .sdk-gauges')
                 expect(footer).to_contain_text('ctx')
-                hosts=list((root/'state/sdkhost').glob('*/status.json'))
-                pid=json.loads(hosts[0].read_text())['pid']
-                page.wait_for_function('!NativeSdkView.running')
+                idle(page)
+                host=next((root/'state/sdkhost').glob('616779*/status.json'))
+                pid=json.loads(host.read_text())['pid']
                 before=len(records)
                 page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
                 page.wait_for_function('!NativeSdkView.loadingUsage')
-                assert json.loads(hosts[0].read_text())['pid']==pid
+                assert json.loads(host.read_text())['pid']==pid
                 assert len(records)==before,'context query must not run a model'
                 page.reload(wait_until='domcontentloaded')
                 expect(page.locator('.native-sdk-pane .sdk-gauges')).to_contain_text('ctx',timeout=20000)
+                page.locator('#sdk-input').fill('draft survives native compaction')
+                with page.expect_response('**/api/native-sdk/compact',timeout=45000) as compacted:
+                    compact_button(page).click()
+                assert compacted.value.ok,compacted.value.text()
+                assert compacted.value.json()['raw']['session_id']==sid
+                page.wait_for_function('NativeSdkView.raw.context_usage?.estimated_after_compaction === true')
+                database=native/'conversations'/f'{sid}.db'
+                with closing(sqlite3.connect(database.as_uri()+'?mode=ro',uri=True)) as connection:
+                    checkpoints=connection.execute('SELECT count(*) FROM steps WHERE step_type=23 AND status=3').fetchone()[0]
+                assert checkpoints==1,checkpoints
+                assert len(records)==before+1 and records[-1]['request']['model']==MODEL
+                assert page.evaluate('S.sel')==uid and json.loads(host.read_text())['pid']==pid
+                expect(page.locator('#sdk-input')).to_have_value('draft survives native compaction')
+                watch(page,uid)
+                send(page,'Private follow-up after native compaction')
+                idle(page)
+                assert len(records)==before+2 and json.loads(host.read_text())['pid']==pid
                 print('NATIVE_CONTEXT',measurement,flush=True)
                 assert not errors,errors
                 assert records and all(r['request']['model']==MODELS[0 if r['kind']=='main' else 1] for r in records)
-                print('PASS real Agy context: native estimate, footer, slash refresh without model turn, same PID/SID and reload',flush=True)
+                print('PASS real Agy context and compaction: native checkpoint, same PID/SID and model, draft, reload and follow-up',flush=True)
             finally:
                 browser.close()
 
