@@ -106,7 +106,7 @@ def rejected_bundles(source,target,operation):
 
 
 class Peer:
-    def __init__(self,host,root,source,roots,node,binary,native_codex=False):
+    def __init__(self,host,root,source,roots,node,binary,native_codex=False,*,directory_checks=False):
         repo=Path(__file__).resolve().parents[1]
         self.process=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10',host,
             'python3 -u '+shlex.quote(str(repo/'tests/session_transfer_peer.py'))],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
@@ -115,7 +115,8 @@ class Peer:
             with sqlite3.connect(path) as db:
                 schemas[str(path)]=';\n'.join(row[0] for row in db.execute("SELECT sql FROM sqlite_master WHERE type IN ('table','index') AND sql IS NOT NULL AND name NOT GLOB 'sqlite_*' AND name NOT GLOB '_sessiondock*'"))+';'
         config={'root':str(root),'roots':roots,'cwds':[{'path':str(source.root/('workspace' if source.paths else 'cwd')), 'mode':(source.root/('workspace' if source.paths else 'cwd')).stat().st_mode & 0o777}],
-            'schemas':schemas,'native_codex':native_codex,'node_id':node.nid,'token':TOKEN,'binary':str(binary.resolve()),'web':str(frontend_dir())}
+            'schemas':schemas,'native_codex':native_codex,'node_id':node.nid,'token':TOKEN,'binary':str(binary.resolve()),'web':str(frontend_dir()),
+            'directory_checks':directory_checks}
         self.process.stdin.write(json.dumps(config)+'\n');self.process.stdin.flush()
         ready=json.loads(self.process.stdout.readline())
         self.native_baseline=ready.get('native_baseline')

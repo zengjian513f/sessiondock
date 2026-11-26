@@ -13291,17 +13291,18 @@ function migrationMembers(rows) {
   const groups = new Map();
   for (const member of rows) {
     const key = `${nodeOf(member.uid)}:${member.source}:${member.sid || member.uid}`;
-    const group = groups.get(key) || {member, aliases:new Set(), required:new Set(), parents:[], selectable:true};
+    const group = groups.get(key) || {member, aliases:new Set(), required:new Set(), cwds:new Set(), parents:[], selectable:true};
     if (member.uid === S.sel || (visible.has(member.uid) && !visible.has(group.member.uid))) group.member = member;
     for (const uid of member.member_uids || [member.uid]) group.aliases.add(uid);
     for (const uid of member.required_uids || [member.uid]) group.required.add(uid);
+    if (member.cwd?.startsWith('/')) group.cwds.add(member.cwd);
     if (member.parent_uid) group.parents.push(member.parent_uid);
     group.selectable &&= member.selectable !== false;
     groups.set(key, group);
   }
   const owners = new Map([...groups.values()].flatMap(group => [...group.aliases].map(uid => [uid, group.member.uid])));
   return [...groups.values()].map(group => ({...group.member,
-    selectable:group.selectable, member_uids:[...group.aliases], required_uids:[...group.required],
+    selectable:group.selectable, member_uids:[...group.aliases], required_uids:[...group.required], cwds:[...group.cwds],
     parent_uid:group.parents.map(uid => owners.get(uid) || uid).find(uid => uid !== group.member.uid) || null,
   }));
 }
@@ -13361,13 +13362,16 @@ async function cloneSessionGroup(uid, resumed = null) {
     ? {mode:resumed.request.mode, new_ids:resumed.request.new_ids} : {};
   let overallProgress = 0;
   let environmentSequence = 0;
+  let directorySequence = 0, checkingDirectories = false, directoryNotice = '';
   const environmentClients = new Map();
+  const directoryIssues = new Map();
   const selectedUids = new Set(resumed?.plan?.sessions?.map(member => member.uid) || []);
   let tree = resumed ? {sessions:migrationMembers(plan.sessions.map(member => ({...member, selectable:true, required_uids:[member.uid]})))} : null;
   let selectionVersion = 0, plannedVersion = -1;
   if (resumed) plan.target_node = resumed.request.target_node;
   const mode = () => resumed?.plan.mode || 'move';
   const crossMachine = () => target.value !== sourceId;
+  const selectable = member => member?.selectable && !directoryIssues.has(member.uid);
   const blockedReason = () => {
     const destination = machines.get(target.value);
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
@@ -13382,16 +13386,16 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
   const renderSelection = () => {
     const reason = blockedReason();
-    notice.textContent = [reason, operationStarted && (backgroundAccepted
+    notice.textContent = [reason, checkingDirectories ? '正在核验目标工作目录…' : directoryNotice, operationStarted && (backgroundAccepted
       ? '关闭窗口后迁移仍会继续。可在工具栏「迁移任务」查看进度和结果。'
       : '提交后，可在工具栏「迁移任务」查看进度和结果。')].filter(Boolean).join(' ');
     notice.hidden = !notice.textContent;
     confirm.textContent = aborting ? '正在撤回…' : backgroundAccepted ? '后台迁移中' : busy && operationStarted ? '正在提交…' : uncertain ? '重试提交同一次迁移' : '迁移所选会话';
-    confirm.disabled = backgroundAccepted || busy || planning || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
+    confirm.disabled = backgroundAccepted || busy || planning || checkingDirectories || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || aborting || uncertain;
     if (target.disabled) closeTarget();
-    for (const input of dialog.querySelectorAll('.transfer-tree input')) input.disabled = busy || aborting || uncertain || input.dataset.unavailable === 'true';
+    for (const input of dialog.querySelectorAll('.transfer-tree input')) input.disabled = busy || aborting || uncertain || checkingDirectories || input.dataset.unavailable === 'true';
     $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
     $d('.transfer-abort').textContent = '撤回本次迁移';
     $d('.clone-cancel').disabled = aborting;
@@ -13400,14 +13404,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     $d('.transfer-abort').disabled = aborting;
     dialog.setAttribute('aria-busy', String(busy));
   };
-  const selectionChanged = () => {
-    renderSelection();
-    // A rejected move can discard its preview during progress reconciliation.
-    // Recover it when the user chooses a supported destination/mode again.
-    if (!busy && !planning && !uncertain) void refreshPlan();
-    else refreshEnvironment();
-  };
-  target.onchange = selectionChanged;
+  target.onchange = () => { if (tree && !busy && !uncertain) void refreshDestination(); };
   const close = (refresh = true) => {
     clearInterval(progressTimer); closeTarget(); dialog.close(); dialog.remove(); refreshTransferTasks();
     if (refresh) resumeTransferSidebar();
@@ -13477,21 +13474,22 @@ async function cloneSessionGroup(uid, resumed = null) {
       const title = document.createElement('td');
       const label = document.createElement('label'); label.className = 'transfer-check';
       label.style.paddingInlineStart = `${depth * 18}px`;
-      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = member.member_uids.every(uid => selectedUids.has(uid));
-      input.dataset.uid = member.uid; input.dataset.unavailable = String(!member.selectable);
-      input.disabled = !member.selectable || busy || uncertain;
+      const available = selectable(member);
+      const issue = directoryIssues.get(member.uid);
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = available && member.member_uids.every(uid => selectedUids.has(uid));
+      input.dataset.uid = member.uid; input.dataset.unavailable = String(!available);
       const shortId = (member.sid || '').slice(-8);
       input.setAttribute('aria-label', `${member.title || member.sid}${shortId ? ' · '+shortId : ''}`);
       input.onchange = () => {
         const ids = member.required_uids || [member.uid];
-        for (const id of ids) if (physical.get(id)?.selectable) input.checked ? selectedUids.add(id) : selectedUids.delete(id);
+        for (const id of ids) if (selectable(physical.get(id))) input.checked ? selectedUids.add(id) : selectedUids.delete(id);
         ++selectionVersion; renderMembers(plan); void refreshPlan();
       };
       const text = document.createElement('span'); text.className = 'transfer-tree-title';
       const name = document.createElement('span'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid;
       name.title = member.title || member.sid;
       const detail = document.createElement('span'); detail.className = 'transfer-session-detail';
-      detail.textContent = [shortId, member.cwd].filter(Boolean).join(' · '); detail.title = member.sid;
+      detail.textContent = [shortId, member.cwd].filter(Boolean).join(' · '); detail.title = [member.sid, member.cwd].filter(Boolean).join('\n');
       text.append(name, detail); label.append(input, text); title.append(label);
       const source = document.createElement('td'); source.textContent = SOURCES[member.source]?.name || member.source;
       if (nodeOf(member.uid) !== sourceId) {
@@ -13500,39 +13498,85 @@ async function cloneSessionGroup(uid, resumed = null) {
         source.append(machine);
       }
       const linked = new Set(member.required_uids.map(uid => physical.get(uid)?.uid).filter(Boolean)).size > 1;
-      const state = document.createElement('td'); state.textContent = member.disabled_reason || (linked ? '原生依赖联动' : selectedUids.has(member.uid) ? '将迁移' : '留在原机器');
-      if (!member.selectable) row.classList.add('transfer-unavailable');
+      const state = document.createElement('td'); state.textContent = member.disabled_reason || issue?.reason || (linked ? '原生依赖联动' : input.checked ? '将迁移' : '留在原机器');
+      if (issue) state.title = issue.paths.join('\n');
+      if (!available) row.classList.add('transfer-unavailable');
       row.append(title, source, state); body.append(row);
       for (const child of children.get(member.uid) || []) append(child, depth + 1);
     };
     for (const member of children.get('') || []) append(member, 0);
     for (const member of members.values()) append(member, 0);
-    const count = tree.sessions.filter(member => member.selectable).length;
-    const selectedCount = tree.sessions.filter(member => member.member_uids.some(uid => selectedUids.has(uid))).length;
+    const available = tree.sessions.filter(selectable);
+    const count = available.length;
+    const selectedCount = available.filter(member => member.member_uids.some(uid => selectedUids.has(uid))).length;
     const all = $d('#transfer-select-all'); all.checked = count > 0 && selectedCount === count;
     all.indeterminate = selectedCount > 0 && selectedCount < count;
     all.dataset.unavailable = String(!count);
     all.onchange = () => {
-      selectedUids.clear();
-      if (all.checked) for (const member of tree.sessions) if (member.selectable) for (const uid of member.member_uids) selectedUids.add(uid);
+      for (const member of available) {
+        for (const uid of member.member_uids) all.checked ? selectedUids.add(uid) : selectedUids.delete(uid);
+      }
       ++selectionVersion; renderMembers(plan); void refreshPlan();
     };
     status.textContent = `已选 ${selectedCount} / ${tree.sessions.length} 个会话${data?.file_count != null && plannedVersion === selectionVersion ? ` · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}` : ''}`;
     renderSelection();
   };
   async function loadTree() {
-    tree = await request('api/session/transfer/tree', {uid});
-    if (tree.selection !== true) throw new Error('源机器尚不支持选择迁移会话，请更新节点');
-    tree.sessions = migrationMembers(tree.sessions);
+    const next = await request('api/session/transfer/tree', {uid});
+    if (next.selection !== true) throw new Error('源机器尚不支持选择迁移会话，请更新节点');
+    tree = {sessions:migrationMembers(next.sessions)};
     // Eligibility and inseparable native dependencies come from the source.
     selectedUids.clear();
     for (const member of tree.sessions) if (member.selectable) for (const uid of member.member_uids) selectedUids.add(uid);
+  }
+  async function refreshDestination() {
+    if (!dialog.isConnected) return;
+    const sequence = ++directorySequence, destination = target.value;
+    const candidates = tree.sessions.filter(member => member.selectable);
+    // The directory endpoint trims input. A trailing slash preserves a
+    // directory name that ends in whitespace and retains exact spelling.
+    const paths = new Map(candidates.flatMap(member => member.cwds)
+      .map(cwd => [cwd, cwd.endsWith('/') ? cwd : cwd + '/']));
+    directoryIssues.clear();
+    directoryNotice = '';
+    error.hidden = true;
+    checkingDirectories = !blockedReason() && crossMachine() && paths.size > 0;
+    ++selectionVersion;
     renderMembers(null);
+    refreshEnvironment();
+    if (checkingDirectories) {
+      let existing;
+      try {
+        const data = await request('api/term/check-dirs', {_node:destination, paths:[...new Set(paths.values())]}, AbortSignal.timeout(10000));
+        if (Array.isArray(data.directories)) existing = new Set(data.directories);
+      } catch {}
+      if (!dialog.isConnected || sequence !== directorySequence) return;
+      if (existing) {
+        const missing = new Map();
+        for (const member of candidates) {
+          const absent = member.cwds.filter(cwd => !existing.has(paths.get(cwd)));
+          if (absent.length) for (const uid of member.member_uids) missing.set(uid, absent);
+        }
+        for (const member of candidates) {
+          const own = missing.get(member.uid);
+          const dependency = member.required_uids.find(uid => missing.has(uid));
+          if (own || dependency) directoryIssues.set(member.uid, {
+            reason:own ? '目标机器缺少工作目录' : '原生依赖缺少目标工作目录',
+            paths:own || missing.get(dependency),
+          });
+        }
+      } else {
+        directoryNotice = '暂时无法核验目标工作目录，执行时会再次检查。';
+      }
+      checkingDirectories = false;
+      renderMembers(null);
+    }
+    return refreshPlan();
   }
   async function refreshEnvironment() {
     const sequence = ++environmentSequence;
     const note = $d('.transfer-environment');
-    if (!plan) {note.hidden = true; renderSelection(); return;}
+    if (!plan || plan.target_node !== target.value || plannedVersion !== selectionVersion) {note.hidden = true; renderSelection(); return;}
     const destinationId = target.value, currentPlan = plan;
     const clients = id => {
       if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
@@ -13571,14 +13615,15 @@ async function cloneSessionGroup(uid, resumed = null) {
     renderSelection();
   }
   async function refreshPlan(executing = false) {
-    if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
+    if (!dialog.isConnected || !tree || (!executing && busy) || planning || checkingDirectories || uncertain || blockedReason()) return;
     const fresh = false, selectedMode = 'move', version = selectionVersion, destination = target.value;
-    if (!selectedUids.size) {
+    const chosen = tree.sessions.filter(selectable).flatMap(member => member.member_uids.filter(uid => selectedUids.has(uid)));
+    if (!chosen.length) {
       const previous = plan;
       planning = true; renderSelection();
       try {await discardPreview(previous); plan = null;}
       catch (failure) {error.textContent = failure.message; error.hidden = false;}
-      finally {planning = false; renderSelection(); if (selectedUids.size) void refreshPlan();}
+      finally {planning = false; renderSelection(); if (version !== selectionVersion || destination !== target.value) void refreshPlan();}
       return false;
     }
     if (plan && plannedVersion === version && plan.target_node === target.value) return true;
@@ -13587,18 +13632,20 @@ async function cloneSessionGroup(uid, resumed = null) {
     status.textContent = '正在读取清单…';
     paintProgress({phase:'planning'});
     try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode, selected_uids:[...selectedUids], target_node:destination,
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode, selected_uids:chosen, target_node:destination,
         ...(previous ? {previous_operation_id:previous.operation_id} : {})});
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
-      if (!dialog.isConnected) {await discardPreview(next); return false;}
+      if (!dialog.isConnected || version !== selectionVersion || destination !== target.value) {
+        await discardPreview(next); return false;
+      }
       plan = next; plan.target_node = destination; plannedVersion = version;
       if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
       return true;
     } catch (failure) {
       plan = previous;
-      if (dialog.isConnected) {
+      if (dialog.isConnected && version === selectionVersion && destination === target.value) {
         status.textContent = '清单读取失败';
         error.textContent = failure.message; error.hidden = false;
       }
@@ -13675,7 +13722,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     refreshEnvironment();
     if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
   } else {
-    try {await loadTree(); await refreshPlan();}
+    try {await loadTree(); await refreshDestination();}
     catch (failure) {error.textContent = failure.message; error.hidden = false;}
   }
 

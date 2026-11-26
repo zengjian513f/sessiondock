@@ -12,7 +12,7 @@ from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
 from opencode_sdk_fixtures import FakeOpenCode, SID
-from session_background_fixtures import BlockedNode
+from session_background_fixtures import BlockedNode, directory_check_env
 from session_bundle_browser import Peer
 from session_transfer_browser import ident
 from transfer_ui import select_target, submit_transfer, wait_transfer
@@ -52,6 +52,12 @@ def main():
         root = Path(temporary)
         source = corpus_at(root/'source', 11)
         third = corpus_at(root/'third', 5)
+        source_only_cwd = source.root/'private review workspace '
+        source_only_cwd.mkdir()
+        records = source.paths['9'].read_text().splitlines(keepends=True)
+        agent = json.loads(records[0])
+        agent['payload']['cwd'] = str(source_only_cwd)
+        source.paths['9'].write_text(json.dumps(agent) + '\n' + ''.join(records[1:]))
         nodes = [SimpleNamespace(name=name, nid=letter*32, port=free_port(), token=TOKEN)
                  for name, letter in (('源机器', 'a'), ('目标机器', 'b'), ('第三节点', 'c'))]
         for corpus, node in ((source, nodes[0]), (third, nodes[2])):
@@ -84,7 +90,8 @@ def main():
                                  'nest_initialized': True},
             }}))
         remote = Peer(args.peer, root, source,
-                      {kind: str(source.root/kind) for kind in ('claude', 'codex', 'grok')}, nodes[1], args.binary)
+                      {kind: str(source.root/kind) for kind in ('claude', 'codex', 'grok')}, nodes[1], args.binary,
+                      directory_checks=True)
         stack.callback(remote.close)
         remote.call('start')
         fixture_root = source.root/'opencode-fixture'
@@ -96,7 +103,8 @@ def main():
         base, _ = stack.enter_context(isolated_server(source, args.binary, state_dir=source.root/'state',
             trash_dir=source.root/'trash', extra_env=env))
         stack.enter_context(isolated_server(third, args.binary, state_dir=third.root/'state',
-            trash_dir=third.root/'trash', extra_env=node_env(third.root, nodes[2].port, '127.0.0.0/8')))
+            trash_dir=third.root/'trash', extra_env={**node_env(third.root, nodes[2].port, '127.0.0.0/8'),
+                **directory_check_env(third.root, args.binary)}))
         hubroot = root/'hub'
         hubroot.mkdir()
         hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [hub_source, *nodes[1:]])
@@ -392,6 +400,69 @@ def main():
         saved = json.loads(remote.read(target_metadata))['sessions']
         assert saved[source.uid('11')]['nest_parent'] == parent, saved
         print('PASS fixed-ID history reuse preserves the destination parent binding', flush=True)
+
+        # A real exact-directory reply from the SSH peer must gray out the
+        # missing native agent and its owning unit, leaving independent rows.
+        for width, theme in ((1280, 'light'), (390, 'dark')):
+            page.set_viewport_size({'width': width, 'height': 900})
+            page.emulate_media(color_scheme=theme)
+            dialog = choose(chain['6'])
+            checked = lambda number: checkbox(dialog, chain[number])
+            probe = '**/api/term/check-dirs'
+            held = []
+            def delay_directory_probe(route):
+                held.append((route, route.fetch()))
+            page.route(probe, delay_directory_probe, times=1)
+            select_target(dialog, nodes[1].nid)
+            expect(dialog.locator('.transfer-notice')).to_contain_text('正在核验目标工作目录')
+            expect(dialog.locator('.clone-confirm')).to_be_disabled()
+            page.screenshot(path=str(args.screenshots/f'tree-dirs-loading-{width}-{theme}.png'), full_page=True)
+            assert held and held[0][1].ok
+            assert set(held[0][0].request.post_data_json['paths']) == {
+                str(source.root/'workspace')+'/', str(source_only_cwd)+'/'}
+            assert held[0][1].json()['directories'] == [str(source.root/'workspace')+'/']
+            select_target(dialog, nodes[2].nid)
+            expect(dialog.locator('.clone-confirm')).to_be_enabled()
+            expect(checked('9')).to_be_enabled()
+            held[0][0].fulfill(response=held[0][1])
+            # The first destination replies late; the second keeps its selection.
+            expect(checked('8')).to_be_checked()
+            checked('7').uncheck()
+            select_target(dialog, nodes[1].nid)
+            expect(checked('9')).to_be_disabled()
+            expect(checked('9')).not_to_be_checked()
+            expect(checked('9').locator('xpath=ancestor::tr')).to_contain_text('目标机器缺少工作目录')
+            expect(checked('8')).to_be_disabled()
+            expect(checked('8')).not_to_be_checked()
+            expect(checked('8').locator('xpath=ancestor::tr')).to_contain_text('原生依赖缺少目标工作目录')
+            expect(checked('7')).to_be_enabled()
+            expect(checked('7')).not_to_be_checked()
+            expect(checked('6')).to_be_checked()
+            expect(dialog.locator('#transfer-select-all')).to_have_js_property('indeterminate', True)
+            checked('9').scroll_into_view_if_needed()
+            page.screenshot(path=str(args.screenshots/f'tree-dirs-missing-{width}-{theme}.png'), full_page=True)
+            select_target(dialog, nodes[2].nid)
+            expect(checked('9')).to_be_enabled()
+            expect(checked('9')).to_be_checked()
+            expect(checked('7')).not_to_be_checked()
+            select_target(dialog, nodes[1].nid)
+            expect(checked('9')).to_be_disabled()
+            expect(dialog.locator('.clone-confirm')).to_be_enabled()
+            with page.expect_response(lambda response: response.url.endswith('/api/session/clone/plan')
+                    and response.request.post_data_json['target_node'] == nodes[1].nid
+                    and set(response.request.post_data_json['selected_uids']) == {chain['6'], chain['7']}) as planned:
+                dialog.locator('#transfer-select-all').check()
+            assert planned.value.ok, planned.value.text()
+            assert {row['uid'] for row in planned.value.json()['sessions']} == {chain['6'], chain['7']}
+            expect(checked('9')).not_to_be_checked()
+            if width == 390:
+                moved = submit_transfer(page, dialog, f'http://127.0.0.1:{hub.port}')
+                assert moved['phase'] == 'complete', moved
+                assert set(moved['result']['link_map'].values()) == {'codex:'+ident(6), 'codex:'+ident(7)}
+                assert source.paths['8'].exists() and source.paths['9'].exists()
+            else:
+                dialog.locator('.clone-cancel').click()
+        print('PASS target directories gray out only missing rows and linked units, stale probes are ignored, eligible selection moves', flush=True)
         assert not errors, errors
     print('PASS selected cross-host migration with fixed identities and durable cross-node nesting')
 

@@ -65,6 +65,9 @@ def serve(config,root):
         SESSIONDOCK_TRASH_DIR=str(destination/'trash'),
         SESSIONDOCK_PROC_ROOT=str(destination/'proc'),SESSIONDOCK_NODE_TOKEN_FILE=str(token),
         SESSIONDOCK_NODE_ID_FILE=str(destination/'ids/node-id'),SESSIONDOCK_NODE_PEERS='127.0.0.0/8')
+    if config.get('directory_checks'):
+        from session_background_fixtures import directory_check_env
+        env.update(directory_check_env(destination, config['binary']))
     process=None;log=tempfile.TemporaryFile();opener=build_opener(ProxyHandler({}))
     def stop():
         nonlocal process

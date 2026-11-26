@@ -2,7 +2,27 @@
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
+import subprocess
 import threading
+
+
+def directory_check_env(root, binary):
+    host = root / 'directory-check-host'
+    ledger = root / 'directory-check-ledger'
+    launcher = root / 'directory-check-launcher.json'
+    host.mkdir(mode=0o700)
+    launcher.touch(mode=0o600)
+    launcher.write_text(json.dumps({
+        'host_binary': str(Path(binary).resolve().with_name('ptyhost')),
+        'host_dir': str(host),
+        'adapters': [{'id': 'fixture-shell', 'source': 'codex',
+                      'executable': '/bin/sh', 'args': ['-c', 'exit 0']}],
+    }))
+    subprocess.run([str(Path(binary).resolve()), '--initialize-lifecycle', str(ledger)],
+                   env={'PATH': '/usr/bin:/bin'}, check=True, timeout=20, capture_output=True)
+    return {'SESSIONDOCK_LIFECYCLE_DIR': str(ledger), 'SESSIONDOCK_LAUNCHER_CONFIG': str(launcher),
+            'SESSIONDOCK_PTYHOST_DIR': str(host)}
 
 
 class BlockedNode:
