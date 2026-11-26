@@ -458,6 +458,13 @@ function nodeAbbrs(nodes) {
   }));
 }
 
+function applyNodeFilterChange() {
+  store.set('nodesOff', [...Nodes.off]);
+  renderNodes(); renderChips(); renderSide();
+  showSessionCount(sidebarSessions().filter(nodeSelected).length);
+  if (S.results !== null) void runSearch();
+}
+
 function renderNodes() {
   if (!HUB_MODE) return;
   const host = document.querySelector('#node-chips');
@@ -478,12 +485,6 @@ function renderNodes() {
     position++;
     return b;
   };
-  const change = () => {
-    store.set('nodesOff', [...Nodes.off]);
-    renderNodes(); renderChips(); renderSide();
-    showSessionCount(sidebarSessions().filter(nodeSelected).length);
-    if (S.results !== null) void runSearch();
-  };
   const abbrs = nodeAbbrs(Nodes.list);
   const counts = new Map();
   for (const row of sidebarSessions()) if (sessionInScope(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
@@ -493,9 +494,10 @@ function renderNodes() {
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
         if (n.online === false) return;
+        rememberMultipleFilters('nodesOff', Nodes.list.map(node => node.id), Nodes.off);
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
-        change();
-      }, reason || '点击选择或取消；双击只选这台机器');
+        applyNodeFilterChange();
+      }, reason || filterShortcutHint);
     const abbr = abbrs.get(n.id);
     if (item.dataset.label !== n.name || item.dataset.abbr !== abbr || item.dataset.count !== String(count)) {
       const name = document.createElement('span');
@@ -515,7 +517,8 @@ function renderNodes() {
     item.ariaLabel = `${n.name} ${count}` + (reason ? `，${reason}` : '');
     item.ondblclick = () => {
       if (n.online === false) return;
-      Nodes.off = new Set(Nodes.list.filter(x => x.id !== n.id).map(x => x.id)); change();
+      Nodes.off = new Set(Nodes.list.filter(x => x.id !== n.id).map(x => x.id));
+      applyNodeFilterChange();
     };
   }
   for (const [id, item] of existing) if (!Nodes.list.some(n => n.id === id)) item.remove();

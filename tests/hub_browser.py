@@ -24,6 +24,7 @@ from hub_fixtures import REPO, FakeNode, Hub
 
 CHROMIUM = Path.home() / ".cache/ms-playwright/chromium-1234/chrome-linux64/chrome"
 NID = {"a": "a" * 32, "b": "b" * 32, "c": "c" * 32}
+FILTER_HINT = "点击选择或取消；右键或长按只选此项，再操作同一项恢复上次多选"
 ROWS_JS = """() => { const byUid = new Map(S.sessions.map(s => [s.uid, s]));
   return [...document.querySelectorAll('#side .item')].map(n => ({
     uid: n.dataset.uid || null, depth: +n.dataset.depth, caret: !!n.querySelector('.nest-caret'),
@@ -267,33 +268,39 @@ def check_page(page, nodes, hub):
     assert not search_requests, search_requests
     page.locator('#q').fill('')
     expect(page.locator('#side .item')).to_have_count(3)
-    # Machine filter: right-click keeps one machine, while an ordinary click adds another.
-    page.get_by_role("button", name="NodeB 1", exact=True).click(button="right")
-    page.wait_for_function('visible().length === 1')
-    assert page.locator("#session-total").inner_text() == "1"
-    page.get_by_role("button", name="NodeA 1", exact=True).click()
-    page.wait_for_function('visible().length === 2')
-    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.nodesOff'))") == [NID["c"]]
-    page.get_by_role("button", name="Vega 1", exact=True).click()
-    page.wait_for_function('visible().length === 3')
+    # Right-click can move between single machines, then restore the last multi-selection.
     node_a = page.get_by_role("button", name="NodeA 1", exact=True)
-    node_a.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 40,
-                                          "button": 0, "clientX": 20, "clientY": 20})
-    page.wait_for_timeout(550)
-    node_a.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 40,
-                                        "button": 0, "clientX": 20, "clientY": 20})
-    node_a.dispatch_event("click")
-    assert page.evaluate("[...Nodes.off].sort()") == [NID["b"], NID["c"]]
-    page.get_by_role("button", name="NodeB 1", exact=True).click()
-    page.get_by_role("button", name="Vega 1", exact=True).click()
+    node_b = page.get_by_role("button", name="NodeB 1", exact=True)
+    node_c = page.get_by_role("button", name="Vega 1", exact=True)
+    node_c.click()
+    node_b.click(button="right")
+    expect(page.locator("#session-total")).to_have_text("1")
+    expect(page.locator("#side .item")).to_contain_text("NodeB session")
+    node_a.click(button="right")
+    expect(page.locator("#side .item")).to_contain_text("NodeA session")
+    page.reload(wait_until="networkidle")
+    expect(node_a).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#side .item")).to_have_count(1)
+    node_a.click(button="right")
+    expect(page.locator("#session-total")).to_have_text("2")
+    expect(page.locator("#side .item")).to_have_count(2)
+    expect(node_b).to_have_attribute("aria-pressed", "true")
+    expect(node_c).to_have_attribute("aria-pressed", "false")
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.nodesOff'))") == [NID["c"]]
+    node_c.click()
     page.wait_for_function('visible().length === 3')
+    # The first press's click-suppression timer must not clear the second press.
+    for off in ([NID["b"], NID["c"]], []):
+        pointer = {"pointerType": "touch", "pointerId": 40,
+                   "button": 0, "clientX": 20, "clientY": 20}
+        node_a.dispatch_event("pointerdown", pointer)
+        page.wait_for_timeout(700)
+        node_a.dispatch_event("pointerup", pointer)
+        node_a.dispatch_event("click")
+        assert page.evaluate("[...Nodes.off].sort()") == off
     page.get_by_role("button", name="NodeB 1", exact=True).dblclick()
     page.wait_for_function('visible().length === 3')
-    page.wait_for_function("""nid => document.querySelector(
-      `#node-chips button[data-node="${nid}"]`)?.title ===
-      '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
-    assert page.get_by_role("button", name="NodeB 1", exact=True).get_attribute("title") == \
-        "点击选择或取消；右键或长按只选这台机器"
+    expect(node_b).to_have_attribute("title", FILTER_HINT)
     # A compressed header keeps every machine chip inline, showing only its initials
     # (two letters when initials clash) and no count; a click still toggles that machine.
     page.set_viewport_size({"width": 390, "height": 844})
@@ -336,6 +343,12 @@ def check_page(page, nodes, hub):
     page.locator("#q").press("Enter")
     page.wait_for_function("S.results?.length === 3")
     assert {r["node_name"] for r in page.evaluate("S.results")} == {"NodeA", "NodeB", "Vega"}
+    for names in (["NodeB"], ["NodeA", "NodeB", "Vega"]):
+        seq = page.locator("#stat").get_attribute("data-seq")
+        with page.expect_request(lambda r: "/api/search?" in r.url):
+            node_b.click(button="right")
+        page.wait_for_function("(seq) => document.querySelector('#stat').dataset.seq !== seq", arg=seq)
+        assert sorted(r["node_name"] for r in page.evaluate("S.results")) == names
     b.set(search_steps=6, search_delay=0.5)
     seq = page.locator("#stat").get_attribute("data-seq")
     page.locator("#q").press("Enter")
@@ -404,11 +417,8 @@ def check_node_chip_issue(page):
     assert recovered["noticeHidden"], recovered
     assert not recovered["issue"], recovered
     chip = page.locator(f'#node-chips button[data-node="{NID["b"]}"]')
-    page.wait_for_function("""nid => document.querySelector(
-      `#node-chips button[data-node="${nid}"]`)?.title ===
-      '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
+    expect(chip).to_have_attribute("title", FILTER_HINT)
     chip.hover()
-    assert chip.get_attribute("title") == "点击选择或取消；右键或长按只选这台机器"
 
 
 def check_nesting(page, injector):

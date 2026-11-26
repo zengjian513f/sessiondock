@@ -4621,30 +4621,47 @@ function renderTimelinePinNotice(meta) {
   if (heading) heading.after(notice); else detail.prepend(notice);
 }
 
+const filterShortcutHint = '点击选择或取消；右键或长按只选此项，再操作同一项恢复上次多选';
+
+function rememberMultipleFilters(key, ids, off) {
+  if (ids.filter(id => !off.has(id)).length > 1) {
+    store.set(key + '.lastMultiple', [...off]);
+  }
+}
+
+function shortcutFilterOff(key, ids, off, selected) {
+  const others = ids.filter(id => id !== selected);
+  if (!off.has(selected) && others.every(id => off.has(id))) {
+    const saved = store.get(key + '.lastMultiple', null);
+    if (!Array.isArray(saved)) return off;
+    const restored = new Set(saved);
+    return ids.filter(id => !restored.has(id)).length > 1 ? restored : off;
+  }
+  rememberMultipleFilters(key, ids, off);
+  return new Set(others);
+}
+
 function applySourceFilterChange() {
   store.set('off', [...S.off]);
   renderChips(); renderSide();
   if (HUB_MODE && S.results !== null) void runSearch();
 }
 
-function selectOnlySource(source) {
+function shortcutSourceFilter(source) {
   if (!Object.hasOwn(SOURCES, source)) return false;
   const control = document.querySelector(`#chips button[data-source="${CSS.escape(source)}"]`);
   if (control?.dataset.unavailableReason) { return false; }
-  S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
+  S.off = shortcutFilterOff('off', Object.keys(SOURCES), S.off, source);
   applySourceFilterChange();
   return true;
 }
 
-function selectOnlyNodeFilter(id) {
+function shortcutNodeFilter(id) {
   const node = Nodes.list.find(item => item.id === id);
   if (!node) return false;
   if (node.online === false) { return false; }
-  Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
-  store.set('nodesOff', [...Nodes.off]);
-  renderNodes(); renderChips(); renderSide();
-  showSessionCount(sidebarSessions().filter(nodeSelected).length);
-  if (S.results !== null) void runSearch();
+  Nodes.off = shortcutFilterOff('nodesOff', Nodes.list.map(item => item.id), Nodes.off, id);
+  applyNodeFilterChange();
   return true;
 }
 
@@ -4665,6 +4682,7 @@ function renderChips() {
       c.type = 'button';
       c.dataset.source = k;
       c.onclick = () => {
+        rememberMultipleFilters('off', Object.keys(SOURCES), S.off);
         S.off.has(k) ? S.off.delete(k) : S.off.add(k);
         applySourceFilterChange();
       };
@@ -4686,7 +4704,7 @@ function renderChips() {
       control.setAttribute('aria-pressed', String(!S.off.has(k)));
       control.querySelector('.ico').style.color = v.color;
       control.querySelector(':scope > b').textContent = n;
-      control.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
+      control.title = `${v.name}：${filterShortcutHint}`;
       control.setAttribute('aria-label', `${v.name}，${n} 个会话`);
       setControlUnavailable(control, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
     }
@@ -4695,7 +4713,7 @@ function renderChips() {
   box.hidden = ![...box.children].some(button => !button.hidden);
 }
 
-/* 机器与 Agent Type 默认是多选；右键（桌面）或长按（触屏）快速收窄到一项。 */
+/* 右键或长按可在单选与最近的多选组合之间切换。 */
 let filterLongPress = null;
 let suppressFilterClick = null;
 
@@ -4703,10 +4721,10 @@ function filterButton(target) {
   return target.closest?.('#node-chips button[data-node], #chips button[data-source], #toolbar-sources-menu button[data-source]') || null;
 }
 
-function selectOnlyFilter(button) {
+function runFilterShortcut(button) {
   if (button.dataset.unavailableReason) { return false; }
-  if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
-  if (button.dataset.source) return selectOnlySource(button.dataset.source);
+  if (button.dataset.node) return shortcutNodeFilter(button.dataset.node);
+  if (button.dataset.source) return shortcutSourceFilter(button.dataset.source);
   return false;
 }
 
@@ -4718,28 +4736,22 @@ function cancelFilterLongPress() {
 
 for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) {
   if (host.id === 'node-chips') {
-    // nodes.js 保持与冻结页面的字节兼容；在新交互层截住它的旧双击直选回调。
+    // 双击不触发旧的机器直选回调。
     host.addEventListener('dblclick', event => {
       const button = filterButton(event.target);
       if (!button?.dataset.node || !host.contains(button)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     }, true);
-    const paintHints = () => {
-      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline):not(.node-issue)')) {
-        const hint = '点击选择或取消；右键或长按只选这台机器';
-        if (button.title !== hint) button.title = hint;
-      }
-    };
-    new MutationObserver(paintHints).observe(host,
-      {childList: true, subtree: true, attributes: true, attributeFilter: ['title']});
-    paintHints();
   }
   host.addEventListener('contextmenu', event => {
     const button = filterButton(event.target);
     if (!button || !host.contains(button)) return;
     event.preventDefault();
-    selectOnlyFilter(button);
+    // A native touch context menu and the long-press timer are one gesture.
+    if (event.pointerType === 'touch' || event.pointerType === 'pen'
+        || event.sourceCapabilities?.firesTouchEvents) return;
+    runFilterShortcut(button);
   });
   host.addEventListener('pointerdown', event => {
     if (event.pointerType === 'mouse' || event.button !== 0) return;
@@ -4750,11 +4762,11 @@ for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) 
     press.timer = setTimeout(() => {
       if (filterLongPress !== press) return;
       filterLongPress = null;
-      if (!selectOnlyFilter(button)) return;
-      suppressFilterClick = button;
+      if (!runFilterShortcut(button)) return;
+      suppressFilterClick = press;
       navigator.vibrate?.(12);
       // 极少数容器长按后不派发 click，不能因此吞掉下一次真实点击。
-      setTimeout(() => { if (suppressFilterClick === button) suppressFilterClick = null; }, 800);
+      setTimeout(() => { if (suppressFilterClick === press) suppressFilterClick = null; }, 800);
     }, LONG_PRESS_MS);
     filterLongPress = press;
   });
@@ -4769,7 +4781,7 @@ for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) 
   }
   host.addEventListener('click', event => {
     const button = filterButton(event.target);
-    if (!button || button !== suppressFilterClick) return;
+    if (!button || button !== suppressFilterClick?.button) return;
     suppressFilterClick = null;
     event.preventDefault();
     event.stopImmediatePropagation();

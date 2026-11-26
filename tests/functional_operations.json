@@ -715,7 +715,7 @@
     {
       "id": "sd.sidebar.source-context",
       "input": "右键Agent chip",
-      "expected": "只选此项",
+      "expected": "只选此项，再次操作恢复最近一次多选",
       "suites": [
         "hub_browser"
       ],
@@ -725,10 +725,10 @@
     {
       "id": "sd.sidebar.source-longpress",
       "input": "触摸长按Agent chip",
-      "expected": "只选此项，移动/取消中止且抑制后续 click",
+      "expected": "单选或恢复最近一次多选，移动/取消中止且抑制后续 click",
       "suites": [],
       "scope": "scenario",
-      "remaining": "尚未为「触摸长按Agent chip」核对并执行到「只选此项，移动/取消中止且抑制后续 click」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "尚未为「触摸长按Agent chip」核对并执行到「单选或恢复最近一次多选，移动/取消中止且抑制后续 click」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
     },
     {
       "id": "sd.sidebar.node-click",
@@ -743,7 +743,7 @@
     {
       "id": "sd.sidebar.node-context",
       "input": "右键Hub机器 chip",
-      "expected": "只选此项",
+      "expected": "只选此项，再次操作恢复最近一次多选",
       "suites": [
         "hub_browser"
       ],
@@ -753,10 +753,10 @@
     {
       "id": "sd.sidebar.node-longpress",
       "input": "触摸长按Hub机器 chip",
-      "expected": "只选此项，移动/取消中止且抑制后续 click",
+      "expected": "单选或恢复最近一次多选，移动/取消中止且抑制后续 click",
       "suites": [],
       "scope": "scenario",
-      "remaining": "尚未为「触摸长按Hub机器 chip」核对并执行到「只选此项，移动/取消中止且抑制后续 click」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "尚未为「触摸长按Hub机器 chip」核对并执行到「单选或恢复最近一次多选，移动/取消中止且抑制后续 click」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
     },
     {
       "id": "sd.sidebar.node-double",
@@ -869,7 +869,7 @@
     {
       "id": "sd.toolbar.source-menu-context",
       "input": "右键二级 Agent 选项",
-      "expected": "只选此来源",
+      "expected": "只选此来源，再次操作恢复最近一次多选",
       "suites": [
         "toolbar_options_browser"
       ],
@@ -879,7 +879,7 @@
     {
       "id": "sd.toolbar.source-menu-longpress",
       "input": "长按二级 Agent 选项",
-      "expected": "只选此来源，位移取消",
+      "expected": "单选或恢复最近一次多选，位移取消",
       "suites": [
         "toolbar_options_browser"
       ],

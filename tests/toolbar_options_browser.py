@@ -13,6 +13,18 @@ from header_fold_browser import corpus
 from history_fixtures import BINARY, isolated_server
 
 
+def long_press(context, page, button):
+    touch = context.new_cdp_session(page)
+    try:
+        bounds = button.bounding_box()
+        point = {'x': bounds['x'] + bounds['width']/2, 'y': bounds['y'] + bounds['height']/2}
+        touch.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [point]})
+        page.wait_for_timeout(700)
+        touch.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+    finally:
+        touch.detach()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -98,20 +110,41 @@ def main():
                     pin.check()
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     assert page.evaluate("S.off.has('agy')")
+                    page.locator('#chips button[data-source=codex]').click(button='right')
+                    expect(page.locator('#side .item')).to_have_count(1)
+                    menu = open_toolbar_options(page, 'sources')
+                    menu.locator('button[data-source=codex]').click(button='right')
+                    expect(page.locator('#side .item')).to_have_count(before - 1)
+                    assert page.evaluate("[...S.off]") == ['agy']
+
+                    # An unpinned choice shares the toolbar's most recent multi-selection.
+                    menu.locator('button[data-source=grok]').click()
+                    expect(page.locator('#side .item')).to_have_count(before - 2)
                     pin.uncheck()
                     if width < 720:
-                        touch = context.new_cdp_session(page)
-                        bounds = source.bounding_box()
-                        point = {'x': bounds['x'] + bounds['width']/2, 'y': bounds['y'] + bounds['height']/2}
-                        touch.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [point]})
-                        page.wait_for_timeout(700)
-                        expect(page.locator('#side .item')).to_have_count(1)
-                        touch.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
-                        touch.detach()
+                        long_press(context, page, source)
                     else:
                         source.click(button='right')
                     expect(page.locator('#side .item')).to_have_count(1)
                     assert page.evaluate("!S.off.has('agy') && S.off.has('claude')")
+                    if args.screenshots_dir:
+                        page.screenshot(path=str(args.screenshots_dir / f'toolbar-source-solo-{width}.png'), full_page=True)
+                    page.reload(wait_until='networkidle')
+                    expect(page.locator('#side .item')).to_have_count(1)
+                    menu = open_toolbar_options(page, 'sources')
+                    source = menu.locator('button[data-source=agy]')
+                    if width < 720:
+                        long_press(context, page, source)
+                    else:
+                        source.click(button='right')
+                    expect(page.locator('#side .item')).to_have_count(before - 2)
+                    assert page.evaluate("[...S.off]") == ['agy', 'grok']
+                    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.off'))") == ['agy', 'grok']
+                    expect(source).to_have_attribute('aria-pressed', 'false')
+                    if args.screenshots_dir:
+                        page.screenshot(path=str(args.screenshots_dir / f'toolbar-source-restored-{width}.png'), full_page=True)
+                    source.click(button='right')
+                    expect(page.locator('#side .item')).to_have_count(1)
                     source.click()
                     expect(page.locator('#side .item')).to_have_count(0)
                     for selected in ('claude', 'codex', 'grok'):
@@ -175,6 +208,9 @@ def main():
                     # must leave filtering unchanged.
                     bounds = source.bounding_box()
                     page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
+                    previous = page.evaluate("[...S.off]")
+                    page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2, button='right')
+                    assert page.evaluate("[...S.off]") == previous
                     assert page.evaluate("S.off.has('agy')")
                     menu.get_by_role('checkbox', name='在工具栏显示Agy', exact=True).check()
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
@@ -200,7 +236,7 @@ def main():
                     assert page.evaluate('S.view') == 'group'
                     expect(page.locator('#nest button[data-mode=flat]')).to_have_attribute('aria-pressed', 'true')
                     assert not errors, errors
-                    print(f'PASS toolbar options {width}px: defaults, independent pin/filter, submenus, persistence, keyboard, bounds', flush=True)
+                    print(f'PASS toolbar options {width}px: pins, source solo/restore, persistence, keyboard, bounds', flush=True)
                     context.close()
                 # Saved legacy modes remain explicit choices, including false.
                 for nested in (True, False):
