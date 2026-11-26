@@ -11566,8 +11566,11 @@ function md(text, full, media = [], context = {}, cache = null) {
     const fence = `<pre><code class="code-block" data-code-lang="${esc(language)}">${code}</code></pre>`;
     if (close < lines.length && language.toLowerCase() === 'mermaid') {
       const vertical = /^\s*(?:flowchart|graph)\s+(?:TD|TB|BT)\b/i.test(lines[i + 1] || '');
-      const height = Math.min(220, Math.max(84, 50 + (close - i - 1) * (vertical ? 27 : 11)));
-      output.push(`<sd-mermaid style="--diagram-height:${height}px">${fence}</sd-mermaid>`);
+      const grouped = lines.slice(i + 1, close).some(line => /^\s*subgraph\b/i.test(line));
+      const height = Math.min(vertical || grouped ? 560 : 320,
+        Math.max(94, 54 + (close - i - 1) * (vertical ? 41 : grouped ? 23 : 12)));
+      const wide = /^\s*(?:flowchart|graph)\s+LR\b/i.test(lines[i + 1] || '');
+      output.push(`<sd-mermaid${wide ? ' data-left-to-right' : ''} style="--diagram-height:${height}px">${fence}</sd-mermaid>`);
     } else output.push(fence);
     if (canCache && !hadUnclosedFence && close < lines.length - 1) {
       cache.prefix = text.slice(0, lineStarts[close + 1]);
