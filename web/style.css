@@ -1713,6 +1713,17 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
   text-rendering: geometricPrecision;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+sd-mermaid { display: block; margin: 8px 0; }
+sd-mermaid > .mermaid-toggle { width: auto; margin: 0 0 4px; padding-inline: 8px; }
+sd-mermaid > .mermaid-preview {
+  overflow-x: auto; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 11px;
+  scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+.mermaid-preview > img { display: block; max-width: none; }
+sd-mermaid[data-rendered]:not([data-source], :has(mark)) > pre,
+sd-mermaid:is([data-source], :has(mark)) > .mermaid-preview,
+sd-mermaid:has(mark) > .mermaid-toggle { display: none; }
 .code-block > .syntax-lines, .tool-out.wrap > .tool-lines {
   display: block;
   content-visibility: auto;

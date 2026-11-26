@@ -5949,7 +5949,7 @@ function markMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement.closest('.msg');
-      return n.parentElement.closest('mark, .fold-preview, .thinking-disclosure, .katex')
+      return n.parentElement.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toggle')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -5987,7 +5987,7 @@ async function markRegexMatches(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .thinking-disclosure, .katex')
+      return n.parentElement?.closest('mark, .fold-preview, .thinking-disclosure, .katex, .mermaid-toggle')
         || !msg || !SEARCH_ROLES.has(msg.dataset.role)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -10392,18 +10392,21 @@ function messageBodyNode(m) {
   const paint = full => {
     const next = document.createElement('template');
     next.innerHTML = render(full);
-    // Later prose must not turn completed fences back into plain text while
-    // the asynchronous syntax worker repaints them. Keep the original nodes,
-    // including pending worker jobs, language labels and horizontal scroll.
+    // Keep the completed fence and its presentation as later prose arrives.
     const previous = [...body.querySelectorAll('pre > code.code-block')];
     const retained = [];
     next.content.querySelectorAll('pre > code.code-block').forEach((code, index) => {
       const old = previous[index];
+      const preview = code.closest('sd-mermaid');
       if (!old || old.textContent !== code.textContent
-          || old.dataset.codeLang !== code.dataset.codeLang) return;
+          || old.dataset.codeLang !== code.dataset.codeLang
+          || Boolean(old.closest('sd-mermaid')) !== Boolean(preview)) return;
       const pre = old.parentElement;
+      const oldPreview = pre.closest('sd-mermaid');
+      const scrollport = oldPreview?.querySelector('.mermaid-preview');
       retained.push([pre, pre.scrollLeft, pre.scrollTop]);
-      code.parentElement.replaceWith(pre);
+      if (scrollport) retained.push([scrollport, scrollport.scrollLeft, scrollport.scrollTop]);
+      (preview || code.parentElement).replaceWith(oldPreview || pre);
     });
     body.replaceChildren(next.content);
     for (const [pre, left, top] of retained) { pre.scrollLeft = left; pre.scrollTop = top; }
@@ -11552,7 +11555,9 @@ function md(text, full, media = [], context = {}, cache = null) {
     const info = open[2].trim();
     const language = info.match(/^[\w+.-]+/)?.[0] || '';
     const code = fenceContent(lines, i + 1, close);
-    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${code}</code></pre>`);
+    const fence = `<pre><code class="code-block" data-code-lang="${esc(language)}">${code}</code></pre>`;
+    output.push(close < lines.length && language.toLowerCase() === 'mermaid'
+      ? `<sd-mermaid>${fence}</sd-mermaid>` : fence);
     if (canCache && !hadUnclosedFence && close < lines.length - 1) {
       cache.prefix = text.slice(0, lineStarts[close + 1]);
       cache.html = output.join('');
