@@ -706,7 +706,7 @@ async fn handle(
         );
     }
     if method == Method::GET && path == "/api/session/transfers" {
-        return ok(&state.transfers.pending());
+        return ok(&state.transfers.tasks());
     }
     if method == Method::GET && path == "/api/session/frozen" {
         return ok(&state.transfers.frozen());

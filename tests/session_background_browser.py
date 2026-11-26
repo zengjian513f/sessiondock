@@ -11,7 +11,7 @@ from history_fixtures import BINARY, isolated_server
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN, GOOD
 from session_clone_browser import prepare
-from session_bundle_browser import Peer, reopen_transfer
+from session_bundle_browser import Peer, open_transfer_tasks, reopen_transfer
 from session_background_fixtures import BlockedNode
 from transfer_ui import select_target
 
@@ -26,6 +26,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-background-') as temporary, sync_playwright() as pw, ExitStack() as stack:
         root = Path(temporary)
         source = prepare(root/'source')
+        source_only_cwd = source.root/'source-only-workspace'
+        source_only_cwd.mkdir()
+        unrelated = source.paths['unrelated']
+        records = unrelated.read_text().splitlines(keepends=True)
+        meta = json.loads(records[0])
+        del meta['payload']['forked_from_id']
+        meta['payload']['cwd'] = str(source_only_cwd)
+        unrelated.write_text(json.dumps(meta) + '\n' + ''.join(records[1:]))
         for name in ('state', 'proc', 'ids', 'trash'):
             (source.root/name).mkdir(parents=True, exist_ok=True)
         source_port = free_port()
@@ -70,6 +78,12 @@ def main():
             expect(dialog.locator('.clone-cancel')).to_have_text('关闭')
             return task, dialog
 
+        page.goto(huburl, wait_until='networkidle')
+        panel = open_transfer_tasks(page)
+        expect(panel).to_contain_text('暂无迁移任务')
+        page.screenshot(path=str(args.screenshots/'tasks-empty.png'), full_page=True)
+        panel.press('Escape')
+
         task, dialog = begin(scoped(a.nid, source.uid('a')), b)
         request = task['request']
         operation = request['operation_id']
@@ -88,6 +102,10 @@ def main():
         dialog.locator('.clone-cancel').click()
         expect(dialog).not_to_be_visible()
         assert not cancel_calls, cancel_calls
+        panel = open_transfer_tasks(page)
+        expect(panel.locator(f'tr[data-operation="{operation}"]')).to_contain_text('查看进度')
+        page.screenshot(path=str(args.screenshots/'tasks-pending.png'), full_page=True)
+        panel.press('Escape')
         new_starts = []
         page.on('request', lambda r: new_starts.append(r.url) if r.url.endswith('/transfer/start') else None)
         for escape in (False, True):
@@ -161,12 +179,78 @@ def main():
         page = context.new_page()
         page.goto(huburl,wait_until='networkidle')
         assert page.request.get(huburl+'/api/session/frozen').json()['uids'] == []
+        panel = open_transfer_tasks(page)
+        completed = panel.locator(f'tr[data-operation="{operation}"]')
+        expect(completed).to_contain_text('已完成')
+        target_uid = saved['result']['target_uid']
+        completed.get_by_role('button', name='打开目标会话').click()
+        expect(panel).not_to_be_visible()
+        page.wait_for_function('(uid) => S.sel === uid', arg=target_uid)
+        expect(page.locator('.dtitle h2')).to_be_visible()
         print('PASS backend completes accepted move with all pages closed across Hub restart', flush=True)
+
+        # The target never received this source-only working directory. Close
+        # before environment checking, then recover the failure from a new page
+        # after the Hub has rebuilt its task list from the durable journals.
+        original = unrelated.read_text()
+        source_uid = scoped(a.nid, source.uid('unrelated'))
+        proxy.blocked = True
+        task, dialog = begin(source_uid, b)
+        failure_id = task['request']['operation_id']
+        failure_journal = hubroot/'transfers'/f'{failure_id}.json'
+        dialog.locator('.clone-cancel').click()
+        expect(dialog).not_to_be_visible()
+        panel = open_transfer_tasks(page)
+        failed = panel.locator(f'tr[data-operation="{failure_id}"]')
+        expect(failed.get_by_role('button',name='查看进度')).to_be_visible()
+        proxy.blocked = False
+        deadline = time.monotonic()+45
+        while time.monotonic() < deadline:
+            failure = json.loads(failure_journal.read_text())
+            if failure['phase'] == 'aborted': break
+            time.sleep(.2)
+        assert failure['phase'] == 'aborted' and failure['error_code'] == 'move_cwd_missing', failure.get('error')
+        assert unrelated.read_text() == original
+        expect(failed.get_by_role('button',name='打开源会话')).to_be_visible()
+        expect(failed).to_contain_text('工作目录不存在')
+        context.close()
+        hub.stop()
+        hub.start()
+        context = browser.new_context(viewport={'width':390, 'height':900},
+                                      color_scheme='dark', has_touch=True, service_workers='block')
+        stack.callback(context.close)
+        page = context.new_page()
+        page.goto(huburl,wait_until='networkidle')
+        panel = open_transfer_tasks(page)
+        failed = panel.locator(f'tr[data-operation="{failure_id}"]')
+        expect(failed).to_contain_text('迁移失败')
+        expect(failed).to_contain_text('工作目录不存在')
+        expect(panel.locator(f'tr[data-operation="{operation}"]')).to_contain_text('已完成')
+        expect(page.locator('#transfer-tasks .transfer-task-count')).to_have_attribute('hidden','')
+        scroll = panel.locator('.transfer-table-scroll')
+        assert scroll.evaluate('(el) => el.scrollWidth === el.clientWidth')
+        page.screenshot(path=str(args.screenshots/'tasks-results-mobile.png'), full_page=True)
+        failed.get_by_role('button',name='打开源会话').click()
+        expect(panel).not_to_be_visible()
+        page.wait_for_function('(uid) => S.sel === uid', arg=source_uid)
+        expect(page.locator('.dtitle h2')).to_contain_text('Unrelated', ignore_case=True)
+        panel = open_transfer_tasks(page)
+        expect(failed).to_be_visible()
+        page.screenshot(path=str(args.screenshots/'tasks-results-detail.png'), full_page=True)
+        panel.press('Escape')
+        page.set_viewport_size({'width':1280, 'height':900})
+        page.emulate_media(color_scheme='light')
+        panel = open_transfer_tasks(page)
+        expect(failed).to_be_visible()
+        assert scroll.evaluate('(el) => el.scrollWidth === el.clientWidth')
+        page.screenshot(path=str(args.screenshots/'tasks-results-desktop.png'), full_page=True)
+        panel.press('Escape')
+        print('PASS closed failed move retains its error and source link after Hub restart on desktop and mobile',flush=True)
 
         # Explicit cancellation is durable too; a restart must not turn it into
         # another execution when the source reconnects.
         proxy.blocked = True
-        task, dialog = begin(saved['result']['target_uid'], a)
+        task, dialog = begin(target_uid, a)
         request = task['request']
         journal = hubroot/'transfers'/f'{request["operation_id"]}.json'
         proxy.block_cancel = True

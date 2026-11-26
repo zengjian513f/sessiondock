@@ -38,7 +38,7 @@
 | `#chips` | Codex / Kiro / Agy / Grok / Claude / OpenCode / SSH 筛选 |
 | `#new-session` | 新建。`terminal_create` 未开时保持隐藏 |
 | `#page-reload` | 刷新页面。独立应用模式等条件下才出现，见 `syncPageReload` |
-| `#transfer-tasks` | 未完成的移动与复制，带计数。见第 5 节 |
+| `#transfer-tasks` | Hub 的「迁移任务」，有未完成任务时显示计数。见第 5 节 |
 | `#trash` | 回收站 |
 | `#report-bug` | 报告问题 |
 | `#settings` | 设置 |
@@ -569,7 +569,8 @@ DELTA（BUG-20261015-153714-49d7c5）：最近目录的会话来源排除附属�
 
 部分迁移后保留跨机 `nest_parent`：父子一起迁移仍同机，留下的一端指向另一端的新位置。
 第三节点的父引用按持久迁移记录解析，详情、列表、搜索及实时元数据一致。
-任务面板显示“未完成的迁移”，恢复同一事务；执行结果不确定时不能改选择或另发新操作。
+工具栏“迁移任务”在关闭迁移窗口后仍可查找任务。未完成任务恢复同一事务；执行结果不确定时
+不能改选择或另发新操作。已结束任务显示结果和失败原因，并提供打开对应会话的入口。
 
 [`tests/session_selected_move_browser.py`](../tests/session_selected_move_browser.py)、
 [`tests/session_transfer_sources_browser.py`](../tests/session_transfer_sources_browser.py)、

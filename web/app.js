@@ -13382,7 +13382,9 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
   const renderSelection = () => {
     const reason = blockedReason();
-    notice.textContent = reason || (operationStarted ? '迁移在后台运行，关闭窗口后仍会继续。可从迁移任务查看进度。' : '');
+    notice.textContent = [reason, operationStarted && (backgroundAccepted
+      ? '关闭窗口后迁移仍会继续。可在工具栏「迁移任务」查看进度和结果。'
+      : '提交后，可在工具栏「迁移任务」查看进度和结果。')].filter(Boolean).join(' ');
     notice.hidden = !notice.textContent;
     confirm.textContent = aborting ? '正在撤回…' : backgroundAccepted ? '后台迁移中' : busy && operationStarted ? '正在提交…' : uncertain ? '重试提交同一次迁移' : '迁移所选会话';
     confirm.disabled = backgroundAccepted || busy || planning || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
@@ -13775,7 +13777,8 @@ function transferPhaseLabel(task) {
     failed:'迁移失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
-  let label = labels[task.phase] || '等待继续';
+  let label = task.phase === 'aborted' && task.error && task.code !== 'move_cancelled'
+    ? '迁移失败' : labels[task.phase] || '等待继续';
   if (task.phase === 'transferring' && task.bytes_total > 0 && !task.work?.length)
     label += ` · ${Math.max(0, Math.min(100, Math.floor((Number(task.bytes_sent) || 0) / task.bytes_total * 100)))}% · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
   return label;
@@ -13821,36 +13824,60 @@ async function refreshTransferTasks() {
   transferTasksLoading = true;
   try {
     const response = await fetch(appUrl('api/session/transfers'));
-    if (!response.ok) return;
-    const {operations} = await response.json();
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const {operations, recent = []} = await response.json();
     transferTasksOpen = operations.length; transferTasksAt = Date.now();
     const button = $('#transfer-tasks');
-    button.hidden = operations.length === 0;
-    button.querySelector('.transfer-task-count').textContent = String(operations.length);
-    layoutHeader();
+    const count = button.querySelector('.transfer-task-count');
+    if (count.textContent !== String(operations.length)) {
+      count.textContent = String(operations.length);
+      count.hidden = operations.length === 0;
+      layoutHeader();
+    }
     const panel = $('#transfer-tasks-dialog');
     if (!panel) return;
+    panel.querySelector('.transfer-tasks-status').hidden = true;
     const tbody = panel.querySelector('tbody');
     const name = id => [...Nodes.machines, ...Nodes.list].find(n => n.id === id)?.name || '离线机器';
     // Keep controls stable while the user is focusing or clicking a task.
-    const signature = JSON.stringify(operations);
+    const signature = JSON.stringify([operations, recent]);
     if (panel._tasksSignature === signature) return;
     panel._tasksSignature = signature;
     tbody.replaceChildren();
-    for (const task of operations) {
+    for (const task of [...operations, ...recent]) {
       const row = document.createElement('tr'); row.dataset.operation = task.request.operation_id;
-      const title = document.createElement('td');
-      title.textContent = task.plan?.sessions?.find(m => m.uid === task.request.uid)?.title || '会话组';
-      const nodes = document.createElement('td');
-      nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
-      const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
+      const session = document.createElement('td');
+      const members = task.plan?.sessions;
+      const title = task.title || (members?.find(m => m.uid === task.request.uid) || members?.[0])?.title || '会话组';
+      const sessionName = el('div', 'transfer-session-name', esc(title));
+      sessionName.title = title;
+      session.append(sessionName, el('div', 'transfer-session-detail',
+        `${esc(name(nodeOf(task.request.uid)))} → ${esc(name(task.request.target_node))}`));
+      if (task.created_ms) session.append(el('div', 'transfer-session-detail', fmtTime(task.created_ms)));
+      const phase = document.createElement('td');
+      phase.textContent = transferPhaseLabel(task);
+      if (task.error) phase.append(el('div', 'transfer-task-error', esc(task.error)));
       const action = document.createElement('td'), open = document.createElement('button');
-      open.className = 'btn'; open.textContent = '查看进度';
+      open.type = 'button'; open.className = 'btn';
+      const terminal = task.phase === 'complete' || task.phase === 'aborted';
+      const uid = task.phase === 'complete' ? task.target_uid : task.request.uid;
+      open.textContent = terminal ? (task.phase === 'complete' ? '打开目标会话' : '打开源会话') : '查看进度';
+      open.disabled = terminal && !uid;
       open.onclick = async () => {
+        if (terminal) {
+          panel.close(); panel.remove();
+          if (!await openExternalSession(uid, 'push')) await openSession(uid, null, {exact:true});
+          return;
+        }
         open.disabled = true;
         try {
           const response = await fetch(appUrl('api/session/transfer/progress'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(task.request)});
           const data = await response.json();
+          if (!panel.isConnected) return;
+          if (response.ok && (data.phase === 'complete' || data.phase === 'aborted')) {
+            await refreshTransferTasks();
+            return;
+          }
           if (!response.ok || !data.plan) throw new Error(data.error?.message || data.error || '清单暂不可用');
           panel.close(); panel.remove();
           await cloneSessionGroup(task.request.uid, data);
@@ -13858,21 +13885,25 @@ async function refreshTransferTasks() {
           const error = panel.querySelector('.transfer-error'); error.textContent = failure.message; error.hidden = false;
         } finally {open.disabled = false;}
       };
-      action.append(open); row.append(title,nodes,phase,action); tbody.append(row);
+      action.append(open); row.append(session,phase,action); tbody.append(row);
     }
-    if (!operations.length) {
+    if (!operations.length && !recent.length) {
       const row = document.createElement('tr'), cell = document.createElement('td');
-      cell.colSpan = 4; cell.textContent = '没有未完成的操作'; row.append(cell); tbody.append(row);
+      cell.colSpan = 3; cell.textContent = '暂无迁移任务'; row.append(cell); tbody.append(row);
     }
-  } catch (error) {console.warn('迁移任务读取失败', error);}
+  } catch (error) {
+    const status = $('#transfer-tasks-dialog .transfer-tasks-status');
+    if (status) {status.textContent = '无法读取迁移任务，正在重试…'; status.hidden = false;}
+    console.warn('迁移任务读取失败', error);
+  }
   finally {transferTasksLoading = false;}
 }
 $('#transfer-tasks').onclick = () => {
   $('#transfer-tasks-dialog')?.remove();
   const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
   panel.setAttribute('aria-labelledby','transfer-tasks-title');
-  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的迁移</h2><button class="transfer-close" aria-label="关闭">×</button></div>
-    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
+  panel.innerHTML = `<div class="transfer-head"><div><h2 id="transfer-tasks-title">迁移任务</h2></div><button type="button" class="transfer-close" aria-label="关闭">×</button></div>
+    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th scope="col">会话</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody></tbody></table></div><p class="transfer-tasks-status" role="status">正在读取迁移任务…</p><p class="transfer-error" role="alert" hidden></p></div>`;
   const close = () => {panel.close(); panel.remove();};
   panel.querySelector('.transfer-close').onclick = close;
   panel.addEventListener('cancel', e => {e.preventDefault(); close();});
@@ -13887,6 +13918,8 @@ refreshTransferFrozen();
 setInterval(() => { if (!document.hidden) void refreshTransferFrozen(); }, TRANSFER_TASKS_MS);
 addEventListener('sessiondock-ui-sessions', () => refreshTransferFrozen());
 if (HUB_MODE) {
+  $('#transfer-tasks').hidden = false;
+  layoutHeader();
   refreshTransferTasks();
   setInterval(() => {
     if (document.hidden || SessionDockNetwork.paused) return;

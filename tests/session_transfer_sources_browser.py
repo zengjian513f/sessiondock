@@ -5,6 +5,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
+from browser_runtime import wait_for_async
 from history_fixtures import BINARY
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
@@ -27,6 +28,13 @@ def exercise(browser, base, source, shots, label):
             page.goto(base, wait_until='networkidle')
             page.wait_for_function('T.listLoaded')
             assert page.evaluate('SessionDockCapabilities.config.session_clone_local_codex === true')
+            assert page.locator('#transfer-tasks').evaluate('(button) => button.hidden') == (label == 'node')
+            if source == 'kiro':
+                # The official ACP catalog can arrive after the initial list.
+                wait_for_async(page, """async () => {
+                    await loadSessions(true);
+                    return S.sessions.some(row => row.title === 'Synthetic Kiro V3 Session');
+                }""", polling=500, timeout=30000)
             rows = page.locator(f'#side .item[data-uid^="{source}:"]')
             row = rows.filter(has_text='Synthetic Kiro V3 Session').first if source == 'kiro' else rows.first
             if not row.is_visible():

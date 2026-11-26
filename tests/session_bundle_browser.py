@@ -42,16 +42,21 @@ def node_call(node,path,value=None,raw=None):
     response=connection.getresponse();result=(response.status,response.read());connection.close();return result
 
 
-def reopen_transfer(page, hub, operation):
-    page.reload(wait_until='networkidle')
+def open_transfer_tasks(page):
     page.wait_for_function("!document.querySelector('#transfer-tasks').hidden",timeout=15000)
     button=page.locator('#transfer-tasks:visible, #a-global-transfer-tasks:visible')
     if not button.count():
-        menu=page.locator('#header-more-btn:visible, #a-more:visible').last
+        menu=page.locator('#a-more:visible' if page.locator('#a-global-transfer-tasks').count()
+                          else '#header-more-btn:visible')
         menu.click()
         button=page.locator('#transfer-tasks:visible, #a-global-transfer-tasks:visible')
     button.first.click()
-    row=page.locator(f'#transfer-tasks-dialog tr[data-operation="{operation}"]')
+    return page.get_by_role('dialog',name='迁移任务')
+
+
+def reopen_transfer(page, hub, operation):
+    page.reload(wait_until='networkidle')
+    row=open_transfer_tasks(page).locator(f'tr[data-operation="{operation}"]')
     with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/progress')) as restored:
         row.get_by_role('button',name='查看进度').click()
     assert restored.value.ok,restored.value.text()

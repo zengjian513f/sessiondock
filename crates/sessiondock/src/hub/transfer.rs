@@ -7,9 +7,10 @@ use super::{Client, Registry, Target, client, namespace};
 use crate::transfer::TransferError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
 
 const IDLE: Duration = Duration::from_secs(300);
+const RECENT_TASKS: usize = 20;
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Request {
     pub uid: String,
@@ -55,6 +56,52 @@ struct Journal {
     #[serde(default)]
     transport: Option<transport::Report>,
 }
+
+#[derive(Default)]
+struct TaskIndex {
+    unfinished: BTreeMap<String, Journal>,
+    recent: BTreeMap<(u64, String), Value>,
+}
+
+impl TaskIndex {
+    fn update(&mut self, journal: Journal) {
+        let id = journal.request.operation_id.clone();
+        if !matches!(journal.phase.as_str(), "complete" | "aborted") {
+            self.unfinished.insert(id, journal);
+            return;
+        }
+        self.unfinished.remove(&id);
+        if !journal.execution_requested {
+            return;
+        }
+        let members = journal
+            .preview
+            .as_ref()
+            .and_then(|plan| plan["sessions"].as_array());
+        let title = members
+            .and_then(|members| {
+                members
+                    .iter()
+                    .find(|m| m["uid"] == journal.request.uid)
+                    .or_else(|| members.first())
+            })
+            .and_then(|member| member["title"].as_str());
+        let target_uid = journal
+            .result
+            .as_ref()
+            .and_then(|result| result["target_uid"].as_str());
+        self.recent.insert(
+            (journal.created_ms, id),
+            json!({"request":journal.request,"phase":journal.phase,"title":title,
+                "created_ms":journal.created_ms,"error":journal.error,"code":journal.error_code,
+                "target_uid":target_uid}),
+        );
+        if self.recent.len() > RECENT_TASKS {
+            self.recent.pop_first();
+        }
+    }
+}
+
 pub struct Transfers {
     policy: crate::transfer::transport::Policy,
     directory: PathBuf,
@@ -64,7 +111,7 @@ pub struct Transfers {
     // when independent transfers finish on different nodes at the same time.
     completed_moves: Arc<std::sync::Mutex<u64>>,
     gates: crate::transfer::coordination::Locks,
-    unfinished: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Journal>>>,
+    tasks: Arc<std::sync::Mutex<TaskIndex>>,
     // Move the guard into the blocking write: cancelling its async waiter must
     // not let a later save overtake it or reuse its temporary file.
     saves: crate::transfer::coordination::Locks,
@@ -81,7 +128,7 @@ impl Transfers {
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
         let mut links = std::collections::BTreeMap::new();
-        let mut unfinished = std::collections::BTreeMap::new();
+        let mut tasks = TaskIndex::default();
         for entry in fs::read_dir(&directory)? {
             let path = entry?.path();
             if path.extension().is_none_or(|ext| ext != "json") {
@@ -111,9 +158,7 @@ impl Transfers {
             }
             let record = Self::link_record(&journal);
             links.insert(record.id.clone(), record);
-            if !matches!(journal.phase.as_str(), "complete" | "aborted") {
-                unfinished.insert(journal.request.operation_id.clone(), journal);
-            }
+            tasks.update(journal);
         }
         let move_seq = links
             .values()
@@ -126,7 +171,7 @@ impl Transfers {
             directory,
             work: Default::default(),
             links: Arc::new(std::sync::Mutex::new(links)),
-            unfinished: Arc::new(std::sync::Mutex::new(unfinished)),
+            tasks: Arc::new(std::sync::Mutex::new(tasks)),
             saves: Default::default(),
             gates: Default::default(),
             cancellations: Default::default(),
@@ -157,8 +202,8 @@ impl Transfers {
                         if let Ok(id) = done { recovering.remove(&id); }
                     }
                     _ = interval.tick() => {
-                        let requests: Vec<_> = self.unfinished.lock().unwrap_or_else(|e| e.into_inner())
-                            .values().map(|journal| (journal.request.clone(), journal.execution_requested && !journal.cancel_requested)).collect();
+                        let requests: Vec<_> = self.tasks.lock().unwrap_or_else(|e| e.into_inner())
+                            .unfinished.values().map(|journal| (journal.request.clone(), journal.execution_requested && !journal.cancel_requested)).collect();
                         for (request, execute) in requests {
                             let id = request.operation_id.clone();
                             let active = self.executions.lock().unwrap_or_else(|e| e.into_inner())
@@ -196,7 +241,7 @@ impl Transfers {
     async fn save(&self, journal: &Journal) -> Result<(), TransferError> {
         let path = self.path(&journal.request.operation_id)?;
         let mut journal = journal.clone();
-        let unfinished = self.unfinished.clone();
+        let tasks = self.tasks.clone();
         let links = self.links.clone();
         let completed_moves = self.completed_moves.clone();
         let save_guard = self
@@ -206,9 +251,10 @@ impl Transfers {
         // Cancellation intent is monotonic. A worker holding an older journal
         // must not erase an accepted cancellation on its next phase save.
         if let Some(previous) = self
-            .unfinished
+            .tasks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .unfinished
             .get(&journal.request.operation_id)
         {
             journal.cancel_requested |= previous.cancel_requested;
@@ -250,18 +296,14 @@ impl Transfers {
                 // Publish disk and memory together, even if the async caller was
                 // cancelled. After rename, update memory even if directory fsync
                 // fails: readers already see the new journal on disk.
-                let mut pending = unfinished.lock().unwrap_or_else(|e| e.into_inner());
+                let mut tasks = tasks.lock().unwrap_or_else(|e| e.into_inner());
                 fs::rename(temp, &path)?;
                 let record = Self::link_record(&journal);
                 links
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(record.id.clone(), record);
-                if matches!(journal.phase.as_str(), "complete" | "aborted") {
-                    pending.remove(&journal.request.operation_id);
-                } else {
-                    pending.insert(journal.request.operation_id.clone(), journal);
-                }
+                tasks.update(journal);
             }
             fs::File::open(path.parent().unwrap())?.sync_all()?;
             drop(completion);
@@ -396,22 +438,23 @@ impl Transfers {
         None
     }
     fn public(journal: &Journal) -> Value {
-        json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,
+        json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,"created_ms":journal.created_ms,
             "background":journal.execution_requested,"cancel_requested":journal.cancel_requested,
             "bytes_sent":journal.bytes_sent,"bytes_total":journal.bytes_total,
             "error":journal.error,"code":journal.error_code,"result":journal.result,"transport":journal.transport})
     }
     /// Startup recovery and successful saves keep this view current without
     /// reopening completed journals or waiting for the operation's mutation gate.
-    pub fn pending(&self) -> Value {
-        let unfinished = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
-        let pending: Vec<_> = unfinished.values().map(Self::public).collect();
-        json!({"operations":pending})
+    pub fn tasks(&self) -> Value {
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let operations: Vec<_> = tasks.unfinished.values().map(Self::public).collect();
+        let recent: Vec<_> = tasks.recent.values().rev().collect();
+        json!({"operations":operations,"recent":recent})
     }
     pub fn frozen(&self) -> Value {
-        let pending = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let mut uids = std::collections::BTreeSet::new();
-        for journal in pending.values().filter(|j| j.execution_requested) {
+        for journal in tasks.unfinished.values().filter(|j| j.execution_requested) {
             for member in journal
                 .preview
                 .as_ref()
@@ -438,9 +481,10 @@ impl Transfers {
         request: &Request,
     ) -> Result<Value, TransferError> {
         let cached = self
-            .unfinished
+            .tasks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .unfinished
             .get(&request.operation_id)
             .cloned();
         let mut journal: Journal = match cached {
@@ -806,9 +850,10 @@ impl Transfers {
         mut request: Request,
     ) -> Result<Value, TransferError> {
         if let Some(journal) = self
-            .unfinished
+            .tasks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .unfinished
             .get(&request.operation_id)
             .cloned()
         {
