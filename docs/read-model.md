@@ -48,8 +48,10 @@ Agy 使用成对的 `SESSIONDOCK_AGY_HOME`（显式原生目录）与
 `<AGY_ROOT>/cli/<sid>/summary.json`、`messages.jsonl`，复用下游索引、历史分页、
 增量、搜索和媒体。持续连接的 `data_version` 负责目录提交，已知 transcript stamp
 及每会话原生数据库/WAL stamp 负责正文变化；追加保留前缀，旧记录改写/回退原子重写，相同字节不改 mtime。
-DELTA：原生回退只截短数据库 `steps`，诊断 transcript 保留后缀。私有投影按原生有效步范围
-及每步最后一条完整记录重建；原生摘要里尚未更新的 `step_count` 不决定历史边界。
+DELTA：原生回退截短数据库 `steps`，诊断 transcript 保留后缀并复用步骤编号。私有投影
+按现存步骤取最后一条完整记录。两侧都有创建时间时，按原生日志的秒精度核对时间。
+数据库确认的同号新用户步骤也划定回退边界，仍在数据库里的后续旧步骤不会重新显示。
+原生摘要里尚未更新的 `step_count` 不决定历史边界。
 完整目录 DB 暂时缺失保留镜像；目录行尚在但 transcript 缺失则保留上次消息镜像，
 摘要标记 `transcript_missing`，历史详情显示暂不可读提示（从未导出时消息文件才
 为空）；恢复后重新核对并清除提示。成功读取

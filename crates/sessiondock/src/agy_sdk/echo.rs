@@ -1,5 +1,6 @@
 //! Agy can persist input before emitting its headless user_input notification.
 use super::{Live, Turn, is_control_input, project, transport::ProcessConfig};
+use crate::sessions::agy::steps::bytes_field;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
@@ -38,45 +39,6 @@ pub(super) async fn first_native_step(process: &ProcessConfig, live: &Live) -> O
 
 // The native uncompressed CascadeStep stores UserInput at field 19, whose
 // fields 2 and 19 are userResponse and clientMessageId (Agy 1.5.9).
-// Unknown fields are skipped by wire type.
-fn varint(bytes: &mut &[u8]) -> Option<u64> {
-    let mut value = 0;
-    for shift in (0..70).step_by(7) {
-        let (&byte, rest) = bytes.split_first()?;
-        *bytes = rest;
-        if shift == 63 && byte > 1 {
-            return None;
-        }
-        value |= u64::from(byte & 127) << shift;
-        if byte < 128 {
-            return Some(value);
-        }
-    }
-    None
-}
-
-fn field(mut bytes: &[u8], wanted: u64) -> Option<&[u8]> {
-    while !bytes.is_empty() {
-        let tag = varint(&mut bytes)?;
-        let length = match tag & 7 {
-            0 => {
-                varint(&mut bytes)?;
-                continue;
-            }
-            1 => 8,
-            2 => usize::try_from(varint(&mut bytes)?).ok()?,
-            5 => 4,
-            _ => return None,
-        };
-        let value = bytes.get(..length)?;
-        bytes = bytes.get(length..)?;
-        if tag >> 3 == wanted && tag & 7 == 2 {
-            return Some(value);
-        }
-    }
-    None
-}
-
 pub(super) async fn refresh(process: &ProcessConfig, live: &Live, turn: &Turn) {
     let (requests, stdin) = {
         let data = live.data.lock().unwrap();
@@ -108,14 +70,14 @@ pub(super) async fn refresh(process: &ProcessConfig, live: &Live, turn: &Turn) {
         let mut ambiguous = false;
         for row in rows {
             let (index, payload) = row.ok()?;
-            let Some(user) = field(&payload, 19) else { continue; };
-            if let Some(id) = field(user, 19).filter(|id| !id.is_empty()) {
+            let Some(user) = bytes_field(&payload, 19) else { continue; };
+            if let Some(id) = bytes_field(user, 19).filter(|id| !id.is_empty()) {
                 if let Some(request) = requests.iter().find(|request| request.as_bytes() == id) {
                     found.push((index, request.clone()));
                 }
             } else if let Some((first, _, text)) = &stdin
                 && index >= *first
-                && field(user, 2) == Some(text.as_bytes())
+                && bytes_field(user, 2) == Some(text.as_bytes())
             {
                 // stdin has no clientMessageId. Only a unique matching row
                 // written after this serialized turn's pre-send checkpoint

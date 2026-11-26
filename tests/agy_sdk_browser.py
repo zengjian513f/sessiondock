@@ -632,8 +632,8 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
     with sqlite3.connect(fixture.native / 'conversation_summaries.db') as db:
         db.execute('UPDATE conversation_summaries SET title=? WHERE conversation_id=?', (title, sid))
     with sqlite3.connect(fixture.native / 'conversations' / f'{sid}.db') as db:
-        db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB)')
-        db.executemany('INSERT INTO steps VALUES (?,?,3,0,NULL)', [(0, 14), (1, 1)])
+        db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB,metadata BLOB)')
+        db.executemany('INSERT INTO steps (idx,step_type,status) VALUES (?,?,3)', [(0, 14), (1, 1)])
     (fixture.root / 'native-echo-store').touch()
     fixture.release('rewind-echo')
     prompt = 'hold:rewind-echo'
@@ -667,9 +667,41 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
         expect(live).not_to_contain_text(abandoned)
         # Repeat a message already present in retained history. The new
         # delivery must use the reused index, even without a stream echo.
+        (fixture.root / 'rewind-reply-delay').touch()
         receipt = send(page, prompt)
+        old_reply = history.locator('.msg[data-role="assistant"]').filter(has_text=abandoned)
+        new_reply = history.locator('.msg[data-role="assistant"]').filter(has_text='回退后的新回复。')
+        users = history.locator('.msg[data-role="user"]').filter(has_text=prompt)
+        expect(users).to_have_count(2, timeout=20000)
+        page.wait_for_function('''id => window.__agySnapshot?.raw?.items.some(
+            item => item.request_id === id && item.role === 'user' && item.native_echo)''',
+            arg=receipt['request_id'])
+        # Cross a history poll with the new user step and the old reply still
+        # in both SQLite and JSONL.
+        page.wait_for_timeout(2200)
+        assert any(event['kind'] == 'rewind-reply-pending' and event['sid'] == sid for event in fixture.events())
+        expect(old_reply).to_have_count(0)
+        expect(live).not_to_contain_text(abandoned)
+        expect(new_reply).to_have_count(0)
+        if screenshots:
+            page.locator('.sdk-msgs').evaluate('box => box.scrollTop = box.scrollHeight')
+            page.screenshot(path=str(screenshots / 'agy-rewind-pending.png'), full_page=True)
+        fixture.release('rewind-reply-db')
+        # The replacement in SQLite now has a new creation time while JSONL
+        # still has only the old line.
+        page.wait_for_timeout(2200)
+        assert any(event['kind'] == 'rewind-reply-in-db' and event['sid'] == sid for event in fixture.events())
+        expect(old_reply).to_have_count(0)
+        expect(new_reply).to_have_count(0)
+        fixture.release('rewind-reply')
         idle(page)
-        expect(history.locator('.msg[data-role="user"]').filter(has_text=prompt)).to_have_count(2, timeout=20000)
+        expect(new_reply).to_have_count(1, timeout=20000)
+        assert new_reply.evaluate('(reply, user) => !!(user.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING)',
+                                  users.last.element_handle())
+        assert not page.evaluate('''([id, abandoned]) => window.__agySnapshots.some(
+            ({raw}) => raw.items.some(item => item.request_id === id &&
+                item.role === 'assistant' && item.content.includes(abandoned)))''',
+            [receipt['request_id'], abandoned]), 'bridge hydrated the abandoned reply'
         if screenshots:
             page.screenshot(path=str(screenshots / 'agy-rewind-after-wide.png'), full_page=True)
         items = page.evaluate('''id => window.__agySnapshot.raw.items.filter(

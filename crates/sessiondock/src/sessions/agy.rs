@@ -10,6 +10,8 @@ use std::{
     time::Duration,
 };
 
+pub(crate) mod steps;
+
 pub const FORMAT: &str = "sessiondock-agy-mirror";
 pub const SUMMARY_FILE: &str = "summary.json";
 pub const MESSAGES_FILE: &str = "messages.jsonl";
@@ -547,8 +549,8 @@ impl Mirror {
         ]);
         let mut cache_session = session.clone();
         cache_session["native_database_version"] = database_version.clone();
-        // Recompute existing mirrors once when this derived field is introduced.
-        cache_session["activity_projection"] = json!(6);
+        // Recompute existing mirrors when the transcript projection changes.
+        cache_session["activity_projection"] = json!(7);
         let directory = root.join("cli").join(sid);
         let mut native = home
             .join("brain")
@@ -746,40 +748,58 @@ impl Mirror {
 }
 
 /// Native rewind truncates `steps` but leaves the diagnostic transcript append-only.
-/// Keep the latest complete projection for each still-present step. Imported text-only
-/// sessions keep their existing read behavior when no native steps table is available.
+/// Keep the latest complete record belonging to each current native step.
+/// A reused index can exist in SQLite before its replacement JSONL line.
 pub(crate) fn active_transcript(database: &Path, bytes: &[u8]) -> Vec<u8> {
-    let maximum =
-        Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| {
-            db.query_row("SELECT MAX(idx) FROM steps", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            })
-        });
-    let Ok(maximum) = maximum else {
+    let Ok(current) = steps::current(database) else {
         return bytes.to_vec();
     };
-    let Some(maximum) = maximum else {
+    if current.is_empty() {
         return Vec::new();
-    };
+    }
     let mut steps = BTreeMap::new();
     let mut other = Vec::new();
+    let mut inputs = steps::InputRevisions::default();
     for line in bytes
         .split_inclusive(|byte| *byte == b'\n')
         .filter(|line| line.ends_with(b"\n"))
     {
-        let index = serde_json::from_slice::<Value>(line)
-            .ok()
-            .and_then(|row| row["step_index"].as_i64());
-        match index {
-            Some(index) if index <= maximum => {
-                steps.insert(index, line);
-            }
-            Some(_) => (),
-            None => other.push(line),
+        let Ok(record) = serde_json::from_slice::<Value>(line) else {
+            other.push(line);
+            continue;
+        };
+        let Some(index) = record["step_index"].as_i64() else {
+            other.push(line);
+            continue;
+        };
+        let Some(&native) = current.get(&index) else {
+            continue;
+        };
+        let logged = steps::record_created_second(&record);
+        if record["type"] == "USER_INPUT"
+            && let Some(logged) = logged
+        {
+            inputs.observe(index, logged);
+        }
+        if native
+            .zip(logged)
+            .is_none_or(|(native, logged)| native == logged)
+        {
+            steps.insert(index, (line, logged));
         }
     }
+    // Replacing a user step establishes a new turn even when SQLite still
+    // contains old later rows. Their timestamps belong to the abandoned turn.
+    let rewinds = inputs.rewinds(|index, created| current.get(&index) == Some(&Some(created)));
     steps
-        .into_values()
+        .into_iter()
+        .filter_map(|(index, (line, created))| {
+            let boundary = rewinds.range(..=index).next_back().map(|(_, &time)| time);
+            created
+                .zip(boundary)
+                .is_none_or(|(created, boundary)| created >= boundary)
+                .then_some(line)
+        })
         .chain(other)
         .flatten()
         .copied()

@@ -1,6 +1,7 @@
 //! Metadata-only headless notifications refer to the selected SID's native
 //! transcript. Never render their transport fields as conversational content.
 use super::{Live, Turn, project, transport::ProcessConfig};
+use crate::sessions::agy::steps;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -210,6 +211,7 @@ pub(super) struct Pending {
     /// completed transcript line for that step. Storing only 16-byte spans
     /// keeps memory tiny across long sessions while allowing re-resolution.
     spans: HashMap<(u64, StepKind), (u64, usize)>,
+    inputs: steps::InputRevisions,
     scanned_offset: u64,
     /// `(line_offset, raw_part_len, fnv1a64)` of the last complete line scanned.
     last_anchor: Option<(u64, usize, u64)>,
@@ -243,6 +245,7 @@ fn index_transcript_line(
     line: &[u8],
     line_offset: u64,
     out: &mut HashMap<(u64, StepKind), (u64, usize)>,
+    inputs: &mut steps::InputRevisions,
 ) {
     if line.is_empty() {
         return;
@@ -259,6 +262,11 @@ fn index_transcript_line(
     let Some(index) = record["step_index"].as_u64() else {
         return;
     };
+    if kind == StepKind::UserInput
+        && let Some(created) = steps::record_created_second(&record)
+    {
+        inputs.observe(index as i64, created);
+    }
     // Rewind reuses indices while retaining abandoned diagnostic lines.
     out.insert((index, kind), (line_offset, line.len()));
 }
@@ -267,12 +275,13 @@ fn index_complete_lines(
     complete: &[u8],
     mut offset: u64,
     out: &mut HashMap<(u64, StepKind), (u64, usize)>,
+    inputs: &mut steps::InputRevisions,
 ) -> Option<(u64, usize, u64)> {
     let mut last_anchor = None;
     for part in complete.split_inclusive(|&b| b == b'\n') {
         let line = part.strip_suffix(b"\n").unwrap_or(part);
         let line = line.strip_suffix(b"\r").unwrap_or(line);
-        index_transcript_line(line, offset, out);
+        index_transcript_line(line, offset, out, inputs);
         last_anchor = Some((offset, part.len(), fnv1a64(part)));
         offset += part.len() as u64;
     }
@@ -307,6 +316,7 @@ impl Pending {
     fn reset_index(&mut self) {
         self.scanned_offset = 0;
         self.spans.clear();
+        self.inputs = steps::InputRevisions::default();
         self.last_anchor = None;
     }
 
@@ -341,7 +351,9 @@ impl Pending {
             let complete = &buf[..=last_nl];
             let base_offset = self.scanned_offset;
             self.scanned_offset += complete.len() as u64;
-            if let Some(anchor) = index_complete_lines(complete, base_offset, &mut self.spans) {
+            if let Some(anchor) =
+                index_complete_lines(complete, base_offset, &mut self.spans, &mut self.inputs)
+            {
                 self.last_anchor = Some(anchor);
             }
         }
@@ -408,6 +420,24 @@ impl Pending {
                     Some((index, kind, offset, len))
                 })
                 .collect();
+            if candidates.is_empty() {
+                break;
+            }
+            let database = process.native_path(&live.sid);
+            let indices = candidates
+                .iter()
+                .map(|&(index, ..)| index as i64)
+                .chain(self.inputs.replacements().map(|(index, _)| index))
+                .collect();
+            let created =
+                tokio::task::spawn_blocking(move || steps::created_seconds(&database, indices))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+            let rewinds = self
+                .inputs
+                .rewinds(|index, time| created.get(&index) == Some(&time));
             let mut need_rescan = false;
             for (index, kind, offset, len) in candidates {
                 let Some(record) = read_validated_record(&mut file, index, kind, offset, len).await
@@ -415,6 +445,23 @@ impl Pending {
                     need_rescan = true;
                     break;
                 };
+                let logged = steps::record_created_second(&record);
+                if let Some((&native, logged)) = created.get(&(index as i64)).zip(logged)
+                    && native != logged
+                {
+                    // An old line remains indexed until the new one is written.
+                    // If the log got ahead of SQLite, retry on DB-only progress.
+                    if logged > native {
+                        self.stamp = None;
+                    }
+                    continue;
+                }
+                if let Some(((_, &boundary), logged)) =
+                    rewinds.range(..=index as i64).next_back().zip(logged)
+                    && logged < boundary
+                {
+                    continue;
+                }
                 let mut step = self.steps.remove(&index).unwrap();
                 if kind == StepKind::UserInput {
                     if let Some(value) = crate::sessions::agy::record_model(&record) {

@@ -75,12 +75,25 @@ def varint(value):
     out.append(value);return bytes(out)
 def proto_field(number,value):
     return varint(number*8+2)+varint(len(value))+value
-def native_record(kind,content,**fields):
+def native_record(kind,content,*,defer_transcript=False,**fields):
     input_text=fields.pop('input_text',content)
     if (root/'native-echo-store').exists():
         connection.execute('CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB)')
         payload=proto_field(19,proto_field(2,input_text.encode())+proto_field(19,fields.pop('client_message_id','').encode()))
-        connection.execute('INSERT OR REPLACE INTO steps VALUES (?,?,3,0,?)',(fields.get('step_index',index),14 if kind=='USER_INPUT' else 1,payload));connection.commit()
+        step_index=fields.get('step_index',index)
+        step_type=14 if kind=='USER_INPUT' else 15
+        if 'created_at' in fields:
+            from datetime import datetime
+            seconds=int(datetime.fromisoformat(fields['created_at']).timestamp())
+            metadata=proto_field(1,b'\x08'+varint(seconds))
+            connection.execute('INSERT OR REPLACE INTO steps (idx,step_type,status,step_format,step_payload,metadata) VALUES (?,?,3,0,?,?)',
+                (step_index,step_type,payload,metadata))
+        else:
+            connection.execute('INSERT OR REPLACE INTO steps (idx,step_type,status,step_format,step_payload) VALUES (?,?,3,0,?)',
+                (step_index,14 if kind=='USER_INPUT' else 1,payload))
+        connection.commit()
+    if defer_transcript:
+        return
     with transcript.open('a') as output:
         output.write(json.dumps({'type':kind,'content':content,'step_index':index,
           'created_at':'2026-10-18T00:00:00Z','status':'DONE','source':'MODEL',**fields},ensure_ascii=False)+'\n')
@@ -223,7 +236,9 @@ for line in sys.stdin:
     content='<USER_REQUEST>\n'+text+'\n</USER_REQUEST>'
     if (root/'model-notice').exists():
         content+='\n<USER_SETTINGS_CHANGE>\n'+(root/'model-notice').read_text()+'\n</USER_SETTINGS_CHANGE>'
-    native_record('USER_INPUT',content,input_text=text)
+    rewind_reply=text=='hold:rewind-echo' and (root/'rewind-reply-delay').exists()
+    rewind_created='2026-10-18T00:01:00Z'
+    native_record('USER_INPUT',content,input_text=text,**({'created_at':rewind_created} if rewind_reply else {}))
     # A reused index can be persisted without another headless notification.
     if index!=rewound_index:
         step('user_input',state='DONE')
@@ -378,6 +393,27 @@ for line in sys.stdin:
         native_record('PLANNER_RESPONSE',' \t')
         step('agent_response',state='DONE');advance()
         result('SUCCESS','最终回执中的回复补齐正文。')
+        continue
+    if rewind_reply:
+        # The old SQLite row can still be visible when the new user step
+        # appears. The replacement reply then reaches SQLite before JSONL.
+        advance()
+        answer='回退后的新回复。'
+        native_record('PLANNER_RESPONSE','',created_at='2026-10-18T00:00:00Z',defer_transcript=True)
+        step('agent_response',state='DONE')
+        record({'kind':'rewind-reply-pending','sid':sid,'step_index':index})
+        deadline=time.monotonic()+25
+        while not (root/'release/rewind-reply-db').exists():
+            if time.monotonic()>deadline:sys.exit('fixture rewind DB hold timeout')
+            threading.Event().wait(0.02)
+        native_record('PLANNER_RESPONSE',answer,created_at=rewind_created,defer_transcript=True)
+        record({'kind':'rewind-reply-in-db','sid':sid})
+        while not (root/'release/rewind-reply').exists():
+            if time.monotonic()>deadline:sys.exit('fixture rewind reply hold timeout')
+            threading.Event().wait(0.02)
+        native_record('PLANNER_RESPONSE',answer,created_at=rewind_created)
+        advance()
+        result('SUCCESS',answer)
         continue
     if text.startswith('hold:'):
         token=text.split(':',1)[1]

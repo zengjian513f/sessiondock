@@ -69,7 +69,10 @@ DELTA（BUG-20261115-155602-e82f81）：消息操作按原生步骤身份开放�
 接口由 Agy CLI 1.5.9 本地 Connect 服务执行，不向 stream-json 发送控制帧或斜杠提示词。
 `ForkConversation.forkAtStepIndex` 是保留的末步；`-1` 表示整会话，因此首条输入之前分支使用原生零回合创建。
 回退的 `stepIndex=-1` 则清空当前会话。写操作要求空闲、原生用户步骤及 `request_id`，持久回执防止重复创建；结果不确定不重发。
-原生数据库 `steps` 是当前对话，诊断 transcript 保留已回退的后缀并复用步骤索引；私有历史投影按有效步骤及最新记录更新，数据库/WAL 变化也使缓存失效，不改写原生文件。
+原生数据库 `steps` 是当前对话，诊断 transcript 保留已回退的后缀并复用步骤索引。
+私有历史投影和仅含元数据的实时通知都按步骤创建时间核对同号记录。若数据库已经写入
+替代步骤，等待它的完整 transcript 记录再显示正文。数据库/WAL 变化也使历史缓存失效。
+见 [Agy 原生数据投影](read-model.md#agy-原生数据投影)。
 
 官方 headless 文档的 Unsupported messages 明确说明，`control_request` 和
 `control_response` 会以 ERROR 结束进程。审批按 CLI 自己配置的策略执行；需要交互
