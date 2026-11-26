@@ -16,7 +16,9 @@ CATALOG = [('synthetic-agy-low', 'Synthetic Agy (Low)'),
            ('synthetic-single-low-thinking', 'Synthetic Single (Low Thinking)'),
            ('synthetic-mixed', 'Synthetic Mixed'),
            ('synthetic-mixed-medium', 'Synthetic Mixed (Medium)'),
-           ('synthetic-plain', 'Synthetic Plain')]
+           ('synthetic-plain', 'Synthetic Plain'),
+           ('gemini-4-neon-high', 'Gemini 4 Neon (High)'),
+           ('gemini-4-neon-xhigh', 'Gemini 4 Neon (XHigh)')]
 
 
 def choose(page, key, value):
@@ -48,7 +50,8 @@ def exercise(browser, fixture, screenshots):
         context, page, uid = open_page(browser, base, fixture)
         try:
             selected(page, 'Synthetic Agy', 'synthetic-agy')
-            expect(page.locator('#sdk-model option')).to_have_text(['Synthetic Agy', 'Synthetic Single', 'Synthetic Mixed', 'Synthetic Plain'])
+            expect(page.locator('#sdk-model option')).to_have_text([
+                'Synthetic Agy', 'Synthetic Single', 'Synthetic Mixed', 'Synthetic Plain', 'Gemini 4 Neon'])
             expect(page.locator('#sdk-effort')).to_have_value('low')
             assert page.locator('#sdk-effort option').evaluate_all('rows => rows.map(row => row.value)') == ['low', 'high']
             assert not fixture.inputs()
@@ -100,7 +103,17 @@ def exercise(browser, fixture, screenshots):
                 page.screenshot(path=str(screenshots / 'plain-independent.png'), full_page=True)
             choose(page, 'model', 'synthetic-agy')
             turn(page, fixture, 'plain to variant clears effort', 'synthetic-agy-high')
-            pictures(page, uid, screenshots, 'selected')
+            expect(page.locator('#sdk-effort option')).to_have_text(['低', '高'])
+            choose(page, 'model', 'gemini-4-neon')
+            expect(page.locator('#sdk-effort option')).to_have_text(['高', 'Extra'])
+            request = choose(page, 'effort', 'xhigh')
+            assert request['model'] == 'gemini-4-neon-xhigh' and request['effort'] == '', request
+            turn(page, fixture, 'Extra uses the native variant', 'gemini-4-neon-xhigh')
+            page.reload(wait_until='domcontentloaded')
+            expect(page.locator('#sdk-input')).to_be_enabled()
+            selected(page, 'Gemini 4 Neon', 'gemini-4-neon')
+            expect(page.locator('#sdk-effort option:checked')).to_have_text('Extra')
+            pictures(page, uid, screenshots, 'extra')
         finally:
             context.close()
 

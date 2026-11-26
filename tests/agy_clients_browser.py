@@ -26,15 +26,19 @@ from playwright.sync_api import expect, sync_playwright
 
 
 from frontend_paths import frontend_dir
+from bug_report_node_browser import open_report
 from client_update_browser import matrix_row, open_machines
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from hub_fixtures import Hub, free_port
 from private_hosts import private_hosts
 from new_session_model_browser import choose_model, open_dialog
+from session_start_fixtures import choose_mode
 
 OLD, NEW = "1.2.16", "1.2.17"
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
-PROFILE_ARGS = ["--fixture-profile", "agy"]
+EFFORT_LABELS = ["low", "medium", "high", "Extra", "max"]
+# Keep background quota probes out of this launch and update fixture.
+PROFILE_ARGS = ["--fixture-profile", "agy", "--disable-slash-commands"]
 MANIFEST_URL = (
     "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app"
     "/manifests/linux_amd64.json"
@@ -44,13 +48,15 @@ MODELS = [("agy-fixture-a", "Agy Fixture A"), ("agy-fixture-b", "Agy Fixture B")
           ("agy-fixture-unnamed", "agy-fixture-unnamed"), ("agy-fixture-c-high", "Agy Fixture C (High)"),
           ("agy-fixture-d-low-thinking", "Agy Fixture D (Low Thinking)"),
           ("agy-fixture-c-low", "Agy Fixture C (Low)"),
-          ("agy-fixture-b-medium", "Agy Fixture B (Medium)")]
+          ("agy-fixture-b-medium", "Agy Fixture B (Medium)"),
+          ("gemini-4-neon-high", "Gemini 4 Neon (High)"), ("gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)")]
 # Agy lists reasoning variants as separate models; those fix the effort.
 VARIANTS = MODELS[3:]
-PICKER_NAMES = ["Agy Fixture A", "Agy Fixture B", "agy-fixture-unnamed", "Agy Fixture C", "Agy Fixture D"]
+PICKER_NAMES = ["Agy Fixture A", "Agy Fixture B", "agy-fixture-unnamed", "Agy Fixture C", "Agy Fixture D", "Gemini 4 Neon"]
 GROUPS = [("Agy Fixture C", {"low": "agy-fixture-c-low", "high": "agy-fixture-c-high"}),
           ("Agy Fixture D", {"low": "agy-fixture-d-low-thinking"}),
-          ("Agy Fixture B", {"": "agy-fixture-b", "medium": "agy-fixture-b-medium"})]
+          ("Agy Fixture B", {"": "agy-fixture-b", "medium": "agy-fixture-b-medium"}),
+          ("Gemini 4 Neon", {"high": "gemini-4-neon-high", "xhigh": "gemini-4-neon-xhigh"})]
 CHECKS = []
 PHASE = "setup"
 
@@ -87,7 +93,9 @@ if source == 'agy' and args[-1:] == ['models']:
           'agy-fixture-c-high\tAgy Fixture C (High)\n'
           'agy-fixture-d-low-thinking\tAgy Fixture D (Low Thinking)\n'
           'agy-fixture-c-low\tAgy Fixture C (Low)\n'
-          'agy-fixture-b-medium\tAgy Fixture B (Medium)', flush=True)
+          'agy-fixture-b-medium\tAgy Fixture B (Medium)\n'
+          'gemini-4-neon-high\tGemini 4 Neon (High)\n'
+          'gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)', flush=True)
     sys.exit(0)
 if source == 'agy' and args[-1:] == ['update']:
     # Closed stdin must reach EOF immediately; bound a regression here too.
@@ -202,7 +210,10 @@ def node_fixture(root, args, name, *, installed):
                         "SESSIONDOCK_OPENCODE_ROOT": str(root / "opencode"),
                         "SESSIONDOCK_OPENCODE_DB": str(root / "opencode/empty.db"),
                         "SESSIONDOCK_AGY_HOME": str(root / "native-agy"),
-                        "SESSIONDOCK_AGY_ROOT": str(root / "agy")}))
+                        "SESSIONDOCK_AGY_ROOT": str(root / "agy"),
+                        "SESSIONDOCK_BUG_REPORT_DIR": str(root / "reports"),
+                        "SESSIONDOCK_BUG_REPORT_REPO": str(root / "work"),
+                        "SESSIONDOCK_BUG_REPORT_WORKER": "true"}))
             yield SimpleNamespace(name=name, port=port, token=token, base=base, root=root,
                                   state=root / "fixture-state")
     finally:
@@ -224,6 +235,9 @@ def page_fixture(browser, base):
     try:
         page.goto(base + "/", wait_until="networkidle")
         page.wait_for_function("T.listLoaded")
+        choose_mode(page, "agy", "cli")
+        page.locator('[data-agent-start-mode="codex"]').select_option("cli")
+        page.locator("#settings-dialog .modal-close").click()
         yield page
         assert not errors, errors
     finally:
@@ -250,7 +264,7 @@ def check_picker(page, node, *, node_id=None, levels=("",)):
             label.click()
             expect(radio).to_be_checked()
             expect(page.locator("#new-model")).to_be_enabled()
-            expect(page.locator("#new-effort option")).to_have_text(["CLI 默认", *EFFORTS])
+            expect(page.locator("#new-effort option")).to_have_text(["CLI 默认", *EFFORT_LABELS])
             assert page.locator("#new-effort option").evaluate_all("items => items.map(o => o.value)") == ["", *EFFORTS]
             if effort == "":
                 expect(page.locator("#new-effort")).to_have_value("")
@@ -352,8 +366,8 @@ def check_variant(page, node, *, node_id=None):
             choose_model(page, name)
             expect(page.locator("#new-model")).to_contain_text(name)
             expect(page.locator("#new-effort")).to_be_enabled()
-            expect(page.locator("#new-session-form .new-effort")).to_be_visible()
-            expect(page.locator("#new-effort option")).to_have_text((["CLI 默认"] if "" in variants else []) + EFFORTS)
+            expect(page.locator("#new-effort")).to_be_visible()
+            expect(page.locator("#new-effort option")).to_have_text((["CLI 默认"] if "" in variants else []) + EFFORT_LABELS)
             options = page.locator("#new-effort option").evaluate_all(
                 "items => items.map(o => [o.value, o.disabled])")
             assert options == [[level, level not in variants] for level in ([""] if "" in variants else []) + EFFORTS], options
@@ -366,9 +380,9 @@ def check_variant(page, node, *, node_id=None):
                 expect(effort).to_have_value("high")
     page.set_viewport_size({"width": 1280, "height": 900})
     choose_model(page, MODELS[0][1])
-    expect(page.locator("#new-session-form .new-effort")).to_be_visible()
+    expect(page.locator("#new-effort")).to_be_visible()
     expect(page.locator("#new-effort")).to_be_enabled()
-    expect(page.locator("#new-effort option")).to_have_text(["CLI 默认", *EFFORTS])
+    expect(page.locator("#new-effort option")).to_have_text(["CLI 默认", *EFFORT_LABELS])
     for name, variants in GROUPS:
         for level, native_id in variants.items():
             if not page.locator("#new-session-dialog").is_visible():
@@ -401,7 +415,7 @@ def check_variant(page, node, *, node_id=None):
             expect(page.locator("#new-effort")).to_have_value(level)
             page.locator("#new-session-dialog .modal-cancel").click()
     # The report dialog uses the same grouping and restores the model's effort.
-    page.locator('[data-report-bug]:visible').first.click()
+    open_report(page)
     if node_id:
         page.locator("#bug-report-node").select_option(node_id)
     page.locator('#bug-report-form label:has(input[value="agy"])').click()
@@ -410,7 +424,11 @@ def check_variant(page, node, *, node_id=None):
     expect(page.locator("#bug-report-model-options [role=option] > span")).to_have_text(PICKER_NAMES)
     page.locator("#bug-report-model-options [role=option]", has_text="Agy Fixture D").click()
     expect(page.locator("#bug-report-effort")).to_have_value("low")
-    expect(page.locator("#bug-report-effort option:disabled")).to_have_text(["medium", "high", "xhigh", "max"])
+    expect(page.locator("#bug-report-effort option:disabled")).to_have_text(["medium", "high", "Extra", "max"])
+    page.locator("#bug-report-model").click()
+    page.locator("#bug-report-model-options [role=option]", has_text="Gemini 4 Neon").click()
+    page.locator("#bug-report-effort").select_option(label="Extra")
+    expect(page.locator("#bug-report-effort")).to_have_value("xhigh")
     page.locator("#bug-report-dialog .modal-close").click()
     passed(f"{where}: grouped models, gray unavailable efforts, exact native IDs and remembered choices "
            f"in new/report dialogs (desktop + phone); "

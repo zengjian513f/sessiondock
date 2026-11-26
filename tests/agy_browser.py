@@ -188,7 +188,7 @@ def run(browser, base, root):
         catalog = page.request.get(base + '/api/term/models?source=agy')
         assert catalog.status == 200, catalog.text()
         assert catalog.json()['models'] == [], catalog.json()
-        expect(page.locator('#new-effort option')).to_have_text(['CLI 默认', 'low', 'medium', 'high', 'xhigh', 'max'])
+        expect(page.locator('#new-effort option')).to_have_text(['CLI 默认', 'low', 'medium', 'high', 'Extra', 'max'])
         page.locator('#new-effort').select_option('low')
         page.locator('#new-cwd').fill(str(root / 'work'))
         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/create') as created:

@@ -315,8 +315,8 @@ DELTA（BUG-20261126-155708-c3adac）：已有 Agy SDK 运行实例的会话可�
 
 模型目录与新建会话共用解析：带强度后缀的原生模型已固定 effort。SDK 模型框将这些
 变体合并为一个模型，强度框只提供目录中实际存在的档位；选择后传对应原生模型 ID，
-并清除旧的独立 effort。包含基础模型的分组可选择“CLI 默认”。无变体的普通模型保留
-low/medium/high/xhigh/max 独立 `--effort`。恢复旧设置或排队任务时，具体变体不会再
+并清除旧的独立 effort。「Extra」对应原生 `xhigh`。包含基础模型的分组可选择“CLI 默认”。
+无变体的普通模型保留 low/medium/high/xhigh/max 独立 `--effort`。恢复旧设置或排队任务时，具体变体不会再
 附带冲突的 `--effort`，模型目录不可用时不猜测可选档位。
 `settings.mode` 可显式选择
 accept-edits/auto/plan，标明下一轮生效，以独立 `--mode` argv 传入，不制造在线 RPC。

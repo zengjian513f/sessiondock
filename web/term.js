@@ -1553,6 +1553,10 @@ function scheduleCwdCompletions() {
 const MODEL_SEARCH_MIN = 10;
 const modelCatalogs = new Map();
 
+function agyEffortLabel(value, fallback = value) {
+  return value === 'xhigh' ? 'Extra' : fallback;
+}
+
 // Agy's catalog lists concrete model/effort combinations. Group them for the
 // two controls, but keep each native ID for the launch request.
 function agyModelCatalog(catalog) {
@@ -1666,8 +1670,9 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const availableEfforts = shown?.efforts || catalog?.efforts || [];
     // Variant groups only allow combinations actually listed by Agy. Plain
     // models retain CLI-default/explicit flag behavior (no support metadata).
+    const agy = source() === 'agy';
     const variants = shown?.variants;
-    const efforts = source() === 'agy' && !variants && availableEfforts.length ? ['', ...availableEfforts] : availableEfforts;
+    const efforts = agy && !variants && availableEfforts.length ? ['', ...availableEfforts] : availableEfforts;
     const priorEffort = variants && model !== shown.id
       ? Object.entries(variants).find(([, id]) => id === model)?.[0] : undefined;
     effort = priorEffort ?? effort;
@@ -1682,7 +1687,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
       !!catalog?.models.length);
     const options = variants ? [...(Object.hasOwn(variants, '') ? [''] : []), ...catalog.efforts] : efforts;
     select.replaceChildren(...options.map(value => {
-      const option = new Option(value || 'CLI 默认', value);
+      const option = new Option((agy ? agyEffortLabel(value) : value) || 'CLI 默认', value);
       option.disabled = !efforts.includes(value);
       if (option.disabled) option.title = '该模型不提供此强度';
       return option;

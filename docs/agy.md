@@ -39,6 +39,9 @@ ID 以强度级别结尾的条目（如 `gemini-3.8-flash-high`、`gemini-3.1-pr
 空结果或失败不覆盖已有目录，刷新失败时前端保留原模型列表与已选值。
 没有强度变体元数据的普通模型使用 `--model <id>`；可选强度用 `--effort <level>`，提供
 low、medium、high、xhigh、max，由 CLI 判断没有强度变体元数据的模型是否接受。
+网页的「Extra」对应原生 `xhigh`。按[官方模型说明](https://antigravity.google/docs/models)，
+Gemini 4 Neon 和 Hydrogen 可提供这一档。Gemini 4 Carbon 的目录只到 `high`。
+实际可选档位以当前节点的 `agy models` 为准。
 这些普通模型的 Agy 选择器支持空值
 “CLI 默认”，省略 `--effort`；合成网关的自定义模型测试使用此空值。
 未选模型时也省略模型 override。CLI 的后台 title generator 可能另选目录中的

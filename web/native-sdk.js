@@ -634,8 +634,9 @@ const NativeSdkView = {
       (this.raw?.capabilities?.effort !== true || selected?.hasEffort === false);
     const efforts = kiroEffortUnavailable ? [] : selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
+    const effortLabel = id => agy ? agyEffortLabel(id, UsageUI.effort(id)) : UsageUI.effort(id);
     effort.replaceChildren();
-    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id != null && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(id ? UsageUI.effort(id) : 'CLI 默认', id)); }
+    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id != null && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(id ? effortLabel(id) : 'CLI 默认', id)); }
     // A native config may remove this control while accepting a settings
     // request. Observe that normalization so its receipt can release the draft.
     if (kiroEffortUnavailable && this.raw?.capabilities?.effort === false) {
@@ -647,7 +648,7 @@ const NativeSdkView = {
     if (variants) chosen = Object.entries(variants).find(([,id])=>id===modelId)?.[0] || '';
     if(chosen && ![...effort.options].some(option=>option.value===chosen)){
       if(modelName!==this.nativeModel && !this.settingChoices.has('effort'))chosen='';
-      else effort.add(new Option(UsageUI.effort(chosen),chosen));
+      else effort.add(new Option(effortLabel(chosen),chosen));
     }
     if (variants && Object.hasOwn(variants, '')) effort.value = chosen;
     else ConversationUI.selectValue(effort,chosen,'选择强度');
