@@ -181,10 +181,18 @@ def main():
                     quota_tab.route('**/api/quotas/refresh', lambda route: route.fulfill(json={'agents': [newer]}))
                     quota_tab.locator('#quota-refresh').click()
                     expect(gauge).to_have_text('2%')
+                    fake.used['secondary'] = 2
                     old.fulfill(response=response)
                     page.wait_for_function('!CodexSdkView.limitsRead')
                     expect(gauge).to_have_text('2%')
                     expect(tab.locator('#conversation-status .sdk-gauge b').filter(has_text='2%')).to_have_count(1)
+                    # The fresher summary omits card details. Read the complete
+                    # account again before waiting for any further notification.
+                    page.wait_for_function('CodexSdkView.limitsRetryTimer === 0 && CodexSdkView.limitsRead')
+                    assert len(held) == 1
+                    held.pop().continue_()
+                    page.wait_for_function('!CodexSdkView.limitsRead')
+                    expect(gauge).to_have_text('2%')
                     quota_tab.close()
                     # A genuine reset still works, through the same account read.
                     fake.used['secondary'] = 0

@@ -773,9 +773,11 @@ behavior; they do not require other sources to expose unsupported controls.
   replaced from the fresh read. Limits load on open, after every turn and on
   `account/rateLimits/updated`, which the node forwards to every attached page
   (that notification carries one bucket only; reset cards refresh on the reads).
-  Failed reads retain the last known values and retry automatically with backoff
-  from 1 second up to 30 seconds, without starting a model turn. Only one read is
-  in flight per view; closing or switching the view cancels its read and retry.
+  Failed reads and responses superseded by a newer quota snapshot retain the last
+  known values and retry automatically with backoff from 1 second up to 30 seconds,
+  without starting a model turn. The shared snapshot contains the count and nearest
+  expiry, while the full account read supplies the individual cards. Only one read
+  is in flight per view. Closing or switching the view cancels its read and retry.
   Rolling notifications merge available values into the current bucket; missing
   or null fields do not erase known windows, credits or account metadata. A full
   account read replaces the snapshot and can remove a window no longer present.

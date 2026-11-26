@@ -31,7 +31,9 @@ for line in sys.stdin:
  q=json.loads(line)
  if q.get('method')=='initialize':print(json.dumps({'id':q['id'],'result':{}}),flush=True)
  if q.get('method')=='account/rateLimits/read':
-  print(json.dumps({'id':q['id'],'result':{'rateLimits':{'primary':{'usedPercent':float((root/'used').read_text()) if (root/'used').exists() else 40,'windowDurationMins':10080,'resetsAt':1800000000},'credits':{'balance':'30816.7'}}}}),flush=True)
+  result={'rateLimits':{'primary':{'usedPercent':float((root/'used').read_text()) if (root/'used').exists() else 40,'windowDurationMins':10080,'resetsAt':1800000000},'credits':{'balance':'30816.7'}}}
+  if (root/'used').exists():result['rateLimitResetCredits']={'availableCount':2,'credits':[]}
+  print(json.dumps({'id':q['id'],'result':result}),flush=True)
 '''
 
 
@@ -42,10 +44,12 @@ class DelayedQuotaServer(FakeAppServer):
         gate = self.quota_gate
         if message.get('method') == 'account/rateLimits/read' and gate:
             bucket = self._bucket()
+            cards = [dict(card) for card in self.cards]
             while not gate.is_set():
                 await asyncio.sleep(0.01)
             await self.send(writer, {'id': message['id'], 'result': {
-                'rateLimits': bucket, 'rateLimitsByLimitId': {'codex': bucket}}})
+                'rateLimits': bucket, 'rateLimitsByLimitId': {'codex': bucket},
+                'rateLimitResetCredits': {'availableCount': len(cards), 'credits': cards}}})
             return
         await super()._handle(writer, message)
 
@@ -210,17 +214,20 @@ def main():
             expect(page.locator('[data-gauge="7d"] b')).to_have_text('25%')
             page.screenshot(path=str(args.screenshots/'failed-refresh.png'))
             # Two SDK pages share one in-flight native read. A separate fresh
-            # collector may finish first; the delayed SDK value must not replace
-            # its persisted snapshot or any already-open surface.
+            # collector may finish first. Retain its snapshot and re-read the
+            # current card details after discarding the delayed SDK response.
             (root/'fail').unlink()
             page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
             expect(page.locator('#sdk-input')).to_be_visible()
             page.wait_for_function('CodexSdkView.connected && !CodexSdkView.limitsRead')
-            other_context=browser.new_context()
-            other=other_context.new_page();other.goto(base)
-            other.wait_for_function('T.listLoaded')
-            other.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
-            other.wait_for_function('CodexSdkView.connected && !CodexSdkView.limitsRead')
+            phone_context=browser.new_context(viewport={'width':472,'height':570},
+                                              has_touch=True,color_scheme='dark')
+            phone=phone_context.new_page();phone.goto(f'http://127.0.0.1:{hub.port}')
+            phone.wait_for_function('T.listLoaded')
+            phone_uid=phone.evaluate('sid => S.sessions.find(row => row.sid === sid).uid',THREAD)
+            if not phone.locator('#side').is_visible():phone.locator('#detail .mobile-back').tap()
+            phone.locator(f'#side .item[data-uid="{phone_uid}"]').tap()
+            phone.wait_for_function('CodexSdkView.connected && !CodexSdkView.limitsRead')
             quota_page=context.new_page();quota_page.goto(base+'/quotas.html')
             expect(quota_page.locator('#quota-refresh')).to_be_enabled()
             before=len(fake.methods('account/rateLimits/read'))
@@ -228,9 +235,9 @@ def main():
             page.locator("#a-chat").click()
             page.locator("#a-sdk").click()
             page.wait_for_timeout(200)
-            other.locator("#a-chat").click()
-            other.locator("#a-sdk").click()
-            other.wait_for_timeout(200)
+            phone.locator("#a-chat").tap()
+            phone.locator("#a-sdk").tap()
+            phone.wait_for_timeout(200)
             (root/'used').write_text('57')
             with quota_page.expect_response('**/api/quotas/refresh'):
                 quota_page.locator('#quota-refresh').click()
@@ -239,18 +246,41 @@ def main():
             expect(quota_page.locator('[data-source="codex"] .quota-remaining b')).to_have_text('57%')
             expect(page.locator('[data-gauge="7d"] b')).to_have_text('57%')
             saved=page.request.get(base+'/api/quotas').json()['agents'][0]
+            assert any(row['id']=='reset-credits' and row['remaining_text']=='2 张' for row in saved['buckets'])
+            fake.used['secondary']=57
+            for card in fake.cards:
+                card['title']='Current reset card'
             fake.quota_gate.set()
             page.wait_for_function('!CodexSdkView.limitsRead')
-            other.wait_for_function('!CodexSdkView.limitsRead')
+            phone.wait_for_function('!CodexSdkView.limitsRead')
             assert len(fake.methods('account/rateLimits/read')) == before+1, 'native query must be shared'
             persisted=page.request.get(base+'/api/quotas').json()['agents'][0]
             assert persisted['captured_at']==saved['captured_at'], (saved,persisted)
             assert persisted['buckets']==saved['buckets'], (saved,persisted)
             expect(page.locator('[data-gauge="7d"] b')).to_have_text('57%')
-            expect(other.locator('[data-gauge="7d"] b')).to_have_text('57%')
+            expect(phone.locator('[data-gauge="7d"] b')).to_have_text('57%')
             page.screenshot(path=str(args.screenshots/'delayed-sdk-read.png'))
+            phone.locator('#sdk-more').tap()
+            phone.screenshot(path=str(args.screenshots/'phone-reset-menu-initial.png'))
+            phone_picker=phone.locator('#sdk-reset-card')
+            expect(phone_picker).to_be_visible(timeout=8000)
+            expect(phone_picker.locator('option')).to_have_text([re.compile('Current reset card')]*2)
+            phone.screenshot(path=str(args.screenshots/'phone-reset-menu.png'))
+            phone.keyboard.press('Escape')
+            phone.set_viewport_size({'width':472,'height':299})
+            phone.locator('#sdk-more').tap()
+            phone_picker.tap()
+            expect(phone.locator('#sdk-reset-card:open')).to_have_count(1)
+            phone.screenshot(path=str(args.screenshots/'phone-short-reset-picker.png'))
+            page.locator('#sdk-more').click()
+            picker=page.locator('#sdk-reset-card')
+            expect(picker).to_be_visible()
+            expect(picker.locator('option')).to_have_text([re.compile('Current reset card')]*2)
+            page.screenshot(path=str(args.screenshots/'desktop-reset-menu.png'))
+            page.keyboard.press('Escape')
+            fake.used['secondary']=25
             # A later failed collection must not suppress a successful SDK read.
-            other_context.close()
+            phone_context.close()
             fake.quota_gate=threading.Event()
             page.locator('#a-chat').click();page.locator('#a-sdk').click()
             page.wait_for_timeout(200)

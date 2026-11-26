@@ -253,10 +253,13 @@ const CodexSdkView = {
       if (!this.current(generation)) return;
       if (!response.ok || !data?.ok) throw new Error('limits unavailable');
       UsageUI.rememberQuota(this.uid,data.quota);
-      this.applyLimits(data.raw, data.captured_at || requestedAt);
+      if (!this.applyLimits(data.raw, data.captured_at || requestedAt)) {
+        throw new Error('limits superseded');
+      }
       this.limitsRetryDelay = 1000;
     } catch {
-      // 保留上次成功值；短暂失败不能让用量一直隐藏到下一回合。
+      // A newer quota summary can supersede the response without carrying
+      // individual reset cards. Retry with the same backoff as a failed read.
       if (this.current(generation)) {
         this.limitsRetryTimer = setTimeout(() => this.loadLimits(generation), this.limitsRetryDelay);
         this.limitsRetryDelay = Math.min(this.limitsRetryDelay * 2, 30000);
@@ -305,7 +308,7 @@ const CodexSdkView = {
   applyLimits(raw, capturedAt=new Date().toISOString()) {
     // Order full reads by the server's query time, never browser arrival time.
     const previous=UsageUI.quota(this.uid);
-    if(previous?.captured_at && Date.parse(capturedAt)<Date.parse(previous.captured_at))return;
+    if(previous?.captured_at && Date.parse(capturedAt)<Date.parse(previous.captured_at))return false;
     this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
     this.limitsRecordedAt = null;
     this.limitsFresh = true;
@@ -314,6 +317,7 @@ const CodexSdkView = {
     this.paintResetCards(raw?.rateLimitResetCredits);
     UsageUI.rememberCodexLimits(this.uid,raw,this.limitsObservedAt);
     this.paintGauges();
+    return true;
   },
 
   seedGauges() {
@@ -456,7 +460,7 @@ const CodexSdkView = {
         {uid: this.uid, credit_id: creditId || null, idempotency_key: key});
       this.redeemKeys.delete(creditId);
       UsageUI.rememberQuota(this.uid,data.quota);
-      this.applyLimits(data.raw.limits, data.captured_at);
+      if (!this.applyLimits(data.raw.limits, data.captured_at)) void this.loadLimits();
       const outcome = data.raw.outcome?.outcome;
       this.setNotice({reset: '已兑换，限额窗口已重置。', alreadyRedeemed: '这张卡此前已兑换，已刷新用量。',
         nothingToReset: '当前没有可重置的限额窗口，未消耗卡片。', noCredit: '没有可用的重置卡。'}[outcome]
