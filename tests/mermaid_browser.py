@@ -45,11 +45,24 @@ VERTICAL = '''flowchart TD
     features --> activation["九层前馈网络和非线性激活"]
     activation --> head["输出层映射到未来三个时间窗口"]
     head --> out["输出三头预测 [B, 3]（保留最后一项标签）"]'''
+GROUPED = '''flowchart TD
+    start["输入与缓存"] --> preparation
+    subgraph preparation["阶段 0：准备并核对实验数据<br/>先核对现有记录"]
+        source["核对静态统计与滚动特征"] --> cache["生成批次缓存"]
+    end
+    preparation --> branches
+    subgraph branches["阶段 1：并行消融与验证 (8 GPU × 3 seed)<br/>对照基线和全部候选"]
+        baseline["基线｜规范化输入<br/>核对逐日统计"]
+        variant["候选｜含长序列特征<br/>记录推理耗时与质量"]
+        control["对照组｜只保留原输入<br/>统一计算评估指标"]
+    end
+    baseline & variant & control --> result["汇总三组实验"]'''
 INVALID = 'flowchart TD\n    input --> ['
 BODY = (f'## 模型结构图\n\n盘前特征缓存。\n\n```mermaid\n{HORIZONTAL}\n```\n\n'
         f'## 原结构\n\n```mermaid\n{VERTICAL}\n```\n\n'
         f'## 不完整的定义\n\n```mermaid\n{INVALID}\n```\n\n'
-        f'```text\n{VERTICAL}\n```')
+        f'```text\n{VERTICAL}\n```\n\n'
+        f'## 并行验证\n\n```mermaid\n{GROUPED}\n```')
 ASSET = '**/vendor/mermaid/mermaid.tiny.js*'
 
 
@@ -70,6 +83,34 @@ def check_labels(diagram):
     })''')
     assert labels and all(label['contained'] for label in labels), labels
     assert any(label['lines'] >= 2 for label in labels), labels
+
+
+def check_group_titles(diagram):
+    groups, connector = diagram.evaluate('''svg => {
+      const rect = el => el.getBoundingClientRect();
+      const nodes = [...svg.querySelectorAll('.node .label-container')].map(rect);
+      const bounds = {};
+      const groups = [...svg.querySelectorAll('.cluster')].map(group => {
+        const outline = rect(group.querySelector(':scope > rect'));
+        const title = group.querySelector('.cluster-label');
+        const box = rect(title);
+        const children = nodes.filter(node => node.top >= outline.top && node.bottom <= outline.bottom
+          && node.left >= outline.left && node.right <= outline.right);
+        const id = title.textContent.startsWith('阶段 0') ? 'source' : 'target';
+        bounds[id] = outline;
+        return {text: title.textContent, children: children.length,
+          topInset: box.top - outline.top, gap: Math.min(...children.map(node => node.top)) - box.bottom};
+      });
+      const path = svg.querySelector('path[id*="-L_preparation_branches_"]');
+      const matrix = path.getScreenCTM();
+      const start = path.getPointAtLength(0).matrixTransform(matrix);
+      const end = path.getPointAtLength(path.getTotalLength()).matrixTransform(matrix);
+      return [groups, {height: end.y - start.y,
+        startGap: Math.abs(start.y - bounds.source.bottom), endGap: bounds.target.top - end.y}];
+    }''')
+    assert len(groups) == 2, groups
+    assert all(group['children'] >= 2 and group['topInset'] > 0 and group['gap'] > 2 for group in groups), groups
+    assert connector['height'] > 4 and connector['startGap'] < 2 and 0 <= connector['endGap'] < 8, connector
 
 
 def drag_diagram(page, preview, dx, dy, touch=None):
@@ -218,8 +259,20 @@ def check(page, base, label, width, theme, screenshots):
         expect(invalid.locator('iframe')).to_have_count(0)
         assert invalid.locator('code').text_content() == INVALID
         expect(messages.locator('pre > code[data-code-lang="text"]')).to_contain_text('通道拼接')
+        grouped = messages.locator('sd-mermaid').last
+        grouped.scroll_into_view_if_needed()
+        group_svg = grouped.frame_locator('iframe').locator('svg').first
+        expect(group_svg).to_contain_text('对照基线和全部候选')
+        check_group_titles(group_svg)
+        grouped.get_by_role('button', name='放大查看').click()
+        dialog.get_by_role('button', name='整图').click()
+        check_group_titles(dialog.frame_locator('iframe').locator('svg').first)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-{view}-{width}-{theme}-groups.png'))
+        page.keyboard.press('Escape')
+        expect(dialog).to_have_count(0)
     assert not errors, errors
-    print(f'PASS Mermaid {label} {width}/{theme}: Agy conversation and SDK history, fit, zoom, pan, text selection', flush=True)
+    print(f'PASS Mermaid {label} {width}/{theme}: group titles, Agy conversation and SDK history, fit, zoom, pan, text selection', flush=True)
 
 
 def check_fallback_and_search(browser, base, screenshots):

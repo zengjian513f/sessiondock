@@ -3,6 +3,8 @@
 (() => {
   const theme = () => document.documentElement.dataset.theme;
   const minZoom = .1, maxZoom = 3, zoomStepPoints = 10, readingZoom = .9;
+  const diagramFontSize = 14;
+  const titleLineHeight = diagramFontSize * 1.5;
   const zoomControls = `
     <div class="mermaid-scale">
       <button type="button" data-out aria-label="缩小图表" title="缩小图表">−</button>
@@ -38,7 +40,7 @@
     return {
       darkMode,
       fontFamily: color('--sans'),
-      fontSize: '14px',
+      fontSize: `${diagramFontSize}px`,
       background: color('--panel-2'),
       primaryColor: color('--sel'),
       primaryTextColor: color('--text'),
@@ -180,6 +182,17 @@
     }
   }
 
+  function extraGroupTitleHeight(svg) {
+    if (!svg.getAttribute('aria-roledescription')?.startsWith('flowchart')) return 0;
+    let height = titleLineHeight;
+    for (const title of svg.querySelectorAll('.cluster-label')) {
+      const measured = Number(title.querySelector('foreignObject')?.getAttribute('height'));
+      const lines = title.querySelectorAll('.text-outer-tspan').length;
+      height = Math.max(height, measured || lines * titleLineHeight);
+    }
+    return Math.ceil(height - titleLineHeight);
+  }
+
   customElements.define('sd-mermaid', class extends HTMLElement {
     connectedCallback() {
       if (!this.stage) this.build();
@@ -258,7 +271,7 @@
           await SessionDockAssets.script('vendor/mermaid/mermaid.tiny.js');
           if (!this.isConnected || !this.visible || theme() !== nextTheme) return;
           const mermaid = globalThis.mermaid;
-          mermaid.initialize({
+          const config = {
             startOnLoad: false,
             securityLevel: 'sandbox',
             suppressErrorRendering: true,
@@ -277,9 +290,21 @@
               .flowchart-link { stroke-width: 1.5px; }
               .cluster-label { font-weight: 600; }`,
             flowchart: {useMaxWidth: false, look: 'classic', diagramPadding: 4,
-              padding: 8, nodeSpacing: 20, rankSpacing: 28, wrappingWidth: 264},
-          });
-          const svg = await render(mermaid, this.querySelector('code').textContent);
+              padding: 8, nodeSpacing: 20, rankSpacing: 36, wrappingWidth: 264,
+              subGraphTitleMargin: {top: 4, bottom: 12}},
+          };
+          const source = this.querySelector('code').textContent;
+          mermaid.initialize(config);
+          let svg = await render(mermaid, source);
+          const extraHeight = extraGroupTitleHeight(svg);
+          if (extraHeight) {
+            // Dagre reserves half a rank above the first row in a group.
+            // Increase rank spacing as well so the wider title area leaves room for arrows.
+            config.flowchart.rankSpacing += 2 * extraHeight;
+            config.flowchart.subGraphTitleMargin.bottom += extraHeight;
+            mermaid.initialize(config);
+            svg = await render(mermaid, source);
+          }
           if (this.isConnected && theme() === nextTheme) {
             this.show(svg, nextTheme);
             this.renderedTheme = nextTheme;

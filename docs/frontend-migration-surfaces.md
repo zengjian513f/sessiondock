@@ -412,7 +412,7 @@ DELTA（BUG-20261126-135117-0033ca）：普通对话和 SDK 的正文气泡按�
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
-DELTA（BUG-20261126-135344-8db5d6）：普通对话和 SDK 共用的 Markdown 使用随前端分发的 Mermaid Tiny 按需渲染闭合的 `mermaid` 围栏。长节点标签先换行再测量；图表使用对话可用宽度，按方向和复杂度预留高度。默认阅读缩放为 90–100%，每次加减 10 个百分点，可点「整图」缩到适合视口，或打开「放大查看」。内嵌和放大窗口都可开启「拖动」，直接按住图表平移，再点一次即可选择 SVG 文字。节点、连线和分组颜色随页面主题切换。全文搜索命中时优先显示高亮源码，仍可手动切回图形。库加载失败、语法错误或不支持的图形时显示源码。节点与 Hub 的 Chromium 验收见 [Mermaid 围栏](../tests/mermaid_browser.py)。
+DELTA（BUG-20261126-135344-8db5d6）：普通对话和 SDK 共用的 Markdown 使用随前端分发的 Mermaid Tiny 按需渲染闭合的 `mermaid` 围栏。长节点标签先换行再测量，流程图按分组标题的高度为标题和首排节点留出间距。图表使用对话可用宽度，按方向和复杂度预留高度。默认阅读缩放为 90–100%，每次加减 10 个百分点，可点「整图」缩到适合视口，或打开「放大查看」。内嵌和放大窗口都可开启「拖动」，直接按住图表平移，再点一次即可选择 SVG 文字。节点、连线和分组颜色随页面主题切换。全文搜索命中时优先显示高亮源码，仍可手动切回图形。库加载失败、语法错误或不支持的图形时显示源码。节点与 Hub 的 Chromium 验收见 [Mermaid 围栏](../tests/mermaid_browser.py)。
 
 DELTA（BUG-20261126-063413-4c1ccb）：用户输入、命令与回答的绿色气泡在明暗主题中各用同色系行内代码衬底，文件路径和普通链接使用对应主题的链接颜色。代码围栏沿用面板底色。宽窄屏、节点／Hub 的普通对话与 SDK 历史见[气泡间距](../tests/bubble_spacing_browser.py)。
 
