@@ -145,11 +145,77 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && !window.__grokSnapshot.requests.length")
     page.locator("#sdk-input").fill("background-task");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.native_tasks?.length>0")
+    raw = snapshot(page, uid)
+    assert raw["background_commands"] == [
+        {"task": "synthetic-bg", "command": "synthetic daemon", "output_available": True}
+    ], raw["background_commands"]
+    assert raw["background_timers"] == [
+        {"task": "periodic", "prompt": "Check periodically", "schedule": "every 5 minutes",
+         "due_at": "2026-12-01T04:10:00+00:00"}
+    ], raw["background_timers"]
+    # A native sidecar is sufficient for the ordinary conversation reader.
+    # It has no ACP connection requirement and an unfinished line commits nothing.
+    updates = fixture.path / "updates.jsonl"
+    def durable(tag, sid=fixture.sid, **fields):
+        return json.dumps({"timestamp":1795480000,"method":"_x.ai/session/update",
+            "params":{"sessionId":sid,"update":{"sessionUpdate":tag,**fields}}}) + "\n"
+    active = durable("task_backgrounded",task_id="persisted-shell",tool_call_id="disk-tool",
+                     command="persisted shell",output_file="private-output")
+    active += durable("task_backgrounded",sid="foreign-sid",task_id="foreign",command="foreign")
+    active += durable("scheduled_task_created",task_id="persisted-timer",prompt="Read-only timer",
+                      next_fire_at="2026-12-01T04:10:00Z",human_schedule="in 5 minutes")
+    done = durable("task_completed",task_snapshot={"task_id":"persisted-shell"})
+    updates.write_text(active + done.rstrip("\n"))
+    ordinary = api(page, "background_tasks", {"uid":uid})["raw"]
+    assert ordinary["background_commands"] == [{"task":"persisted-shell","command":"persisted shell"}]
+    assert ordinary["background_timers"][0]["prompt"] == "Read-only timer"
+    page.locator("#a-chat").click()
+    chat = page.locator("#conversation-status")
+    chat.get_by_role("button", name="后台任务 2", exact=True).click()
+    chat_tasks = chat.get_by_role("dialog", name="后台任务")
+    expect(chat_tasks).to_contain_text("persisted shell")
+    expect(chat_tasks).to_contain_text("Read-only timer")
+    if screenshots:
+        page.screenshot(path=str(screenshots / "background-conversation.png"))
+    page.keyboard.press("Escape")
+    with updates.open("a") as handle:
+        handle.write("\n" + durable("scheduled_task_deleted",task_id="persisted-timer"))
+    assert api(page, "background_tasks", {"uid":uid})["raw"] == {
+        "background_commands":[], "background_timers":[]
+    }
+    expect(chat.get_by_role("button", name="后台任务", exact=False)).to_have_count(0)
+    page.locator("#a-sdk").click()
+    prompts_before_read = len(fixture.received("session/prompt"))
+    request = {"uid": uid, "task": "synthetic-bg"}
+    output = api(page, "background_output", request)["raw"]
+    assert output["clipped"] and output["output"].endswith("Grok queried tail"), output.get("note")
+    assert len(output["output"].encode()) <= 64 * 1024 and "old prefix" not in output["output"]
+    page.wait_for_function("""async request => {
+        const response = await fetch('/api/native-sdk/background_output', {method:'POST',
+            headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});
+        return (await response.json()).raw?.output === 'Grok passive tail';
+    }""", arg=request)
+    assert len(fixture.received("session/prompt")) == prompts_before_read
+    assert len(fixture.received("x.ai/task/list")) == 1
+    assert "Grok passive tail" not in json.dumps(snapshot(page, uid))
+    page.locator(".sdk-pane button.background-commands").click()
+    tasks = page.locator(".background-command-list:popover-open")
+    expect(tasks).to_contain_text("Check periodically")
+    tasks.get_by_role("button", name="synthetic daemon", exact=False).click()
+    dialog = page.get_by_role("dialog", name="后台输出")
+    expect(dialog.get_by_label("日志输出")).to_contain_text("Grok passive tail")
+    expect(dialog.get_by_text("下载完整日志")).to_have_count(0)
+    if screenshots:
+        page.screenshot(path=str(screenshots / "background-sdk-output.png"))
+    dialog.get_by_role("button", name="关闭").click()
     page.close();advance(observer,marker,20);advance(observer,marker,620)
     assert alive(pid),"a native background task was reclaimed after the prompt ended"
     page,uid=page_for(context,base,fixture)
     page.locator("#sdk-input").fill("clear-background");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && !window.__grokSnapshot.native_tasks?.length")
+    assert not snapshot(page, uid)["background_timers"]
+    assert not snapshot(page, uid)["background_commands"]
+    assert api(page, "background_output", request)["raw"] is None
     page.wait_for_function("window.__grokSnapshot && Array.isArray(window.__grokSnapshot.input_queue) && window.__grokSnapshot.input_queue.length===0")
     prompts=len(fixture.received("session/prompt"))
     page.close()

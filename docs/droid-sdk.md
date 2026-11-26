@@ -187,6 +187,17 @@ macOS／Windows 采集器的真实 Droid 验收仍待相应节点安装 CLI；�
 [活动通知](../tests/droid_activity_browser.py)与 [CLI 设置／版本](../tests/droid_clients_browser.py)
 分别覆盖实时子导航、后台状态及进程级设置、原生更新查询。
 
+DELTA：后台命令以 `droid.session_notification.params.sessionId` 和原生 `toolUseId`
+为归属。同一会话的 `tool_execution_heartbeat.detached:true` 建立后台命令记录，
+对应 `Execute` 工具提供可选命令正文，`settled_*` 核销当前运行项。原生
+`tool_progress_update.update.fullOutput` 到达后，按选中的原生任务返回最多
+64 KiB 的输出尾部，标明本地截断。输出读取只用已有观测。父连接若收到携带子 SID 的
+事件，只有原生目录已证实该子会话归属时才允许从父连接按子 SID 读取。
+只读子代理视图能显示已有 SDK 宿主的同一批观测。独立 CLI 的 JSONL 目前只有会话消息与
+工具记录，缺少匹配的 detached 生命周期；`@factory/droid-sdk` 0.10.0 的会话方法表
+未公布后台输出查询。网页读取不会启动或接管 CLI。
+[Factory SDK 0.10.0](https://www.npmjs.com/package/@factory/droid-sdk/v/0.10.0)
+
 子代理派生操作按原生新文件的 callingSessionId 决定归属；保留调用关系时继续显示在
 对应 owner/agent 下，没有调用关系时作为独立新会话。旧运行实例结束后移除恢复绑定，
 重复动作先读取持久回执，不因服务重启再次执行回退。子代理蓝点仅表示受管 SDK，

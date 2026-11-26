@@ -1,6 +1,7 @@
 //! OpenCode v2 native API bridge. Contract and protocol evidence:
 //! docs/opencode-sdk.md. No HTTP facade or native file writer lives here.
 mod actions;
+pub(crate) mod background;
 mod project;
 mod transport;
 
@@ -9,7 +10,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -21,6 +22,7 @@ use transport::{Transport, encoded};
 pub struct Bridge {
     transport: Transport,
     root: PathBuf,
+    database: Option<PathBuf>,
     proc_root: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     creates: tokio::sync::Mutex<HashMap<String, Value>>,
@@ -45,10 +47,20 @@ struct Live {
     sending: usize,
     catalog: Vec<Value>,
     controls: HashMap<String, Value>,
+    background_checked: Option<Instant>,
+    background_reading: bool,
+    background_jobs: Vec<Value>,
     tx: broadcast::Sender<Arc<str>>,
 }
 
 impl Live {
+    fn project_background_commands(&mut self) {
+        self.raw["background_commands"] = json!(background::merge_commands(
+            &self.background_jobs,
+            background::message_commands(self.records.values().map(|v| (v["type"].as_str(), v))),
+        ));
+    }
+
     fn snapshot(&self) -> Value {
         crate::presentation::native_snapshot(
             "opencode",
@@ -111,6 +123,7 @@ pub fn new(
             root,
         )?,
         root: root.clone(),
+        database: config.opencode_db.clone(),
         proc_root: config.proc_root.clone(),
         sessions: Mutex::new(HashMap::new()),
         creates: tokio::sync::Mutex::new(HashMap::new()),
@@ -220,6 +233,7 @@ impl Bridge {
                     .await
             }
             "create" => self.create(&target, &input).await,
+            "background_output" => self.background_output(&target, &input).await,
             "open" => {
                 let (session, key) = self.open(&target).await?;
                 Ok(
@@ -347,7 +361,7 @@ impl Bridge {
             .api(cwd, "GET", &format!("/api/session/{}", encoded(sid)), None)
             .await?;
         let identity = self.identity(&info["data"])?;
-        if identity["uid"] != target["uid"]
+        if identity["uid"] != background::native_uid(target)?
             || identity["session_id"] != target["session_id"]
             || identity["cwd"] != target["cwd"]
         {
@@ -396,7 +410,7 @@ impl Bridge {
             state: Mutex::new(Live {
                 seq: 0,
                 raw: json!({"session_id":sid,"running":false,"items":[],"requests":[],"model":info["model"],
-                "effort":info["model"]["variant"]}),
+                "effort":info["model"]["variant"],"background_commands":[],"background_timers":[]}),
                 records: records
                     .into_iter()
                     .filter_map(|v| Some((v["id"].as_str()?.to_owned(), v)))
@@ -407,6 +421,9 @@ impl Bridge {
                 sending: 0,
                 catalog,
                 controls: HashMap::new(),
+                background_checked: None,
+                background_reading: false,
+                background_jobs: Vec::new(),
                 tx,
             }),
             operation: Arc::new(tokio::sync::Mutex::new(())),
@@ -684,6 +701,7 @@ impl Bridge {
                 tokio::select! { _ = self.transport.shutdown.cancelled()=>break, _ = session.wake.notified()=>{} }
                 continue;
             }
+            self.observe_background(&session);
             let result = self.refresh(&session).await;
             if let Err(error) = result
                 && let Ok(mut state) = session.state.lock()
@@ -699,6 +717,51 @@ impl Bridge {
             tokio::select! {_ = self.transport.shutdown.cancelled()=>break,
             _ = tokio::time::sleep(Duration::from_millis(if active {350}else{2000}))=>{}}
         }
+    }
+
+    fn observe_background(self: &Arc<Self>, session: &Arc<Session>) {
+        let Ok(mut state) = session.state.lock() else {
+            return;
+        };
+        if state.background_reading
+            || state
+                .background_checked
+                .is_some_and(|checked| checked.elapsed() < Duration::from_secs(2))
+        {
+            return;
+        }
+        state.background_reading = true;
+        drop(state);
+        let bridge = self.clone();
+        let session = session.clone();
+        tokio::spawn(async move {
+            let (jobs, timers) = bridge.background_status(&session.sid, &session.cwd).await;
+            let Ok(mut state) = session.state.lock() else {
+                return;
+            };
+            state.background_reading = false;
+            state.background_checked = Some(Instant::now());
+            if state.raw["stopped"] == true {
+                return;
+            }
+            let mut changed = false;
+            if let Some(jobs) = jobs
+                && jobs != state.background_jobs
+            {
+                let before = state.raw["background_commands"].clone();
+                state.background_jobs = jobs;
+                state.project_background_commands();
+                changed = state.raw["background_commands"] != before;
+            }
+            if let Some(timers) = timers {
+                let timers = json!(timers);
+                changed |= state.raw["background_timers"] != timers;
+                state.raw["background_timers"] = timers;
+            }
+            if changed {
+                state.publish_raw();
+            }
+        });
     }
 
     async fn refresh(&self, session: &Session) -> Result<(), String> {
@@ -787,6 +850,7 @@ impl Bridge {
         }
         state.requests = project::requests(&permissions, &forms);
         state.raw["queue"] = project::queue(&inbox);
+        state.project_background_commands();
         for entry in inbox["data"].as_array().into_iter().flatten() {
             if let Some(item) = state
                 .items

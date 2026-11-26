@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
     time::Duration,
 };
@@ -64,6 +64,7 @@ pub struct Connection {
     closed: CancellationToken,
     done: CancellationToken,
     generation: u64,
+    background_list_unsupported: AtomicBool,
 }
 
 impl Connection {
@@ -77,6 +78,14 @@ impl Connection {
 
     pub fn is_closed(&self) -> bool {
         self.closed.is_cancelled()
+    }
+
+    pub(super) fn background_list_supported(&self) -> bool {
+        !self.background_list_unsupported.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn disable_background_list(&self) {
+        self.background_list_unsupported.store(true, Ordering::Relaxed);
     }
 
     pub async fn open(
@@ -161,6 +170,7 @@ impl Connection {
             closed,
             done: CancellationToken::new(),
             generation,
+            background_list_unsupported: AtomicBool::new(false),
         });
         connection.attach_reader();
         spawn_io(inner.clone(), connection.clone());

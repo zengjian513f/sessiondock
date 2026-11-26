@@ -2,6 +2,7 @@
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
 mod actions;
+mod background;
 mod hosted;
 mod protocol;
 mod transport;
@@ -110,6 +111,10 @@ struct Live {
     retry: Value,
     compact: Value,
     background_tasks: Vec<Value>,
+    #[serde(default)]
+    background_level_seen: bool,
+    #[serde(default)]
+    background_starts: BTreeMap<String, Value>,
     error: Option<String>,
     #[serde(default)]
     runtime_error: Option<String>,
@@ -278,6 +283,8 @@ impl Session {
                 retry: Value::Null,
                 compact: Value::Null,
                 background_tasks: vec![],
+                background_level_seen: false,
+                background_starts: BTreeMap::new(),
                 error: None,
                 runtime_error: None,
                 last_turn: Value::Null,
@@ -301,7 +308,9 @@ impl Session {
             "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
-            "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "background_tasks":live.background_tasks,
+            "background_commands":background::commands(&live.background_tasks, &live.items),
+            "error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "progress":live.turns.front().map(|id|json!({"request_id":id})),
             "capabilities":capabilities()}}),

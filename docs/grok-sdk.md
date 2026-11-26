@@ -171,6 +171,32 @@ DELTA（BUG-20261024-154228-478a04）：ACP 运行时不按对话空闲时间回
 订阅／运行／审批／后台任务，以及无人观察的静默实例持续保留和同实例重开。
 只在临时 HTTP 服务中使用 LD_PRELOAD 加速 monotonic clock；生产没有超时 override。
 
+### 后台命令与定时提醒
+
+DELTA：`raw.background_commands` 来自所选原生 `sessionId` 的
+`_x.ai/task_backgrounded`，以 `task_id` 标识命令。`_x.ai/task_completed` 使用
+`task_snapshot.task_id` 核销。完整 `background_tasks` 清单可核销缺席项，截断清单
+只更新实际包含的证据。原生清单也可能包括未标 owner 的任务，因此只有已观察的
+会话事件或列表行上的明确 owner 才建立归属。并行子代理保留独立的原生身份。
+[官方事件结构](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/extensions/notification.rs)
+
+选中后台命令后，读取同一 `tool_call_id` 的 Bash 累计输出或同一任务的 monitor 事件。
+没有已观察正文时，已有 ACP 连接可调用只读 `_x.ai/task/list {sessionId}`，只返回结果中
+属于该 SID 且匹配任务 ID 的后台命令输出。快照只携带输出可用标记，按需返回最多
+64 KiB 的 UTF-8 尾部；原生或本地截断均标明，早期正文无法补读。1.0.92
+（`b06756fd6256`）的独立临时 HOME 以 `grok-4.6 / low` 完成握手，缺失 SID 的
+`task/list` 返回已识别的查询失败，`task/output` 返回 `-32601`。测试未建立或加载原生
+会话。工具返回的绝对输出路径没有 SessionDock 文件授权。
+[官方任务读取实现](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/extensions/task.rs)、
+[官方输出关联实现](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/acp_handler/background.rs)
+
+`raw.background_timers` 使用 `scheduled_task_created/fired/deleted` 的原生任务 ID、
+提示词、周期和 `next_fire_at`。重复提醒触发时更新时间，一次性提醒触发或任务删除时
+移除对应项。普通对话可从所选会话的 `updates.jsonl` 完整行只读还原已持久化的
+任务和提醒。普通视图可见的周期时间受原生落盘更新频率影响，输出路径和实时输出窗口
+不属于该读源。
+[原生落盘与通知实现](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/tools/notification_bridge.rs)
+
 新增 facade 方法及边界：
 
 - `usage` 原样保留原生 input/output/cache/reasoning/modelUsage 计数；原生输入包含缓存，

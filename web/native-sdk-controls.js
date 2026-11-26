@@ -36,9 +36,9 @@ const NativeSdkControls = {
   scheduledTimers(timers) {
     const deadline = timer => Number.isFinite(timer.due) ? timer.due : Number.MAX_VALUE;
     return timers.map(timer => {
-      const delay = this.timerDelay(timer.delay);
+      const delay = this.timerDelay(timer.delay || '');
       const created = Date.parse(timer.created_at);
-      const due = new Date(created + delay).getTime();
+      const due = timer.due_at ? Date.parse(timer.due_at) : new Date(created + delay).getTime();
       return {...timer, created, due, delayMs: delay};
     }).sort((left, right) => deadline(left) - deadline(right));
   },
@@ -103,6 +103,7 @@ const NativeSdkControls = {
       span.textContent = '延时 ' + delay;
       timing.append(span);
     }
+    if (timer.schedule) timing.append(el('span', '', timer.schedule));
     if (timing.childElementCount) item.append(timing);
     const origin = el('div', 'sdk-timer-origin');
     if (showTask && timer.task) origin.textContent = TaskOutput.number(timer.task);

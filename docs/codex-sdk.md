@@ -393,6 +393,33 @@ items, requests}}`: the turn in flight with its items as accumulated so far
 taken under one lock, so no event is missed or duplicated. `heartbeat` events
 keep proxies alive; a lagging page receives `bridge/reset` and reloads.
 
+DELTA: `open.raw.background_commands`, `snapshot.raw.background_commands`,
+and `bridge/backgroundCommands.raw.background_commands` describe running commands
+of the selected native thread, including an idle thread after its foreground
+turn completes. The bridge uses the paginated `thread/backgroundTerminals/list`
+on the existing listener via its unsubscribed query connection. This method
+requires `experimentalApi: true`. A daemon without the method leaves the list
+empty. A temporary query failure leaves a connected SDK's last confirmed list
+in place. Ordinary Codex conversations can use `POST /api/native-sdk/background_tasks`
+with `{uid, agent?}` to refresh the exact thread on an existing listener.
+An unavailable observation is represented by `raw.background_commands: null`.
+An independent CLI runtime without that listener has no list.
+Looking up a list does not start a daemon, resume or subscribe to a thread, or
+control a terminal. Parent and child lookups use their own native IDs.
+
+Each listed entry uses the native `itemId` as `task`. With `output_available`,
+the shared `POST /api/native-sdk/background_output` route reads the selected
+task's current tail for `{uid, agent?, task}`. The bridge matches only
+`item/commandExecution/outputDelta` notifications for that thread and item
+on the owning connection. `terminalInteraction` reports input and contributes
+no output. The reply carries up to 64 KiB of observed UTF-8 output and marks a
+clipped or potentially missing beginning. The native list has no output buffer,
+so output before observation or during disconnection cannot be replayed. New
+connection state starts with a new tail. Ended tasks disappear at the next
+successful native list read and their tail is discarded. An empty live output
+is distinct from an ended task. Snapshots and list updates carry no log text.
+Coverage: [Codex background terminals](../tests/codex_sdk_background_terminals_browser.py).
+
 Server requests are forwarded as their own method with
 `raw = {key, params}`, where `key` is the JSON spelling of the request id.
 Handled: `item/commandExecution/requestApproval`,

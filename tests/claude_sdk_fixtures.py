@@ -273,22 +273,23 @@ def fake_cli():
         with output_lock:
             print(json.dumps({**frame, "session_id": sid}), flush=True)
 
-    def record(kind, identifier, message):
+    def record(kind, identifier, message, **native):
         nonlocal previous
         materialize_fork()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as stream:
             stream.write(json.dumps({"type": kind, "uuid": identifier, "parentUuid": previous,
                 "sessionId": sid, "cwd": cwd, "timestamp": "2026-10-18T11:00:00Z", "isSidechain": False,
-                "message": message}) + "\n")
-        previous = identifier
+                "message": message, **native}) + "\n")
+        if not native.get("isSidechain"):
+            previous = identifier
 
-    def assistant(content, message_id):
+    def assistant(content, message_id, parent=None):
         frame_id = str(uuid.uuid4())
         message = {"role": "assistant", "id": message_id, "model": state["model"], "content": content,
             "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 10}}
-        record("assistant", frame_id, message)
-        send({"type": "assistant", "uuid": frame_id, "message": message})
+        record("assistant", frame_id, message, isSidechain=parent is not None)
+        send({"type": "assistant", "uuid": frame_id, "message": message, "parent_tool_use_id": parent})
 
     def stream_text(content, message_id, hold=False):
         send({"type": "stream_event", "event": {"type": "message_start", "message": {"id": message_id, "model": state["model"]}}})
@@ -378,10 +379,57 @@ def fake_cli():
                     "status": "allowed_warning", "rateLimitType": "five_hour", "utilization": .8, "resetsAt": 1900000000}})
             if content == "usage-unavailable": state["usage_available"] = False
             if content == "usage-available": state["usage_available"] = True
-            if content == 'background':
-                send({'type':'system','subtype':'background_tasks_changed','tasks':[{'task_id':'synthetic-background','task_type':'local_bash','description':'Synthetic native background job'}]})
-            if content == 'finish-background':
-                send({'type':'system','subtype':'background_tasks_changed','tasks':[]})
+            if content == "background":
+                task = "synthetic-background"
+                output = Path(cwd) / "tasks" / (task + ".output")
+                output.parent.mkdir(exist_ok=True)
+                output.write_text("first native Claude log line\n")
+                shell = {"type": "tool_use", "id": "root-bash", "name": "Bash",
+                         "input": {"command": "printf synthetic", "run_in_background": True}}
+                child = {**shell, "id": "child-bash"}
+                front = {**shell, "id": "foreground-bash"}
+                timer = {"type": "tool_use", "id": "cron-create", "name": "CronCreate",
+                         "input": {"cron": "*/15 * * * *", "prompt": "Synthetic Claude timer"}}
+                assistant([shell, front, timer], "root-background-calls")
+                assistant([child], "child-background-calls", parent="parent-agent-call")
+                root_task = {"task_id": task, "task_type": "local_bash", "run_id": "02",
+                             "description": "Synthetic native background job"}
+                child_task = {"task_id": "nested-bash", "task_type": "local_bash", "run_id": "03",
+                              "description": "Synthetic nested command", "parent_task_id": "child-owner"}
+                ambient_task = {**root_task, "task_id": "ambient-bash", "ambient": True}
+                send({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+                for tool, item in [(shell, root_task), (child, child_task), (front, ambient_task)]:
+                    send({"type": "system", "subtype": "task_started", **item,
+                          "tool_use_id": tool["id"], "is_backgrounded": item is not ambient_task})
+                send({"type": "system", "subtype": "background_tasks_changed",
+                      "tasks": [root_task, child_task, ambient_task]})
+                send({"type": "system", "subtype": "task_notification", "task_id": task,
+                      "run_id": "01", "status": "completed", "output_file": str(output)})
+                native = {"backgroundTaskId": task, "backgroundOutputPath": str(output)}
+                result = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": shell["id"],
+                    "content": f"Command running in background with ID: {task}. Output is being written to: {output}."}]}
+                record("user", "root-bash-result", result, toolUseResult=native)
+                send({"type": "user", "uuid": "root-bash-result", "message": result, "tool_use_result": native,
+                      "parent_tool_use_id": None})
+                record("user", "cron-result", {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": timer["id"], "content": "Scheduled recurring job cron-alpha"}]},
+                    toolUseResult={"id": "cron-alpha", "durable": False, "recurring": True,
+                                   "nextFireAt": 1900000000000})
+                record("attachment", "cron-carry", None, attachment={"type": "session_cron_carry",
+                    "tasks": [{"id": "cron-beta", "prompt": "Carried Claude timer", "cron": "0 9 * * *",
+                               "recurring": True, "createdAt": 1790000000000}]})
+            if content == "finish-background":
+                send({"type": "system", "subtype": "task_started", "task_id": "late-unlisted",
+                      "task_type": "local_bash", "description": "Late start without snapshot membership",
+                      "tool_use_id": "root-bash", "run_id": "05", "is_backgrounded": True})
+                send({"type": "system", "subtype": "task_notification", "task_id": "synthetic-background",
+                      "run_id": "02", "status": "completed", "output_file": str(Path(cwd) / "tasks" / "synthetic-background.output")})
+                send({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+                notice = "<task-notification>\n<task-id>synthetic-background</task-id><status>completed</status>\n</task-notification>"
+                record("user", "root-bash-ended", {"role": "user", "content": notice},
+                       origin={"kind": "task-notification"})
+                record("attachment", "cron-end", None, attachment={"type": "session_cron_carry",
+                       "tasks": [], "ended": ["cron-beta"]})
             stream_text("streaming Claude progress", message_id, hold=content == 'progress-hold')
             if content == 'presentation-heavy':
                 for index in range(160):

@@ -4,7 +4,11 @@
 const TaskOutput = {
   number(task) { return '任务 ' + task.replace(/^task-/, ''); },
 
-  mount(panel, {uid, agent, ref, task, command}, {close, back} = {}) {
+  readable(task) {
+    return !!task && (Boolean(task.ref || task.output_available) || typeof task.output === 'string');
+  },
+
+  mount(panel, {uid, agent, ref, task, command}, {close, back, readOutput} = {}) {
     panel.classList.add('task-output-panel');
     panel.innerHTML = `<div class="modal-head task-output-head"><div><h2>后台输出</h2>
       <span class="task-output-number"></span></div></div>
@@ -45,40 +49,55 @@ const TaskOutput = {
     }
     const pre = panel.querySelector('.task-output-text'), status = panel.querySelector('[role=status]');
     const follow = panel.querySelector('input'), refresh = panel.querySelector('.task-output-controls button');
-    const target = new URL('api/session/file', new URL('.', location.href));
-    target.search = new URLSearchParams({uid, ref, agent: agent || '', download: '1'});
-    panel.querySelector('a').href = target.href;
+    let target;
+    const download = panel.querySelector('a');
+    if (ref) {
+      target = new URL('api/session/file', new URL('.', location.href));
+      target.search = new URLSearchParams({uid, ref, agent: agent || '', download: '1'});
+      download.href = target.href;
+    } else {
+      download.remove();
+    }
     const controller = new AbortController();
     let timer;
     function schedule() {
       clearTimeout(timer);
       if (follow.checked && !document.hidden && !controller.signal.aborted) timer = setTimeout(read, 3000);
     }
+    async function readFile() {
+      const response = await fetch(target, {cache: 'no-store', signal: controller.signal, headers: {Range: 'bytes=-65536'}});
+      const range = response.headers.get('Content-Range') || '';
+      const empty = response.status === 416 && range === 'bytes */0';
+      if (!empty && response.status !== 206) {
+        if (response.headers.get('Content-Type')?.includes('application/json')) {
+          const body = await response.json();
+          throw new Error(body.error || '无法读取日志');
+        }
+        await response.body?.cancel();
+        throw new Error('请检查连接或登录状态');
+      }
+      const bytes = empty ? new Uint8Array() : new Uint8Array(await response.arrayBuffer());
+      const clipped = !empty && !range.startsWith('bytes 0-');
+      let first = 0;
+      while (clipped && (bytes[first] & 0xc0) === 0x80) first++;
+      return {output: new TextDecoder().decode(bytes.subarray(first)), clipped};
+    }
     async function read() {
       if (refresh.disabled || controller.signal.aborted) return;
       refresh.disabled = true;
       clearTimeout(timer);
       try {
-        const response = await fetch(target, {cache: 'no-store', signal: controller.signal, headers: {Range: 'bytes=-65536'}});
-        const range = response.headers.get('Content-Range') || '';
-        const empty = response.status === 416 && range === 'bytes */0';
-        if (!empty && response.status !== 206) {
-          if (response.headers.get('Content-Type')?.includes('application/json')) {
-            const body = await response.json();
-            throw new Error(body.error || '无法读取日志');
-          }
-          await response.body?.cancel();
-          throw new Error('请检查连接或登录状态');
+        const sample = target ? await readFile() : await readOutput(controller.signal);
+        if (controller.signal.aborted) return;
+        delete status.dataset.error;
+        if (!sample) {
+          status.textContent = '任务已离开后台任务列表';
+          return;
         }
-        const bytes = empty ? new Uint8Array() : new Uint8Array(await response.arrayBuffer());
-        const clipped = !empty && !range.startsWith('bytes 0-');
-        let first = 0;
-        while (clipped && (bytes[first] & 0xc0) === 0x80) first++;
-        const output = new TextDecoder().decode(bytes.subarray(first));
+        const {output, clipped, note} = sample;
         const atEnd = pre.hidden || pre.scrollHeight - pre.scrollTop - pre.clientHeight <= 2;
         pre.hidden = !output;
-        delete status.dataset.error;
-        status.textContent = empty ? '暂时没有输出' : clipped ? '显示最近 64 KiB' : '';
+        status.textContent = note || (clipped ? '显示最近 64 KiB' : output ? '' : '暂时没有输出');
         if (pre.textContent !== output) pre.textContent = output;
         if (atEnd) pre.scrollTop = pre.scrollHeight;
       } catch (error) {

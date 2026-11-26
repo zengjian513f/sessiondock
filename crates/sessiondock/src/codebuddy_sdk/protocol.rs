@@ -455,13 +455,17 @@ pub(super) fn observe_at(
                 live.compact = json!({"state":"success","native":frame});
                 live.context_usage = Value::Null;
                 live.usage.as_object_mut().unwrap().remove("context");
-            } else if frame["subtype"] == "background_tasks_changed" {
-                live.background_tasks = frame["tasks"].as_array().cloned().unwrap_or_default();
-            } else if frame["subtype"] == "task_started" {
-                live.background_tasks.push(frame.clone());
-            } else if frame["subtype"] == "task_notification" {
-                live.background_tasks
-                    .retain(|task| task["task_id"] != frame["task_id"]);
+            } else if matches!(
+                frame["subtype"].as_str(),
+                Some("task_started" | "task_updated" | "task_notification")
+            ) {
+                if frame["session_id"] == session.sid {
+                    background::observe(
+                        &mut live.background_tasks,
+                        session.background_dir.as_deref(),
+                        &frame,
+                    );
+                }
             } else if frame["subtype"] == "session_state_changed" {
                 // Stream-json can continue background work after a result. The
                 // native state is observed separately from accepted input count.

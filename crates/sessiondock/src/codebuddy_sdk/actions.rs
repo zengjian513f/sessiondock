@@ -73,6 +73,7 @@ impl Bridge {
                 source.cwd.clone(),
                 path,
                 &Value::Null,
+                &self.profile,
             );
             session.fork_source = Some(source.sid.clone());
             let session = Arc::new(session);

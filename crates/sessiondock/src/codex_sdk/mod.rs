@@ -11,6 +11,7 @@
 //! `api::codex_sdk`; nothing here parses HTTP.
 
 mod actions;
+mod background;
 mod capacity;
 mod channel;
 mod connection;
@@ -382,6 +383,8 @@ impl CodexSdk {
         tokio::spawn(async move { inner.run_queue().await });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.run_capacity_retries().await });
+        let inner = sdk.inner.clone();
+        tokio::spawn(async move { inner.watch_background().await });
         let recovering = sdk.clone();
         tokio::spawn(async move {
             for (id, attempt) in recovering.inner.creations.pending() {
@@ -490,6 +493,7 @@ impl CodexSdk {
             .lock()
             .expect("stopped")
             .remove(thread_id);
+        self.inner.refresh_background(&thread).await;
         Ok(thread.summary())
     }
 
@@ -497,6 +501,7 @@ impl CodexSdk {
     /// duplicate between the two.
     pub async fn attach(&self, thread_id: &str) -> Result<Attached, RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
+        self.inner.refresh_background(&thread).await;
         Ok(Self::observe(thread))
     }
 
@@ -508,6 +513,7 @@ impl CodexSdk {
         let thread = self.inner.threads.lock().expect("threads")
             .get(thread_id).cloned()
             .ok_or_else(|| RpcError::Unavailable("原生线程当前未连接".into()))?;
+        self.inner.refresh_background(&thread).await;
         Ok(Self::observe(thread))
     }
 
@@ -1106,6 +1112,9 @@ impl Inner {
             .get(&thread_id)
             .cloned();
         if let Some(thread) = thread {
+            if matches!(method, "item/started" | "item/commandExecution/outputDelta") {
+                thread.observe_background(generation, method, &params);
+            }
             thread.apply(method, params.clone());
             if method == "turn/started"
                 && let Some(id) = params["turn"]["id"].as_str().filter(|id| !id.is_empty())

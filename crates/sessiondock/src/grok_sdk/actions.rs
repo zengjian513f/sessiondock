@@ -1,9 +1,59 @@
 //! Explicit native extensions; no transcript rewriting or model-emulated commands.
-use super::{Bridge, Session, capabilities, live, required};
+use super::{Bridge, Session, background, capabilities, live, required, target_key};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 impl Bridge {
+    pub(super) async fn background_output(
+        &self,
+        target: &Value,
+        input: &Value,
+    ) -> Result<Value, String> {
+        let key = target_key(target)?;
+        let sid = required(target, "session_id")?;
+        let task = required(input, "task")?;
+        let session = self.sessions.lock().unwrap().get(&key).cloned();
+        let Some(session) = session.filter(|session| session.sid == sid) else {
+            return Ok(json!({"raw":null}));
+        };
+        if !session.connection.alive.load(Ordering::Acquire) {
+            return Ok(json!({"raw":null}));
+        }
+        {
+            let state = session.live.lock().unwrap();
+            let Some(output) = state.background.output(task) else {
+                return Ok(json!({"raw":null}));
+            };
+            if output["output"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+                || state.extensions.get("background_output") == Some(&false)
+            {
+                return Ok(json!({"raw":output}));
+            }
+        }
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            session
+                .connection
+                .request("x.ai/task/list", json!({"sessionId":sid})),
+        )
+        .await;
+        let mut state = session.live.lock().unwrap();
+        let Some(fallback) = state.background.output(task) else {
+            return Ok(json!({"raw":null}));
+        };
+        let output = match result {
+            Ok(Ok(result)) => background::queried_output(&result, sid, task),
+            Ok(Err(error)) if error == "grok_sdk_native_error: code -32601" => {
+                state.extensions.insert("background_output".into(), false);
+                None
+            }
+            _ => None,
+        };
+        Ok(json!({"raw":output.unwrap_or(fallback)}))
+    }
+
     pub(super) async fn read_extension(
         &self,
         session: &Session,

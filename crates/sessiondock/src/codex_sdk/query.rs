@@ -25,6 +25,7 @@ pub(super) fn repeatable(method: &str) -> bool {
             | "config/read"
             | "account/rateLimits/read"
             | "thread/goal/get"
+            | super::background::LIST
     )
 }
 

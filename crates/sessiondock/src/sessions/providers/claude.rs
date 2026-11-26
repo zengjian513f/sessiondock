@@ -1,5 +1,8 @@
 //! Claude's append-only transcript is a tree, not a flat event log.
 
+mod background;
+pub(super) use background::background_metadata;
+
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
@@ -827,6 +830,7 @@ pub(super) fn record(
                 "queued_command",
                 "compact_file_reference",
                 "total_tokens_reminder",
+                "session_cron_carry",
             ]
             .contains(&kind)
             {

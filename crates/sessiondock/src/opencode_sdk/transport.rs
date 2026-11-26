@@ -62,6 +62,24 @@ impl Transport {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
+        self.api_with_absence(cwd, method, path, body, None).await
+    }
+
+    pub async fn shell_output(&self, cwd: &Path, path: &str) -> Result<Option<Value>, String> {
+        let output = self
+            .api_with_absence(cwd, "GET", path, None, Some("ShellNotFoundError"))
+            .await?;
+        Ok((!output.is_null()).then_some(output))
+    }
+
+    async fn api_with_absence(
+        &self,
+        cwd: &Path,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        not_found: Option<&str>,
+    ) -> Result<Value, String> {
         // Require the shared service; do not intentionally start a daemon or
         // use a one-shot standalone runtime. The CLI's own discovery race is
         // documented in docs/opencode-sdk.md.
@@ -83,7 +101,9 @@ impl Transport {
             args.extend(["--data".into(), body.to_string()]);
         }
         let identity = body_identity(method, path, &args);
-        let output = self.run_identified(cwd, &args, identity.as_deref()).await?;
+        let output = self
+            .run_identified(cwd, &args, identity.as_deref(), not_found)
+            .await?;
         if output.iter().all(u8::is_ascii_whitespace) {
             return Ok(Value::Null);
         }
@@ -91,7 +111,7 @@ impl Transport {
     }
 
     async fn run(&self, cwd: &Path, args: &[String]) -> Result<Vec<u8>, String> {
-        self.run_identified(cwd, args, None).await
+        self.run_identified(cwd, args, None, None).await
     }
 
     async fn run_identified(
@@ -99,6 +119,7 @@ impl Transport {
         cwd: &Path,
         args: &[String],
         identity: Option<&str>,
+        not_found: Option<&str>,
     ) -> Result<Vec<u8>, String> {
         let result = self
             .commands
@@ -119,6 +140,11 @@ impl Transport {
         }
         if result["success"] != true {
             let native: Option<Value> = serde_json::from_slice(&output).ok();
+            if let Some(tag) = not_found
+                && native.as_ref().is_some_and(|value| value["_tag"] == tag)
+            {
+                return Ok(Vec::new());
+            }
             let detail = native
                 .as_ref()
                 .and_then(|v| v["message"].as_str())

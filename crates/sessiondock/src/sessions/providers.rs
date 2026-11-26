@@ -256,6 +256,11 @@ fn parse_context<'a>(
     let lineage = (source == "claude").then(|| claude::lineage(records, options));
     if let Some(lineage) = &lineage {
         meta["_timeline_tip"] = json!(lineage.tip);
+        if let Value::Object(tasks) =
+            claude::background_metadata(path, records, options.agent, lineage)
+        {
+            meta.as_object_mut().expect("Claude metadata").extend(tasks);
+        }
     }
     if source == "claude" && !options.agent.is_empty() {
         meta["sid"] = json!(options.agent);

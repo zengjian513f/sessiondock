@@ -300,7 +300,8 @@ impl Session {
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
             "steers":live.accepted.values().filter(|r|r["operation"]=="steer" && r["consumed"]!=true).collect::<Vec<_>>(),
-            "activity":live.activity,"background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "activity":live.activity,"background_tasks":live.background_task_statuses(&self.sid),
+            "background_commands":live.background_commands(&self.sid),"error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "progress":live.turns.front().map(|id|json!({"request_id":id})),
             "capabilities":capabilities()}}),
@@ -726,6 +727,11 @@ impl Bridge {
             );
             session.stop.cancel();
             return result;
+        }
+        match method {
+            "background_tasks" => return self.background_tasks(&target),
+            "background_output" => return self.background_output(&target, &input),
+            _ => {}
         }
         let session = self.select(&target)?;
         let _runtime = session.runtime.read().await;

@@ -73,6 +73,28 @@ DELTA（2.182.0）：分支和回退已接到消息按钮及网页命令；必�
   只验证了 CLI 接受（`updated` 回执），没有独立观察模型请求。
 - 未观察到 `session_state_changed`、`control_cancel_request`、`get_usage` 等 Claude 专有帧。
 
+## 只读后台工作（2.187.0）
+
+原生 stream-json 的 `task_started` 来自各会话的后台注册表，后续
+`task_updated` 和 `task_notification` 可证明任务结束。SDK 只在原生
+`session_id` 和顶层 `tool_use_id` 一致时显示 Bash、PowerShell 或 Monitor。
+旧帧缺少所有权证据时不纳入根列表。
+
+Unix 上，非管道执行可能在 CLI 的原生临时目录为会话和任务分别保存 stdout 与 stderr。
+已观察的当前任务和确实存在的原生文件允许按需读取最近 64 KiB。两个流独立呈现，
+次序不能还原；截掉的开头无法从此视图补读。浏览器通过选中会话和任务 ID 请求，
+快照只发布日志可读状态。退出后不继续读取旧 SDK 实例。独立 TUI shell 任务、未证实的
+子代理日志、纯管道输出与 Windows 日志均没有此读取能力。
+
+普通对话可只读默认项目目录下的 `.codebuddy/scheduled_tasks.json`。只有显式
+`sessionId` 与选中主会话一致、启用且未过期的未指派任务才归属该会话。内存定时器和
+项目配置目录覆盖不在此读取路径中。浏览器显示原生创建时间及 Cron 表达式；
+文件缺少预计触发时间时不计算本地估计。查看命令和定时器不启动 CLI、不发送模型输入。
+
+这些形状来自[官方 CodeBuddy Code 2.187.0 npm 包](https://registry.npmjs.org/@tencent-ai/codebuddy-code/2.187.0)。
+假 CLI 的 Chromium 回归覆盖顶层任务、子代理隔离、空输出与增长、截断、执行结束、
+以及同一项目下持久定时器的会话归属和独立刷新。
+
 ## 验证状态
 
 [codebuddy_sdk_browser.py](../tests/codebuddy_sdk_browser.py) 用复现上述协议的假 CLI

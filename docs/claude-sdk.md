@@ -184,6 +184,30 @@ DELTA（2.1.306）：`revert` 调用原生 `rewind_conversation`，传用户 UUI
 `crate::sessions::uid_for("claude", native_path)` 生成 UID。
 原生会话路径从未被桥接自造文件、重序列化或改写。
 
+## 只读后台工作
+
+SDK 用原生 `background_tasks_changed` 的全量活跃清单更新 `raw.background_commands`。
+旧版本没有清单时，只接受明确进入后台的任务及对应的状态更新。按 `run_id` 区分同一任务的不同运行，
+迟到的终止通知不会移除新运行。根列表只接入能对应顶层工具调用的 Bash／Monitor，跳过前台、
+环境任务和子代理任务；子代理自己的普通记录独立归属。
+
+普通对话以选中 transcript 中配对的 Bash／Monitor 调用和原生启动结果识别任务，使用
+`TaskStop`、已归属的终止通知和 Monitor 到期记录移除任务。只有存在当前运行证据才显示在跑的
+命令。Bash 启动结果中的日志路径复用该会话原有的文件引用，SDK 界面同样从已落盘历史获取该引用。
+路径可以实时跟随；Monitor 只有可证实的命令信息时，仅显示任务信息。结束帧中的
+`output_file` 属于终止通知，不能用作仍在运行的日志证据。
+
+Cron 只读归属来自本会话成功的 `CronCreate`、`CronDelete`、`scheduled_task_fire`
+记录及 `session_cron_carry` 的延续和结束项。可证实的 `ScheduleWakeup` 结果携带原生预计
+时间和实际延迟。周期表达式按原生记录展示，预期触发只使用原生结果里的时间。
+项目级 `.claude/scheduled_tasks.json` 的 `createdBySessionId` 记录创建者，
+调度器仍可由其他项目进程执行该任务，故它不作为选中会话的定时器来源。读取这些数据不发
+`CronList`、模型输入、终端按键或恢复请求。
+
+协议依据为 Claude Code 2.1.332 官方 npm 包、[SDK 任务消息](https://code.claude.com/docs/en/agent-sdk/typescript#sdkbackgroundtaskschangedmessage)
+和[原生定时任务](https://code.claude.com/docs/en/scheduled-tasks)。假 CLI 的 Chromium 回归覆盖
+活跃清单、迟到的另一运行终止通知、子代理和环境任务隔离、普通对话文件引用及 Cron 结束项。
+
 ## 接口证据与验证状态
 
 本节为历史接口证据，保留当时实际型号；当前测试使用 `claude-haiku-5-5` / low。

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from urllib.parse import quote
 import tempfile
 import time
 import uuid
@@ -112,6 +113,56 @@ def browser_check(fixture, base, screenshots):
         assert usage["tokens"]["input"] == 100 and usage["tokens"]["output"] == 20, usage
         assert SECRET not in json.dumps(final), "account token leaked"
         capture(page, "codebuddy-sdk-wide-light.png")
+
+        # Only the selected root shell can grant access to the native output window.
+        send(page, "start native background")
+        raw = wait_snapshot(page, fixture.uid, lambda raw: not raw["running"] and bool(raw["background_commands"]))["raw"]
+        assert raw["background_commands"] == [{"task": "buddy-shell", "command": "printf synthetic buddy",
+                                                "description": "Synthetic Buddy command", "output_available": True}], raw
+        requested = {"uid": fixture.uid, "task": "buddy-shell"}
+        assert post(page, "background_output", requested)["raw"]["output"] == ""
+        footer = page.locator('#sdk-composer .sdk-status-row')
+        footer.get_by_role('button', name='后台任务 1', exact=True).click()
+        dialog = page.get_by_role('dialog', name='后台输出')
+        expect(dialog.get_by_role('status')).to_have_text('暂时没有输出')
+        capture(page, "codebuddy-background-empty.png")
+        assert post(page, "background_output", {**requested, "task": "buddy-child-shell"})["raw"] is None
+        (fixture.background_logs / "buddy-shell.stdout.log").write_text("first Buddy log\n")
+        assert post(page, "background_output", requested)["raw"]["output"] == "first Buddy log\n"
+        (fixture.background_logs / "buddy-shell.stdout.log").write_text("early-no-longer-visible" + "x" * 65536 + "\nBuddy tail line")
+        (fixture.background_logs / "buddy-shell.stderr.log").write_text("Buddy error line")
+        last = post(page, "background_output", requested)["raw"]
+        assert last["clipped"] and "early-no-longer-visible" not in last["output"], last
+        assert "Buddy tail line" in last["output"] and "Buddy error line" in last["output"], last
+        assert len(last["output"].encode()) <= 65536
+        dialog.get_by_role('button', name='刷新').click()
+        expect(dialog.get_by_label('日志输出')).to_contain_text('Buddy tail line')
+        capture(page, "codebuddy-background-output.png")
+        dialog.get_by_role('button', name='关闭').click()
+
+        # Native durable timers refresh on the same session without a CLI prompt.
+        schedules = fixture.cwd / ".codebuddy" / "scheduled_tasks.json"
+        schedules.parent.mkdir()
+        timer = {"sessionId": fixture.sid, "id": "owned-cron", "cron": "*/10 * * * *",
+                 "prompt": "CodeBuddy durable reminder", "createdAt": 1790000000000}
+        schedules.write_text(json.dumps({"tasks": [timer, {**timer, "id": "unbound", "sessionId": None},
+            {**timer, "id": "foreign", "sessionId": str(uuid.uuid4())},
+            {**timer, "id": "assigned", "agentId": "different-agent"},
+            {**timer, "id": "disabled", "enabled": False}]}))
+        history = base + '/api/messages/' + quote(fixture.uid, safe='')
+        durable = page.request.get(history).json()["meta"]["background_timers"]
+        assert [entry["task"] for entry in durable] == ["owned-cron"], durable
+        assert durable[0]["schedule"] == "*/10 * * * *" and durable[0]["created_at"].startswith("2026-")
+        footer.get_by_role('button', name='后台任务 2', exact=True).click()
+        expect(footer.get_by_role('dialog', name='后台任务')).to_contain_text('CodeBuddy durable reminder')
+        capture(page, "codebuddy-background-reminder.png")
+        page.keyboard.press('Escape')
+        schedules.write_text('{"tasks":[]}')
+        assert not page.request.get(history).json()["meta"].get("background_timers")
+
+        send(page, "finish native background")
+        wait_snapshot(page, fixture.uid, lambda raw: not raw["running"] and not raw["background_commands"])
+        assert post(page, "background_output", requested)["raw"] is None
 
         # Native Agent init frames carry child SIDs in the parent's stdout.
         send(page, "run subagents")

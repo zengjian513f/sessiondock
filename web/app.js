@@ -2462,6 +2462,7 @@ function tickSync() {
   if (SessionDockNetwork.paused) return;
   if (!S.sel || document.hidden) return;
   if (migrationReadPaused(S.sel, S.agent)) return;
+  refreshBackgroundTasks();
   const pushing = _es && _esUid === S.sel && _es.readyState === 1;
   const gap = pushing ? BACKUP_MS : (S.live.has(S.sel) ? S.syncGap : SYNC_MS);
   if (Date.now() - (S.lastSync || 0) < gap) return;
@@ -10778,6 +10779,16 @@ function backgroundCommandNames(entry) {
   return names;
 }
 
+async function readBackgroundTaskData(operation, body, signal) {
+  const response = await fetch(appUrl('api/native-sdk/' + operation), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body), signal,
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.ok) throw new Error(result?.error || '无法读取后台任务');
+  return result.raw;
+}
+
 function openTaskOutput(log, meta, command, trigger, menu) {
   const dialog = el('dialog', 'app-dialog task-output-dialog');
   dialog.id = 'task-output-dialog';
@@ -10786,11 +10797,24 @@ function openTaskOutput(log, meta, command, trigger, menu) {
   dialog.append(panel);
   document.body.append(dialog);
   const close = () => dialog.close();
+  const readOutput = async signal => {
+    if (log.output_available) {
+      return readBackgroundTaskData('background_output', {
+        uid: meta.uid, agent: meta.agent_id || '', task: log.task,
+      }, signal);
+    }
+    const selected = menu._entry?.meta;
+    if (selected?.uid !== meta.uid || selected.agent_id !== meta.agent_id) return null;
+    const current = menu._commands.find(task => task.task === log.task);
+    return typeof current?.output === 'string'
+      ? {output: current.output, clipped: current.output_truncated}
+      : null;
+  };
   const stop = TaskOutput.mount(panel, {...log, uid: meta.uid, agent: meta.agent_id, command}, {
-    close,
-    back: menu ? () => dialog.close('list') : null,
+    close, readOutput,
+    back: menu?._isList ? () => dialog.close('list') : null,
   });
-  if (menu) menu._returnButton = panel.querySelector('.task-output-back');
+  if (menu?._isList) menu._returnButton = panel.querySelector('.task-output-back');
   if (trigger?.getAttribute('aria-controls') === dialog.id) trigger.setAttribute('aria-expanded', 'true');
   dialog.addEventListener('close', () => {
     if (menu) delete menu._returnButton;
@@ -10801,10 +10825,19 @@ function openTaskOutput(log, meta, command, trigger, menu) {
     trigger.focus({preventScroll: true});
     if (dialog.returnValue === 'list' && menu?._isList) {
       trigger.click();
-      [...menu.querySelectorAll('button[data-ref]')].find(button => button.dataset.ref === log.ref)?.focus();
+      [...menu.querySelectorAll('button[data-key]')].find(button => button.dataset.key === backgroundTaskKey(log))?.focus();
     }
   }, {once: true});
   dialog.showModal();
+}
+
+function backgroundTaskKey(log) {
+  return JSON.stringify([log.task, log.ref, TaskOutput.readable(log)]);
+}
+
+function recordedBackgroundCommands(meta) {
+  if (meta?.source === 'claude' && !sessionLiveStatus(meta.uid).live) return [];
+  return meta?.background_commands;
 }
 
 function paintBackgroundCommands(row, entry) {
@@ -10812,12 +10845,14 @@ function paintBackgroundCommands(row, entry) {
   const commands = meta?.background_commands || meta?.background_logs || [];
   const timers = meta?.background_timers || [];
   const count = commands.length + timers.length;
-  const direct = count === 1 && !!commands[0]?.ref;
+  const direct = count === 1 && TaskOutput.readable(commands[0]);
   let trigger = row.querySelector('.background-commands');
   let menu = row.querySelector('.background-command-list');
   if (menu?._returnButton) menu._returnButton.hidden = !count || direct;
   if (!count) {
     if (!trigger) return false;
+    menu._entry = entry;
+    menu._commands = commands;
     if (menu.matches(':popover-open')) menu.hidePopover();
     trigger.remove();
     menu.remove();
@@ -10840,7 +10875,7 @@ function paintBackgroundCommands(row, entry) {
     trigger.onclick = event => {
       if (menu._isList) { toggleList(event); return; }
       const log = menu._commands[0], {meta} = menu._entry;
-      openTaskOutput(log, meta, log.command || backgroundCommandNames(menu._entry).get(log.ref), trigger);
+      openTaskOutput(log, meta, log.command || backgroundCommandNames(menu._entry).get(log.ref) || log.description, trigger, menu);
     };
     menu.addEventListener('beforetoggle', event => {
       clearTimeout(menu._dueTimer);
@@ -10860,7 +10895,9 @@ function paintBackgroundCommands(row, entry) {
   }
   trigger.setAttribute('aria-controls', direct ? 'task-output-dialog' : menu.id);
   trigger.title = direct ? '查看后台命令输出' : '查看后台任务';
-  const key = JSON.stringify([meta.uid, meta.agent_id, commands, timers]);
+  const key = JSON.stringify([meta.uid, meta.agent_id, commands.map(log => [
+    backgroundTaskKey(log), log.command, log.description,
+  ]), timers]);
   if (key !== menu._logKey && menu.matches(':popover-open')) {
     paintBackgroundTaskList(menu);
     ConversationUI.placePopover(menu, trigger);
@@ -10875,15 +10912,15 @@ function paintBackgroundTaskList(menu) {
   const section = menu.querySelector('.task-commands'), list = section.querySelector('.sdk-timer-list');
   const previous = new Map([...list.children].map(item => [item.dataset.key, item]));
   for (const log of commands) {
-    const key = JSON.stringify([log.task, log.ref]);
+    const key = backgroundTaskKey(log);
+    const readable = TaskOutput.readable(log);
     let item = previous.get(key);
     if (!item) {
-      item = el(log.ref ? 'button' : 'div', 'sdk-timer-item command-option',
+      item = el(readable ? 'button' : 'div', 'sdk-timer-item command-option',
         '<span class="command-name"></span><small class="sdk-timer-origin"></small>');
       item.dataset.key = key;
-      if (log.ref) {
+      if (readable) {
         item.type = 'button';
-        item.dataset.ref = log.ref;
         item.append(el('i', '', '›'));
         item.lastChild.setAttribute('aria-hidden', 'true');
         item.onclick = () => {
@@ -10894,13 +10931,13 @@ function paintBackgroundTaskList(menu) {
       list.append(item);
     }
     previous.delete(key);
-    const command = log.command || names?.get(log.ref), number = TaskOutput.number(log.task);
+    const command = log.command || names?.get(log.ref) || log.description, number = TaskOutput.number(log.task);
     item._log = log;
     item._command = command;
     const lines = command?.split(/\r?\n/);
     item.firstChild.textContent = lines ? lines.slice(0, 3).join('\n') : number;
     item.querySelector('small').textContent = [lines ? number : '',
-      lines?.length > 3 ? '共 ' + lines.length + ' 行' : '', log.ref ? '' : '未登记输出日志'].filter(Boolean).join(' · ');
+      lines?.length > 3 ? '共 ' + lines.length + ' 行' : '', readable ? '' : '未登记输出日志'].filter(Boolean).join(' · ');
   }
   for (const stale of previous.values()) stale.remove();
   section.hidden = !commands.length;
@@ -10924,6 +10961,52 @@ function paintBackgroundTaskList(menu) {
       ConversationUI.placePopover(menu, menu._trigger);
     }, Math.min(upcoming[0].due - now, 0x7fffffff));
   }
+}
+
+let observedBackgroundTasks = null;
+
+function refreshBackgroundTasks() {
+  const {sel: uid, agent} = S;
+  const row = $('#conversation-status');
+  const source = uid.split(':')[0];
+  const chat = row && !SessionContentView.kind && !row.classList.contains('hidden');
+  const readOnlySdk = SessionContentView.kind === 'sdk' && SdkView.readOnly
+    && SdkView.uid === uid && SdkView.agent === agent;
+  if ((!chat && !readOnlySdk) || !['codex', 'grok', 'droid'].includes(source)) return;
+  if (observedBackgroundTasks?.uid !== uid || observedBackgroundTasks.agent !== agent) {
+    observedBackgroundTasks?.active?.abort();
+    observedBackgroundTasks = {uid, agent, next: 0};
+  }
+  const current = observedBackgroundTasks;
+  if (current.active || current.next > Date.now()) return;
+  const read = new AbortController();
+  current.active = read;
+  readBackgroundTaskData('background_tasks', {uid, agent: agent || ''}, read.signal).then(data => {
+    if (current !== observedBackgroundTasks || uid !== S.sel || agent !== S.agent) return;
+    current.data = data && {
+      background_commands: data.background_commands ?? current.data?.background_commands,
+      background_timers: data.background_timers ?? current.data?.background_timers,
+    };
+    if (row?.isConnected && !SessionContentView.kind) paintConversationBackgroundTasks(row);
+    if (SessionContentView.kind === 'sdk' && SdkView.readOnly
+        && SdkView.uid === uid && SdkView.agent === agent) SdkView.updateBackgroundTasks(current.data || {});
+  }).catch(() => { /* Keep the last observation during a transient read failure. */ }).finally(() => {
+    current.active = null;
+    current.next = Date.now() + 4000;
+  });
+}
+
+function paintConversationBackgroundTasks(row) {
+  const entry = cache.get(viewKey(S.sel, S.agent));
+  const observed = observedBackgroundTasks;
+  const live = observed && observed.uid === S.sel && observed.agent === S.agent ? observed.data : null;
+  if (!entry) return paintBackgroundCommands(row, entry);
+  const meta = {
+    ...entry.meta,
+    background_commands: live?.background_commands ?? recordedBackgroundCommands(entry.meta),
+    background_timers: live?.background_timers ?? entry.meta.background_timers,
+  };
+  return paintBackgroundCommands(row, {...entry, meta});
 }
 
 function renderConversationUsage(row, uid) {
@@ -11045,7 +11128,7 @@ function renderActivity(activity) {
     details._statusDetail = null;
     details.textContent = n.title;
   }
-  paintBackgroundCommands(row, cache.get(viewKey(S.sel, S.agent)));
+  paintConversationBackgroundTasks(row);
   renderConversationUsage(row, S.sel);
   paintComposerRunControl(n, S.sel, S.agent, 'cli');
   ConversationUI.updateStatusDisclosure(n, details);

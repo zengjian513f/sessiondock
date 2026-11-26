@@ -766,6 +766,7 @@ const NativeSdkView = {
       if (after && before !== after) void loadSessions(true, true);
     }
     this.raw = raw;
+    this.updateBackgroundTasks(raw);
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
       ? `${raw.model.providerID}/${raw.model.id}` : raw.model?.id || raw.model?.modelID || null;

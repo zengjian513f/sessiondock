@@ -570,6 +570,13 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        if matches!(method, "background_tasks" | "background_output") {
+            let provider = self
+                .providers
+                .get(source)
+                .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
+            return dispatch!(provider, bridge, bridge.call(method, target, input).await);
+        }
         if source == "kiro" && target["agent"].as_str().is_some_and(|id| !id.is_empty()) {
             return Err("Kiro 子代理只提供历史视图，不是可独立控制的原生会话".into());
         }

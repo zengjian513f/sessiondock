@@ -89,6 +89,7 @@ pub struct Mirror {
     database_identity: Option<DatabaseIdentity>,
     data_version: Option<i64>,
     sessions: HashMap<String, Mirrored>,
+    background: HashMap<String, crate::opencode_sdk::background::MirrorStatus>,
     polls: u32,
     last_error: Option<String>,
 }
@@ -102,6 +103,7 @@ impl Mirror {
             database_identity: None,
             data_version: None,
             sessions: HashMap::new(),
+            background: HashMap::new(),
             polls: 0,
             last_error: None,
         }
@@ -181,6 +183,7 @@ impl Mirror {
             // Reconcile disk bytes too: a replacement may reuse ids/timestamps.
             self.data_version = None;
             self.sessions.clear();
+            self.background.clear();
         }
         Ok(true)
     }
@@ -248,6 +251,10 @@ impl Mirror {
         }
         let projects = read_projects(connection)?;
         let rows = read_sessions(connection)?;
+        // These tables are optional and newer than the base v2 mirror.
+        if let Ok(background) = crate::opencode_sdk::background::mirror_status(connection) {
+            self.background = background;
+        }
         let mut seen = HashSet::new();
         for row in rows {
             let id = row.id.clone();
@@ -256,7 +263,7 @@ impl Mirror {
             }
             seen.insert(id.clone());
             let dir = self.root.join(&row.project).join(&id);
-            let summary = summary_json(&row, projects.get(&row.project));
+            let summary = summary_json(&row, projects.get(&row.project), self.background.get(&id));
             self.mirror_session(connection, &id, dir, summary)?;
         }
         self.retain(&seen, self.data_version.is_none())
@@ -461,13 +468,21 @@ fn read_sessions(connection: &Connection) -> io::Result<Vec<SessionRow>> {
     Ok(sessions)
 }
 
-fn summary_json(row: &SessionRow, worktree: Option<&String>) -> String {
-    let value = json!({
+fn summary_json(
+    row: &SessionRow,
+    worktree: Option<&String>,
+    background: Option<&crate::opencode_sdk::background::MirrorStatus>,
+) -> String {
+    let mut value = json!({
         "format": FORMAT,
         "version": 1,
         "session": row.fields,
         "project": {"id": row.project, "worktree": worktree},
     });
+    if let Some(background) = background {
+        value["background_commands"] = json!(background.commands);
+        value["background_timers"] = json!(background.timers);
+    }
     let mut text = serde_json::to_string(&value).unwrap_or_default();
     text.push('\n');
     text

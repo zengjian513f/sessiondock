@@ -92,6 +92,7 @@ class FakeGrok:
         self.permission_id = None
         self.turn = None
         self.interjections = {}
+        self.background_live = False
         with self.log.open("a") as log:
             log.write(json.dumps({"fixture_start":{"pid":os.getpid()}})+"\n")
 
@@ -107,8 +108,16 @@ class FakeGrok:
         self.send({"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": message}})
 
     def update(self, update_type, **fields):
-        native = update_type not in {"agent_message_chunk","agent_thought_chunk","tool_call","tool_call_update","config_option_update","current_mode_update"}
-        self.send({"jsonrpc": "2.0", "method": "_x.ai/session/update" if native else "session/update",
+        method = "_x.ai/session/update"
+        if update_type in {"agent_message_chunk", "agent_thought_chunk", "tool_call",
+                           "tool_call_update", "config_option_update", "current_mode_update"}:
+            method = "session/update"
+        elif update_type in {"task_backgrounded", "task_completed", "scheduled_task_created",
+                             "scheduled_task_fired", "scheduled_task_deleted", "monitor_event"}:
+            method = "_x.ai/" + update_type
+        elif update_type == "background_tasks":
+            method = "_x.ai/session_notification"
+        self.send({"jsonrpc": "2.0", "method": method,
                    "params": {"sessionId": self.sid, "update": {"sessionUpdate": update_type, **fields}}})
 
     def settings(self):
@@ -190,6 +199,19 @@ class FakeGrok:
             summary["generated_title"]=params["title"]
             (self.path/"summary.json").write_text(json.dumps(summary))
             self.reply(message,{})
+        elif method == "x.ai/task/list":
+            assert params == {"sessionId": self.sid}
+            output = "old prefix\n" + "日" * 22000 + "\nGrok queried tail"
+            tasks = [
+                {"task_id": "synthetic-bg", "owner_session_id": "foreign-sid",
+                 "is_backgrounded": True, "output": "FOREIGN_GROK_LOG"},
+                {"task_id": "synthetic-bg", "owner_session_id": self.sid,
+                 "kind": "bash", "is_backgrounded": self.background_live, "completed": False,
+                 "output": output, "output_total_bytes": len(output.encode()), "truncated": True},
+            ]
+            self.reply(message, {"result": {"tasks": tasks}, "error": None})
+            self.update("tool_call_update", toolCallId="bg-tool", status="in_progress",
+                        rawOutput={"type": "Bash", "output_for_prompt": "Grok passive tail", "truncated": True})
         elif method in {"x.ai/session/usage","x.ai/session/info","x.ai/billing","x.ai/rewind/points","x.ai/compact_conversation","x.ai/rewind/execute","x.ai/session/fork"}:
             if not self.extensions:
                 self.error(message,-32601,"Synthetic unsupported extension")
@@ -300,9 +322,32 @@ class FakeGrok:
             self.extensions = False
         self.append("user", text)
         if text == "background-task":
+            self.background_live = True
             self.update("task_backgrounded",task_id="synthetic-bg",tool_call_id="bg-tool",command="synthetic daemon",cwd=self.cwd,output_file="private-synthetic-output")
-            self.update("background_tasks",tasks=[{"task_id":"synthetic-bg","status":"running"}],truncated=False)
+            self.update("background_tasks", tasks=[
+                {"task_id": "synthetic-bg", "kind": "bash", "status": "running"},
+                {"task_id": "unowned-task", "kind": "bash", "status": "running"},
+            ], truncated=False)
+            self.send({"jsonrpc": "2.0", "method": "_x.ai/task_backgrounded", "params": {
+                "sessionId": "foreign-sid", "update": {"sessionUpdate": "task_backgrounded",
+                "task_id": "foreign-task", "command": "foreign command"}}})
+            self.update("subagent_spawned", subagent_id="synthetic-child")
+            self.update("scheduled_task_created", task_id="one-shot", prompt="Check once",
+                        human_schedule="in 5 minutes", next_fire_at="2026-12-01T04:05:00+00:00")
+            self.update("scheduled_task_created", task_id="periodic", prompt="Check periodically",
+                        human_schedule="every 5 minutes", next_fire_at="2026-12-01T04:05:00+00:00")
+            self.update("scheduled_task_fired", task_id="one-shot", prompt="Check once",
+                        human_schedule="in 5 minutes", next_fire_at=None)
+            self.update("scheduled_task_fired", task_id="periodic", prompt="Check periodically",
+                        human_schedule="every 5 minutes", next_fire_at="2026-12-01T04:10:00+00:00")
         elif text == "clear-background":
+            self.background_live = False
+            self.update("task_completed", task_snapshot={"task_id": "synthetic-bg", "owner_session_id": self.sid})
+            # Grok may emit a delayed background-start delivery for the same ID.
+            self.update("task_backgrounded", task_id="synthetic-bg", tool_call_id="bg-tool",
+                        command="already finished", cwd=self.cwd, output_file="")
+            self.update("scheduled_task_deleted", task_id="periodic", reason="expired")
+            self.update("subagent_finished", subagent_id="synthetic-child")
             self.update("background_tasks",tasks=[],truncated=False)
         self.update("agent_thought_chunk", content={"type": "text", "text": "Grok synthetic reasoning"})
         self.update("agent_message_chunk", content={"type": "text", "text": "Grok streaming "})

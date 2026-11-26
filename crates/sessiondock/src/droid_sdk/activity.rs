@@ -50,7 +50,7 @@ fn row(live: &mut Live, key: &str, text: String, n: &Value) {
     );
 }
 
-pub(super) fn observe(live: &mut Live, n: &Value) {
+pub(super) fn observe(live: &mut Live, n: &Value, sid: Option<&str>, owns_view: bool) {
     let kind = n["type"].as_str().unwrap_or("");
     match kind {
         "child_session_available" => {
@@ -246,38 +246,115 @@ pub(super) fn observe(live: &mut Live, n: &Value) {
             row(live, &key, text, n);
         }
         "tool_execution_heartbeat" if n["detached"] == true => {
-            let key = label(n, "toolUseId");
-            let task = json!({"id":key,"name":n["toolName"],"status":"running","detached":true});
-            if let Some(old) = live.background_tasks.iter_mut().find(|v| v["id"] == key) {
-                *old = task;
-            } else {
-                live.background_tasks.push(task);
-            }
-            row(
-                live,
-                &format!("background:{key}"),
-                format!("后台任务运行中 · {}", label(n, "toolName")),
-                n,
-            );
-        }
-        "tool_execution_phase_changed" => {
-            let key = label(n, "toolUseId");
-            let phase = label(n, "phase");
-            live.activity.insert(format!("tool:{key}"), n.clone());
-            if phase.starts_with("settled_")
-                && let Some(task) = live.background_tasks.iter_mut().find(|v| v["id"] == key)
+            let (Some(sid), Some(key)) = (sid, tool_id(n)) else {
+                return;
+            };
+            if let Some(old) = live
+                .background_tasks
+                .iter_mut()
+                .find(|v| v["id"] == key && v["session_id"] == sid)
             {
-                task["status"] = json!(phase);
+                // A late heartbeat cannot undo an already observed settlement.
+                if old["detached"] == true && old["status"] != "running" {
+                    return;
+                }
+                old["name"] = n["toolName"].clone();
+                old["status"] = json!("running");
+                old["detached"] = json!(true);
+            } else {
+                live.background_tasks.push(
+                    json!({"id":key,"name":n["toolName"],"status":"running","detached":true,"session_id":sid}),
+                );
+            }
+            if owns_view {
                 row(
                     live,
                     &format!("background:{key}"),
-                    format!(
-                        "后台任务结束 · {} · {}",
-                        label(n, "toolName"),
-                        state(&phase)
-                    ),
+                    format!("后台任务运行中 · {}", label(n, "toolName")),
                     n,
                 );
+            }
+        }
+        "tool_execution_phase_changed" => {
+            let (Some(sid), Some(key)) = (sid, tool_id(n)) else {
+                return;
+            };
+            let phase = n["phase"].as_str().unwrap_or_default();
+            if owns_view {
+                live.activity.insert(format!("tool:{key}"), n.clone());
+            }
+            if !matches!(
+                phase,
+                "settled_after_execution" | "settled_without_execution" | "settled_unknown"
+            ) {
+                return;
+            }
+            if let Some(index) = live
+                .background_tasks
+                .iter()
+                .position(|v| v["id"] == key && v["session_id"] == sid)
+            {
+                let task = &mut live.background_tasks[index];
+                if task["detached"] != true {
+                    live.background_tasks.remove(index);
+                    return;
+                }
+                task["status"] = json!(phase);
+                task.as_object_mut().unwrap().remove("output");
+                if owns_view {
+                    row(
+                        live,
+                        &format!("background:{key}"),
+                        format!("后台任务结束 · {} · {}", label(n, "toolName"), state(phase)),
+                        n,
+                    );
+                }
+            }
+        }
+        "tool_call" if n["toolUse"]["name"] == "Execute" => {
+            let tool = &n["toolUse"];
+            if let (Some(sid), Some(id), Some(command)) = (
+                sid,
+                tool["id"].as_str().filter(|id| !id.is_empty()),
+                tool["input"]["command"].as_str(),
+            ) {
+                live.remember_background_command(sid, id, command);
+            }
+        }
+        "create_message" => {
+            if let Some(sid) = sid {
+                for block in n["message"]["content"].as_array().into_iter().flatten() {
+                    if block["type"] == "tool_use"
+                        && block["name"] == "Execute"
+                        && let Some(id) = block["id"].as_str().filter(|id| !id.is_empty())
+                        && let Some(command) = block["input"]["command"].as_str()
+                    {
+                        live.remember_background_command(sid, id, command);
+                    }
+                }
+            }
+        }
+        "tool_progress_update" => {
+            let (Some(sid), Some(key), Some(output)) =
+                (sid, tool_id(n), n["update"]["fullOutput"].as_str())
+            else {
+                return;
+            };
+            if let Some(task) = live.background_tasks.iter_mut().find(|task| {
+                task["id"] == key
+                    && task["session_id"] == sid
+                    && (task["detached"] != true || task["status"] == "running")
+            }) {
+                let mut start = output.len().saturating_sub(64 * 1024);
+                while !output.is_char_boundary(start) {
+                    start += 1;
+                }
+                let clipped = start != 0;
+                let mut body = json!({"output":&output[start..],"clipped":clipped});
+                if clipped {
+                    body["note"] = json!("只显示 Droid 提供的最近输出，无法补读更早的输出");
+                }
+                task["output"] = body;
             }
         }
         "llm_retry" => {
@@ -285,4 +362,130 @@ pub(super) fn observe(live: &mut Live, n: &Value) {
         }
         _ => {}
     }
+}
+
+fn tool_id(notification: &Value) -> Option<&str> {
+    notification["toolUseId"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+}
+
+impl Live {
+    fn remember_background_command(&mut self, sid: &str, id: &str, command: &str) {
+        if let Some(task) = self
+            .background_tasks
+            .iter_mut()
+            .find(|task| task["session_id"] == sid && task["id"] == id)
+        {
+            task["command"] = json!(command);
+        } else {
+            self.background_tasks
+                .push(json!({"session_id":sid,"id":id,"command":command}));
+        }
+    }
+
+    pub(super) fn background_task_statuses(&self, sid: &str) -> Vec<Value> {
+        self.background_tasks.iter()
+            .filter(|task| task["session_id"] == sid && task["detached"] == true)
+            .map(|task| json!({
+            "id":task["id"],"name":task["name"],"status":task["status"],"detached":task["detached"]
+        })).collect()
+    }
+
+    pub(super) fn background_commands(&self, sid: &str) -> Vec<Value> {
+        self.background_tasks
+            .iter()
+            .filter(|task| task["session_id"] == sid && task["status"] == "running")
+            .map(|task| {
+                let mut command = json!({"task":task["id"]});
+                if let Some(name) = task["name"].as_str().filter(|name| !name.is_empty()) {
+                    command["description"] = json!(name);
+                }
+                if let Some(text) = task["command"].as_str() {
+                    command["command"] = json!(text);
+                }
+                if task["output"].is_object() {
+                    command["output_available"] = json!(true);
+                }
+                command
+            })
+            .collect()
+    }
+}
+
+impl Bridge {
+    fn existing_background_views(&self, target: &Value, sid: &str) -> Vec<Arc<Session>> {
+        let Some(owner) = target["uid"].as_str() else {
+            return vec![];
+        };
+        let state = lock(&self.state);
+        let existing = |uid: &str| state.sessions.get(uid).cloned();
+        if target["agent"]
+            .as_str()
+            .is_some_and(|agent| !agent.is_empty())
+        {
+            let Some(native_uid) = target["native_uid"].as_str().filter(|id| *id != owner) else {
+                return vec![];
+            };
+            existing(native_uid)
+                .filter(|session| session.sid == sid)
+                .into_iter()
+                .chain(existing(owner))
+                .collect()
+        } else {
+            existing(owner)
+                .filter(|session| session.sid == sid)
+                .into_iter()
+                .collect()
+        }
+    }
+
+    pub(super) fn background_tasks(&self, target: &Value) -> Result<Value, String> {
+        let sid = target["session_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("droid_sdk: resolved session_id is required")?;
+        for session in self.existing_background_views(target, sid) {
+            let live = lock(&session.live);
+            if owns_background_view(&live, &session, sid) {
+                return Ok(json!({"raw":{"background_commands":live.background_commands(sid)}}));
+            }
+        }
+        Ok(json!({"raw":{"background_commands":[]}}))
+    }
+
+    pub(super) fn background_output(&self, target: &Value, input: &Value) -> Result<Value, String> {
+        let sid = target["session_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("droid_sdk: resolved session_id is required")?;
+        let task = input["task"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("droid_sdk: missing background task identity")?;
+        for session in self.existing_background_views(target, sid) {
+            let live = lock(&session.live);
+            if owns_background_view(&live, &session, sid) {
+                let output = live
+                    .background_tasks
+                    .iter()
+                    .find(|entry| {
+                        entry["session_id"] == sid
+                            && entry["id"] == task
+                            && entry["status"] == "running"
+                    })
+                    .and_then(|entry| entry.get("output"));
+                return Ok(json!({"raw":output}));
+            }
+        }
+        Ok(json!({"raw":null}))
+    }
+}
+
+fn owns_background_view(live: &Live, session: &Session, sid: &str) -> bool {
+    (session.sid == sid && live.outbound.is_some())
+        || live
+            .background_tasks
+            .iter()
+            .any(|task| task["session_id"] == sid && task["detached"] == true)
 }

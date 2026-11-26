@@ -230,7 +230,11 @@ pub(super) fn observe_at(
         }
     } else if frame["method"] == "droid.session_notification" {
         let n = &frame["params"]["notification"];
-        activity::observe(&mut live, n);
+        let activity_sid = frame["params"]["sessionId"]
+            .as_str()
+            .filter(|sid| !sid.is_empty());
+        let view_sid = activity_sid.filter(|sid| *sid == session.sid);
+        activity::observe(&mut live, n, activity_sid, view_sid.is_some());
         match n["type"].as_str().unwrap_or("") {
             "create_message" => message(&mut live, n),
             "tool_call" => {

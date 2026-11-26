@@ -88,6 +88,69 @@ pub(super) fn metadata(path: &Path, records: &[(Value, u64)], fallback: &str) ->
         "model":model,"branch":Value::Null})
 }
 
+/// The project's durable Cron store is shared, but each row may explicitly
+/// name a conversation. Dedicated-agent jobs and legacy unbound jobs have no
+/// evidence that they will run in the selected conversation.
+pub(crate) fn background_timers(cwd: &Path, sid: &str) -> Vec<Value> {
+    use crate::files::{FileBody, FileService, ReadOptions};
+    if !cwd.is_absolute() || sid.is_empty() {
+        return Vec::new();
+    }
+    let path = cwd.join(".codebuddy").join("scheduled_tasks.json");
+    let files = FileService::default();
+    let schedule = path
+        .to_str()
+        .and_then(|path| files.navigation(path).ok())
+        .and_then(|target| {
+            files
+                .read(
+                    target,
+                    &ReadOptions {
+                        download: true,
+                        ..Default::default()
+                    },
+                )
+                .ok()
+        })
+        .and_then(|response| match response.body {
+            FileBody::Reader(reader) => {
+                serde_json::from_reader::<_, Value>(std::io::BufReader::new(reader)).ok()
+            }
+            _ => None,
+        });
+    let Some(schedule) = schedule else {
+        return Vec::new();
+    };
+    let now =
+        chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).timestamp_millis();
+    schedule["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|task| {
+            task["sessionId"] == sid
+                && task["agentId"].is_null()
+                && task["enabled"] != false
+                && task["expiresAt"].as_i64().is_none_or(|expiry| expiry > now)
+        })
+        .filter_map(|task| {
+            let id = task["id"].as_str().filter(|id| !id.is_empty())?;
+            let prompt = task["prompt"]
+                .as_str()
+                .filter(|prompt| !prompt.is_empty())?;
+            let cron = task["cron"].as_str().filter(|cron| !cron.is_empty())?;
+            let mut entry = json!({"task":id,"prompt":prompt,"schedule":cron});
+            if let Some(created) = task["createdAt"]
+                .as_i64()
+                .and_then(chrono::DateTime::from_timestamp_millis)
+            {
+                entry["created_at"] = json!(created.to_rfc3339());
+            }
+            Some(entry)
+        })
+        .collect()
+}
+
 impl Parser<'_> {
     pub(super) fn codebuddy(&mut self, record: &Value, end: u64) -> Result<(), String> {
         let first = self.events.len();

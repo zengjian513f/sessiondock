@@ -87,6 +87,8 @@ pub(crate) fn readonly(path: &str) -> bool {
                 | "/api/session/resolve-files"
                 | "/api/session/conversation/check"
                 | "/api/session/conversation/complete-path"
+                | "/api/native-sdk/background_tasks"
+                | "/api/native-sdk/background_output"
                 | "/api/resources/probe"
                 | "/api/session/resources/probe"
                 | "/api/resources/compact"

@@ -2798,8 +2798,8 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
 .task-output-panel { display: flex; flex-direction: column; max-height: calc(100dvh - 32px);
   overflow: auto; color: var(--text); font: 14px/1.5 var(--sans); }
 .task-output-head { align-items: center; flex: none; padding: 14px 16px 12px; }
-.task-output-head > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.task-output-number { color: var(--muted); font-size: 12px; }
+.task-output-head > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.task-output-number { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .task-output-command { flex: none; margin: 0 16px 12px; max-height: 18dvh; overflow: auto; color: var(--text);
   white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--terminal-font); }
 .task-output-command:has(+ .task-script) { margin-bottom: 3px; }

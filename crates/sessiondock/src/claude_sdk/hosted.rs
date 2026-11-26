@@ -183,6 +183,8 @@ impl Bridge {
                 // Reopening the channel must not erase the previous turn's
                 // failure. The next explicit turn clears its own error state.
                 live.background_tasks.clear();
+                live.background_level_seen = false;
+                live.background_starts.clear();
                 live.streaming_blocks.clear();
                 live.control_requests.clear();
                 live.save_checkpoint().map_err(error)?;
@@ -371,6 +373,8 @@ async fn run(
         live.native_running = false;
         live.requests.clear();
         live.background_tasks.clear();
+        live.background_level_seen = false;
+        live.background_starts.clear();
     }
     if !end.detached
         && !end.retired

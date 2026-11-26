@@ -140,6 +140,8 @@ async fn execute(
             | "agents"
             | "commands"
             | "command"
+            | "background_tasks"
+            | "background_output"
     ) {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -199,6 +201,46 @@ async fn execute(
         }
     };
     let source = target["source"].as_str().unwrap_or_default();
+    if source == "codex" && matches!(method.as_str(), "background_tasks" | "background_output") {
+        let Some(sdk) = &state.codex_sdk else {
+            return Ok(Json(response(Value::Null)));
+        };
+        let sid = target["session_id"].as_str().unwrap_or_default();
+        let raw = if method == "background_tasks" {
+            json!({"background_commands":sdk.background_commands(sid).await})
+        } else {
+            let task = body["task"].as_str().unwrap_or_default();
+            sdk.background_output(sid, task)
+                .await
+                .unwrap_or(Value::Null)
+        };
+        return Ok(Json(json!({"ok":true,"raw":raw})));
+    }
+    if source == "grok" && method == "background_tasks" {
+        let uid = body["uid"].as_str().unwrap_or_default().to_owned();
+        let agent = body["agent"].as_str().unwrap_or_default().to_owned();
+        let online = state.native_sdks.loaded_uids().iter().any(|id| id == &uid)
+            || state.polls.latest_live().is_some_and(|live| {
+                live["uids"]
+                    .as_array()
+                    .is_some_and(|uids| uids.iter().any(|id| id == &uid))
+            });
+        let raw = if online {
+            state
+                .reader
+                .run(move |store| store.snapshot(&uid, &agent)?.grok_background_tasks())
+                .await?
+        } else {
+            Value::Null
+        };
+        return Ok(Json(json!({"ok":true,"raw":raw})));
+    }
+    if (method == "background_tasks" && source != "droid")
+        || (method == "background_output"
+            && !matches!(source, "grok" | "opencode" | "droid" | "codebuddy"))
+    {
+        return Ok(Json(response(Value::Null)));
+    }
     let _droid_transfer_guard = if source == "droid"
         && matches!(
             method.as_str(),

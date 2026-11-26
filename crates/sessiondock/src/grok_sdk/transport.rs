@@ -95,6 +95,7 @@ impl Connection {
             if !resumed {
                 state.native_tasks.clear();
                 state.incomplete_tasks = false;
+                state.background = Default::default();
                 state.generation += 1;
                 state.config = Value::Null;
                 state.models = Value::Null;
@@ -251,7 +252,13 @@ impl Connection {
         if message.get("method").is_some() {
             let is_chunk = matches!(
                 message["params"]["update"]["sessionUpdate"].as_str(),
-                Some("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")
+                Some(
+                    "agent_message_chunk"
+                        | "agent_thought_chunk"
+                        | "user_message_chunk"
+                        | "tool_call_update"
+                        | "monitor_event"
+                )
             );
             let prev_seq = state.seq;
             if let Some(response) = state.receive_at(message, received) {
@@ -284,6 +291,9 @@ impl Connection {
         } else {
             Ok(message["result"].clone())
         };
+        let association_method_is_task_list = association
+            .as_ref()
+            .is_some_and(|entry| entry.frame["method"] == "_x.ai/task/list");
         if let Some(entry) = association {
             let method = entry.frame["method"].as_str().unwrap_or("");
             match method {
@@ -355,7 +365,11 @@ impl Connection {
             }
         }
         state.completed_rpcs.insert(id);
-        state.publish();
+        if association_method_is_task_list {
+            state.save_checkpoint().map_err(error)?;
+        } else {
+            state.publish();
+        }
         if let Some(err) = state.last_checkpoint_error.clone() {
             return Err(err);
         }
@@ -433,6 +447,7 @@ async fn run(
             state.requests.clear();
             state.native_tasks.clear();
             state.incomplete_tasks = false;
+            state.background = Default::default();
             let generation = state.generation;
             for receipt in state.steers.values_mut() {
                 if receipt["generation"] == generation && receipt["status"] != "rejected" {

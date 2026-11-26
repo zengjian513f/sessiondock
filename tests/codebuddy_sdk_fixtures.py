@@ -68,9 +68,10 @@ class CodebuddyFixture:
         self.config = self.home / ".codebuddy"
         self.projects = self.config / "projects"
         self.cwd = self.root / "workspace"
+        self.tmp = self.root / "native-tmp"
         self.received = self.root / "codebuddy-native-received.jsonl"
         self.sid = "3e4eb4fd-8678-467e-a8a3-34728c7c7e26"
-        for directory in (self.projects, self.cwd, self.root / "host", self.root / "lifecycle",
+        for directory in (self.projects, self.cwd, self.tmp, self.root / "host", self.root / "lifecycle",
                           self.root / "state", self.root / "proc"):
             directory.mkdir(parents=True, exist_ok=True)
         (self.root / "proc/stat").write_text("btime 1700000000\n")
@@ -83,8 +84,13 @@ class CodebuddyFixture:
         self.launcher.write_text(json.dumps({"host_binary": "/bin/true", "host_dir": str(self.root / "host"),
             "profiles": [{"id": "codebuddy-fixture", "source": "codebuddy", "executable": sys.executable,
                 "args": [str(Path(__file__).resolve()), "--fake-cli"], "env": {"HOME": str(self.home),
-                    "CODEBUDDY_CONFIG_DIR": str(self.config), "SESSIONDOCK_FAKE_CODEBUDDY_LOG": str(self.received)},
+                    "CODEBUDDY_CONFIG_DIR": str(self.config), "TMPDIR": str(self.tmp),
+                    "SESSIONDOCK_FAKE_CODEBUDDY_LOG": str(self.received)},
                 "env_remove": ["LD_PRELOAD", "SESSIONDOCK_TEST_CLOCK_OFFSET"]}]}))
+
+    @property
+    def background_logs(self):
+        return self.tmp / f"codebuddy-{os.getuid()}" / project_key(self.cwd) / self.sid / "bg-tasks"
 
     def frames(self, kind=None):
         rows = [json.loads(line) for line in self.received.read_text().splitlines()] if self.received.exists() else []
@@ -320,6 +326,32 @@ def fake_cli():
             stream_text("streaming CodeBuddy progress", message_id, hold=content == 'progress-hold')
             if content == "run subagents":
                 subagent_frames()
+            elif content == "start native background":
+                directory = Path(os.environ["TMPDIR"]) / f"codebuddy-{os.getuid()}" / project_key(cwd) / sid / "bg-tasks"
+                directory.mkdir(parents=True, exist_ok=True)
+                for task in ("buddy-shell", "buddy-child-shell"):
+                    for stream in ("stdout", "stderr"):
+                        (directory / f"{task}.{stream}.log").touch()
+                for task, tool, parent in (("buddy-shell", "Bash", None),
+                                           ("buddy-child-shell", "Bash", "parent-agent-call"),
+                                           ("buddy-foreground", "Bash", None)):
+                    call = f"call-{task}"
+                    send({"type": "assistant", "uuid": str(uuid.uuid4()), "parent_tool_use_id": parent,
+                          "message": {"id": f"msg-{task}", "role": "assistant", "model": state["model"],
+                                      "content": [{"type": "tool_use", "id": call, "name": tool,
+                                                   "input": {"command": "printf synthetic buddy"}}]}})
+                    if task != "buddy-foreground":
+                        send({"type": "system", "subtype": "task_started", "task_id": task,
+                              "tool_use_id": call, "description": "Synthetic Buddy command", "task_type": tool})
+                        send({"type": "system", "subtype": "task_updated", "task_id": task,
+                              "patch": {"status": "running"}, "status": "running"})
+                send({"type": "system", "subtype": "task_started", "task_id": "ambiguous-buddy-shell",
+                      "description": "No owner tool", "task_type": "Bash"})
+            elif content == "finish native background":
+                send({"type": "system", "subtype": "task_updated", "task_id": "buddy-shell",
+                      "patch": {"status": "completed"}, "status": "completed"})
+                send({"type": "system", "subtype": "task_notification", "task_id": "buddy-shell",
+                      "status": "completed", "summary": "Synthetic Buddy command finished"})
             elif content == "recover offline output":
                 send({"type": "assistant", "uuid": str(uuid.uuid4()),
                       "message": {"id": "recovery-reasoning", "content": [

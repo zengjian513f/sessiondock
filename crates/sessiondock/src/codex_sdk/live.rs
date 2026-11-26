@@ -5,9 +5,9 @@
 //! a snapshot and subscribes in the same critical section sees each event
 //! exactly once.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}},
+    time::Instant,
 };
 
 use indexmap::IndexMap;
@@ -22,6 +22,7 @@ pub struct LiveThread {
     state: Mutex<State>,
     subscribers: AtomicUsize,
     pub resume_lock: tokio::sync::Mutex<()>,
+    pub(super) background_poll: tokio::sync::Mutex<Option<Instant>>,
 }
 
 #[derive(Default)]
@@ -39,6 +40,7 @@ struct State {
     /// Last observed terminal outcome, without retaining completed turn items.
     last_turn: Value,
     items: IndexMap<String, Value>,
+    background: super::background::Background,
     /// Open server requests keyed by the JSON spelling of their id.
     requests: IndexMap<String, Request>,
     usage: Value,
@@ -64,6 +66,7 @@ impl LiveThread {
             state: Mutex::new(State::default()),
             subscribers: AtomicUsize::new(0),
             resume_lock: tokio::sync::Mutex::new(()),
+            background_poll: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -106,6 +109,39 @@ impl LiveThread {
 
     pub fn summary(&self) -> Value {
         summary(&self.state.lock().expect("live"))
+    }
+
+    pub(super) fn watching_background(&self) -> bool {
+        self.subscribers.load(Ordering::Relaxed) != 0
+            || self.state.lock().expect("live").background.is_running()
+    }
+
+    pub(super) fn observe_background(&self, generation: u64, method: &str, params: &Value) {
+        let mut state = self.state.lock().expect("live");
+        if state.generation == Some(generation) && params["threadId"] == self.id {
+            let selected = self.subscribers.load(Ordering::Relaxed) != 0;
+            state.background.observe(method, params, selected);
+        }
+    }
+
+    pub(super) fn set_background(&self, generation: u64, commands: Vec<super::background::Command>) {
+        let mut state = self.state.lock().expect("live");
+        if state.generation == Some(generation) && state.background.replace(commands) {
+            let rows = state.background.rows();
+            let event = state.event("bridge/backgroundCommands", json!({"background_commands": rows}));
+            let _ = self.tx.send(event);
+        }
+    }
+
+    pub(super) fn background_rows(&self, generation: u64) -> Option<Vec<Value>> {
+        let state = self.state.lock().expect("live");
+        (state.generation == Some(generation) && state.background.known)
+            .then(|| state.background.rows())
+    }
+
+    pub(super) fn background_output(&self, generation: u64, task: &str) -> Option<Value> {
+        let state = self.state.lock().expect("live");
+        (state.generation == Some(generation)).then(|| state.background.output(task)).flatten()
     }
 
     pub fn active_turn(&self) -> Option<String> {
@@ -241,6 +277,7 @@ impl LiveThread {
             "seq": state.seq, "type": "snapshot",
             "raw": {
                 "summary": summary(&state),
+                "background_commands": state.background.rows(),
                 "turn": state.turn,
                 "items": state.items.values().collect::<Vec<_>>(),
                 "requests": state.requests.iter().map(|(key, request)| json!({
@@ -314,6 +351,8 @@ impl LiveThread {
     /// Tell attached pages to reload; the sender drops with this thread.
     pub fn reset(&self, reason: &str) {
         let mut state = self.state.lock().expect("live");
+        state.generation = None;
+        state.background = super::background::Background::default();
         let event = state.event("bridge/reset", json!({"reason": reason}));
         let _ = self.tx.send(event);
     }
@@ -326,6 +365,7 @@ fn summary(state: &State) -> Value {
         "last_turn": state.last_turn, "capacity_retry": state.capacity.summary(),
         "queue":state.queue, "accepted":state.accepted,
         "recorded_limits": state.recorded_limits,
+        "background_commands": state.background.rows(),
     })
 }
 

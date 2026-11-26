@@ -12,6 +12,7 @@ from sdk_usage_fixtures import assert_inline_usage, assert_usage_outside_menu, c
 import base64
 import json
 from pathlib import Path
+from urllib.parse import quote, urlencode
 import re
 import tempfile
 import time
@@ -378,7 +379,7 @@ def browser_check(fixture, base, screenshots):
         browser.close()
 
 
-def idle_check(fixture, base, clock):
+def idle_check(fixture, base, clock, screenshots=None):
     from playwright.sync_api import sync_playwright, expect
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -428,14 +429,46 @@ def idle_check(fixture, base, clock):
         wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
 
         send(page, 'background')
-        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and bool(raw['background_tasks']))
+        raw = wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and bool(raw['background_tasks']))['raw']
+        assert raw['background_commands'] == [{'task': 'synthetic-background', 'command': 'printf synthetic',
+                                               'description': 'Synthetic native background job'}], raw
+        messages = base + '/api/messages/' + quote(fixture.uid, safe='')
+        native = page.request.get(messages).json()['meta']
+        commands = native['background_commands']
+        assert [command['task'] for command in commands] == ['synthetic-background'], native
+        log = commands[0]['ref']
+        text = page.request.get(base + '/api/session/file?' + urlencode({'uid': fixture.uid, 'ref': log}))
+        assert text.ok and text.text() == 'first native Claude log line\n', text.status
+        timers = {timer['task']: timer for timer in native['background_timers']}
+        assert set(timers) == {'cron-alpha', 'cron-beta'}, timers
+        assert timers['cron-alpha']['schedule'] == '*/15 * * * *' and timers['cron-alpha']['due_at'].startswith('2030-'), timers
+        assert timers['cron-beta']['prompt'] == 'Carried Claude timer', timers
+        for label, footer in (
+            ('sdk', page.locator('#sdk-composer .sdk-status-row')),
+            ('conversation', page.locator('#conversation-status')),
+        ):
+            if label == 'conversation':
+                page.locator('#a-chat').click()
+            footer.get_by_role('button', name='后台任务 3', exact=True).click()
+            menu = footer.get_by_role('dialog', name='后台任务')
+            expect(menu).to_contain_text('Carried Claude timer')
+            menu.get_by_role('button', name='printf synthetic', exact=False).click()
+            dialog = page.get_by_role('dialog', name='后台输出')
+            expect(dialog.get_by_label('日志输出')).to_contain_text('first native Claude log line')
+            expect(dialog.get_by_role('link', name='下载完整日志')).to_be_visible()
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'claude-background-{label}.png'))
+            dialog.get_by_role('button', name='关闭').click()
         context.close()
         clock.advance(650)
         wake()
         assert loaded(), 'native background task was reaped after the main result'
         context, page = open_page()
         send(page, 'finish-background')
-        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and not raw['background_tasks'])
+        raw = wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and not raw['background_tasks'])['raw']
+        assert raw['background_commands'] == [], raw
+        native = page.request.get(messages).json()['meta']
+        assert not native.get('background_commands') and [r['task'] for r in native['background_timers']] == ['cron-alpha'], native
         clock.advance(650)
         wake()
         assert loaded(), 'observed native runtime was reaped'
@@ -623,7 +656,7 @@ def main():
         fixture = ClaudeFixture(Path(temporary))
         clock = MonotonicClock(Path(temporary))
         with fixture.server(args.binary, extra_env=clock.env) as base:
-            idle_check(fixture, base, clock)
+            idle_check(fixture, base, clock, args.screenshots)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-fork-restart-') as temporary:
         fork_restart_check(ClaudeFixture(Path(temporary)), args.binary)
     print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, startup approval cancellation, native fork boundaries/source preservation/deduplication, quiet/active/request/task/subscriber survival and same-instance reopen")

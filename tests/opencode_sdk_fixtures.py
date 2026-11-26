@@ -44,6 +44,10 @@ class FakeOpenCode:
         self.received = []
         self.pending = {}
         self.inbox = {}
+        self.background_jobs = []
+        self.background_timers = []
+        self.shell_logs = {}
+        self.background_unavailable = False
         self.forks = 0
         self.lose_ack = None
         self.lock = threading.RLock()
@@ -57,12 +61,14 @@ class FakeOpenCode:
         self.append(SID, {'id': 'msg_sdk_prior', 'type': 'user', 'text': 'SDK native history',
                           'time': {'created': 1}})
 
-    def create(self, sid, cwd, model=None):
+    def create(self, sid, cwd, model=None, *, parent=None):
         info = {'id': sid, 'projectID': 'sdkproject', 'location': {'directory': cwd},
                 'model': model or dict(MODEL), 'title': 'OpenCode SDK synthetic',
                 'agent': 'build', 'permissions': [], 'cost': 0,
                 'tokens': {'input': 0, 'output': 0, 'reasoning': 0, 'cache': {'read': 0, 'write': 0}},
                 'time': {'created': 1, 'updated': 1}}
+        if parent:
+            info['parentID'] = parent
         self.sessions[sid] = info
         self.messages[sid] = []
         self.permissions[sid] = []
@@ -70,9 +76,9 @@ class FakeOpenCode:
         self.inbox[sid] = []
         with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute('INSERT INTO session_v2 '
-                               '(id,project_id,slug,directory,title,version,agent,model,time_created,time_updated) '
-                               'VALUES (?,?,?,?,?,?,?,?,?,?)',
-                               (sid, 'sdkproject', sid, cwd, info['title'], '2.0.32', 'build',
+                               '(id,project_id,parent_id,slug,directory,title,version,agent,model,time_created,time_updated) '
+                               'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                               (sid, 'sdkproject', parent, sid, cwd, info['title'], '2.0.32', 'build',
                                 json.dumps(info['model']), 1, 1))
         return info
 
@@ -179,6 +185,26 @@ class FakeOpenCode:
         parsed = urlsplit(raw_path)
         path, query = parsed.path, parse_qs(parsed.query)
         parts = path.strip('/').split('/')
+        if method == 'GET' and path in ('/api/experimental/job', '/api/experimental/automation'):
+            assert query.get('sessionID') and query['sessionID'][0] in self.sessions
+            assert query.get('descendants') != ['true']
+            if self.background_unavailable:
+                return 503, {'message': 'temporary native background observation failure'}
+            # Include foreign records to prove the bridge checks native owner
+            # independently of the requested session filter.
+            return 200, {'data': self.background_jobs if path.endswith('/job') else self.background_timers}
+        if method == 'GET' and len(parts) == 4 and parts[:2] == ['api', 'shell'] and parts[3] == 'output':
+            assert query.get('location[directory]') == [str(self.cwd)]
+            output = self.shell_logs.get(parts[2])
+            if output is None:
+                return 404, {'_tag': 'ShellNotFoundError', 'message': 'no retained shell output'}
+            size = len(output)
+            start = min(int(query.get('cursor', [0])[0]), size)
+            limit = int(query.get('limit', [65536])[0])
+            end = min(start + limit, size)
+            return 200, {'location': {'directory': str(self.cwd)}, 'data': {
+                'output': output[start:end].decode('utf-8', errors='ignore'),
+                'size': size, 'cursor': end, 'truncated': False}}
         if path == '/api/session' and method == 'POST':
             sid = body.get('id', 'ses_synthetic_created')
             if sid in self.sessions:

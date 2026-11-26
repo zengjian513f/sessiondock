@@ -46,9 +46,26 @@ pub(super) fn metadata(
         Value::Null => json!(fallback),
         value => value,
     };
-    json!({"sid": sid, "title": clip(&title), "cwd": session["directory"],
+    let mut meta = json!({"sid": sid, "title": clip(&title), "cwd": session["directory"],
         "created": stamp(&session["time_created"]), "updated": stamp(&session["time_updated"]),
-        "model": session["model"]["id"], "branch": session["agent"]})
+        "model": session["model"]["id"], "branch": session["agent"]});
+    let commands = crate::opencode_sdk::background::merge_commands(
+        summary["background_commands"]
+            .as_array()
+            .map_or(&[], Vec::as_slice),
+        crate::opencode_sdk::background::message_commands(
+            records
+                .iter()
+                .map(|(row, _)| (row["type"].as_str(), &row["data"])),
+        ),
+    );
+    if !commands.is_empty() {
+        meta["background_commands"] = json!(commands);
+    }
+    if summary["background_timers"].is_array() {
+        meta["background_timers"] = summary["background_timers"].clone();
+    }
+    meta
 }
 
 impl Parser<'_> {

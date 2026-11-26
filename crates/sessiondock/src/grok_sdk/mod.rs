@@ -1,9 +1,12 @@
 //! Grok's native ACP bridge. Contract and protocol evidence: docs/grok-sdk.md.
 //! No HTTP, PTY keystrokes, native transcript writes or implicit CLI discovery.
 mod actions;
+mod background;
 mod live;
 mod steering;
 mod transport;
+
+pub(crate) use background::read_background_updates;
 
 use crate::{
     config::Config,
@@ -329,6 +332,9 @@ impl Bridge {
         }
         if method == "recover" {
             return self.recover(&target, &input).await;
+        }
+        if method == "background_output" {
+            return self.background_output(&target, &input).await;
         }
         if method == "create" {
             return self.create(&target, &input).await;
@@ -952,6 +958,7 @@ impl Bridge {
             || state.has_pending_steers()
             || !state.native_tasks.is_empty()
             || state.incomplete_tasks
+            || state.background.has_tasks()
         {
             return Err("grok_sdk_busy".into());
         }

@@ -167,6 +167,14 @@ DELTA：原生子代理调用失败时，按其调用 ID 将父会话保存的�
 原 RPC 回执、输入队列、审批和读取游标，不调用 initialize/load/prompt。没有
 原始子代理证据时不猜归属；缺少宿主日志时不能重建旧归属。普通读取不激活原生会话。
 
+Kiro 的 `agent-subtask` 继续走子代理列表。V3 ACP 文档和已验证的会话记录只给出
+子代理归属、普通工具通知与历史，缺少独立后台 shell、原生输出或定时任务的
+会话级只读协议。官方 Crew 定时任务使用独立的 Crew 调度接口，当前 ACP
+集成缺少将这些任务关联到所选会话的原生字段。2.37.0 在临时未登录环境中
+于 initialize 前退出，未验证该版本的已登录能力。
+[Kiro V3 ACP](https://kiro.dev/docs/cli/v3/acp-migration/)、
+[Kiro Crew 调度](https://kiro.dev/docs/crew/features/cron/)
+
 ## 验收入口与证据边界
 
 - [SDK 浏览器](../tests/kiro_sdk_browser.py)：官方目录及缓存、显式启动、流式消息、

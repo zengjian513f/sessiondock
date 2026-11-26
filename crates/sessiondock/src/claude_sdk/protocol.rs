@@ -280,13 +280,28 @@ pub(super) fn observe_at(
                     if block["type"] == "tool_result" {
                         let call = block["tool_use_id"].as_str().unwrap_or("");
                         let output = text(&block["content"]);
-                        let result = json!({"role":"tool_result","text":output,"content":output,"call_id":call,
+                        let mut result = json!({"role":"tool_result","text":output,"content":output,"call_id":call,
                             "error":block["is_error"].as_bool().unwrap_or(false),"native_block":block});
                         if let Some(tool) = live
                             .items
                             .iter_mut()
                             .find(|row| row["role"] == "tool" && row["call_id"] == call)
                         {
+                            if frame["session_id"] == session.sid
+                                && frame.get("parent_tool_use_id").is_some_and(Value::is_null)
+                                && tool.get("parent_tool_use_id").is_some_and(Value::is_null)
+                                && block["is_error"] != true
+                            {
+                                let native = frame.get("tool_use_result").unwrap_or(&Value::Null);
+                                let task = match tool["name"].as_str() {
+                                    Some("Bash") => background::result_task(native, &output),
+                                    Some("Monitor") => background::monitor_task(native, &output),
+                                    _ => None,
+                                };
+                                if let Some(task) = task {
+                                    result["background_task_id"] = json!(task);
+                                }
+                            }
                             tool["result"] = result;
                         } else {
                             upsert(
@@ -469,13 +484,29 @@ pub(super) fn observe_at(
                 live.compact = json!({"state":"success","native":frame});
                 live.context_usage = Value::Null;
                 live.usage.as_object_mut().unwrap().remove("context");
-            } else if frame["subtype"] == "background_tasks_changed" {
-                live.background_tasks = frame["tasks"].as_array().cloned().unwrap_or_default();
-            } else if frame["subtype"] == "task_started" {
-                live.background_tasks.push(frame.clone());
-            } else if frame["subtype"] == "task_notification" {
-                live.background_tasks
-                    .retain(|task| task["task_id"] != frame["task_id"]);
+            } else if matches!(
+                frame["subtype"].as_str(),
+                Some(
+                    "background_tasks_changed"
+                        | "task_started"
+                        | "task_updated"
+                        | "task_notification"
+                )
+            ) {
+                if frame["session_id"] == session.sid {
+                    let Live {
+                        background_tasks,
+                        background_starts,
+                        background_level_seen,
+                        ..
+                    } = &mut *live;
+                    background::observe(
+                        background_tasks,
+                        background_starts,
+                        background_level_seen,
+                        &frame,
+                    );
+                }
             } else if frame["subtype"] == "session_state_changed" {
                 // Stream-json can continue background work after a result. The
                 // native state is observed separately from accepted input count.

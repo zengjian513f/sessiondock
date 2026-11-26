@@ -403,6 +403,30 @@ impl ViewSnapshot {
         self.view.native_scope.clone()
     }
 
+    pub(crate) fn grok_background_tasks(&self) -> Result<Value, SessionError> {
+        let scope = self.native_scope()?;
+        let candidate = &self.view.parsed.candidate;
+        if scope.source != "grok" || candidate.source != "grok" {
+            return Ok(Value::Null);
+        }
+        let path = candidate.path.join("updates.jsonl");
+        super::trusted_path(&candidate.root, &path)?;
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
+            _ => return Err(SessionError::new(503, "原生后台任务记录暂时不可读取")),
+        }
+        let stamp = super::stamp(&path)?;
+        let mut input = native_input::CheckedNative::open(&candidate.root, &path, &stamp)?;
+        let result = crate::grok_sdk::read_background_updates(
+            std::io::BufReader::new(&mut input),
+            &scope.session_id,
+        )
+        .map_err(|_| SessionError::new(503, "原生后台任务记录在读取期间变化"))?;
+        input.finish()?;
+        Ok(result)
+    }
+
     pub fn messages(&self, query: &MessageQuery) -> Result<Value, SessionError> {
         validate_message_query(query)?;
         let selection = select_batch(self, query, None)?;
@@ -1913,10 +1937,24 @@ fn view_meta(request: &ViewRequest, parsed: &Parsed) -> Result<Value, SessionErr
     if !meta.is_object() {
         return Err(SessionError::new(500, "会话行不是对象"));
     }
-    if let Some(logs) = parsed.meta.get("background_logs") {
-        meta["background_logs"] = logs.clone();
+    for field in [
+        "background_logs",
+        "background_commands",
+        "background_timers",
+    ] {
+        if let Some(value) = parsed.meta.get(field) {
+            meta[field] = value.clone();
+        }
     }
     if request.agent.is_empty() {
+        if parsed.candidate.source == "codebuddy"
+            && let (Ok(sid), Some(cwd)) = (&parsed.native_id, parsed.meta["cwd"].as_str())
+        {
+            meta["background_timers"] = json!(providers::codebuddy::background_timers(
+                std::path::Path::new(cwd),
+                sid,
+            ));
+        }
         if parsed.meta["timeline_pin"].is_object() {
             meta["timeline_pin"] = parsed.meta["timeline_pin"].clone();
         }

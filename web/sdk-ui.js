@@ -71,6 +71,7 @@ const SdkUI = {
     }
   },
   mount(view, {name, readOnly, historyReady, settings}) {
+    view.backgroundTasks = null;
     const pane = view.pane;
     pane.setAttribute('aria-label', `${name} SDK`);
     pane.classList.add('sdk-pane');
@@ -673,6 +674,37 @@ const SdkUI = {
       return data;
     },
 
+    updateBackgroundTasks(raw) {
+      const {background_commands, background_timers} = raw;
+      if (this.backgroundTasks?.background_commands === background_commands
+          && this.backgroundTasks?.background_timers === background_timers) return;
+      this.backgroundTasks = {background_commands, background_timers};
+      this.paintBackgroundTasks(this.historyEntry);
+    },
+
+    paintBackgroundTasks(entry) {
+      const live = this.backgroundTasks;
+      const recorded = entry?.meta;
+      if (!this.notice || (!live && !recorded)) return;
+      const liveCommands = live?.background_commands;
+      const recordedCommands = recordedBackgroundCommands(recorded);
+      let commands = liveCommands ?? recordedCommands;
+      if (liveCommands?.length && recordedCommands?.length) {
+        const references = new Map(recordedCommands.filter(task => task.ref).map(task => [task.task, task.ref]));
+        commands = liveCommands.map(task => !TaskOutput.readable(task) && references.has(task.task)
+          ? {...task, ref: references.get(task.task)}
+          : task);
+      }
+      const meta = {
+        uid: this.uid, agent_id: this.agent,
+        background_commands: commands,
+        background_logs: recorded?.background_logs,
+        background_timers: live?.background_timers ?? recorded?.background_timers,
+      };
+      if (paintBackgroundCommands(this.notice.parentElement, {meta, msgs: entry?.msgs}))
+        this.layoutToolbar();
+    },
+
     async refreshHistory(generation, afterTurn = false) {
       if (this.pending(this.uid) && !afterTurn) return;
       try {
@@ -727,8 +759,7 @@ const SdkUI = {
       if (this.readOnly && this.baseNotice && this.agent)
         this.setNotice(...this.baseNotice);
       const data = this.historyData;
-      if (this.uid.startsWith('agy:') && paintBackgroundCommands(this.notice.parentElement, entry))
-        this.layoutToolbar();
+      this.paintBackgroundTasks(entry);
       const backgroundTimers = entry.meta?.background_timers;
       const taskAgents = entry.meta?.background_task_agents;
       const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;

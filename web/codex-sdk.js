@@ -629,6 +629,7 @@ const CodexSdkView = {
     // Reconcile ownership on this connection's snapshot as well.
     queueUiChange({live: true});
     this.summary = raw.summary || {};
+    this.updateBackgroundTasks(raw.background_commands === undefined ? this.summary : raw);
     void CodexSdkGoal.load(this);
     this.seedGauges();
     this.turn = raw.turn || null;
@@ -694,6 +695,7 @@ const CodexSdkView = {
       return;
     }
     if (method === 'bridge/reset') {
+      this.updateBackgroundTasks({});
       this.setConnected(false);
       queueUiChange({live: true});
       this.setNotice('载入中', 'connecting');
@@ -704,6 +706,9 @@ const CodexSdkView = {
     // Do not move a disclosure away from the pointer between press and release.
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
     switch (method) {
+      case 'bridge/backgroundCommands':
+        this.updateBackgroundTasks(raw);
+        return;
       case 'bridge/capacityRetry':
         if (this.summary) this.summary.capacity_retry = raw.delay_seconds ? raw : null;
         this.paintStatus();

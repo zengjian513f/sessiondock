@@ -2,6 +2,7 @@
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
 mod actions;
+mod background;
 mod hosted;
 mod protocol;
 mod transport;
@@ -50,6 +51,7 @@ struct Session {
     path: PathBuf,
     observed_model: Option<String>,
     fork_source: Option<String>,
+    background_dir: Option<PathBuf>,
     runtime: RwLock<()>,
     operations: AsyncMutex<()>,
     live: Mutex<Live>,
@@ -231,8 +233,16 @@ fn project_key(cwd: &Path) -> String {
 }
 
 impl Session {
-    fn new(uid: String, sid: String, cwd: PathBuf, path: PathBuf, input: &Value) -> Self {
+    fn new(
+        uid: String,
+        sid: String,
+        cwd: PathBuf,
+        path: PathBuf,
+        input: &Value,
+        profile: &CliProfile,
+    ) -> Self {
         let (events, _) = broadcast::channel(128);
+        let background_dir = background::task_directory(profile, &path, &sid);
         Self {
             uid,
             sid,
@@ -240,6 +250,7 @@ impl Session {
             path,
             observed_model: None,
             fork_source: None,
+            background_dir,
             runtime: RwLock::new(()),
             operations: AsyncMutex::new(()),
             stop: CancellationToken::new(),
@@ -305,7 +316,9 @@ impl Session {
             "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
-            "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "background_tasks":live.background_tasks,
+            "background_commands":background::commands(&live.background_tasks, &live.items),
+            "error":live.error,"error_kind":live.error_kind,
             "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "progress":live.turns.front().map(|id|json!({"request_id":id})),
             "capabilities":capabilities()}}),
@@ -535,7 +548,14 @@ impl Bridge {
         let path = path.ok_or(
             "codebuddy_sdk: inventory identity no longer exists under the configured native root",
         )?;
-        let mut session = Session::new(uid.into(), sid.into(), cwd, path, &Value::Null);
+        let mut session = Session::new(
+            uid.into(),
+            sid.into(),
+            cwd,
+            path,
+            &Value::Null,
+            &self.profile,
+        );
         // Historical evidence is display-only until stream-json reports the
         // runtime's model. Never turn a resumed transcript into a CLI override.
         session.observed_model = target["observed_model"]
@@ -588,6 +608,7 @@ impl Bridge {
             cwd.clone(),
             path,
             input,
+            &self.profile,
         ));
         let mut receipt = session.receipt();
         receipt["session"] = json!({"uid":uid,"source":"codebuddy","session_id":sid,"cwd":cwd,
@@ -610,6 +631,25 @@ impl Bridge {
     ) -> Result<Value, String> {
         if self.shutdown.is_cancelled() {
             return Err("codebuddy_sdk: node shutting down".into());
+        }
+        if method == "background_output" {
+            if target["agent"]
+                .as_str()
+                .is_some_and(|agent| !agent.is_empty())
+            {
+                return Ok(json!({"raw":null}));
+            }
+            let bridge = self.clone();
+            return tokio::task::spawn_blocking(move || {
+                let raw = bridge.background_output(
+                    target["uid"].as_str().unwrap_or_default(),
+                    target["session_id"].as_str().unwrap_or_default(),
+                    input["task"].as_str().unwrap_or_default(),
+                );
+                json!({"raw":raw})
+            })
+            .await
+            .map_err(|_| "codebuddy_sdk: background output read failed".into());
         }
         if method == "create" {
             return self.create(&target, &input);
@@ -642,6 +682,7 @@ impl Bridge {
                     .join(project_key(&cwd))
                     .join(format!("{sid}.jsonl")),
                 &Value::Null,
+                &self.profile,
             ));
             let result = self.ensure(&session).await.map(
                 |_| json!({"models":lock(&session.live).models,"capabilities":capabilities()}),

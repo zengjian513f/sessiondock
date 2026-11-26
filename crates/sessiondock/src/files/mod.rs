@@ -11,7 +11,8 @@ mod write;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    path::PathBuf,
+    io::{Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
 };
 
 pub(crate) use boundary::FileVersion;
@@ -73,6 +74,21 @@ impl std::fmt::Display for FileError {
     }
 }
 impl std::error::Error for FileError {}
+
+/// Read a bounded window from a log path already attributed by its provider.
+pub(crate) fn native_log_tail(path: &Path, limit: usize) -> Result<(Vec<u8>, bool), FileError> {
+    let target = boundary::open_target(boundary::volume_root(path)?, path.to_owned())?;
+    let size = target.metadata.len();
+    let start = size.saturating_sub(limit as u64);
+    let mut output = vec![0; (size - start) as usize];
+    let mut file = target.file()?;
+    file.seek(SeekFrom::Start(start)).map_err(FileError::io)?;
+    file.read_exact(&mut output).map_err(FileError::io)?;
+    // A growing log can append past this read window. The opened file and
+    // every path component must still refer to the same entries.
+    target.verify_identity()?;
+    Ok((output, start != 0))
+}
 
 /// Values must come from the complete, selected semantic SessionStore view.
 /// Neither cwd nor a raw client UID establishes any filesystem authority.

@@ -7,6 +7,8 @@ use std::{
 };
 use tokio::sync::broadcast;
 
+use super::background::{self, Background};
+
 type ErrorKind = Option<&'static str>;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -59,6 +61,8 @@ pub(super) struct Live {
     pub steers: HashMap<String, Value>,
     pub native_tasks: HashSet<String>,
     pub incomplete_tasks: bool,
+    #[serde(default)]
+    pub background: Background,
     pub seq: u64,
     pub turn: u64,
     pub generation: u64,
@@ -104,6 +108,7 @@ impl Live {
             steers: HashMap::new(),
             native_tasks: HashSet::new(),
             incomplete_tasks: false,
+            background: Background::default(),
             seq: 0,
             turn: 0,
             generation: 0,
@@ -130,6 +135,7 @@ impl Live {
             "progress":self.prompt_started.then(||json!({})),
             "last_turn":self.last_turn,"runtime_error":self.runtime_error,"retry":self.retry,"compact":self.compact,
             "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
+            "background_commands":self.background.commands(true),"background_timers":self.background.timers(),
             "model":self.models["currentModelId"],"effort":self.effort,
             "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
@@ -311,19 +317,41 @@ impl Live {
                 json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Unsupported ACP client method"}}),
             );
         }
-        if !ours
-            || !matches!(
-                message["method"].as_str(),
-                Some("session/update" | "x.ai/session/update" | "_x.ai/session/update")
-            )
-        {
-            return None;
-        }
+        let method = message["method"].as_str().unwrap_or_default();
+        let method = method.strip_prefix('_').unwrap_or(method);
         let update = &params["update"];
-        if update["_meta"]["isReplay"] == true || params["_meta"]["isReplay"] == true {
+        let tag = update["sessionUpdate"].as_str().unwrap_or_default();
+        let routed = matches!(
+            (method, tag),
+            (
+                "session/update" | "x.ai/session/update" | "x.ai/session_notification",
+                _
+            ) | ("x.ai/task_backgrounded", "task_backgrounded")
+                | ("x.ai/task_completed", "task_completed")
+                | ("x.ai/monitor_event", "monitor_event")
+                | ("x.ai/scheduled_task_created", "scheduled_task_created")
+                | ("x.ai/scheduled_task_fired", "scheduled_task_fired")
+                | ("x.ai/scheduled_task_deleted", "scheduled_task_deleted")
+        );
+        if !ours || !routed {
             return None;
         }
-        match update["sessionUpdate"].as_str().unwrap_or("") {
+        let replay = update["_meta"]["isReplay"] == true || params["_meta"]["isReplay"] == true;
+        if !self.sid.is_empty() {
+            if tag == "tool_call_update" && !replay && self.background.observe_shell_output(update)
+            {
+                // The selected-task reader sees the new tail. Background
+                // stdout need not be copied into every conversation snapshot.
+                return None;
+            }
+            if self.background.update(update, &self.sid) && replay {
+                self.publish();
+            }
+        }
+        if replay {
+            return None;
+        }
+        match tag {
             "agent_message_chunk" => {
                 self.retry = Value::Null;
                 self.chunk("assistant", &update["content"]);
@@ -380,29 +408,39 @@ impl Live {
                 item["native"] = json!(native);
             }
             "task_backgrounded" => {
-                if let Some(id) = update["task_id"].as_str() {
-                    self.native_tasks.insert(format!("task:{id}"));
+                if let Some(id) = background::task_id(update) {
+                    if self.background.contains(&id) {
+                        self.native_tasks.insert(format!("task:{id}"));
+                    }
                 } else {
                     self.incomplete_tasks = true;
                 }
             }
             "background_tasks" => {
+                let tasks = update["tasks"].as_array()?;
                 if update["truncated"] != true {
                     self.native_tasks.retain(|id| !id.starts_with("task:"));
                     self.incomplete_tasks = false;
                 } else {
                     self.incomplete_tasks = true;
                 }
-                for task in update["tasks"].as_array().into_iter().flatten() {
-                    if !matches!(
-                        task["status"].as_str(),
-                        Some("completed" | "failed" | "cancelled" | "exited")
-                    ) {
-                        if let Some(id) = task["id"].as_str().or_else(|| task["task_id"].as_str()) {
-                            self.native_tasks.insert(format!("task:{id}"));
+                for task in tasks {
+                    if task["owner_session_id"]
+                        .as_str()
+                        .is_some_and(|owner| owner != self.sid)
+                    {
+                        continue;
+                    }
+                    if !background::finished(task) {
+                        if let Some(id) = background::task_id(task) {
+                            if !self.background.is_finished(&id) {
+                                self.native_tasks.insert(format!("task:{id}"));
+                            }
                         } else {
                             self.incomplete_tasks = true;
                         }
+                    } else if let Some(id) = background::task_id(task) {
+                        self.native_tasks.remove(&format!("task:{id}"));
                     }
                 }
             }
@@ -432,11 +470,28 @@ impl Live {
                 }
             }
             "task_completed" => {
+                if let Some(id) = background::task_id(&update["task_snapshot"])
+                    .or_else(|| background::task_id(update))
+                    && !self.background.contains(&id)
+                {
+                    self.native_tasks.remove(&format!("task:{id}"));
+                }
                 // A completion can schedule a hidden native wake prompt; a
                 // bridge prompt ending is not proof that wake has finished.
                 if update["will_wake"] == true {
                     self.native_tasks.insert("native-wake".into());
                 }
+            }
+            "scheduled_task_fired" => {
+                if update.get("next_fire_at").is_some_and(Value::is_null)
+                    && let Some(id) = background::task_id(update)
+                {
+                    self.native_tasks.remove(&format!("task_id:{id}"));
+                }
+            }
+            "monitor_event" => {
+                // Only the selected-task output surface changes.
+                return None;
             }
             "config_option_update" => self.config = update["configOptions"].clone(),
             "model_changed" => {

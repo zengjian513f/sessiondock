@@ -167,6 +167,44 @@ fork、shell、command、compact 在调用前按 request_id 在当前桥接进�
 图片与普通文件统一使用 SessionDock 附件发布后的文本路径引用。已移除 `turn.files`
 及 `command.files` 原生附件适配，不生成 data URI，不把图片字节附加到原生 prompt。
 
+## 后台命令与定时任务
+
+DELTA：OpenCode v2.4.1 的 SDK 快照和普通对话状态栏可显示所选原生 SID 正在运行的
+后台 shell，以及该 SID 创建、仍为 `active` 的定时提示词。SDK 以
+`GET /api/experimental/job?sessionID=…&kind=shell` 的 `Job.Shell.sessionID`、
+`shellID` 和 `status` 确认归属与生命周期，也接受所选会话消息中带
+`metadata.background:true` 的运行中 `Session.Message.Shell`。子代理使用各自
+的 SID 观察本身的 shell 和定时任务。父会话的 `Job.Subagent` 由已有的子代理入口呈现。
+任务进入完成、取消或错误状态后移出底栏；实验接口暂时读取失败时保留上次成功的观察。
+
+`GET /api/experimental/automation?sessionID=…` 按创建会话读取自动化。
+只投影带 `action.type=prompt` 的 `at/every/cron` 定时任务。
+`time.created` 和 `nextDueAt` 转为 UTC ISO 时间，周期显示原生规则；
+到期时间本身是计划，只有原生状态变化确认定时任务退出等待。
+
+普通对话沿用现有 history 请求的 `meta.background_commands` 和
+`meta.background_timers`，从只读 SQLite 镜像的 `job`、`automation` 表和
+已持久化的原生 shell 消息获得证据。打开对话只读镜像；旧数据库缺可选表时保留可读的
+消息投影。SDK 使用同名 `raw` 字段，对每个命令只发布元数据和
+`output_available:true`。原生 shell 日志不作为普通对话的文件授权。
+
+`background_output({task})` 使用 facade 已解析的 UID、原生 UID 和 SID。先确认
+所选会话在原生消息、持久 job 或已运行共享服务的 job 列表中拥有该任务，再读取
+`GET /api/shell/{id}/output?location[directory]=…`。目录仅用于路由。
+用原生字节大小和游标读取末尾 64 KiB，已有已结束消息在保留了最后一页时也可直接提供
+输出。返回 `{raw:{output,clipped?,note?}}`，空字符串表示当前尚无内容，
+原生已确认没有保留输出时返回 `{raw:null}`。早期输出没有补读或下载入口。
+原生 job 消费后若没有保留可确认归属的记录，该任务也随之不可补读。
+观察沿用共享服务预检，不执行 session open、prompt、terminal 或
+session background 操作。项目级 shell 列表和只表示最后控制终端的
+`terminal/read` 接口没有足够的任务归属证据。
+
+2026-11-26 在临时 HOME 和 XDG 目录用本机 2.4.1 隔离 `serve --stdio` 核实
+上述 OpenAPI、`job` 和 `automation` 表结构、不同 SID 的自动化查询结果、
+会话 shell 消息的 `metadata.background`，及 shell 字节游标在运行期间和结束后的
+输出行为。合成定时任务在临时服务退出前没有到期。未调用在线模型。
+原生接口也见[后台任务 API](https://opencode.ai/docs/api#experimental)。
+
 ## 并存限制
 
 默认 TUI 与桥接通过同一 HOME/profile 下的默认原生 daemon 操作同一个 SID。
@@ -188,4 +226,7 @@ runtime、进程启动后才选择的其他 SID 不能靠进程采样完整识�
 重试不重复执行。加 `--hub-binary` 使用真实 Hub 验证 fork 命名空间、重新打开
 新身份、SSE/SEND 路由和成功回执重试。共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
+[opencode_background_browser.py](../tests/opencode_background_browser.py) 覆盖普通对话、
+SDK 和所选子代理的只读任务，包含跨 SID、完成、暂时不可读与 64 KiB 截尾。
+可单独运行，也随 OpenCode SDK 套件执行。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
