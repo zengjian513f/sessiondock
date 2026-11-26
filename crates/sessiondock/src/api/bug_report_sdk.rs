@@ -172,8 +172,7 @@ pub(super) async fn launch(
                 .await?
                 .0;
                 conversations
-                    .sdk_accepted(&uid, &request_id, &input, response.clone())
-                    .await
+                    .sdk_accepted_for_draft(&identity.key, &request_id, &input, response.clone())
                     .map_err(super::conversation::error)?;
                 Ok(response)
             } else {

@@ -146,6 +146,8 @@ def provider(source, root, binary, *, cli=False, report=False, extra_env=None):
 
 
 class StartDaemon(FakeAppServer):
+    before_name_reply = None
+
     async def _handle(self, writer, message):
         if message.get('method') == 'thread/name/set':
             params = message['params']
@@ -158,6 +160,8 @@ class StartDaemon(FakeAppServer):
             with index.open('a') as output:
                 output.write(json.dumps({'id': self.thread_id, 'thread_name': params['name'],
                                          'updated_at': '2026-10-23T16:00:00Z'})+'\n')
+            if self.before_name_reply:
+                self.before_name_reply()
             await self.send(writer, {'id': message['id'], 'result': {}})
             await self.notify('thread/name/updated', {'threadName': params['name']})
             return

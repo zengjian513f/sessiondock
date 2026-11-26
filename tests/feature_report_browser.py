@@ -8,9 +8,10 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import expect, sync_playwright
 from sdk_start_stop_fixtures import provider
-from history_fixtures import BINARY, REPO
+from history_fixtures import BINARY, REPO, codex_row, encoded
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
 from bug_report_node_browser import open_report, wait_drafts
@@ -20,6 +21,8 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     print(label, source, 'feature/report SDK handoff', flush=True)
     page = browser.new_page(viewport={'width': 1280, 'height': 900})
     page.set_default_timeout(20000)
+    shots = REPO/'target/validation/report-feature'
+    shots.mkdir(parents=True, exist_ok=True)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(base, wait_until='networkidle')
@@ -69,8 +72,6 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         (root/'init-delay').write_text('12')
     starts_before = len(peer.methods('thread/start')) if tier_id else 0
     if tier_id:
-        shots = REPO/'target/validation/report-feature'
-        shots.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(shots / f'{label}-codex-picker.png'))
         page.set_viewport_size({'width': 390, 'height': 844})
         page.emulate_media(color_scheme='dark')
@@ -79,6 +80,19 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         page.set_viewport_size({'width': 1280, 'height': 900})
         page.emulate_media(color_scheme='light')
     started = time.monotonic()
+    ledger_path = root/'state/conversations/conversation-ledger.json'
+    initial_draft = None
+    if source == 'codex' and not reject:
+        def on_name():
+            nonlocal initial_draft
+            ledger = read_document(ledger_path)
+            initial_draft = next(draft for draft in ledger['drafts'].values()
+                                 if draft['value'].get('session', {}).get('thread_id') == peer.thread_id)
+            # The creation receipt stops supplying a draft identity as soon as
+            # the rollout exists, while the new file has yet to become readable
+            # as a session. Hold that window through draft settlement.
+            peer.rollout.touch()
+        peer.before_name_reply = on_name
     with page.expect_response(lambda r: r.url.endswith('/api/bug-report') and r.request.method=='POST') as response:
         page.locator('#bug-report-go').click()
     reply = response.value.json()
@@ -98,7 +112,7 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         assert data['status'] == 'failed', data
         sid = data['worker']['session']['sid']
         assert not [m for m in peer.methods('turn/start') if m['params']['threadId'] == sid]
-        ledger = read_document((root/'state/conversations/conversation-ledger.json'))
+        ledger = read_document(ledger_path)
         draft = next(d for d in ledger['drafts'].values()
                      if d['value'].get('session', {}).get('report_id') == reply['report_id'])
         assert draft['value']['text'] == (manifest.parent/'worker-prompt.md').read_text()
@@ -112,10 +126,10 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
     if replays:
         assert replays[0] == replays[1], replays
     expect(page.locator('#bug-report-toast')).to_be_visible()
-    page.locator('#bug-report-toast').get_by_role('button',name='打开',exact=True).click()
-    expect(page.locator('#sdk-input')).to_be_visible()
-    expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
-    page.wait_for_function('SdkView.connected')
+    open_worker = page.locator('#bug-report-toast').get_by_role('button', name='打开', exact=True)
+    if initial_draft is None:
+        open_worker.click()
+        page.wait_for_function('SdkView.connected')
     # Wait for the node's durable SDK receipt, not a fabricated browser success.
     manifest=root/'reports'/reply['report_id']/'manifest.json'
     deadline=time.monotonic()+20
@@ -123,15 +137,47 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         data=json.loads(manifest.read_text())
         if data['status']!='starting': break
         page.wait_for_timeout(100)
-    assert data['status']=='submitted', data
+    if initial_draft is not None:
+        peer.wait_for(lambda: [call for call in peer.methods('turn/start')
+                              if call['params']['threadId'] == reply['worker']['thread_id']])
+    assert data['status']=='submitted', data.get('error')
+    deferred_reads = []
+    if initial_draft is not None:
+        peer.before_name_reply = None
+        assert peer.rollout.stat().st_size == 0
+        peer.rollout.write_bytes(encoded(codex_row('session_meta', {
+            'id': peer.thread_id, 'cwd': peer.created[peer.thread_id]['thread']['cwd'],
+            'timestamp': '2026-10-17T10:00:00Z'})))
+        uid = reply['worker']['uid']
+        route_pattern = lambda url: (urlsplit(url).path.endswith('/api/session/conversation')
+                                     and parse_qs(urlsplit(url).query) == {'uid': [uid]})
+        def draft_read(route):
+            if not deferred_reads:
+                deferred_reads.append(None)
+                # Deliver a read issued before SDK acceptance after the page
+                # opens, then let a normal follow read pick up the receipt.
+                route.fulfill(json={'ok': True, 'draft': initial_draft})
+            else:
+                deferred_reads.append(route)
+        page.route(route_pattern, draft_read)
+        open_worker.click()
+        page.wait_for_function('SdkView.connected')
+        expect(page.locator('#sdk-input')).to_have_value(initial_draft['value']['text'])
+        page.screenshot(path=str(shots / f'{label}-codex-draft-before-sync.png'))
+        page.unroute(route_pattern, draft_read)
+        for route in deferred_reads[1:]:
+            route.continue_()
+        expect(page.locator('#sdk-input')).to_have_value('')
+        page.screenshot(path=str(shots / f'{label}-codex-draft-after-sync.png'))
+    expect(page.locator('#sdk-input')).to_be_visible()
+    expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label','停止会话')
+    page.wait_for_function('SdkView.connected')
     assert data['worker_mode']=='sdk'
     assert data['report_type'] == reply['report_type'] == report_type
     title = ('功能需求: ' if report_type == 'feature' else 'BUG: ') + description
     if source == 'kiro' and len(title) > 80:
         title = title[:77] + '...'
     assert reply['worker']['session']['title'] == title
-    shots = REPO/'target/validation/report-feature'
-    shots.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(shots / f'{label}-{source}-before-title-check.png'))
     expect(page.locator('.dhead h2')).to_have_text(title)
     expect(page.locator(f'#side .item[data-uid="{reply["worker"]["uid"]}"]')).to_contain_text(title)
@@ -157,7 +203,7 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         assert '诊断包所在机器：处理会话本机' in prompt
         assert str(manifest.parent) in prompt
     # The first SEND has one durable SDK receipt, including after a repeated request.
-    ledger = read_document((root/'state/conversations/conversation-ledger.json'))
+    ledger = read_document(ledger_path)
     submitted = [r for r in ledger['requests'].values()
                  if r.get('id') == 'report-send:' + reply['report_id']]
     assert len(submitted) == 1, submitted
@@ -170,8 +216,8 @@ def exercise(browser, base, source, root, label, peer=None, reject=False):
         sid = reply['worker']['session']['sid']
         calls = [m['method'] for m in peer.received if m.get('params', {}).get('threadId') == sid]
         assert calls.count('thread/name/set') == 1, calls
-        if 'turn/start' in calls:
-            assert calls.index('thread/name/set') < calls.index('turn/start'), calls
+        assert calls.count('turn/start') == 1, calls
+        assert calls.index('thread/name/set') < calls.index('turn/start'), calls
     page.screenshot(path=str(shots / f'{label}-{source}-worker.png'))
     page.set_viewport_size({'width': 390, 'height': 844})
     page.emulate_media(color_scheme='dark')

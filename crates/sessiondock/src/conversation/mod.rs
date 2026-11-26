@@ -789,8 +789,6 @@ impl Conversations {
     pub async fn send(&self, input: SendInput) -> Result<Value, Failure> {
         self.send_with_prompt(input, None).await
     }
-    /// A native SDK accepted this input. Consume the same submitted draft
-    /// fields as ordinary SEND, including after the requesting page leaves.
     pub async fn sdk_accepted(
         &self,
         uid: &str,
@@ -799,17 +797,23 @@ impl Conversations {
         result: Value,
     ) -> Result<(), Failure> {
         let identity = self.identity(uid).await?;
+        self.sdk_accepted_for_draft(&identity.key, id, draft, result)
+    }
+
+    /// Settle an accepted SDK input against the draft key verified before submission.
+    pub fn sdk_accepted_for_draft(
+        &self,
+        key: &str,
+        id: &str,
+        draft: &Value,
+        result: Value,
+    ) -> Result<(), Failure> {
         let payload = json!({"text":draft["text"],
             "attachments":draft["attachments"].as_array().into_iter().flatten().map(|a|json!({"upload_id":a["upload_id"],"number":a["number"]})).collect::<Vec<_>>(),
             "quotes":draft["quotes"].as_array().cloned().unwrap_or_default()});
-        self.store.begin(&identity.key, id, payload)?;
-        self.store.finish(
-            &identity.key,
-            id,
-            "sent",
-            result,
-            draft["draft_revision"].as_u64(),
-        )
+        self.store.begin(key, id, payload)?;
+        self.store
+            .finish(key, id, "sent", result, draft["draft_revision"].as_u64())
     }
     pub async fn send_with_prompt(
         &self,

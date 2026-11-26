@@ -24,7 +24,10 @@ paths, link the report draft to the returned native UID, and retain the diagnost
 prompt as an editable draft on failure. Their response includes `worker.mode`,
 `worker.uid` and `worker.session`; Hub qualifies both the worker and its nested
 session. Opening the report joins that SDK view. The manifest records
-`worker_mode: "sdk"` and SDK submission status. CLI behavior below is unchanged.
+`worker_mode: "sdk"` and SDK submission status. For Codex, durable SDK
+acceptance settles the already-linked report draft even while the new rollout
+is becoming readable. An idle open editor follows that settlement and preserves
+new edits through the normal draft revision checks.
 
 Before the first task, all six SDK providers rename the native session to the
 report title through their ordinary rename API (Codex `thread/name/set`, or the
