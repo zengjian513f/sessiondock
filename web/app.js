@@ -4722,10 +4722,6 @@ function renderChips() {
 let filterLongPress = null;
 let suppressFilterClick = null;
 
-function filterButton(target) {
-  return target.closest?.('#node-chips button[data-node], #chips button[data-source], #toolbar-sources-menu button[data-source]') || null;
-}
-
 function runFilterShortcut(button) {
   if (button.dataset.unavailableReason) { return false; }
   if (button.dataset.node) return shortcutNodeFilter(button.dataset.node);
@@ -4739,35 +4735,30 @@ function cancelFilterLongPress() {
   filterLongPress = null;
 }
 
-for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) {
-  if (host.id === 'node-chips') {
-    // 双击不触发旧的机器直选回调。
-    host.addEventListener('dblclick', event => {
-      const button = filterButton(event.target);
-      if (!button?.dataset.node || !host.contains(button)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }, true);
-  }
+function bindFilterShortcut(host, selector, shortcut) {
+  const controlFor = target => {
+    const control = target.closest?.(selector);
+    return control && host.contains(control) ? control : null;
+  };
   host.addEventListener('contextmenu', event => {
-    const button = filterButton(event.target);
-    if (!button || !host.contains(button)) return;
+    const control = controlFor(event.target);
+    if (!control) return;
     event.preventDefault();
     // A native touch context menu and the long-press timer are one gesture.
     if (event.pointerType === 'touch' || event.pointerType === 'pen'
         || event.sourceCapabilities?.firesTouchEvents) return;
-    runFilterShortcut(button);
+    shortcut(control);
   });
   host.addEventListener('pointerdown', event => {
     if (event.pointerType === 'mouse' || event.button !== 0) return;
-    const button = filterButton(event.target);
-    if (!button || !host.contains(button)) return;
+    const control = controlFor(event.target);
+    if (!control) return;
     cancelFilterLongPress();
-    const press = {button, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0};
+    const press = {control, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0};
     press.timer = setTimeout(() => {
       if (filterLongPress !== press) return;
       filterLongPress = null;
-      if (!runFilterShortcut(button)) return;
+      if (!host.contains(control) || !shortcut(control)) return;
       suppressFilterClick = press;
       navigator.vibrate?.(12);
       // 极少数容器长按后不派发 click，不能因此吞掉下一次真实点击。
@@ -4785,12 +4776,24 @@ for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) 
     host.addEventListener(type, cancelFilterLongPress);
   }
   host.addEventListener('click', event => {
-    const button = filterButton(event.target);
-    if (!button || button !== suppressFilterClick?.button) return;
+    const control = controlFor(event.target);
+    if (!control || control !== suppressFilterClick?.control) return;
     suppressFilterClick = null;
     event.preventDefault();
     event.stopImmediatePropagation();
   }, true);
+}
+
+const nodeChips = $('#node-chips');
+// 双击不触发旧的机器直选回调。
+nodeChips.addEventListener('dblclick', event => {
+  if (!event.target.closest('button[data-node]')) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
+bindFilterShortcut(nodeChips, 'button[data-node]', runFilterShortcut);
+for (const host of [$('#chips'), $('#toolbar-sources-menu')]) {
+  bindFilterShortcut(host, 'button[data-source]', runFilterShortcut);
 }
 
 /* ---------- 分层：附属关系 ---------- */
@@ -7402,6 +7405,10 @@ function bindDirectoryFilter() {
       : S.directories.size ? `已选择 ${S.directories.size} 个文件夹` : '未选择文件夹');
   };
   const apply = directories => {
+    const previous = S.directories;
+    if (previous === null || previous.size > 1) {
+      store.set('visibleDirectories.lastMultiple', previous === null ? null : [...previous]);
+    }
     S.directories = directories;
     store.set('visibleDirectories', directories === null ? null : [...directories]);
     for (const checkbox of list.querySelectorAll('input')) {
@@ -7410,6 +7417,18 @@ function bindDirectoryFilter() {
     updateButton();
     renderSide();
   };
+  bindFilterShortcut(list, '.directory-filter-row', label => {
+    if (menu.hidden) return false;
+    const path = label.querySelector('input').value;
+    if (S.directories?.size === 1 && S.directories.has(path)) {
+      const saved = store.get('visibleDirectories.lastMultiple', undefined);
+      if (saved === null) apply(null);
+      else if (Array.isArray(saved) && saved.length > 1) apply(new Set(saved));
+    } else {
+      apply(new Set([path]));
+    }
+    return true;
+  });
   const items = () => [...menu.querySelectorAll('button:not(:disabled), input')];
   const open = () => {
     if (!menu.hidden) return;
@@ -7426,6 +7445,7 @@ function bindDirectoryFilter() {
     const rows = document.createDocumentFragment();
     for (const path of paths) {
       const label = el('label', 'directory-filter-row');
+      label.title = filterShortcutHint;
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.value = path;

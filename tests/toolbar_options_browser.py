@@ -25,7 +25,7 @@ def long_press(context, page, button):
         touch.detach()
 
 
-def check_directory_filter(page, payload, width, screenshots_dir):
+def check_directory_filter(context, page, payload, width, screenshots_dir):
     original = payload.copy()
     rows = deepcopy(payload['sessions'])
     for source in ('kiro', 'codebuddy', 'droid'):
@@ -54,6 +54,45 @@ def check_directory_filter(page, payload, width, screenshots_dir):
     expect(menu.get_by_role('checkbox', checked=True)).to_have_count(4)
     if screenshots_dir:
         page.screenshot(path=str(screenshots_dir / f'directory-filter-{width}.png'), full_page=True)
+
+    shared_check.locator('../span').click(button='right')
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(1)
+    expect(shared_check).to_be_checked()
+    expect(items).to_have_count(shared_count)
+    shared_check.click(button='right')
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(4)
+    expect(page.locator('#directory-filter')).to_have_attribute('aria-description', '显示所有文件夹')
+
+    long_check = menu.get_by_role('checkbox', name=long_path, exact=True)
+    unknown_check = menu.get_by_role('checkbox', name='(未知)', exact=True)
+    long_check.uncheck()
+    unknown_check.uncheck()
+    for checkbox, count in ((unknown_check, 1), (long_check, paths.count(long_path))):
+        label_text = checkbox.locator('../span')
+        if width < 720:
+            long_press(context, page, label_text)
+        else:
+            label_text.click(button='right')
+        expect(menu.get_by_role('checkbox', checked=True)).to_have_count(1)
+        expect(checkbox).to_be_checked()
+        expect(items).to_have_count(count)
+    if screenshots_dir:
+        page.screenshot(path=str(screenshots_dir / f'directory-shortcut-solo-{width}.png'), full_page=True)
+    page.reload(wait_until='networkidle')
+    expect(items).to_have_count(paths.count(long_path))
+    menu = open_directory_filter(page)
+    if width < 720:
+        long_press(context, page, long_check)
+    else:
+        long_check.click(button='right')
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(2)
+    expect(shared_check).to_be_checked()
+    expect(menu.get_by_role('checkbox', name=older, exact=True)).to_be_checked()
+    expect(items).to_have_count(shared_count + paths.count(older))
+    if screenshots_dir:
+        page.screenshot(path=str(screenshots_dir / f'directory-shortcut-restored-{width}.png'), full_page=True)
+    menu.get_by_role('button', name='全选', exact=True).click()
+
     menu.get_by_role('button', name='全不选').click()
     expect(items).to_have_count(0)
     expect(page.locator('#session-total')).to_have_text('0')
@@ -95,7 +134,7 @@ def check_directory_filter(page, payload, width, screenshots_dir):
     expect(page.locator('#side-search-label')).to_have_text('搜索结果')
     expect(page.locator('#side-search-count')).to_have_text(f'{shared_count} 条')
     menu = open_directory_filter(page)
-    menu.get_by_role('button', name='全选', exact=True).click()
+    shared_check.click(button='right')
     expect(page.locator('#side-search-count')).to_have_text(f'{len(rows)} 条')
     menu.get_by_role('button', name='全不选').click()
     expect(page.locator('#side-search-count')).to_have_text('0 条')
@@ -139,7 +178,7 @@ def check_directory_filter(page, payload, width, screenshots_dir):
     page.unroute('**/api/search?*')
     page.reload(wait_until='networkidle')
     expect(items).to_have_count(7)
-    print(f'PASS directory filter {width}px: snapshot, keyboard, search, scope, bulk, persistence, scrolling', flush=True)
+    print(f'PASS directory filter {width}px: shortcuts, snapshot, keyboard, search, scope, bulk, persistence, scrolling', flush=True)
 
 
 def main():
@@ -182,7 +221,7 @@ def main():
                     assert page.locator('#view button').evaluate_all('(buttons) => buttons.map(b => b.dataset.v)') == ['date', 'directory', 'group', 'tree']
                     if args.screenshots_dir:
                         page.screenshot(path=str(args.screenshots_dir / f'toolbar-defaults-{width}.png'), full_page=True)
-                    check_directory_filter(page, payload, width, args.screenshots_dir)
+                    check_directory_filter(context, page, payload, width, args.screenshots_dir)
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     expect(page.locator('#nest button:visible')).to_have_count(3)
 
