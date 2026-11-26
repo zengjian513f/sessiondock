@@ -1728,6 +1728,7 @@ sd-mermaid {
 .mermaid-zoom { gap: 5px; }
 .mermaid-scale { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
 .mermaid-scale > [data-reset] { min-inline-size: 46px; font-variant-numeric: tabular-nums; }
+.mermaid-toolbar button[aria-pressed="true"] { border-color: var(--border); background: var(--sel); }
 .mermaid-toolbar .mermaid-expand { color: var(--accent); font-weight: 600; }
 .mermaid-toggle { margin-inline-start: auto; }
 .mermaid-status { margin-inline-end: auto; padding-inline-start: 4px; color: var(--muted); font-size: 11px; }
@@ -1749,6 +1750,9 @@ sd-mermaid {
   inline-size: max-content; min-inline-size: 100%; min-block-size: 100%;
 }
 .mermaid-board > iframe { display: block; border: 0; }
+.mermaid-board[data-pan] { cursor: grab; touch-action: none; user-select: none; }
+.mermaid-board[data-pan][data-dragging] { cursor: grabbing; }
+.mermaid-board[data-pan] > iframe { pointer-events: none; }
 .mermaid-dialog.app-dialog {
   width: calc(100vw / var(--interface-scale) - 16px);
   height: calc(100dvh / var(--interface-scale) - 16px);

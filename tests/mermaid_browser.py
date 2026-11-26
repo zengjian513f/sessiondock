@@ -72,18 +72,37 @@ def check_labels(diagram):
     assert any(label['lines'] >= 2 for label in labels), labels
 
 
+def drag_diagram(page, preview, dx, dy, touch=None):
+    bounds = preview.bounding_box()
+    x, y = bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2
+    if touch:
+        for action, points in (('touchStart', [{'x': x, 'y': y}]),
+                               ('touchMove', [{'x': x + dx, 'y': y + dy}]), ('touchEnd', [])):
+            touch.send('Input.dispatchTouchEvent', {'type': action, 'touchPoints': points})
+        return
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + dx, y + dy, steps=5)
+    page.mouse.up()
+
+
 def check(page, base, label, width, theme, screenshots):
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='domcontentloaded')
     expect(page.locator('html')).to_have_attribute('data-theme', theme)
     page.locator('#side .item').filter(has_text=TITLE).click()
-    mouse = page.context.new_cdp_session(page)
+    cdp = page.context.new_cdp_session(page)
     for view, selector in (('chat', '#msgs'), ('sdk', '.sdk-history')):
         page.locator('#a-' + view).click()
         messages = page.locator(selector)
+        scrollbox = page.locator('#msgs' if view == 'chat' else '.sdk-msgs')
         horizontal, vertical, invalid = (messages.locator('sd-mermaid').nth(i) for i in range(3))
-        horizontal.scroll_into_view_if_needed()
+        expect(horizontal).to_be_visible()
+        # Scroll up like a reader to leave the initial follow-to-bottom state.
+        scrollbox.hover(position={'x': 4, 'y': 100})
+        page.mouse.wheel(0, -2000)
+        expect(horizontal).to_be_in_viewport()
         diagram = horizontal.frame_locator('iframe').locator('svg').first
         expect(diagram).to_be_visible()
         expect(diagram).to_contain_text('缓存特征')
@@ -106,17 +125,36 @@ def check(page, base, label, width, theme, screenshots):
         assert preview.evaluate('el => el.scrollWidth === el.clientWidth && el.scrollHeight === el.clientHeight')
         reset.click()
         expect(reset).to_have_text(default_size)
-        for _ in range(4):
-            horizontal.get_by_role('button', name='放大图表').click()
-        assert reset.inner_text() != default_size
+        zoom_in = horizontal.get_by_role('button', name='放大图表')
+        for step in range(1, 5):
+            zoom_in.click()
+            expect(reset).to_have_text(f'{int(default_size.rstrip("%")) + 10 * step}%')
         assert preview.evaluate('el => el.scrollWidth > el.clientWidth')
+        pan = horizontal.get_by_role('button', name='拖动')
+        expect(pan).to_have_attribute('aria-pressed', 'false')
+        pan.click()
+        expect(pan).to_have_attribute('aria-pressed', 'true')
+        preview.scroll_into_view_if_needed()
+        before = preview.evaluate('el => el.scrollLeft')
+        conversation = scrollbox.evaluate('el => el.scrollTop')
+        drag_diagram(page, preview, -84, 0)
+        assert preview.evaluate('el => el.scrollLeft') > before
+        assert scrollbox.evaluate('el => el.scrollTop') == conversation
+        if screenshots and ((width == 390 and theme == 'dark') or (width == 1920 and theme == 'light')):
+            page.screenshot(path=str(screenshots / f'{label}-{view}-{width}-{theme}-drag.png'))
+        if width == 390:
+            before = preview.evaluate('el => el.scrollLeft')
+            drag_diagram(page, preview, 60, 0, touch=cdp)
+            assert preview.evaluate('el => el.scrollLeft') < before
+            assert scrollbox.evaluate('el => el.scrollTop') == conversation
+        pan.click()
+        expect(pan).to_have_attribute('aria-pressed', 'false')
         preview.hover(position={'x': 40, 'y': 35})
         before = preview.evaluate('el => el.scrollLeft')
         page.mouse.wheel(-200, 0)
         page.wait_for_function('([el, left]) => el.scrollLeft < left', arg=[preview.element_handle(), before])
         horizontal.get_by_role('button', name='缩小图表').click()
-        if screenshots and width == 390 and theme == 'dark':
-            page.screenshot(path=str(screenshots / f'{label}-{view}-zoomed.png'))
+        expect(reset).to_have_text(f'{int(default_size.rstrip("%")) + 30}%')
         horizontal.get_by_role('button', name='整图', exact=True).click()
         assert preview.evaluate('el => el.scrollLeft === 0 && el.scrollTop === 0')
         reset.click()
@@ -137,13 +175,27 @@ def check(page, base, label, width, theme, screenshots):
         modal_open.click()
         dialog = page.get_by_role('dialog', name='Mermaid 图表')
         expect(dialog.frame_locator('iframe').get_by_text('输出三头预测', exact=False)).to_be_visible()
+        dialog_preview = dialog.locator('.mermaid-preview')
+        dialog_pan = dialog.get_by_role('button', name='拖动')
+        for _ in range(4):
+            dialog.get_by_role('button', name='放大图表').click()
+        dialog_pan.click()
+        before = dialog_preview.evaluate('el => el.scrollTop')
+        drag_diagram(page, dialog_preview, 0, -124)
+        assert dialog_preview.evaluate('el => el.scrollTop') > before
+        if screenshots and width == 390 and theme == 'dark':
+            page.screenshot(path=str(screenshots / f'{label}-{view}-{width}-{theme}-expanded-drag.png'))
+        dialog_pan.click()
         dialog.get_by_role('button', name='整图', exact=True).click()
-        assert dialog.locator('.mermaid-preview').evaluate('el => el.scrollHeight === el.clientHeight')
+        assert dialog_preview.evaluate('el => el.scrollHeight === el.clientHeight')
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-{view}-{width}-{theme}-expanded.png'))
         page.keyboard.press('Escape')
         expect(dialog).to_have_count(0)
         expect(modal_open).to_be_focused()
+        text_mode = vertical.get_by_role('button', name='拖动')
+        text_mode.click()
+        text_mode.click()
         label_text = frame.locator('foreignObject p').filter(has_text='通道拼接')
         expect(label_text).to_be_visible()
         bounds = label_text.evaluate('text => text.getBoundingClientRect().toJSON()')
@@ -155,7 +207,7 @@ def check(page, base, label, width, theme, screenshots):
         for action, delta, buttons in (('mousePressed', .5, 1),
                                         ('mouseMoved', bounds['width'] - .5, 1),
                                         ('mouseReleased', bounds['width'] - .5, 0)):
-            mouse.send('Input.dispatchMouseEvent', {
+            cdp.send('Input.dispatchMouseEvent', {
                 'type': action, 'x': x + delta, 'y': y, 'button': 'left',
                 'buttons': buttons, 'clickCount': 1,
             })
@@ -277,7 +329,8 @@ def main():
                 for endpoint, label in ((base, 'node'), (f'http://127.0.0.1:{hub.port}', 'hub')):
                     for width in (1920, 390):
                         for theme in ('light', 'dark'):
-                            page = browser.new_page(viewport={'width': width, 'height': 900}, color_scheme=theme)
+                            page = browser.new_page(viewport={'width': width, 'height': 900}, color_scheme=theme,
+                                                    has_touch=(width == 390))
                             try:
                                 check(page, endpoint, label, width, theme, args.screenshots)
                             finally:

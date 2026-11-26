@@ -2,14 +2,15 @@
 
 (() => {
   const theme = () => document.documentElement.dataset.theme;
-  const minZoom = .1, maxZoom = 3, zoomStep = 1.35, readingZoom = .9;
+  const minZoom = .1, maxZoom = 3, zoomStepPoints = 10, readingZoom = .9;
   const zoomControls = `
     <div class="mermaid-scale">
       <button type="button" data-out aria-label="缩小图表" title="缩小图表">−</button>
       <button type="button" data-reset aria-label="恢复阅读大小" title="恢复阅读大小"></button>
       <button type="button" data-in aria-label="放大图表" title="放大图表">+</button>
     </div>
-    <button type="button" data-fit>整图</button>`;
+    <button type="button" data-fit>整图</button>
+    <button type="button" data-pan aria-pressed="false" title="切换拖动图表和选择文字">拖动</button>`;
   const canvas = `
     <div class="mermaid-preview" tabindex="0" role="region" aria-label="Mermaid 图表">
       <div class="mermaid-board"></div>
@@ -56,16 +57,42 @@
       this.stage = stage;
       this.startAtFirstNode = startAtFirstNode;
       this.preview = stage.querySelector('.mermaid-preview');
+      this.board = this.preview.querySelector('.mermaid-board');
       this.resetButton = controls.querySelector('[data-reset]');
       this.outButton = controls.querySelector('[data-out]');
       this.inButton = controls.querySelector('[data-in]');
       const fitButton = controls.querySelector('[data-fit]');
+      const panButton = controls.querySelector('[data-pan]');
       this.resetButton.onclick = () => { this.zoom = null; this.layout(); this.goToStart(); };
-      this.outButton.onclick = () => this.resize(this.scale / zoomStep);
-      this.inButton.onclick = () => this.resize(this.scale * zoomStep);
+      this.outButton.onclick = () => this.stepZoom(-zoomStepPoints);
+      this.inButton.onclick = () => this.stepZoom(zoomStepPoints);
       fitButton.onclick = () => this.resize('fit');
+      panButton.onclick = () => panButton.setAttribute('aria-pressed', this.board.toggleAttribute('data-pan'));
+      this.board.onpointerdown = event => this.startPan(event);
+      this.board.onpointermove = event => this.movePan(event);
+      this.board.onlostpointercapture = event => {
+        if (this.drag?.pointerId !== event.pointerId) return;
+        this.drag = null;
+        this.board.removeAttribute('data-dragging');
+      };
       this.zoom = null;
       this.stage.diagramViewport = this;
+    }
+
+    startPan(event) {
+      if (!this.board.hasAttribute('data-pan') || !event.isPrimary || event.button !== 0 || this.drag) return;
+      const {scrollLeft, scrollTop, currentCSSZoom} = this.preview;
+      this.drag = {pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        scrollLeft, scrollTop, scale: currentCSSZoom || 1};
+      this.board.setPointerCapture(event.pointerId);
+      this.board.setAttribute('data-dragging', '');
+    }
+
+    movePan(event) {
+      if (this.drag?.pointerId !== event.pointerId) return;
+      const {x, y, scrollLeft, scrollTop, scale} = this.drag;
+      this.preview.scrollLeft = scrollLeft - (event.clientX - x) / scale;
+      this.preview.scrollTop = scrollTop - (event.clientY - y) / scale;
     }
 
     show(diagram) {
@@ -75,7 +102,7 @@
         this.frame = document.createElement('iframe');
         this.frame.setAttribute('sandbox', '');
         this.frame.referrerPolicy = 'no-referrer';
-        this.preview.querySelector('.mermaid-board').append(this.frame);
+        this.board.append(this.frame);
       }
       this.frame.title = diagram.title;
       this.frame.srcdoc = diagram.html;
@@ -103,6 +130,10 @@
       this.resetButton.textContent = `${Math.round(this.scale * 100)}%`;
       this.outButton.disabled = this.scale <= minZoom;
       this.inButton.disabled = this.scale >= maxZoom;
+    }
+
+    stepZoom(points) {
+      this.resize((Math.round(this.scale * 100) + points) / 100);
     }
 
     resize(scale) {
