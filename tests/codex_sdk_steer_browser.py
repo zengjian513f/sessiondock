@@ -38,10 +38,6 @@ def exercise(browser,base,fake,width,theme,screenshots,label):
         with page.expect_response('**/api/codex-sdk/turn') as response:box.press('Control+Enter')
         expect(send).to_be_enabled()
         return response.value
-    def action():
-        button=page.get_by_role('button',name='引导当前任务',exact=True)
-        if not button.is_visible():page.locator('#sdk-more').click()
-        return button
     def finish_idle(text):
         page.wait_for_function('CodexSdkView.turn?.id')
         assert len([m for m in fake.methods('turn/start') if m['params']['input'][0]['text']==text])==1
@@ -85,10 +81,6 @@ def exercise(browser,base,fake,width,theme,screenshots,label):
     box.fill('newer draft '+label)
     with page.expect_response('**/api/codex-sdk/turn'):fake.hold_steer=False
     expect(send).to_be_enabled();expect(box).to_have_value('newer draft '+label)
-    box.fill('click steer '+label)
-    button=action()
-    if screenshots:page.screenshot(path=str(screenshots/f'{label}-steer.png'),full_page=True)
-    button.click();expect(box).to_have_value('')
     # Lost HTTP reply, then retry the saved operation after reload: one native steer.
     payloads=[]
     def lose(route):

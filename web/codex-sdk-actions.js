@@ -11,20 +11,18 @@ const CodexSdkActions = {
     actions.id = 'sdk-actions'; actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', '会话操作');
     for (const [action, text, tooltip] of [
-      ['steer', '引导当前任务', '引导当前任务：将输入框内容立即插队发给运行中回合（Ctrl+Enter；空闲时直接作为新回合发送）'],
       ['compact', '压缩上下文', '压缩上下文：压缩早期对话历史以释放上下文窗口空间（/compact）'],
       ['review', '代码审查', '代码审查：选择未提交改动、分支对比、指定提交或自定义要求发起审查（/review）'],
     ]) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'new-model-option sdk-action';
       button.dataset.sdkAction = action; button.title = tooltip; button.setAttribute('aria-label', text);
-      button.innerHTML = uiIcon({steer:'continue', compact:'compact', review:'review'}[action]);
+      button.innerHTML = uiIcon({compact:'compact', review:'review'}[action]);
       const label = document.createElement('span'); label.className = 'sdk-action-label'; label.textContent = text;
       button.append(label);
       button.onclick = () => {
         view.closeToolbarMenus();
-        if(action==='steer')void view.send('steer');
-        else void this.command(view, `/${action}`);
+        void this.command(view, `/${action}`);
       };
       actions.append(button);
     }

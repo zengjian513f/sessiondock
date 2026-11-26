@@ -134,11 +134,6 @@ def exercise(browser, base, root, shots, label, audit):
     expect(attached).to_have_count(0)
     page.locator('#sdk-file').set_input_files(attachment)
     page.get_by_role('button',name='移除附件',exact=True).click()
-    box.fill('click steering '+label)
-    action=page.get_by_role('button',name='引导当前任务',exact=True)
-    if not action.is_visible():page.locator('#sdk-more').click()
-    action.click();expect(box).to_have_value('')
-    expect(page.locator('.sdk-live')).to_contain_text('click steering '+label)
     gate=root/'fake-native-store/steer-delay';gate.touch()
     box.fill('delayed steer')
     with page.expect_request(lambda r:'/api/native-sdk/steer' in r.url):box.press('Control+Enter')
@@ -172,11 +167,13 @@ def exercise(browser, base, root, shots, label, audit):
                 if row.is_visible():row.click()
                 else:page.locator('#a-sdk').click()
             box.fill('下一步请先检查日志')
-            if not action.is_visible():page.locator('#sdk-more').click()
+            more=page.locator('#sdk-more')
+            if more.is_visible():more.click()
+            expect(page.locator('[data-sdk-action="steer"]')).to_have_count(0)
             page.screenshot(path=str(shots/f'{label}-{width}-{theme}.png'),full_page=True)
-            if width==390:
-                action.click();expect(box).to_have_value('')
             if page.locator('#sdk-more-menu').evaluate("e=>e.matches(':popover-open')"):page.keyboard.press('Escape')
+            if width==390:
+                box.press('Control+Enter');expect(box).to_have_value('')
     page.locator('#sdk-stop').click()
     page.wait_for_function('!NativeSdkView.running')
     assert not errors,errors

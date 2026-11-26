@@ -120,13 +120,12 @@ const CodexSdkView = {
     if (gauges && (gauges.parentElement !== row || gauges.nextElementSibling !== credits)) row.insertBefore(gauges, usage);
     if (credits && (credits.parentElement !== row || credits.nextElementSibling !== usage)) row.insertBefore(credits, usage);
     if (!usage.hidden) usage.hidden = true;
-    const buttons = ['steer', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     const permissions = this.pane.querySelector('#sdk-permissions'), reset = this.pane.querySelector('.sdk-reset');
     if (permissions && permissions.parentElement !== more) more.append(permissions);
     if (reset && (reset.parentElement !== more || reset.previousElementSibling !== permissions)) more.append(reset);
     SdkUI.layoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
       .map(selector => this.pane.querySelector(selector))
-      .concat([...this.pane.querySelectorAll('.sdk-policy')], buttons));
+      .concat([...this.pane.querySelectorAll('.sdk-policy')], this.pane.querySelector('[data-sdk-action="review"]')));
     this.updateStatusDisclosure();
   },
 

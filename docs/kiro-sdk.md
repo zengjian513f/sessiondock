@@ -96,8 +96,8 @@ RPC/写入 ID、待发送 frame、原生响应、回合归属及 stdout/stderr �
 ## 运行中引导
 
 DELTA：Enter 保留 SessionDock 持久 FIFO；Ctrl+Enter 将编辑器文字直接交给
-`_session/steer {sessionId,message,messageId}`。会话操作中的“引导当前任务”使用同一
-编辑器，移动端可点击；运行中按住 Ctrl 时发送按钮显示“引导”，点击直接引导；手机长按发送按钮
+`_session/steer {sessionId,message,messageId}`。运行中按住 Ctrl 时发送按钮显示“引导”，
+点击直接引导；手机长按发送按钮
 500 毫秒触发一次引导，短按仍发送／排队。Shift+Enter 换行，输入法组合输入不提交。
 空闲时这些编辑器提交入口走普通发送，开始新任务；原生引导失败仍保留草稿。
 Kiro 2.24.1 官方 TUI 使用该接口，但 initialize 未广告；不回退到不存在的 `session/steer`。

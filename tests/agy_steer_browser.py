@@ -462,18 +462,6 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
     assert len(fixture.steers('direct steering ' + label)) == 1
     assert page.evaluate('NativeSdkView.running')
 
-    # Session action menu ("引导当前任务") steers composer draft directly during running turn.
-    box.fill('menu steering ' + label)
-    action = page.get_by_role('button', name='引导当前任务', exact=True)
-    if not action.is_visible():
-        page.locator('#sdk-more').click()
-    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/steer')) as menu_resp:
-        action.click()
-    assert menu_resp.value.ok, menu_resp.value.text()
-    expect(box).to_have_value('')
-    expect(messages).to_contain_text('Agy steered: menu steering ' + label)
-    assert len(fixture.steers('menu steering ' + label)) == 1
-
     # Composer attachment + Ctrl+Enter steer and queued attachment + 立即引导.
     page.locator('#sdk-file').set_input_files({'name': 'agy-steer-context.txt', 'mimeType': 'text/plain', 'buffer': b'isolated agy steer context'})
     att_resp = steer('attachment steering ' + label)

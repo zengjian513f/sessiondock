@@ -5,21 +5,18 @@ from playwright.sync_api import expect
 
 def exercise_idle_send_gestures(page, source, label, finish, screenshots=None):
     box=page.locator('#sdk-input');button=page.locator('#sdk-send')
+    expect(page.locator('[data-sdk-action="steer"]')).to_have_count(0)
     requests=[]
     def record(request):
         if request.method=='POST' and ('/api/codex-sdk/turn' in request.url or '/api/native-sdk/steer' in request.url or '/api/native-sdk/turn' in request.url):requests.append(request)
     page.on('request',record)
     cdp=page.context.new_cdp_session(page)
     try:
-        for gesture in ('keyboard','ctrl-click','touch-hold','action'):
+        for gesture in ('keyboard','ctrl-click','touch-hold'):
             text=f'idle {gesture} {label}';box.fill(text);before=len(requests)
             if screenshots:page.screenshot(path=str(screenshots/f'{source}-{label}-idle-{gesture}-before.png'),full_page=True)
             if gesture=='keyboard':box.press('Control+Enter')
             elif gesture=='ctrl-click':button.click(modifiers=['Control'])
-            elif gesture=='action':
-                action=page.get_by_role('button',name='引导当前任务',exact=True)
-                if not action.is_visible():page.locator('#sdk-more').click()
-                action.click()
             else:
                 button.scroll_into_view_if_needed();r=button.bounding_box()
                 cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[{'x':r['x']+r['width']/2,'y':r['y']+r['height']/2,'id':1}]})
@@ -40,6 +37,13 @@ def exercise_idle_send_gestures(page, source, label, finish, screenshots=None):
 
 def exercise_send_gestures(page, source, label, screenshots=None):
     box=page.locator('#sdk-input');button=page.locator('#sdk-send')
+    more=page.locator('#sdk-more')
+    if more.is_visible():
+        more.click()
+    expect(page.locator('[data-sdk-action="steer"]')).to_have_count(0)
+    if screenshots:page.screenshot(path=str(screenshots/f'{source}-{label}-toolbar.png'),full_page=True)
+    if page.locator('#sdk-more-menu').is_visible():
+        page.keyboard.press('Escape')
     view='CodexSdkView' if source=='codex' else 'NativeSdkView'
     requests=[]
     def record(request):

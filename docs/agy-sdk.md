@@ -107,7 +107,7 @@ DELTA（BUG-20261023-025934-a5d53c）：`/rename` 使用本机原生管理接口
 
 DELTA（BUG-20261110-162211-7507b6）：Agy 1.5.4 已用临时 HOME 与 loopback 合成模型核对本机
 Connect `SendUserCascadeMessage`（`deliveryStrategy=MESSAGE_DELIVERY_STRATEGY_NEXT_INVOCATION`）：
-运行中通过 `Ctrl+Enter`、按住 `Ctrl` 点击发送、手机长按发送、会话菜单“引导当前任务”以及排队气泡
+运行中通过 `Ctrl+Enter`、按住 `Ctrl` 点击发送、手机长按发送以及排队气泡
 “立即引导”（`queue_steer`，保留已发布附件路径与无关草稿）提交后，原生在当前工具或模型步骤结束后进入下一
 invocation，保持同一 `stream-json` 回合、同一 PID/SID 及显式 `--model` 参数。原生不按
 `clientMessageId` 去重：桥接对同一 `request_id` 保存回执，连接前失败／HTTP 非 200 记为确定失败，

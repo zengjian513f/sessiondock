@@ -596,8 +596,7 @@ behavior; they do not require other sources to expose unsupported controls.
   at the narrowest pane/scale it moves into the existing toolbar overflow menu.
   Coverage: [controls](../tests/codex_sdk_controls_browser.py) and
   [layout](../tests/codex_sdk_layout_browser.py).
-- DELTA: Ctrl+Enter directly steers the active turn; the “引导当前任务” toolbar
-  action submits the same editor on desktop/mobile. During a turn, holding Ctrl changes SEND to
+- DELTA: Ctrl+Enter directly steers the active turn. During a turn, holding Ctrl changes SEND to
   引导 and clicking steers; touch-holding SEND for 500 ms steers once without a
   second ordinary send on release. Short taps retain ordinary send/queue.
   When idle, these editor submission gestures use ordinary send to start a new

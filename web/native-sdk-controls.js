@@ -126,11 +126,8 @@ const NativeSdkControls = {
     menu.classList.add('sdk-native-menu');
     // Other model pools share ⋯ with controls that do not fit.
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
-    const source = view.uid.split(':')[0], composerSteer = ['kiro','droid','agy'].includes(source);
+    const source = view.uid.split(':')[0];
     const actionDefs = [
-      ['steer','引导当前任务',composerSteer
-        ? '引导当前任务：将输入框内容立即插队发给运行中回合（Ctrl+Enter；空闲时直接作为新回合发送）'
-        : '引导当前任务：向正在运行的回合插队发送补充指令'],
       ['compact','压缩上下文',source==='droid'
         ? '压缩上下文：压缩早期对话历史以释放上下文空间；若原生生成新会话将自动切换（/compact）'
         : '压缩上下文：压缩早期对话历史以释放上下文空间（/compact）'],
@@ -140,6 +137,7 @@ const NativeSdkControls = {
       ['command','原生命令','原生命令：选择并执行当前原生服务注册的斜杠命令'],
       ['permissions','权限规则','权限规则：查看或编辑当前会话的 OpenCode 原生权限规则 JSON'],
     ];
+    if (source === 'grok') actionDefs.unshift(['steer','引导当前任务','引导当前任务：向正在运行的回合插队发送补充指令']);
     for (const [method,label,tooltip] of actionDefs) {
       const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=tooltip;button.setAttribute('aria-label',label);
       button.innerHTML=uiIcon(({compact:'compact',unrevert:'undo',revert_commit:'continue',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',label));
@@ -453,7 +451,6 @@ const NativeSdkControls = {
     return modal.answer;
   },
   async action(view,method,body={}) {
-    if(method==='steer' && ['kiro','droid','agy'].includes(view.uid.split(':')[0]))return view.send('steer');
     const generation=view.generation,droid=view.uid.startsWith('droid:');
     if(droid && view.nativeActionPending){view.setNotice('会话操作正在进行，请稍候。');return false;}
     if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setNotice('当前原生接口尚未提供按消息分支，输入已保留。','blocked');return false;}
