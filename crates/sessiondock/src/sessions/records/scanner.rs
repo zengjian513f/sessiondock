@@ -201,7 +201,15 @@ impl Document {
 }
 
 pub(crate) fn scan<R: Read>(reader: R, limits: Limits) -> Result<Document, ScanError> {
-    let (root, stats) = scan_into::<_, Node>(reader, limits)?;
+    scan_selected(reader, limits, Projection::All)
+}
+
+pub(super) fn scan_selected<R: Read>(
+    reader: R,
+    limits: Limits,
+    projection: Projection,
+) -> Result<Document, ScanError> {
+    let (root, stats) = scan_into::<_, Node>(reader, limits, projection)?;
     Ok(Document { root, stats })
 }
 
@@ -209,7 +217,7 @@ pub(crate) fn scan<R: Read>(reader: R, limits: Limits) -> Result<Document, ScanE
 /// behavior as `scan`, but building Value containers directly. A private
 /// span is rejected explicitly, never replaced with a marker/empty value.
 pub(crate) fn scan_value<R: Read>(reader: R, limits: Limits) -> Result<Value, ScanError> {
-    scan_into::<_, Value>(reader, limits).map(|(value, _)| value)
+    scan_into::<_, Value>(reader, limits, Projection::All).map(|(value, _)| value)
 }
 
 /// A caller-specific read model. Only actual object members are projected;
@@ -218,6 +226,23 @@ pub(crate) fn scan_value<R: Read>(reader: R, limits: Limits) -> Result<Value, Sc
 pub(crate) enum Projection {
     All,
     Fields(&'static [(&'static str, Projection)]),
+    Except(&'static [(&'static str, Option<Projection>)]),
+}
+
+impl Projection {
+    fn field(self, key: &str) -> Option<Self> {
+        match self {
+            Self::All => Some(Self::All),
+            Self::Fields(fields) => fields
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, child)| *child),
+            Self::Except(fields) => fields
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map_or(Some(Self::All), |(_, child)| *child),
+        }
+    }
 }
 
 /// Validate every byte with the scanner's lexical grammar while retaining
@@ -241,7 +266,9 @@ pub(crate) fn scan_projected(line: &[u8], projection: Projection) -> Result<Valu
         },
     };
     parser.whitespace()?;
-    let value = parser.projected(projection)?;
+    let value = parser
+        .projected(Some(projection))?
+        .expect("root is selected");
     parser.whitespace()?;
     if parser.input.peek()?.is_some() {
         return Err(parser.error(ErrorKind::Syntax));
@@ -328,7 +355,11 @@ impl Build for Value {
     }
 }
 
-fn scan_into<R: Read, T: Build>(reader: R, limits: Limits) -> Result<(T, ScanStats), ScanError> {
+fn scan_into<R: Read, T: Build>(
+    reader: R,
+    limits: Limits,
+    projection: Projection,
+) -> Result<(T, ScanStats), ScanError> {
     let mut parser = Parser {
         input: Input {
             reader,
@@ -342,7 +373,7 @@ fn scan_into<R: Read, T: Build>(reader: R, limits: Limits) -> Result<(T, ScanSta
         limits,
     };
     parser.whitespace()?;
-    let root = parser.node::<T>()?;
+    let root = parser.node::<T>(projection)?;
     parser.whitespace()?;
     if parser.input.peek()?.is_some() {
         return Err(parser.error(ErrorKind::Syntax));
@@ -615,18 +646,11 @@ impl<R: Read> Parser<R> {
         self.whitespace()?;
         self.expect(b':')?;
         self.whitespace()?;
-        Ok(match projection {
-            Some(Projection::All) => Some(Projection::All),
-            Some(Projection::Fields(fields)) => fields
-                .iter()
-                .find(|(name, _)| Some(*name) == key.as_deref())
-                .map(|(_, child)| *child),
-            None => None,
-        })
+        Ok(projection
+            .and_then(|projection| projection.field(key.as_deref().expect("selected key"))))
     }
 
-    fn projected(&mut self, projection: Projection) -> Result<Value, ScanError> {
-        let mut selected = Some(projection);
+    fn projected(&mut self, mut selected: Option<Projection>) -> Result<Option<Value>, ScanError> {
         let mut stack = Vec::<ProjectionFrame>::new();
         'node: loop {
             let mut value = match self.input.peek()? {
@@ -693,7 +717,7 @@ impl<R: Read> Parser<R> {
             };
             loop {
                 let Some(frame) = stack.last_mut() else {
-                    return Ok(value.expect("root is selected"));
+                    return Ok(value);
                 };
                 match frame {
                     ProjectionFrame::Array(values) => {
@@ -736,7 +760,7 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn node<T: Build>(&mut self) -> Result<T, ScanError> {
+    fn node<T: Build>(&mut self, projection: Projection) -> Result<T, ScanError> {
         self.stats.nodes += 1;
         self.resident.add(NODE_WEIGHT, self.input.offset)?;
         match self.input.peek()? {
@@ -761,7 +785,7 @@ impl<R: Read> Parser<R> {
             Some(b'"') => T::text(self.string(false)?),
             Some(b'-' | b'0'..=b'9') => self.number().map(T::number),
             Some(b'[') => self.array::<T>(),
-            Some(b'{') => self.object::<T>(),
+            Some(b'{') => self.object::<T>(projection),
             _ => Err(self.error(ErrorKind::Syntax)),
         }
     }
@@ -774,7 +798,7 @@ impl<R: Read> Parser<R> {
             return Ok(T::array(values));
         }
         loop {
-            values.push(self.node::<T>()?);
+            values.push(self.node::<T>(Projection::All)?);
             self.whitespace()?;
             match self.input.next()? {
                 Some(b']') => return Ok(T::array(values)),
@@ -783,7 +807,7 @@ impl<R: Read> Parser<R> {
             }
         }
     }
-    fn object<T: Build>(&mut self) -> Result<T, ScanError> {
+    fn object<T: Build>(&mut self, projection: Projection) -> Result<T, ScanError> {
         self.expect(b'{')?;
         self.whitespace()?;
         let mut values = T::Map::default();
@@ -798,8 +822,12 @@ impl<R: Read> Parser<R> {
             self.whitespace()?;
             self.expect(b':')?;
             self.whitespace()?;
-            let value = self.node::<T>()?;
-            T::insert(&mut values, key, value);
+            if let Some(child) = projection.field(&key) {
+                let value = self.node::<T>(child)?;
+                T::insert(&mut values, key, value);
+            } else {
+                self.projected(None)?;
+            }
             self.whitespace()?;
             match self.input.next()? {
                 Some(b'}') => return Ok(T::object(values)),

@@ -222,7 +222,27 @@ async fn codex_target(state: &AppState, uid: &str) -> Option<BoundTarget> {
         Some(target) => Some(target.clone()),
         None => {
             let scanner = state.proc_scan.as_ref()?;
-            let document = state.reader.run(|store| store.list_recent()).await.ok()?;
+            // An inherited pane requires both a Codex host and an ancestor.
+            // Ordinary SDK/external sessions with neither exact nor inherited
+            // bindings have no PTY approval to look for in the process table.
+            if !shared.snapshot.hosts.iter().any(|host| {
+                host.bound_target()
+                    .is_some_and(|bound| bound.source().as_str() == "codex")
+            }) {
+                return None;
+            }
+            let document = state
+                .reader
+                .run(|store| store.recent_document())
+                .await
+                .ok()?;
+            let target = document["sessions"]
+                .as_array()?
+                .iter()
+                .find(|row| row["uid"] == uid)?;
+            if target["forked_from_id"].as_str().unwrap_or("").is_empty() {
+                return None;
+            }
             let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
             let scan = scanner.snapshot(false).await.ok()?;
             shared

@@ -51,10 +51,23 @@ def build(root):
     started=codex_row("event_msg",{"type":"task_started","turn_id":"activity-turn"})
     started["timestamp"]=datetime.now(timezone.utc).isoformat()
     corpus.put("codex-page-activity","codex",[*activity_rows,started],[])
-    # Fewer than the old 600-event window, yet several MiB of tool-like text.
+    # Include both resident and streaming Codex fields that consume native
+    # bytes without contributing messages to the window or the history gap.
+    hidden_payload = "HIDDEN CODEX PAYLOAD " + "q" * 100000
+    malformed_items = [
+        b'{"type":"event_msg","payload":{"type":"item_completed",'
+        b'"item":{"text":"' + b'q' * size + b'\\q"}}}\n'
+        for size in (2000, 100000)
+    ]
     corpus.put("codex-heavy-window","codex",[
         codex_row("session_meta",{"id":"codex-heavy-window","cwd":"/synthetic/heavy"}),
-        *[row(f"HEAVY ROW {index:04d} " + "x" * 12288) for index in range(449)]],[])
+        codex_row("compacted", {"replacement_history": [{"text": hidden_payload}]}),
+        *[row(f"HEAVY ROW {index:04d} " + "x" * 12288) for index in range(449)],
+        codex_row("response_item", {"type": "reasoning", "summary": [],
+                                   "encrypted_content": hidden_payload}),
+        codex_row("event_msg", {"type": "item_completed",
+                                "item": {"text": hidden_payload[:4000]}}),
+        *malformed_items],[])
     corpus.put("codex-oversized-window","codex",[
         codex_row("session_meta",{"id":"codex-oversized-window","cwd":"/synthetic/oversized"}),
         *[row(f"OLDER ROW {index:04d}") for index in range(30)],
@@ -522,6 +535,12 @@ def main():
                         tail=wire["partial"]["tail"]
                         assert 100<=tail<200 and len(wire["messages"])<205
                         assert len(opening[0])<2*1024*1024
+                        assert wire["end"]==corpus.paths[name].stat().st_size
+                        assert wire["message_total"]==449
+                        assert wire["messages"][0]["event_kind"]=="compact"
+                        warnings=wire["meta"]["migration_warnings"]
+                        assert "跳过未知的Codex event_msg：item_completed ×1" in warnings
+                        assert "跳过无效的JSONL 记录 ×2" in warnings
                         assert recent["text"][-tail:]==[f"HEAVY ROW {i:04d} "+"x"*12288 for i in range(449-tail,449)]
                     else:
                         assert len(wire["messages"])==1
@@ -530,7 +549,7 @@ def main():
                     while snapshot()["partial"]:
                         click_page();settled()
                     restored=snapshot()
-                    expected=([f"HEAVY ROW {i:04d} "+"x"*12288 for i in range(449)]
+                    expected=(["已压缩", *[f"HEAVY ROW {i:04d} "+"x"*12288 for i in range(449)]]
                               if name=="codex-heavy-window" else
                               [*[f"OLDER ROW {i:04d}" for i in range(30)],recent["text"][-1]])
                     assert restored["text"]==expected and restored["cursor"]==live

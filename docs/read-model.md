@@ -241,6 +241,9 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
 - **小记录先走 serde_json**：≤ 64 KiB 的完整行不可能含 span，`serde_json` 与结构
   扫描器对它接受的输入产生相同的 `Value`（保序、重复键后者胜、同一数字解析器）；
   它拒绝的（超过其递归深度、真正的语法错误）再交给没有深度门槛的扫描器裁决。
+- **Codex 大字段投影**：流式解码及含大字段标记的小记录可在语法校验时略去
+  `payload` 中的加密推理、重复完成项和压缩上下文。这些字段不参与历史投影，
+  仍参与原生字节检查点。推理摘要、工具输出、压缩标记和无效行计数照常产生。
 - **Agy 追加投影**：旧 AST 仍在缓存、完整旧前缀校验通过、上次投影成功且 summary
   stamp 与选项不变时，无媒体/sidecar 的 Agy 前缀只复用 turn、跳过计数和旧事件，
   reducer 处理新增记录。状态计入视图预算，不额外保留 AST；改写、截断、元数据变化、
@@ -273,8 +276,9 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
 - **响应 = 小字段 + 拼接**：`meta`/`version`/`reset`/`start`/`end`/`anchor` 由 serde_json
   照旧生成、去掉收尾的 `}`，接 `"messages":[` + 缓存片段 + `]`，再接
   `message_total`/`partial`/`activity_changed`/`activity`，最后由 handler 追加
-  `prompt`（主视图）并收尾。全文、`window=1`（头 100 + 尾 500 是两段
-  `memcpy`）、`start=/head=/anchor=` 增量（`end > start` 的后缀）、`append=1`、
+  `prompt`（主视图）并收尾。全文、`window=1`（快照准备好后按
+  [首屏窗口规则](history-pages.md#finite-history-pages)截取首尾两段）、
+  `start=/head=/anchor=` 增量（`end > start` 的后缀）、`append=1`、
   历史页（`/page?cursor=`，按非 status 位置切片）都走这条路；分页预算
   （`pages::Budget`）使用缓存中的消息长度与文本引用数。
 - **编码格式**：可缓存的消息使用自身的 `to_vec` 输出，周围字段通过 `json!` 值序列化。

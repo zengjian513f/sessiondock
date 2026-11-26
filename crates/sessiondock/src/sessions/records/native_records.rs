@@ -2,6 +2,7 @@
 //! index observes the physical input before any provider interpretation.
 use super::*;
 use crate::media::{NativeImage, NativeSpan};
+use scanner::Projection;
 use std::io::{self, BufRead, BufReader, Cursor, Read};
 
 /// Complete lines up to this size are decoded from their resident bytes; it
@@ -9,6 +10,20 @@ use std::io::{self, BufRead, BufReader, Cursor, Read};
 /// string the resident decoder would inline where the pull decoder would span.
 const SMALL: usize = budgets::INLINE_STRING_BYTES;
 mod replay_source;
+
+// This reader serves timeline projection and checkpoint validation. These
+// Codex payload fields are never used for display, media or native identity.
+// The scanner still validates their JSON and the index observes every byte.
+const CODEX_HISTORY: Projection = Projection::Except(&[(
+    "payload",
+    Some(Projection::Except(&[
+        ("encrypted_content", None),
+        ("item", None),
+        ("replacement_history", None),
+        ("replacement_history_metadata", None),
+        ("retained_context", None),
+    ])),
+)]);
 
 /// Why a complete line produced no row: not a JSON object (skipped and
 /// counted), or a media failure that still fails the
@@ -83,6 +98,12 @@ pub(in crate::sessions) fn scan_native_records(
     candidate: &Candidate,
 ) -> Result<RawIndex, SessionError> {
     let mut index = super::super::native_input::RawIndexBuilder::new(probe)?;
+    let codex = candidate.source == "codex";
+    let projection = if codex {
+        CODEX_HISTORY
+    } else {
+        Projection::All
+    };
     let mut failure = None;
     let result = (|| -> Result<(), SessionError> {
         let mut reader = BufReader::with_capacity(
@@ -98,6 +119,7 @@ pub(in crate::sessions) fn scan_native_records(
         let skipped =
             io::copy(&mut reader.by_ref().take(decoder.skip), &mut io::sink()).map_err(io_error)?;
         decoder.offset = skipped;
+        let mut prefix = Vec::with_capacity(SMALL);
         loop {
             if reader.fill_buf().map_err(io_error)?.is_empty() {
                 break;
@@ -113,7 +135,7 @@ pub(in crate::sessions) fn scan_native_records(
                 decoder.offset = start + line.consumed;
                 continue;
             }
-            let mut prefix = Vec::with_capacity(SMALL);
+            prefix.clear();
             line.by_ref()
                 .take(SMALL as u64)
                 .read_to_end(&mut prefix)
@@ -123,12 +145,26 @@ pub(in crate::sessions) fn scan_native_records(
                 continue;
             }
             let decoded = if line.complete {
-                decode_record(&prefix)
-                    .map(|value| (value, Vec::new()))
-                    .map_err(|_| Rejected::Invalid)
+                // The serde path is faster for ordinary small rows. These
+                // literal keys only select the decoder for bulky rows. The
+                // structural parser decides which fields are actually at the
+                // discarded position, including escaped and duplicate keys.
+                (if codex
+                    && prefix.len() >= 1024
+                    && (memchr::memmem::find(&prefix, b"\"encrypted_content\"").is_some()
+                        || memchr::memmem::find(&prefix, b"\"item\"").is_some()
+                        || memchr::memmem::find(&prefix, b"\"replacement_history\"").is_some())
+                {
+                    scanner::scan_selected(&prefix[..], record_limits(), projection)
+                        .and_then(scanner::Document::into_value)
+                } else {
+                    decode_record(&prefix)
+                })
+                .map(|value| (value, Vec::new()))
+                .map_err(|_| Rejected::Invalid)
             } else {
-                let input = Cursor::new(prefix).chain(&mut line);
-                let document = scanner::scan(input, record_limits());
+                let input = Cursor::new(&prefix[..]).chain(&mut line);
+                let document = scanner::scan_selected(input, record_limits(), projection);
                 // Invalid JSON must still be drained through the physical LF.
                 // EOF without LF never turns a partial record into a row/error.
                 io::copy(&mut line, &mut io::sink()).map_err(io_error)?;
