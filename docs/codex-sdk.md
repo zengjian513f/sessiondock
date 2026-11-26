@@ -438,7 +438,8 @@ statuses, through the existing expandable tool cards.
 DELTA (BUG-20261018-050342-5d4448): `request_user_input_async` emits an
 `agentMessage` with `delivery: "async"` and `questions: [{title, options?}]`,
 not a server request. SDK renders these as the existing radio/free-text cards;
-continuing output preserves selections. Explicit 提交回答 sends the question
+continued output appears above the pending cards, preserving entered answers
+and keeping the cards outside tool groups. Explicit 提交回答 sends the question
 and chosen/free-text answer through the durable SDK queue, then explicitly
 steers if the turn is still active; idle answers start a turn. A failed steer
 leaves the saved answer visible in the queue. No JSON-RPC request result is

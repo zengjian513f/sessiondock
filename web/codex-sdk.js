@@ -852,9 +852,9 @@ const CodexSdkView = {
           this.paintRequest(request);
         }
     }
+    CodexSdkQuestions.paint(this);
     SdkUI.groupTools(this);
     SdkUI.syncAssistantBubbles(this);
-    CodexSdkQuestions.paint(this);
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
     this.paintStatus();
@@ -937,7 +937,8 @@ const CodexSdkView = {
     }
     if (old) old.replaceWith(node);
     else {
-      const firstRequest = this.live.querySelector('[data-sdk-request]');
+      // Match history reconciliation: live items precede all pending cards.
+      const firstRequest = this.live.querySelector(':scope > .sdk-request');
       this.live.insertBefore(node, firstRequest);
     }
     ConversationUI.restoreToolState(node, toolState);
@@ -1461,8 +1462,12 @@ const CodexSdkQuestions = {
     for (const row of [...(view.summary?.queue || []), ...(view.summary?.accepted || [])]) {
       if (row.id?.startsWith('sdk-question:')) pending.delete(row.id.slice('sdk-question:'.length));
     }
+    let changed = false;
     for (const card of view.live.querySelectorAll('[data-sdk-async-question]')) {
-      if (!pending.has(card.dataset.sdkAsyncQuestion)) card.remove();
+      if (!pending.has(card.dataset.sdkAsyncQuestion)) {
+        card.remove();
+        changed = true;
+      }
     }
     for (const [id, questions] of pending) {
       if (!id) continue;
@@ -1505,6 +1510,8 @@ const CodexSdkQuestions = {
       card.dataset.sdkAsyncQuestion = id;
       card.querySelector('button').textContent = '提交回答';
       view.live.append(card);
+      changed = true;
     }
+    if (changed) ConversationUI.refreshToolTails(view.box);
   },
 };

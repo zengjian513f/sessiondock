@@ -2,13 +2,17 @@
 """SDK async questions: native item/history recovery, real choices and delivery."""
 import argparse
 import asyncio
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from codex_sdk_browser import build, server, THREAD
 from codex_sdk_fixtures import FakeAppServer
 from history_fixtures import BINARY, codex_row
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
 from sdk_ui_fixtures import start_sdk
 
 QUESTIONS = [
@@ -26,17 +30,31 @@ def main():
     args.screenshots.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        for theme, width in [(theme, width) for theme in ('light', 'dark') for width in (1440, 390)]:
+        for target, theme, width in [(target, theme, width)
+                for target in ('node', 'hub') for theme in ('light', 'dark') for width in (1440, 390)]:
+            label = f'{target}-{theme}-{width}'
             with tempfile.TemporaryDirectory(prefix='sd-sdk-question-') as tmp:
                 root = Path(tmp)
                 corpus = build(root)
-                with FakeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake, server(corpus, args.binary, root/'app.sock') as base:
+                port = free_port()
+                extra = node_env(root, port, '127.0.0.0/8') if target == 'hub' else {}
+                with FakeAppServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake, \
+                        server(corpus, args.binary, root/'app.sock', extra) as base, ExitStack() as stack:
+                    if target == 'hub':
+                        hub_root = root / 'hub'
+                        hub_root.mkdir()
+                        hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
+                                  [SimpleNamespace(name='QuestionNode', token=TOKEN, port=port)])
+                        stack.callback(hub.stop)
+                        hub.start()
+                        base = f'http://127.0.0.1:{hub.port}'
                     context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
                     page = context.new_page()
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.goto(base, wait_until='networkidle')
-                    page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+                    uid_tail = corpus.uid('sdk').split(':', 1)[1]
+                    page.locator(f'#side .item[data-uid$="{uid_tail}"]').click()
                     start_sdk(page)
                     expect(page.locator('#sdk-input')).to_be_visible()
                     page.locator('#sdk-input').click()
@@ -58,12 +76,42 @@ def main():
                     assert not fake.methods('turn/steer')
                     card.get_by_label('只让最终回答完整显示，过程说明仍折叠', exact=True).check()
                     card.get_by_placeholder('输入答案', exact=True).fill('保留手动展开状态')
+                    card_node = card.element_handle()
+                    # Codex can start and finish more tools before the next history poll.
+                    for index in range(3):
+                        tool = {'id': f'continued-tool-{index}', 'type': 'commandExecution',
+                                'command': f'python check_{index}.py', 'status': 'inProgress',
+                                'aggregatedOutput': ''}
+                        notify('item/started', {'item': tool})
+                        node = page.locator(f'[data-sdk-item="{tool["id"]}"]')
+                        expect(node).to_be_attached()
+                        if index == 0:
+                            page.screenshot(path=str(args.screenshots/f'{label}-continued-tool.png'))
+                        assert node.evaluate(
+                            '(tool, card) => !!(tool.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)',
+                            card_node), 'a new tool was inserted below the pending question'
+                        notify('item/completed', {'item': {**tool, 'status': 'completed',
+                                                          'aggregatedOutput': f'检查 {index} 完成'}})
+                    group = page.locator('.sdk-live .sdk-tool-group').last
+                    toggle = group.locator('.group-preview .fold-toggle')
+                    expect(group.locator('.group-count')).to_have_text('🔧 ×3')
+                    expect(group.locator('.tool-active-tail')).to_have_count(0)
+                    toggle.click()
+                    expect(group.locator('.tool-out:visible')).to_have_count(3)
+                    page.evaluate('() => CodexSdkView.refreshHistory(CodexSdkView.generation, true)')
+                    expect(group.locator('.tool-out:visible')).to_have_count(3)
+                    assert group.evaluate('(group, card) => group.nextElementSibling === card', card_node)
+                    toggle.click()
+                    expect(group.locator('.tool-out:visible')).to_have_count(0)
                     # Continued work must preserve selected answers and typed text.
                     notify('item/started', {'item': {'id': 'progress', 'type': 'agentMessage', 'text': 'Continuing work'}})
+                    progress = page.locator('[data-sdk-item="progress"]')
+                    expect(progress).to_be_attached()
+                    assert progress.evaluate('(message, card) => message.nextElementSibling === card', card_node)
                     expect(card.locator('input:checked')).to_have_count(1)
                     expect(card.get_by_placeholder('输入答案', exact=True)).to_have_value('保留手动展开状态')
                     card.scroll_into_view_if_needed()
-                    page.screenshot(path=str(args.screenshots/f'{theme}-{width}-selected.png'))
+                    page.screenshot(path=str(args.screenshots/f'{label}-selected.png'))
                     assert card.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1')
                     # Snapshot recovery must restore the pending question.
                     page.reload(wait_until='networkidle')
@@ -95,14 +143,14 @@ def main():
                     expect(history_card).to_be_visible()
                     history_card.get_by_label('采用上述规则', exact=True).check()
                     history_card.scroll_into_view_if_needed()
-                    page.screenshot(path=str(args.screenshots/f'{theme}-{width}-history.png'))
+                    page.screenshot(path=str(args.screenshots/f'{label}-history.png'))
                     history_card.get_by_role('button', name='提交回答').click()
                     start = fake.wait_for(lambda: fake.methods('turn/start') if len(fake.methods('turn/start')) == 2 else None)[-1]['params']
                     assert start['input'][0]['text'] == QUESTIONS[0]['title']+'\n• 采用上述规则', start
                     assert len(fake.methods('turn/steer')) == 1
                     assert not errors, errors
                     context.close()
-                    print(f'PASS {theme}/{width}: live and history questions, snapshot, selection/free text, retry, steer/start, draft preserved', flush=True)
+                    print(f'PASS {label}: live tool order, disclosure, history, reload, selection/free text, retry, steer/start, draft', flush=True)
         browser.close()
 
 
