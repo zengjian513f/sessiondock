@@ -8,6 +8,7 @@ use std::{path::Path, time::Duration};
 pub(crate) static DELETE: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 const NAME: &str = "agy-delete";
+const FILTER_ECHO_WAIT: Duration = Duration::from_secs(1);
 
 fn present(home: &Path, sid: &str) -> Result<bool, String> {
     let db = Connection::open_with_flags(
@@ -144,10 +145,10 @@ async fn screen(client: &HostClient) -> Option<crate::delivery::driver::ScreenCa
     })
 }
 
-async fn wait_screen(
+async fn wait_screen<T>(
     client: &HostClient,
-    accept: impl Fn(&crate::delivery::driver::ScreenCapture) -> bool,
-) -> Result<(), String> {
+    accept: impl Fn(&crate::delivery::driver::ScreenCapture) -> Option<T>,
+) -> Result<T, String> {
     loop {
         if let Some(frame) = screen(client).await {
             if crate::bridge::menus::agy::screen_prompt(&frame.text)
@@ -155,29 +156,96 @@ async fn wait_screen(
             {
                 return Err("Agy 正在等待工作目录信任确认。请先启动此会话，自行选择是否信任目录；确认后停止会话，再重试删除。本次未提交删除确认。".into());
             }
-            if accept(&frame) {
-                return Ok(());
+            if let Some(result) = accept(&frame) {
+                return Ok(result);
             }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
+fn picker_rows(text: &str) -> Option<impl Iterator<Item = &str>> {
+    let (_, menu) = text.rsplit_once("(tab to cycle)")?;
+    let mut rows = menu.lines().map(str::trim).filter(|row| !row.is_empty());
+    (rows.next() == Some("Conversations")).then_some(rows)
+}
+
+fn delete_shortcut(row: &str) -> bool {
+    row.starts_with("Keyboard:") && row.contains("f4 Delete")
+}
+
+fn unfiltered_picker(text: &str) -> bool {
+    picker_rows(text).is_some_and(|mut rows| {
+        rows.next()
+            .is_some_and(|row| row.starts_with("Type to search conversations..."))
+            && rows.any(delete_shortcut)
+    })
+}
+
 fn picker_row<'a>(text: &'a str, sid: &str) -> Option<&'a str> {
     // Anchor in the picker below the last editor boundary, never in history.
-    let (_, menu) = text.rsplit_once("(tab to cycle)")?;
-    let rows: Vec<_> = menu
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-    (rows.first() == Some(&"Conversations")
-        && rows.get(1) == Some(&format!("Search: {sid}").as_str())
-        && rows.get(2).is_some_and(|s| s.starts_with("> [CURRENT] "))
-        && rows
-            .get(3)
-            .is_some_and(|s| s.starts_with("Keyboard:") && s.contains("f4 Delete")))
-    .then(|| rows[2])
+    let mut rows = picker_rows(text)?;
+    if rows.next()?.strip_prefix("Search: ") != Some(sid) {
+        return None;
+    }
+    let row = rows.next()?;
+    (row.starts_with("> [CURRENT] ") && rows.next().is_some_and(delete_shortcut)).then_some(row)
+}
+
+fn empty_editor(frame: &crate::delivery::driver::ScreenCapture) -> bool {
+    crate::conversation::agy_editor(frame).as_deref() == Some("")
+}
+
+async fn open_picker(client: &HostClient) -> Result<(), String> {
+    send(client, "/resume\r").await?;
+    wait_screen(client, |frame| unfiltered_picker(&frame.text).then_some(())).await
+}
+
+async fn filter_picker(client: &HostClient, sid: &str) -> Result<(), String> {
+    // The SID comes from native inventory and is sent as text.
+    client
+        .request(
+            NAME,
+            ControlOp::Paste {
+                text: sid.into(),
+                bracketed: true,
+            },
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| "Agy 会话选择未确认".into())
+}
+
+enum Selection {
+    Current,
+    ReturnedToEditor,
+    FilterCleared,
+}
+
+async fn select_current(client: &HostClient, sid: &str) -> Result<(), String> {
+    filter_picker(client, sid).await?;
+    let echo_deadline = tokio::time::Instant::now() + FILTER_ECHO_WAIT;
+    let selection = wait_screen(client, |frame| {
+        if picker_row(&frame.text, sid).is_some() {
+            Some(Selection::Current)
+        } else if picker_rows(&frame.text).is_none() && empty_editor(frame) {
+            Some(Selection::ReturnedToEditor)
+        } else if tokio::time::Instant::now() >= echo_deadline && unfiltered_picker(&frame.text) {
+            Some(Selection::FilterCleared)
+        } else {
+            None
+        }
+    })
+    .await?;
+    match selection {
+        Selection::Current => return Ok(()),
+        Selection::ReturnedToEditor => open_picker(client).await?,
+        Selection::FilterCleared => (),
+    }
+    // A redraw can drop the picker or its search. Retry only the search,
+    // before any destructive input, and prove the full SID again.
+    filter_picker(client, sid).await?;
+    wait_screen(client, |frame| picker_row(&frame.text, sid).map(|_| ())).await
 }
 
 pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> Result<(), String> {
@@ -213,42 +281,25 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
             .agy_delete_command(&directory, sid, cwd)
             .map_err(|_| "Agy 启动项不可用")?;
         let mut child = command.spawn().map_err(|_| "Agy 删除终端启动失败")?;
+        let mut stage = "等待原生编辑区";
         let operation = async {
-            wait_screen(&client, |c| {
-                crate::conversation::agy_editor(c).as_deref() == Some("")
-            })
-            .await?;
-            send(&client, "/resume\r").await?;
-            wait_screen(&client, |c| {
-                c.text
-                    .rsplit_once("(tab to cycle)")
-                    .is_some_and(|(_, menu)| {
-                        menu.contains("Type to search conversations...")
-                            && menu.contains("f4 Delete")
-                    })
-            })
-            .await?;
-            // SID comes from the native inventory; paste it as text, not terminal controls.
-            client
-                .request(
-                    NAME,
-                    ControlOp::Paste {
-                        text: sid.into(),
-                        bracketed: true,
-                    },
-                )
-                .await
-                .map_err(|_| "Agy 会话选择未确认")?;
-            wait_screen(&client, |c| picker_row(&c.text, sid).is_some()).await?;
+            wait_screen(&client, |frame| empty_editor(frame).then_some(())).await?;
+            stage = "打开原生会话选择器";
+            open_picker(&client).await?;
+            stage = "按完整会话 ID 核对选中行";
+            select_current(&client, sid).await?;
             let before = screen(&client).await.ok_or("Agy 会话选择画面丢失")?;
             let selected = picker_row(&before.text, sid).ok_or("Agy 会话选择已变化")?;
             let markers = selected.matches("[Delete? (y/n)]").count();
+            stage = "等待原生删除确认";
             send(&client, "\x1bOS").await?; // F4, advertised by the verified picker.
             wait_screen(&client, |c| {
                 picker_row(&c.text, sid)
-                    .is_some_and(|s| s.matches("[Delete? (y/n)]").count() == markers + 1)
+                    .filter(|s| s.matches("[Delete? (y/n)]").count() == markers + 1)
+                    .map(|_| ())
             })
             .await?;
+            stage = "核对原生删除结果";
             send(&client, "y").await?;
             while !deleted(home, sid)? {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -257,9 +308,7 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
         };
         let outcome = tokio::time::timeout(Duration::from_secs(25), operation)
             .await
-            .unwrap_or_else(|_| {
-                Err("Agy 原生删除未确认（启动、菜单或删除超时），请刷新列表核对后重试".into())
-            });
+            .unwrap_or_else(|_| Err(format!("Agy 原生删除超时（{stage}），请刷新列表核对后重试")));
         // Always stop the private worker, including partial/failed menu operations.
         let _ = client.request(NAME, ControlOp::Kill { force: true }).await;
         let _ = tokio::task::spawn_blocking(move || {

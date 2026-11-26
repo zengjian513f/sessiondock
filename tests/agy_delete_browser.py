@@ -20,8 +20,10 @@ from agy_browser import process_alive
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--hub-binary', type=Path, default=REPO/'target/debug/sessiondock-hub')
+    parser.add_argument('--hub-binary', type=Path)
     args=parser.parse_args()
+    sibling_hub=args.binary.with_name('sessiondock-hub')
+    hub_binary=args.hub_binary or (sibling_hub if sibling_hub.is_file() else REPO/'target/debug/sessiondock-hub')
     root=Path(tempfile.mkdtemp(prefix='sessiondock-agy-delete-'))
     print('ROOT',root,flush=True)
     for n in ('home','host','ledger','state','work','bin','claude','codex','grok','opencode','mirror','proc','hub'):
@@ -49,7 +51,7 @@ def main():
         options={'headless':True}
         if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):options['executable_path']=os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser=pw.chromium.launch(**options)
-        hub=Hub(args.hub_binary,root/'hub',[SimpleNamespace(port=port,token='t'*40,name='Fixture')]);hub.start()
+        hub=Hub(hub_binary,root/'hub',[SimpleNamespace(port=port,token='t'*40,name='Fixture')]);hub.start()
         try:
             page=browser.new_page(viewport={'width':1280,'height':900});page.set_default_timeout(35000)
             def open_sid(url,sid):
@@ -60,7 +62,8 @@ def main():
                     page.locator('#detail .mobile-back:visible').click()
                 item.click()
                 if sid in EMPTY_IDS:
-                    expect(page.locator('#detail')).to_contain_text('仅找到 Agy 的会话索引')
+                    expect(page.locator('#detail')).to_contain_text('0 条消息')
+                    expect(page.locator('#detail')).not_to_contain_text('仅找到 Agy 的会话索引')
                 else:
                     expect(page.locator('#msgs')).to_contain_text('fixture '+sid)
                 return uid
@@ -109,6 +112,8 @@ def main():
             with page.expect_response(lambda r:r.request.method=='DELETE') as response:popup.locator('[data-popup-action="ok"]').click()
             assert response.value.status==200,response.value.text()
             assert not exists(IDS[0]) and exists(IDS[1])
+            commands=[json.loads(line).get('input') for line in (root/'calls.jsonl').read_text().splitlines()]
+            assert commands.count('/resume\r')==1,commands
             repeat=page.request.delete(base+'/api/session/'+uid)
             assert repeat.status==404,repeat.text()
             print('PASS cancel, same-title SID deletion, native files, repeated delete',flush=True)
@@ -136,6 +141,14 @@ def main():
                 with page.expect_response(lambda r:r.request.method=='DELETE',timeout=10000 if mode=='trust' else 40000) as response:popup.locator('[data-popup-action="ok"]').click()
                 assert response.value.status==500 and response.value.json()['code']=='agy_remove_failed',response.value.text()
                 expect(page.locator('dialog.app-popup[open]')).to_contain_text('删除失败')
+                if mode in ('wrong','refuse'):
+                    phase='按完整会话 ID 核对选中行' if mode=='wrong' else '核对原生删除结果'
+                    expect(page.locator('dialog.app-popup[open]')).to_contain_text(phase)
+                    for width,theme in ((1280,'light'),(390,'dark')):
+                        page.set_viewport_size({'width':width,'height':900})
+                        page.evaluate('theme => document.documentElement.dataset.theme=theme',theme)
+                        page.screenshot(path=str(root/f'{mode}-phase-{width}-{theme}.png'),full_page=True)
+                    page.set_viewport_size({'width':1280,'height':900})
                 if mode=='trust':
                     expect(page.locator('dialog.app-popup[open]')).to_contain_text('工作目录信任确认')
                     for width,theme in [(1280,'light'),(390,'light'),(1280,'dark'),(390,'dark')]:
@@ -165,6 +178,8 @@ def main():
             assert (root/'mirror/deleted'/IDS[3]).is_file()
             assert not (native/'conversations'/(IDS[3]+'.db')).exists()
             print('PASS actual Hub forwards scoped Agy deletion to owning node',flush=True)
+            # Native catalog refresh can close the picker or clear its search.
+            (native/'mode').write_text('reload')
             open_sid(hub_url,IDS[4])
             page.locator(f'#side .item[data-uid="{page.evaluate("S.sel")}"]').click(button='right')
             page.locator('#item-menu [data-act="pick"]').click()
@@ -178,6 +193,7 @@ def main():
             assert response.value.status==200,response.value.text()
             expect(page.locator('#detail')).to_contain_text('会话已从 Agy 删除')
             expect(page.locator('#detail-open-trash')).to_have_count(0)
+            page.screenshot(path=str(root/'batch-reloaded.png'),full_page=True)
             assert not exists(IDS[4]) and not exists(IDS[5])
             assert exists(EMPTY_IDS[2]) and (root/'mirror/deleted'/EMPTY_IDS[2]).is_file()
             assert not (native/'conversations'/(EMPTY_IDS[2]+'.db')).exists()
@@ -186,9 +202,14 @@ def main():
             page.reload();page.wait_for_function('T.listLoaded')
             assert not list((root/'host').glob('.agy-delete-*'))
             calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
+            for sid,resume_count in ((IDS[4],2),(IDS[5],1)):
+                inputs=[c['input'] for c in calls if c.get('sid')==sid and 'input' in c]
+                assert inputs.count('/resume\r')==resume_count,inputs
+                assert sum(sid in text for text in inputs)==2,inputs
+                assert inputs.count('\x1bOS')==inputs.count('y')==1,inputs
             assert all(not process_alive(c['pid']) for c in calls if 'start' in c)
             assert not any(c.get('start') in EMPTY_IDS for c in calls)
-            print('PASS Hub batch deletes selected normal/empty SIDs, keeps failures, refresh and worker cleanup',flush=True)
+            print('PASS Hub batch recovers reset pickers before confirming once, deletes the selected SIDs and cleans workers',flush=True)
         finally:
             browser.close();hub.stop()
     with isolated_server(Corpus(root),args.binary,host_dir=root/'host',lifecycle_dir=root/'ledger',

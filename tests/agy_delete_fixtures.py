@@ -6,6 +6,7 @@ from agy_history_browser import SCHEMA, record
 
 IDS = [f'a6000000-0000-4000-8000-{i:012d}' for i in range(10, 16)]
 EMPTY_IDS = [f'a6000000-0000-4000-8000-{i:012d}' for i in range(20, 23)]
+PICKER_RELOADS = {IDS[4]: 'editor', IDS[5]: 'unfiltered'}
 
 
 def seed_empty(native, work):
@@ -48,7 +49,7 @@ def retain_native_steps(native, sid):
     (native / 'brain' / sid / '.system_generated/logs/transcript_full.jsonl').unlink()
 
 
-FAKE = r'''
+FAKE = f'PICKER_RELOADS = {PICKER_RELOADS!r}\n' + r'''
 import os, sys, tty, json, sqlite3, shutil
 from pathlib import Path
 if '--version' in sys.argv:
@@ -79,6 +80,10 @@ if mode == 'trust':
     show('Accessing workspace:\r\n\r\n'+str(Path.cwd())+'\r\n\r\nDo you trust the contents of this project?\r\n\r\nAntigravity CLI requires permission to read, edit, and execute files here.\r\n\r\n> Yes, I trust this folder\r\n  No, exit\r\n\r\n  ↑/↓ Navigate · enter Confirm')
 else:
     show()
+def unfiltered_picker():
+    show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  Type to search conversations...\r\n> [CURRENT] Review Closed Research Reports · 同名 Agy 会话\r\n\r\nKeyboard: ↑/↓ Navigate  f4 Delete')
+
+filter_reloaded = False
 buf=b''
 while True:
     data=os.read(0,4096)
@@ -89,10 +94,18 @@ while True:
         if empty and mode=='ok':
             show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  No conversations available.\r\n  Press Enter to return.\r\n\r\nKeyboard: enter Select  tab Switch Tab  esc Go back / Clear search')
         else:
-            show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  Type to search conversations...\r\n> [CURRENT] Review Closed Research Reports · 同名 Agy 会话\r\n\r\nKeyboard: ↑/↓ Navigate  f4 Delete')
+            unfiltered_picker()
         buf=b''
     elif sid.encode() in buf:
-        picker();buf=b''
+        if mode == 'reload' and sid in PICKER_RELOADS and not filter_reloaded:
+            filter_reloaded = True
+            if PICKER_RELOADS[sid] == 'editor':
+                show()
+            else:
+                unfiltered_picker()
+        else:
+            picker()
+        buf=b''
     elif b'\x1bOS' in buf:
         picker(True);buf=b''
     elif buf==b'y':
