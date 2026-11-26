@@ -65,6 +65,14 @@ def open_toolbar_options(page, kind):
     return page.locator(f'#toolbar-{kind}-menu')
 
 
+def open_directory_filter(page):
+    trigger = page.locator('#directory-filter')
+    if not trigger.is_visible():
+        page.locator('#header-more-btn').click()
+    trigger.click()
+    return page.locator('#directory-filter-menu')
+
+
 def choose_toolbar_option(page, kind, value):
     """Choose a pinned button or its equivalent under the header ellipsis."""
     host, attribute = {'view': ('view', 'v'), 'nest': ('nest', 'mode'),

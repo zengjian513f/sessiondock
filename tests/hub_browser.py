@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from browser_runtime import choose_toolbar_option
+from browser_runtime import choose_toolbar_option, open_directory_filter
 from playwright.sync_api import expect, sync_playwright
 
 from hub_fixtures import REPO, FakeNode, Hub
@@ -65,7 +65,7 @@ class Injector:
         route.fulfill(status=response.status, headers={"content-type": "application/json"}, body=json.dumps(data))
 
 
-def check_directory_view(browser, hub):
+def check_directory_view(browser, hub, screenshot=None):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
     errors = []
@@ -119,8 +119,37 @@ def check_directory_view(browser, hub):
     expect(shared.locator('.gcount')).to_have_text('1')
     page.get_by_role('button', name='NodeA 1', exact=True).click()
     expect(shared.locator('.gcount')).to_have_text('2')
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox')).to_have_count(2)
+    if screenshot:
+        path = Path(screenshot)
+        page.screenshot(path=str(path.with_stem(path.stem + '-directory-filter')), full_page=True)
+    menu.get_by_role('checkbox', name='/other/project', exact=True).uncheck()
+    expect(shared.locator('.item .node-badge')).to_have_text(['NodeB', 'NodeA'])
+    expect(page.locator('#side > .group')).to_have_count(1)
+    page.keyboard.press('Escape')
+    page.get_by_role('button', name='NodeA 1', exact=True).click()
+    expect(shared.locator('.item .node-badge')).to_have_text(['NodeB'])
+    page.get_by_role('button', name='NodeA 1', exact=True).click()
+    page.reload(wait_until='networkidle')
+    expect(page.locator('#side > .group')).to_have_count(1)
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox', name='/other/project', exact=True)).not_to_be_checked()
+    menu.get_by_role('button', name='全选', exact=True).click()
+    expect(page.locator('#side > .group')).to_have_count(2)
+    page.keyboard.press('Escape')
     shared.locator(f'.item[data-uid="{scoped(NID["b"], "claude:same-file-hash")}"]').click()
     expect(page.locator('#detail')).to_contain_text('reply NodeB')
+    menu = open_directory_filter(page)
+    menu.get_by_role('checkbox', name='/same/project', exact=True).uncheck()
+    expect(shared).to_have_count(0)
+    page.reload(wait_until='domcontentloaded')
+    expect(page.locator('#detail')).to_contain_text('reply NodeB')
+    expect(shared).to_have_count(0)
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox', name='/same/project', exact=True)).not_to_be_checked()
+    menu.get_by_role('button', name='全选', exact=True).click()
+    page.keyboard.press('Escape')
     choose_toolbar_option(page, 'view', 'tree')
     expect(page.locator('#side > .group')).to_have_count(3)
     page.set_viewport_size({'width': 390, 'height': 844})
@@ -544,7 +573,7 @@ def main():
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
                     check_moved_search(browser, hub, nodes[0])
-                    check_directory_view(browser, hub)
+                    check_directory_view(browser, hub, args.screenshot)
                     check_trash_order(browser, hub, nodes)
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     injector = Injector()

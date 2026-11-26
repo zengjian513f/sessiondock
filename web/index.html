@@ -134,6 +134,7 @@
     <path d="M4 5.2v5.6M12 6.7c0 2.6-2.6 3.3-5.4 3.6-1.3.1-2.1.4-2.6 1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
   </symbol>
   <symbol id="i-list" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4a1 1 0 0 1 1-1h3l2 2h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
   <symbol id="i-tree" viewBox="0 0 16 16">
     <rect x="5.5" y="1.5" width="5" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/>
     <rect x="1.5" y="11" width="5" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/>
@@ -227,6 +228,10 @@
     <div class="header-actions">
       <button class="btn hidden" id="new-session" title="新建会话" aria-label="新建会话">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
+      </button>
+      <button type="button" class="btn" id="directory-filter" title="筛选文件夹" aria-label="筛选文件夹"
+              aria-haspopup="dialog" aria-expanded="false" aria-controls="directory-filter-menu">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-folder"/></svg>
       </button>
       <button type="button" class="btn" id="page-reload" hidden title="刷新页面" aria-label="刷新页面">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-refresh"/></svg>
@@ -381,6 +386,14 @@
 <div id="toolbar-view-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="列表视图"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
 <div id="toolbar-sources-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="Agent 类型"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
 <div id="toolbar-nest-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="折叠方式"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
+<div id="directory-filter-menu" class="ctx-menu toolbar-options" hidden role="dialog" aria-label="筛选文件夹">
+  <div class="directory-filter-actions">
+    <button type="button" id="directory-filter-all">全选</button>
+    <button type="button" id="directory-filter-none">全不选</button>
+  </div>
+  <div id="directory-filter-list" role="group" aria-label="工作目录"></div>
+  <div id="directory-filter-empty" class="toolbar-options-hint" hidden>暂无会话目录</div>
+</div>
 
 <div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
 <dialog id="new-session-dialog" aria-labelledby="new-session-title">

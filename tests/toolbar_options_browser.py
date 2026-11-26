@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from browser_runtime import choose_toolbar_option, open_toolbar_options
+from browser_runtime import choose_toolbar_option, open_directory_filter, open_toolbar_options
 from frontend_framework_browser import launch_chromium
 from header_fold_browser import corpus
 from history_fixtures import BINARY, isolated_server
@@ -23,6 +23,123 @@ def long_press(context, page, button):
         touch.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
     finally:
         touch.detach()
+
+
+def check_directory_filter(page, payload, width, screenshots_dir):
+    original = payload.copy()
+    rows = deepcopy(payload['sessions'])
+    for source in ('kiro', 'codebuddy', 'droid'):
+        rows.append(dict(rows[0], source=source, agent_type=source, uid=f'{source}:directory-source',
+                         sid='directory-source', title=f'Directory {source}'))
+    shared, older = '/synthetic/workspace/project', '/synthetic/archived/project'
+    long_path = '/synthetic/workspace/branches/active/release-review/feature-with-a-long-directory-name-for-mobile'
+    paths = [shared, older, shared, long_path, shared, '', older, shared, long_path, older]
+    shared_count = paths.count(shared)
+    for row, path, hour in zip(rows, paths, (12, 11, 8, 10, 9, 7, 6, 5, 4, 3), strict=True):
+        row.update(cwd=path, updated=f'2026-09-11T{hour:02d}:00:00Z')
+    payload.update(sessions=rows, sig='directory-fixture')
+    assert page.evaluate('pollSessions()')
+    page.route('**/api/live*', lambda route: route.fulfill(json={'uids': [rows[0]['uid'], rows[1]['uid']]}))
+    assert page.evaluate('refreshLive(true).then(() => S.live.size === 2)')
+    page.route('**/api/search?*', lambda route: route.fulfill(json={
+        'results': [dict(row, hits=1) for row in rows],
+    }))
+    items = page.locator('#side .item')
+    search = page.locator('#q')
+    menu = open_directory_filter(page)
+    labels = menu.locator('.directory-filter-row')
+    checks = menu.get_by_role('checkbox')
+    shared_check = menu.get_by_role('checkbox', name=shared, exact=True)
+    expect(labels).to_have_text([shared, older, long_path, '(未知)'])
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(4)
+    if screenshots_dir:
+        page.screenshot(path=str(screenshots_dir / f'directory-filter-{width}.png'), full_page=True)
+    menu.get_by_role('button', name='全不选').click()
+    expect(items).to_have_count(0)
+    expect(page.locator('#session-total')).to_have_text('0')
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(0)
+    shared_check.focus()
+    shared_check.press('Space')
+    expect(shared_check).to_be_checked()
+    expect(items).to_have_count(shared_count)
+    expect(page.locator('#session-total')).to_have_text(str(shared_count))
+    if screenshots_dir:
+        other_theme = 'light' if width < 720 else 'dark'
+        page.evaluate('applyTheme', other_theme)
+        page.screenshot(path=str(screenshots_dir / f'directory-selected-{other_theme}-{width}.png'), full_page=True)
+        page.evaluate('applyTheme', 'dark' if width < 720 else 'light')
+
+    # New and reordered folders are picked up only on the next opening.
+    added = dict(rows[0], uid='claude:directory-refresh', sid='directory-refresh',
+                 title='New folder session', cwd='/synthetic/new', updated='2026-09-11T13:00:00Z')
+    rows[1]['updated'] = '2026-09-11T14:00:00Z'
+    payload.update(sessions=[*rows, added], sig='directory-refreshed')
+    assert page.evaluate('pollSessions()')
+    expect(labels).to_have_text([shared, older, long_path, '(未知)'])
+    expect(shared_check).to_be_focused()
+    expect(shared_check).to_be_checked()
+    expect(items).to_have_count(shared_count)
+    page.keyboard.press('Escape')
+    expect(page.locator('#directory-filter')).to_be_focused()
+    menu = open_directory_filter(page)
+    expect(labels).to_have_text([older, added['cwd'], shared, long_path, '(未知)'])
+    expect(menu.get_by_role('checkbox', name=added['cwd'], exact=True)).not_to_be_checked()
+    search.click()
+    expect(menu).to_be_hidden()
+    page.locator('#livecount').click()
+    expect(items).to_have_count(1)
+    page.locator('#allcount').click()
+    search.fill('project')
+    expect(page.locator('#side-search-count')).to_have_text(f'{shared_count} 条')
+    search.press('Enter')
+    expect(page.locator('#side-search-label')).to_have_text('搜索结果')
+    expect(page.locator('#side-search-count')).to_have_text(f'{shared_count} 条')
+    menu = open_directory_filter(page)
+    menu.get_by_role('button', name='全选', exact=True).click()
+    expect(page.locator('#side-search-count')).to_have_text(f'{len(rows)} 条')
+    menu.get_by_role('button', name='全不选').click()
+    expect(page.locator('#side-search-count')).to_have_text('0 条')
+    expect(checks).to_have_count(5)
+    page.reload(wait_until='networkidle')
+    expect(page.locator('#side .empty')).to_have_text('没有会话')
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(0)
+    shared_check.check()
+    page.reload(wait_until='networkidle')
+    expect(items).to_have_count(shared_count)
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(1)
+    expect(shared_check).to_be_checked()
+    menu.get_by_role('button', name='全选', exact=True).click()
+    expect(items).to_have_count(len(rows) + 1)
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(5)
+    search.click()
+
+    # Scroll long catalogs inside the menu while keeping the bulk actions in view.
+    extra = [dict(added, uid=f'claude:directory-{i}', sid=f'directory-{i}', cwd=f'/synthetic/extra-{i:02d}')
+             for i in range(40)]
+    payload.update(sessions=[*rows, added, *extra], sig='directory-long-list')
+    assert page.evaluate('pollSessions()')
+    menu = open_directory_filter(page)
+    expect(checks).to_have_count(45)
+    checks.last.scroll_into_view_if_needed()
+    expect(checks.last).to_be_in_viewport()
+    expect(menu.get_by_role('button', name='全不选')).to_be_in_viewport()
+    assert menu.evaluate('el => {const r = el.getBoundingClientRect(); return r.right <= innerWidth && r.bottom <= innerHeight;}')
+    search.click()
+    payload.update(sessions=[], sig='directory-empty')
+    assert page.evaluate('pollSessions()')
+    menu = open_directory_filter(page)
+    expect(menu.get_by_text('暂无会话目录')).to_be_visible()
+    expect(checks).to_have_count(0)
+    if screenshots_dir:
+        page.screenshot(path=str(screenshots_dir / f'directory-empty-{width}.png'), full_page=True)
+    payload.update(original)
+    page.unroute('**/api/live*')
+    page.unroute('**/api/search?*')
+    page.reload(wait_until='networkidle')
+    expect(items).to_have_count(7)
+    print(f'PASS directory filter {width}px: snapshot, keyboard, search, scope, bulk, persistence, scrolling', flush=True)
 
 
 def main():
@@ -65,6 +182,7 @@ def main():
                     assert page.locator('#view button').evaluate_all('(buttons) => buttons.map(b => b.dataset.v)') == ['date', 'directory', 'group', 'tree']
                     if args.screenshots_dir:
                         page.screenshot(path=str(args.screenshots_dir / f'toolbar-defaults-{width}.png'), full_page=True)
+                    check_directory_filter(page, payload, width, args.screenshots_dir)
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     expect(page.locator('#nest button:visible')).to_have_count(3)
 

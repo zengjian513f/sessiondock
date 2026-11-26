@@ -8,7 +8,7 @@ whole sweep checks the fold order:
   header chrome, in this order as the page gets narrower: Agent/view/nest labels, then the
       hostname title, then machine chips down to their initials (seeded here; hub does the same),
       then right-side buttons. Buttons that fold are a suffix of the priority list (settings ->
-      report -> trash -> page refresh [-> new when terminal_create]); the menu keeps the inline order;
+      report -> trash -> page refresh -> directory filter [-> new when terminal_create]); the menu keeps the inline order;
       the filter bar is never squeezed unless everything folded; once folded, one more button
       would not fit; the ... button always provides toolbar options; within a tier narrower
       never unfolds chrome or buttons; all three tiers share one header height (no jump across
@@ -33,7 +33,7 @@ from history_fixtures import BINARY, Corpus, claude_row, isolated_server
 
 SID = "fold-sweep"
 OTHER_SID = "fold-switch"
-HEADER_PRIORITY = ["new-session", "page-reload", "session-cleanup", "trash", "report-bug", "settings"]
+HEADER_PRIORITY = ["new-session", "directory-filter", "page-reload", "session-cleanup", "trash", "report-bug", "settings"]
 ACTION_ORDER = ["a-star", "a-turns", "a-session-toggle", "a-session-freeze", "a-clone-group", "report-bug", "a-session-action"]
 # The branch is an API field the title bar no longer shows.
 META_PRIORITY = ["mcount-total", "size", "time", "meta-node", "cwd", "meta-source", "model", "session-id"]

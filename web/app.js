@@ -172,6 +172,7 @@ applyFont();
 // Keep explicit legacy nesting preferences; fresh profiles start collapsed.
 const initialChildMode = store.get('childMode',
   store.get('nest', null) === null ? 'hidden' : store.get('nest', false) ? 'nested' : 'flat');
+const savedDirectories = store.get('visibleDirectories', null);
 
 const S = {
   sessions: [],
@@ -182,6 +183,7 @@ const S = {
   nest: initialChildMode === 'hidden' ? false : store.get('nest', false),
   nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
   off: new Set(store.get('off', [])),
+  directories: Array.isArray(savedDirectories) ? new Set(savedDirectories) : null,
   closed: new Set(store.get('closed', [])),
   searchClosed: new Set(),
   searchNestClosed: new Set(),
@@ -2642,7 +2644,7 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- 数据加载
 function renderSessionCounts() {
-  const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s));
+  const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s) && directorySelected(s));
   const active = pool.filter(sessionScopeActive).length;
   const known = SessionDockCapabilities.allows('live');
   $('#session-active').textContent = known ? active : '?';
@@ -3405,9 +3407,12 @@ addEventListener('sessiondock-network-resumed', async () => {
   }
 });
 
+const sessionDirectory = s => s.cwd || '';
+const directorySelected = s => S.directories === null || S.directories.has(sessionDirectory(s));
+
 function visible() {
   const eligible = s => !s.pending_delete && (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
-    && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
+    && nodeSelected(s) && directorySelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
     const active = sessionScopeActive;
@@ -6170,6 +6175,8 @@ function revealSessionInSidebar(uid, agent, catalog = null) {
   // afterwards so ordinary polling keeps the compact catalog contract.
   let changed = !!catalog;
   if (catalog) { S.sessions = catalog; S.sig = ''; }
+  // Opening a conversation directly can still leave its directory hidden in the list.
+  if (!directorySelected(row)) return;
   if (S.term || S.results) { cancelSearch(true); changed = true; }
   if (S.view === 'group' && !globalThis.SessionDockGroups?.matches(row)) {
     S.view = 'tree'; store.set('view', S.view); changed = true;
@@ -7374,6 +7381,7 @@ function closeToolbarMenus(restoreFocus = false) {
   }
 }
 function openToolbarMenu(trigger) {
+  closeDirectoryFilter();
   closeToolbarMenus();
   const menu = document.getElementById(trigger.getAttribute('aria-controls'));
   menu.hidden = false;
@@ -7385,17 +7393,112 @@ function positionToolbarMenu(trigger) {
   placeSubmenu(menu, trigger);
 }
 
+function bindDirectoryFilter() {
+  const button = $('#directory-filter'), menu = $('#directory-filter-menu');
+  const list = $('#directory-filter-list'), all = $('#directory-filter-all'), none = $('#directory-filter-none');
+  const updateButton = () => {
+    button.classList.toggle('on', S.directories !== null);
+    button.setAttribute('aria-description', S.directories === null ? '显示所有文件夹'
+      : S.directories.size ? `已选择 ${S.directories.size} 个文件夹` : '未选择文件夹');
+  };
+  const apply = directories => {
+    S.directories = directories;
+    store.set('visibleDirectories', directories === null ? null : [...directories]);
+    for (const checkbox of list.querySelectorAll('input')) {
+      checkbox.checked = directories === null || directories.has(checkbox.value);
+    }
+    updateButton();
+    renderSide();
+  };
+  const items = () => [...menu.querySelectorAll('button:not(:disabled), input')];
+  const open = () => {
+    if (!menu.hidden) return;
+    const folded = button.parentElement === $('#header-menu');
+    if (folded) closeToolbarMenus();
+    else closeHeaderMenu();
+    const latest = new Map();
+    // The open menu keeps this snapshot even when list sync changes the sidebar.
+    for (const session of sidebarSessions()) {
+      const path = sessionDirectory(session);
+      latest.set(path, Math.max(latest.get(path) ?? -Infinity, Date.parse(session.updated) || 0));
+    }
+    const paths = [...latest.keys()].sort((a, b) => latest.get(b) - latest.get(a) || a.localeCompare(b));
+    const rows = document.createDocumentFragment();
+    for (const path of paths) {
+      const label = el('label', 'directory-filter-row');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = path;
+      checkbox.checked = S.directories === null || S.directories.has(path);
+      checkbox.onchange = () => {
+        const directories = new Set(S.directories ?? paths);
+        if (checkbox.checked) directories.add(path);
+        else directories.delete(path);
+        apply(directories);
+      };
+      label.append(checkbox, el('span', '', path || '(未知)'));
+      rows.appendChild(label);
+    }
+    list.replaceChildren(rows);
+    $('#directory-filter-empty').hidden = paths.length > 0;
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    if (folded) placeSubmenu(menu, button);
+    else placeDropdown(menu, button);
+    list.scrollTop = 0;
+  };
+  all.onclick = () => apply(null);
+  none.onclick = () => apply(new Set());
+  button.onclick = () => {
+    if (!menu.hidden) closeDirectoryFilter(true);
+    else { open(); items()[0]?.focus(); }
+  };
+  bindMenuKeyboard(button, menu, items, open);
+  const keydown = button.onkeydown;
+  button.onkeydown = event => {
+    if (button.parentElement !== $('#header-menu')) keydown(event);
+    else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      event.stopPropagation();
+      open();
+      items()[0]?.focus();
+    }
+  };
+  menu.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft' || button.parentElement !== $('#header-menu')) return;
+    event.preventDefault();
+    closeDirectoryFilter(true);
+  });
+  menu.addEventListener('focusout', event => {
+    if (event.relatedTarget && !event.relatedTarget.closest('#directory-filter-menu, #directory-filter, #header-more')) {
+      closeHeaderMenu();
+    }
+  });
+  updateButton();
+}
+
+function closeDirectoryFilter(restoreFocus = false) {
+  const menu = $('#directory-filter-menu');
+  if (menu.hidden) return;
+  const button = $('#directory-filter');
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+  layoutHeader();
+  if (restoreFocus) (button.offsetWidth ? button : $('#header-more-btn')).focus();
+}
+
 // 顶栏按空间逐级收，任何一级都不因折叠留白：
 //   1. Agent / 组织方式 / 分层 的文字标签
 //   2. 主机标题（.brand-name）
 //   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
-//   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
+//   4. 右侧按钮从末尾折进 ⋯
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'session-cleanup', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'directory-filter', 'page-reload', 'transfer-tasks', 'session-cleanup', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
 function closeHeaderMenu(restoreFocus = false) {
+  closeDirectoryFilter();
   closeToolbarMenus();
   const menu = $('#header-menu');
   if (!menu || menu.hidden) return;
@@ -7408,7 +7511,7 @@ function closeHeaderMenu(restoreFocus = false) {
 function layoutHeader() {
   const header = $('header'), filters = header?.querySelector('.header-filters');
   const more = $('#header-more'), menu = $('#header-menu');
-  if (!filters || !more || !menu || !menu.hidden) return;
+  if (!filters || !more || !menu || !menu.hidden || !$('#directory-filter-menu').hidden) return;
   if (getComputedStyle(header).display === 'none') return;
   const squeezed = () => filters.scrollWidth > filters.clientWidth
     || header.scrollWidth > header.clientWidth;
@@ -7495,24 +7598,30 @@ function layoutHeader() {
 {
   const button = $('#header-more-btn'), menu = $('#header-menu');
   const items = () => [...menu.querySelectorAll('button:not(:disabled):not(.hidden)')];
-  const open = () => { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); };
+  const open = () => {
+    closeDirectoryFilter();
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+  };
   button.onclick = () => menu.hidden ? open() : closeHeaderMenu();
   bindMenuKeyboard(button, menu, items, open);
   menu.addEventListener('click', event => {
-    if (event.target.closest('button') && !event.target.closest('[data-toolbar-menu]')) closeHeaderMenu(true);
+    if (event.target.closest('button') && !event.target.closest('[data-toolbar-menu], #directory-filter')) closeHeaderMenu(true);
   });
   $('#header-more').addEventListener('focusout', event => {
     if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)
         && !event.relatedTarget.closest('.toolbar-options')) closeHeaderMenu();
   });
   document.addEventListener('click', event => {
-    if (!event.target.closest('#header-more, .toolbar-options')) closeHeaderMenu();
+    if (!event.target.closest('#header-more, .toolbar-options, #directory-filter')) closeHeaderMenu();
   }, true);
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && menu.hidden === false) {
+    if (event.key !== 'Escape') return;
+    if (!$('#directory-filter-menu').hidden || !menu.hidden) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if ($('.toolbar-options:not([hidden])')) closeToolbarMenus(true);
+      if (!$('#directory-filter-menu').hidden) closeDirectoryFilter(true);
+      else if ($('.toolbar-options:not([hidden])')) closeToolbarMenus(true);
       else closeHeaderMenu(true);
     }
   }, true);
@@ -7528,6 +7637,7 @@ function layoutHeader() {
     if (trigger) positionToolbarMenu(trigger);
   });
   for (const node of [$('header'), $('.brand'), ...$('.header-filters').children]) observer.observe(node);
+  bindDirectoryFilter();
   layoutHeader();
 }
 
@@ -11904,7 +12014,7 @@ renderView();
 // changes the visible rows within that same display tree, never its membership.
 function sidebarNestContext() {
   return JSON.stringify([S.view, S.nest, S.childMode, S.picking, S.nestAttachUids, S.term, S.opts,
-    S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : []]);
+    S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : [], S.directories && [...S.directories]]);
 }
 
 /** Group checkbox membership and count after a branch opened or closed in place. */
@@ -13085,7 +13195,9 @@ async function openExternalSession(spec, historyMode = 'replace') {
     const pending = SdkView.pending(pendingRoute?.uid || spec);
     if (pending) { await openSession(pending.uid, null, {historyMode}); return true; }
   }
-  if (S.childMode === 'hidden' && (!route || !sidebarRowNode(route.uid, route.agent))) {
+  const routeRow = route && S.sessions.find(row => row.uid === route.uid);
+  if (S.childMode === 'hidden' && (!routeRow
+      || ((route.agent || directorySelected(routeRow)) && !sidebarRowNode(route.uid, route.agent)))) {
     try {
       // The compact list deliberately omits this target/its ancestors. Resolve
       // against the complete inventory before treating it as a missing link.

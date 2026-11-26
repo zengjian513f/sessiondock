@@ -2629,6 +2629,23 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
 .toolbar-options button:hover { background: var(--hover); }
 .toolbar-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .toolbar-options button.off .ico { opacity: .45; }
+#directory-filter.on { color: var(--accent); }
+#directory-filter[aria-expanded="true"] { background: var(--hover); }
+#directory-filter-menu { display: flex; flex-direction: column; width: 380px; box-sizing: border-box; }
+#directory-filter-menu[hidden] { display: none; }
+.directory-filter-actions { display: flex; flex: none; border-bottom: 1px solid var(--border); }
+.directory-filter-actions button { width: auto; }
+#directory-filter-list { overflow-y: auto; overscroll-behavior: contain; }
+.directory-filter-row {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  border-radius: 6px; color: var(--text); font-size: 13px; line-height: 1.4;
+  overflow-wrap: anywhere; cursor: pointer;
+}
+.directory-filter-row:hover, .directory-filter-row:focus-within { background: var(--hover); }
+.directory-filter-row input { flex: none; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+@media (max-width: 720px) {
+  .directory-filter-row { padding: 11px 12px; font-size: 14px; }
+}
 
 /* Reserve the status column before stopping so rows do not jump or wrap. */
 #session-cleanup-list .cleanup-item { flex-wrap: nowrap; min-height: 39px; box-sizing: border-box; }
