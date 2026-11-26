@@ -14,7 +14,9 @@ const SOURCES = Object.freeze(Object.fromEntries(
 const store = {
   get(k, d) {
     try {
-      const v = SessionDockCapabilities.stored(k, STORAGE_PREFIX);
+      const saved = SessionDockCapabilities.stored(k, STORAGE_PREFIX);
+      const v = saved === null && PROJECT_VIEW.cwd && PROJECT_VIEW.inheritPreference(k)
+        ? SessionDockCapabilities.stored(k, STANDARD_STORAGE_PREFIX) : saved;
       return v === null ? d : JSON.parse(v);
     } catch { return d; }
   },
@@ -177,7 +179,7 @@ const savedDirectories = store.get('visibleDirectories', null);
 const S = {
   sessions: [],
   view: store.get('view', 'date'),
-  childMode: initialChildMode === 'hidden' ? 'hidden' : 'shown',
+  childMode: initialChildMode === 'hidden' && !PROJECT_VIEW.cwd ? 'hidden' : 'shown',
   lazyOpen: new Map(),  // 本页临时展开的父会话；刷新不预加载
   lazyPending: new Set(),
   nest: initialChildMode === 'hidden' ? false : store.get('nest', false),
@@ -3093,6 +3095,7 @@ async function loadSessions(force, preserveList = false) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     d = await r.json();
     if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
+    d.sessions = PROJECT_VIEW.rows(d.sessions);
   } catch (e) {
     if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
     if (preserveList) return false;
@@ -3157,6 +3160,7 @@ async function runSessionPoll() {
     if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return false;
     applyNodeState(d, 'sessions');
     if (d.unchanged || !d.sessions) return true;
+    d.sessions = PROJECT_VIEW.rows(d.sessions);
     const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
     S.sig = d.sig;
     S.sessions = d.sessions;
@@ -3412,7 +3416,7 @@ const sessionDirectory = s => s.cwd || '';
 const directorySelected = s => S.directories === null || S.directories.has(sessionDirectory(s));
 
 function visible() {
-  const eligible = s => !s.pending_delete && (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+  const eligible = s => PROJECT_VIEW.match(s) && !s.pending_delete && (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
     && nodeSelected(s) && directorySelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
@@ -7722,10 +7726,14 @@ function replaceSessionHead(previous, meta, total) {
   if (focused) next.querySelector('#' + CSS.escape(focused))?.focus({preventScroll: true});
 }
 
+function sessionHeaderIcon(source) {
+  return `<span class="ico">${icon(source)}<span class="item-status" id="dlive"></span></span>`;
+}
+
 function head(m, total) {
   const h = el('div', 'dhead');
   h.dataset.uid = m.uid;
-  const titleIcon = `<span class="ico">${icon(m.source)}<span class="item-status" id="dlive"></span></span>`;
+  const titleIcon = sessionHeaderIcon(m.source);
   const hasAgents = (m.agent_items || []).length > 0;
   const canToggleRun = !m.agent_id
     || (SdkView.available(m.uid, m.agent_id) && !SdkView.historyOnlyReason(m.uid, m.agent_id));
@@ -13317,7 +13325,7 @@ async function openExternalSession(spec, historyMode = 'replace') {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
-      sidebarCatalog = data.sessions;
+      sidebarCatalog = PROJECT_VIEW.rows(data.sessions);
       route = routeSession(spec, sidebarCatalog);
     } catch (error) { console.warn('链接会话列表读取失败', error); }
     if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
@@ -13326,7 +13334,7 @@ async function openExternalSession(spec, historyMode = 'replace') {
     if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
     await openSession(route.uid, route.agent, {exact:true, historyMode, sidebarCatalog}); return true;
   }
-  if (!HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
+  if (PROJECT_VIEW.cwd || !HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
   let result;
   try {
     const response = await fetch(appUrl('api/sessions/resolve'), {

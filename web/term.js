@@ -254,7 +254,7 @@ async function fetchTermList(node = '', force = false) {
     T.unavailable_reason = data.unavailable_reason || '';
     T.list = mergeUnavailableTermRows(data.sessions || [], T.list, data.errors);
     T.sources = data.sources || {};
-    T.sdkSessions = data.sdk_sessions || [];
+    T.sdkSessions = PROJECT_VIEW.rows(data.sdk_sessions || []);
     T.resume_sources = data.resume_sources || {};
     T.codex_sdk = (data.codex_sdk ?? SessionDockCapabilities.config.codex_sdk) === true;
     T.native_sdks = data.native_sdks || SessionDockCapabilities.config.native_sdks || {};
@@ -264,7 +264,7 @@ async function fetchTermList(node = '', force = false) {
     T.home = data.home || '';
     const hadSelected = String(S.sel || '').startsWith('tmux:')
       && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
-    T.pending = mergeUnavailableTermRows(data.pending || [], T.pending, data.errors);
+    T.pending = mergeUnavailableTermRows(PROJECT_VIEW.rows(data.pending || []), T.pending, data.errors);
     if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
         && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
       pendingSelectionGone(String(S.sel).slice(5));
@@ -1906,7 +1906,7 @@ function openNewSessionDialog(origin = null) {
   newCreateAttempt = null;
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
   prepareNewNode();
-  $('#new-cwd').value = currentSessionCwd();
+  $('#new-cwd').value = PROJECT_VIEW.cwd || currentSessionCwd();
   if (newContinueOrigin) {
     const input = $(`#new-session-form input[value="${CSS.escape(newContinueOrigin.source)}"]`);
     if (input) input.checked = true;
@@ -1914,6 +1914,10 @@ function openNewSessionDialog(origin = null) {
   refreshNewNodeFields();
   NewModels.refresh();
   dialog.showModal();
+  if (PROJECT_VIEW.cwd && !newContinueOrigin) {
+    $('#new-session-form input[name="new-source"]:checked:not(:disabled)')?.focus();
+    return;
+  }
   if (newContinueOrigin) closeCwdPicker();
   else renderCommonCwdOptions();
   setTimeout(() => {
@@ -1975,7 +1979,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
   disposeMessageObservers($('#msgs'));
   $('#detail').innerHTML = `<div class="dhead" data-uid="${esc(S.sel)}"><div class="dtitle">
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
-    <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
+    <h2>${sessionHeaderIcon(info.source)}<span>${esc(pendingTitle)}</span></h2>
     <div class="dhead-actions" aria-label="会话操作">
       ${consoleButtonMarkup()}
       ${sessionActionsMarkup(`
@@ -2345,7 +2349,7 @@ async function createNewSession(e) {
   const continuationRequirements = Array.from(document.querySelectorAll('#continue-session-options input:checked'),
     input => `${input.value}。`).join('\n');
   const source = $('#new-session-dialog input[name="new-source"]:checked')?.value;
-  const cwd = $('#new-cwd').value.trim();
+  const cwd = PROJECT_VIEW.cwd || $('#new-cwd').value.trim();
   const go = origin ? $('#continue-session-go') : $('#new-session-go'), error = $('#new-session-error');
   error.textContent = '';
   if (!source) { error.textContent = '没有可用的会话类型'; return; }
@@ -2365,6 +2369,7 @@ async function createNewSession(e) {
     const endpoint = sdk ? (source === 'codex' ? 'api/codex-sdk/create' : 'api/native-sdk/create') : 'api/term/create';
     let d = await post(endpoint, request);
     if (d.needs_create) {
+      if (PROJECT_VIEW.cwd) throw new Error('所选机器上无法启动此项目。');
       const target = String(d.cwd || cwd);
       if (!await appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
         $('#new-cwd').focus();
@@ -2373,9 +2378,11 @@ async function createNewSession(e) {
       go.textContent = '创建目录中…';
       d = await post(endpoint, { ...request, cwd: target, create_cwd: true });
     }
-    if (d.error) { error.textContent = d.error; return; }
-    const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
-    store.set(dirsKey, recent);
+    if (d.error) { error.textContent = PROJECT_VIEW.error(d.error); return; }
+    if (!PROJECT_VIEW.cwd) {
+      const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
+      store.set(dirsKey, recent);
+    }
     if (sdk && d.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== d.uid), d.session];
     if (origin) {
       const uid = sdk ? d.uid : pendingUid(d.name);
@@ -2419,7 +2426,7 @@ async function createNewSession(e) {
     // The backend instance is ready; list refresh must not block the conversation.
     void loadTermList();
   } catch (err) {
-    error.textContent = err.message || '创建失败';
+    error.textContent = PROJECT_VIEW.error(err.message || '创建失败');
   } finally {
     newSessionCreating = false;
     go.disabled = false;

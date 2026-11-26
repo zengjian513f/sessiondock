@@ -1,0 +1,16 @@
+.project-view #app > header,
+.project-view .side-search > .qbox,
+.project-view #side .cwd,
+.project-view .meta-cwd,
+.project-view #new-session-dialog .new-cwd-combobox {
+  display: none !important;
+}
+.project-view #project-view-tools {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-inline: 2px;
+}
+.project-view #project-view-tools strong { font-size: 12px; }
+.project-view #project-view-tools .btn { min-height: 28px; }
+.project-view .side-search { padding: 4px 7px; }

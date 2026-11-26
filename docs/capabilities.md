@@ -67,6 +67,15 @@ updates while `visualViewport.scale` differs from 1 do not reinterpret pixel
 magnification as a keyboard or resize the PTY. Chromium touch emulation tests
 this routing; it does not establish mobile Edge device compatibility.
 
+## Same-origin project view
+
+A same-origin frame can open SessionDock with `embedded_project` set to an
+absolute project path. The regular catalog, conversation, SDK and composer
+components render the matching project and its subdirectories. The existing
+launcher retains its machine, agent and model settings and uses the supplied
+path directly. The frame keeps its navigation and layout preferences separate
+and inherits appearance and launch defaults from the full page.
+
 ## Group cloning
 
 历史能力名 `session_clone_local_codex` 表示节点具有原生迁移适配器，覆盖 Claude、Codex、Grok、Droid；

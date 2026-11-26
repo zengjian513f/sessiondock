@@ -1,8 +1,10 @@
 'use strict';
 
 const HUB_MODE = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub';
-const STORAGE_PREFIX = SessionDockCapabilities.namespace
+const STANDARD_STORAGE_PREFIX = SessionDockCapabilities.namespace
   || (HUB_MODE ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.');
+const STORAGE_PREFIX = PROJECT_VIEW.cwd
+  ? STANDARD_STORAGE_PREFIX + `project.${encodeURIComponent(PROJECT_VIEW.cwd)}.` : STANDARD_STORAGE_PREFIX;
 // list 只有启用的机器，别处都按它；machines 是设置页用的完整名单（含停用的），
 // 顺序就是注册表顺序，只由用户在设置页拖动决定，不随启用状态变
 const Nodes = {list: [], machines: [], off: new Set(), capabilities: {}, errors: new Map()};
@@ -607,6 +609,9 @@ function refreshNewNodeFields() {
   }
   const checked = document.querySelector('input[name="new-source"]:checked');
   if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
+  document.querySelector('#new-session-error').textContent = '';
+  document.querySelector('#new-session-go').disabled = !cap.enabled && !anyNewSdkEnabled();
+  if (PROJECT_VIEW.cwd) return;
   const input = document.querySelector('#new-cwd');
   const value = input.value;
   void newNodeHasDir(value.trim(), node).then(exists => {
@@ -615,8 +620,6 @@ function refreshNewNodeFields() {
     input.value = '';
     renderCommonCwdOptions();
   });
-  document.querySelector('#new-session-error').textContent = '';
-  document.querySelector('#new-session-go').disabled = !cap.enabled && !anyNewSdkEnabled();
   renderCommonCwdOptions();
   void loadSharedCwdOptions();
 }

@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="SessionDock">
 <title>__SESSIONDOCK_HOSTNAME__ · 会话管理</title>
 <script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="project-view.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="page-watchdog.js?v=__SESSIONDOCK_ASSET_VERSION__" data-surface="index"></script>
 <script defer src="assets.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script>
@@ -36,9 +37,11 @@
     // 不先画列表、等列表接口回来再翻到会话页。app.js 恢复不了时再退回列表。
     try {
       const read = key => JSON.parse(localStorage.getItem(prefix + key));
+      const params = new URLSearchParams(location.search);
+      const projectFrame = window.parent !== window && params.has('embedded_project');
       if (matchMedia('(max-width: 720px)').matches
-          && ((new URLSearchParams(location.search).get('sid') || '').trim()
-            || (read('mobilePage') === 'detail' && read('sel')))) {
+          && ((params.get('sid') || '').trim()
+            || (!projectFrame && read('mobilePage') === 'detail' && read('sel')))) {
         document.documentElement.dataset.bootPage = 'detail';
       }
     } catch {}
@@ -49,6 +52,7 @@
 <link rel="preload" href="fonts/UbuntuSansMono.woff2?v=__SESSIONDOCK_ASSET_VERSION__" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="session-card.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="stylesheet" href="style.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="project-view.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="stylesheet" href="session-resources.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="stylesheet" href="voice-input.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
@@ -269,6 +273,7 @@
   <main>
     <div id="left">
       <div class="side-search">
+        <div id="project-view-tools" hidden><strong>会话</strong></div>
         <div class="qbox">
           <input id="q" autocomplete="off" aria-label="搜索会话" placeholder="快速筛选… Enter 搜正文" title="无需回车：筛选标题、UUID / UID、目录、机器名、Agent 名和模型名；空格分词，双引号搜索短语；Enter 搜索对话正文">
           <div class="opts" id="search-mode" role="group" aria-label="关键词匹配方式">
