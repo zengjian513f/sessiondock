@@ -23,8 +23,19 @@ TABLE = '\n'.join('| ' + ' | '.join(row) + ' |' for row in (
      '31,239 req/min', '1 req/min', '99.99 percent', '2026-11-18 00:00 UTC']))
 DIFF_OUTPUT = '\n'.join(f'{line}; route = /api/synthetic/builds/{i}/' + 'segments/' * 20
                         for i, line in enumerate(OUTPUT.splitlines()))
+INPUT_ROLES = ('user', 'command', 'answer')
+INLINE = """1. 检查基线 `base/v1/` 和 `base/v2/` 下的 `./src/report.py`。
+2. 运行 `--dry-run`，保留 `MAX_RETRIES` 和 `0.995/0.997`。
+3. 对照 [运行手册](https://example.invalid/runbook)，核对 `./logs/run.txt`。
+
+```text
+report --dry-run
+```"""
 HISTORY = [dict(role=role, text=f'{role} START\n\n{TEXT}\n\n{role} END')
            for role in ('user', 'assistant', 'thinking', 'system', 'command', 'answer')]
+for message in HISTORY:
+    if message['role'] in (*INPUT_ROLES, 'assistant'):
+        message['text'] += '\n\n' + INLINE
 HISTORY[1]['text'] += '\n\n' + TABLE
 HISTORY += [dict(role='tool', name='Bash', summary='$ synthetic-command', text='synthetic-command',
                  result=dict(role='tool_result', text=OUTPUT, exit_code=0)),
@@ -52,8 +63,51 @@ def check_horizontal_wheel(page, body, shot):
     page.screenshot(path=str(shot))
 
 
+def check_inline_code(bubble, role):
+    body = bubble.locator('.mb')
+    expect(body.locator('li > code').filter(has_text='--dry-run')).to_be_attached()
+    expect(body.locator('a > code').filter(has_text='./src/report.py')).to_be_attached()
+    expect(body.locator('pre > code')).to_have_text('report --dry-run')
+    colors = body.evaluate("""body => {
+        const plain = getComputedStyle(body.querySelector('li > code'));
+        const path = getComputedStyle(body.querySelector('a > code'));
+        const link = getComputedStyle(body.querySelector('a:not(:has(code))'));
+        const surface = getComputedStyle(body.closest('.message-bubble') ?? body.closest('.msg'));
+        const canvas = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+        function luminance(color) {
+            canvas.fillStyle = color;
+            canvas.fillRect(0, 0, 1, 1);
+            const [r, g, b] = Array.from(canvas.getImageData(0, 0, 1, 1).data, value => {
+                const channel = value / 255;
+                return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+            });
+            return .2126 * r + .7152 * g + .0722 * b;
+        }
+        function contrast(first, second) {
+            const a = luminance(first), b = luminance(second);
+            return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+        }
+        return {
+            fill: plain.backgroundColor,
+            pathFill: path.backgroundColor,
+            fence: getComputedStyle(body.querySelector('pre')).backgroundColor,
+            tint: contrast(plain.backgroundColor, surface.backgroundColor),
+            code: contrast(plain.color, plain.backgroundColor),
+            path: contrast(path.color, path.backgroundColor),
+            link: contrast(link.color, surface.backgroundColor),
+        };
+    }""")
+    assert colors['fill'] == colors['pathFill'], (role, colors)
+    if role in INPUT_ROLES:
+        assert colors['fill'] != colors['fence'], (role, colors)
+        assert 1 < colors['tint'] <= 1.3, (role, colors)
+        assert min(colors['code'], colors['path'], colors['link']) >= 4.5, (role, colors)
+    else:
+        assert colors['fill'] == colors['fence'], (role, colors)
+
+
 def exercise(browser, base, label, shots):
-    for width, theme in ((1280, 'light'), (390, 'light'), (1280, 'dark'), (390, 'dark')):
+    for width, theme in ((1280, 'dark'), (390, 'dark'), (1280, 'light'), (390, 'light')):
         context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
         page = context.new_page()
         errors = []
@@ -72,18 +126,22 @@ def exercise(browser, base, label, shots):
             page.locator('#a-' + entry).click()
             scope = page.locator(selector)
             expect(scope).to_contain_text('user END')
+            for button in scope.get_by_role('button', name='展开本轮过程', exact=True).all():
+                button.click()
             for button in scope.get_by_role('button', name='展开工具调用组', exact=True).all():
                 button.click()
             for role in ('user', 'assistant', 'thinking', 'system', 'command', 'answer'):
                 bubble = scope.locator(f'.msg[data-role="{role}"]').filter(has_text=f'{role} START').first
                 body = bubble.locator('.mb')
+                if role == 'thinking':
+                    bubble.get_by_role('button', name='展开思考摘要', exact=True).click()
                 body.scroll_into_view_if_needed()
                 try:
                     check_scroll_inset(body)
                 except AssertionError:
                     page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-{role}-failed.png'))
                     raise
-                if role != 'assistant':
+                if role not in ('assistant', 'thinking'):
                     page.wait_for_function('e => e.scrollTop > 0', arg=body.element_handle())
                     check_scroll_fade(body, 'top')
                     body.click(position={'x': 35, 'y': 35})
@@ -110,6 +168,11 @@ def exercise(browser, base, label, shots):
                     check_scroll_fade(body)
                 bubble.locator('.message-header').scroll_into_view_if_needed()
                 page.screenshot(path=str(shots / f'{label}-{width}-{theme}-{entry}-{role}.png'))
+                if role in (*INPUT_ROLES, 'assistant'):
+                    check_inline_code(bubble, role)
+                if role == 'thinking':
+                    bubble.get_by_role('button', name='收起思考摘要', exact=True).click()
+                    expect(body).to_be_hidden()
             check_horizontal_wheel(page, scope.locator('.mb .tw'),
                                    shots / f'{label}-{width}-{theme}-{entry}-table-horizontal.png')
             for index, output in enumerate(scope.locator('.tool-out').all()):

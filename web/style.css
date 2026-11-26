@@ -29,7 +29,8 @@
   --scroll-thumb: rgba(107, 114, 128, .42);
   --scroll-thumb-hover: rgba(107, 114, 128, .68);
   --star: #a66b00;
-  --bubble-user: #d9fdd3;
+  --bubble-user: #e3f3e5;
+  --bubble-user-link: #214db1;
   --bubble-assistant: #ffffff;
   --bubble-thinking: #f1efff;
   --bubble-tool: var(--terminal-bg);
@@ -77,7 +78,8 @@
     --scroll-thumb: rgba(223, 227, 234, .24);
     --scroll-thumb-hover: rgba(223, 227, 234, .42);
     --star: #f6c344;
-    --bubble-user: #244c36;
+    --bubble-user: #293f33;
+    --bubble-user-link: #adc6ff;
     --bubble-assistant: #22262d;
     --bubble-thinking: #302d45;
     --bubble-system: #292d35;
@@ -1332,11 +1334,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 /* Borders reserve vertical space outside the scrollport, including at the tail. */
 .msg .mb { padding: 0 12px; border-block: 8px solid transparent; }
-.msg[data-role="user"] {
-  --bubble: var(--bubble-user); margin-left: auto; margin-right: 0;
-}
-.msg[data-role="command"] {
-  --bubble: var(--bubble-user); margin-left: auto; margin-right: 0;
+.msg:is([data-role="user"], [data-role="command"], [data-role="answer"]) {
+  --bubble: var(--bubble-user);
+  --bubble-inline-code: color-mix(in srgb, var(--bubble), var(--text) 8%);
+  --bubble-link: var(--bubble-user-link);
+  margin-left: auto; margin-right: 0;
 }
 .native-message-state {
   display: block; padding: 0 10px 8px; color: var(--muted);
@@ -1383,10 +1385,6 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .msg[data-role="question"] {
   --bubble: var(--bubble-question); width: min(520px, 100%); border-color: #e5c96b;
 }
-.msg[data-role="answer"] {
-  --bubble: var(--bubble-user); margin-left: auto; margin-right: 0;
-}
-
 /* 已完成回合的外层过程合集；展开后内部仍沿用原消息与工具折叠样式。 */
 .msg.turn-process {
   width: 100%; margin-block: -1px 8px; border: 0; border-radius: 0;
@@ -1752,11 +1750,11 @@ pre.event-detail-body { white-space: pre-wrap; overflow-wrap: anywhere; font-fam
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .mb code:not(pre code) {
-  background: var(--panel-2); padding: 1px 5px; border-radius: 4px;
+  background: var(--bubble-inline-code, var(--panel-2)); padding: 1px 5px; border-radius: 4px;
   font: 12px "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 .mb p { margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
-.mb a:not(.media-link) { color: var(--accent); text-underline-offset: 2px; }
+.mb a:not(.media-link) { color: var(--bubble-link, var(--accent)); text-underline-offset: 2px; }
 .mb h3 { font-size: 14px; margin: 11px 0 4px; font-weight: 650; }
 .mb h3.h1 { font-size: 16px; }
 .mb h3.h2 { font-size: 15px; }

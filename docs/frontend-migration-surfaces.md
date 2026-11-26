@@ -404,6 +404,8 @@ Agy 设置通知默认收为旧值 → 新值的一行摘要，完整说明按�
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
+DELTA（BUG-20261126-063413-4c1ccb）：用户输入、命令与回答的绿色气泡在明暗主题中各用同色系行内代码衬底，文件路径和普通链接使用对应主题的链接颜色。代码围栏沿用面板底色。宽窄屏、节点／Hub 的普通对话与 SDK 历史见[气泡间距](../tests/bubble_spacing_browser.py)。
+
 DELTA（BUG-20261020-081844-534008）：正文增量更新保留同位置、同内容及语言的代码围栏
 节点、高亮、语言标签和滚动位置；后续文字增长不再使已完成代码反复退回纯文本。
 代码内容或语言改变时重新渲染。沿用按内容收缩的气泡宽度，不固定生成中的气泡大小。
