@@ -76,9 +76,13 @@ def check(page, base, fixture, out, hub_mode):
     (fixture.root / 'settings-fail').unlink()
     close_more(page)
 
-    # Rename via the real composer dialog, then reload the native read model.
-    send(page, '/rename')
+    # Open the same rename form from the heading and from the composer.
     dialog = page.get_by_role('dialog', name='重命名会话', exact=True)
+    page.get_by_role('button', name='重命名会话', exact=True).click()
+    expect(dialog).to_be_visible()
+    capture(page, out, 'rename-title-wide-light')
+    dialog.get_by_role('button', name='取消', exact=True).click()
+    send(page, '/rename')
     dialog.get_by_role('textbox', name='会话名称').fill('Droid actions renamed')
     capture(page, out, 'rename-wide-light')
     with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/rename')) as renamed:

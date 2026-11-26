@@ -1116,11 +1116,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   position: relative; flex: none; width: 30px; height: 30px; display: grid; place-items: center;
   overflow: visible;
 }
-.dtitle h2 > span, .session-view-switch > span {
+.dtitle h2 > span {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .session-view-switch {
-  display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%;
+  flex: none;
   margin: -2px 0; padding: 2px 4px; border: 0; border-radius: 5px;
   background: transparent; color: inherit; font: inherit; font-weight: inherit;
   line-height: 1.35; text-align: left; cursor: pointer;
@@ -1134,9 +1134,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .session-title-edit:hover { background: var(--hover); }
 .session-title-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dtitle h2 > .session-view-switch:has(> i:only-child) { flex: none; }
-.session-view-switch > span { min-width: 0; overflow-wrap: anywhere; }
-.session-view-switch > i { flex: none; color: var(--muted); font-style: normal; font-size: 13px; }
+.session-view-switch > i { color: var(--muted); font-style: normal; font-size: 13px; }
 .session-view-menu {
   position: fixed; z-index: 12; top: auto; left: auto;
   display: grid; gap: 3px; width: min(520px, calc(100vw / var(--interface-scale, 1) - 40px));
@@ -2261,21 +2259,18 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     font: inherit; font-size: 20px; cursor: pointer;
   }
   .mobile-back:hover { background: var(--hover); }
-  .dtitle h2, .dtitle h2.has-session-views {
-    /* 运行点伸出图标上沿；文字由内部 span / switch 单独省略。 */
+  .dtitle h2 {
+    /* 运行点伸出图标上沿；标题文字单独省略。 */
     display: flex; align-items: center; gap: 6px; overflow: visible;
     margin: 0; font-size: 14.5px; line-height: 1.35;
     overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap;
   }
-  .dtitle h2 > .ico, .dtitle h2.has-session-views > .ico {
+  .dtitle h2 > .ico {
     flex: none; margin-top: 0;
   }
-  .dtitle h2 > span, .session-view-switch > span {
+  .dtitle h2 > span {
     display: block; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
-  }
-  .session-view-switch {
-    flex: 1 1 auto; align-items: center; overflow: hidden; white-space: nowrap;
   }
   .session-view-menu, .fork-chain-menu {
     width: calc(100vw / var(--interface-scale, 1) - 16px);

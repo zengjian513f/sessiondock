@@ -175,28 +175,46 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     context.close()
 
 
-def exercise_selector(browser, base, screenshots, label):
-    context = browser.new_context(viewport={'width':390, 'height':900}, color_scheme='dark')
+def exercise_selector(browser, base, width, theme, screenshots, label):
+    context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
     page = context.new_page()
     page.goto(base, wait_until='domcontentloaded')
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
-    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_have_count(0)
-    start_sdk(page)
-    page.get_by_role('button', name='重命名会话', exact=True).click()
+    title = page.locator('#a-session-title')
+    trigger = page.get_by_role('button', name='重命名会话', exact=True)
+    arrow = page.get_by_role('button', name='切换主会话/子代理', exact=True)
     dialog = page.get_by_role('dialog', name='重命名会话', exact=True)
-    expect(dialog).to_be_visible()
-    dialog.get_by_role('button', name='取消', exact=True).click()
-    page.locator('#a-view-switch').click()
     menu = page.locator('#session-view-menu')
+    expect(trigger).to_have_count(0)
+    title.click()
+    expect(menu).to_be_hidden()
+    expect(dialog).to_be_hidden()
+    start_sdk(page)
+    expect(trigger).to_be_enabled()
+    trigger.press('Enter')
+    expect(dialog).to_be_visible()
+    expect(menu).to_be_hidden()
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{label}-title-dialog.png'), full_page=True)
+    new_title = '主会话标题 · Renamed with subagents'
+    dialog.get_by_role('textbox', name='会话名称').fill(new_title)
+    dialog.get_by_role('button', name='保存', exact=True).click()
+    expect(trigger).to_have_text(new_title)
+    expect(trigger).to_be_enabled()
+    arrow.press('Enter')
     expect(menu).to_be_visible()
+    expect(dialog).to_be_hidden()
     if screenshots:
         page.screenshot(path=str(screenshots / (label+'-title-agent-menu.png')), full_page=True)
     menu.locator(f'[data-agent="{CHILD}"]').click()
     expect(page.locator('.sdk-history')).to_contain_text('Child history sentinel')
-    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_have_count(0)
-    page.locator('#a-view-switch').click()
+    expect(trigger).to_have_count(0)
+    title.click()
+    expect(menu).to_be_hidden()
+    expect(dialog).to_be_hidden()
+    arrow.click()
     menu.locator('[data-agent=""]').click()
-    expect(page.get_by_role('button', name='重命名会话', exact=True)).to_be_visible()
+    expect(trigger).to_have_text(new_title)
     context.close()
 
 
@@ -213,19 +231,21 @@ def main():
         try:
             for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'),
                                        ('node', 1280, 'dark'), ('node', 390, 'light'), ('hub', 1280, 'light'),
-                                       ('selector-node',390,'dark'), ('selector-hub',390,'dark')]:
+                                       ('selector-node',1280,'light'), ('selector-node',390,'dark'),
+                                       ('selector-hub',1280,'dark'), ('selector-hub',390,'light')]:
                 root = Path(temporary) / f'{mode}-{width}-{theme}'
                 root.mkdir()
                 corpus = build(root)
                 if mode.startswith('selector'): add_children(corpus)
                 port = free_port()
+                label = f'{mode}-{width}-{theme}'
                 env = environment(root, args.binary)
                 if mode.endswith('hub'):
                     env.update(node_env(root, port, '127.0.0.0/8'))
                 with RenameServer(root / 'app.sock', corpus.paths['sdk'], root / 'session_index.jsonl') as fake:
                     with server(corpus, args.binary, root / 'app.sock', env) as base:
                         if mode.endswith('node'):
-                            if mode.startswith('selector'): exercise_selector(browser, base, args.screenshots, mode)
+                            if mode.startswith('selector'): exercise_selector(browser, base, width, theme, args.screenshots, label)
                             else: exercise(browser, base, corpus, fake, width, theme, args.screenshots)
                         else:
                             hub_root = root / 'hub'
@@ -234,7 +254,7 @@ def main():
                                       hub_root, [SimpleNamespace(name='SdkNode', token=TOKEN, port=port)])
                             hub.start()
                             try:
-                                if mode.startswith('selector'): exercise_selector(browser, f'http://127.0.0.1:{hub.port}', args.screenshots, mode)
+                                if mode.startswith('selector'): exercise_selector(browser, f'http://127.0.0.1:{hub.port}', width, theme, args.screenshots, label)
                                 else: exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, width, theme, args.screenshots)
                             finally:
                                 hub.stop()

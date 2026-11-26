@@ -41,7 +41,6 @@ const SdkUI = {
     let title = heading?.querySelector('#a-session-title');
     if (!title) return;
     const editable = !!this.titleRenameView(heading);
-    const switcher = heading.querySelector('#a-view-switch');
     if (editable !== (title.tagName === 'BUTTON')) {
       const next = document.createElement(editable ? 'button' : 'span');
       next.id = title.id;
@@ -56,9 +55,6 @@ const SdkUI = {
       title.replaceWith(next);
       title = next;
     }
-    // Keep the agent selector separate from the editable title: no nested buttons.
-    if (switcher && editable && switcher.contains(title)) switcher.before(title);
-    if (switcher && !editable && !switcher.contains(title)) switcher.prepend(title);
     if (editable) title.disabled = !!this.titleRenamePending;
   },
   async renameTitle(heading) {

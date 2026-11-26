@@ -3,8 +3,8 @@
 
 Isolated Rust server, synthetic Claude session with three subagents, desktop and 390 px.
 ``agent_items[].active`` is what the backend reads off the sidecar transcripts (an open last
-turn with no stop notice in the owner's file): the worker's turn is open, the others ended. Only the
-owner's liveness is page state (``S.live``; a synthetic corpus has no CLI process). The worker
+turn with no stop notice in the owner's file): the worker's turn is open, the others ended. The
+owner's liveness comes from a synthetic ``/api/live`` response. The worker
 finishing and resuming are edits to its transcript that reach the menu through a list refresh.
 """
 from __future__ import annotations
@@ -130,10 +130,15 @@ def reload_rows(page, predicate):
 
 
 def check_page(page, uid, data, screenshot=None):
+    owner_live = False
+    page.route('**/api/live*', lambda route: route.fulfill(json={'uids': [uid] if owner_live else []}))
     page.evaluate("uid => openSession(uid)", uid)
     page.locator("#a-view-switch").wait_for()
     page.wait_for_function('document.querySelector("#msgs .msg")')
     page.evaluate(STICKY_TOOLBAR)
+    page.locator('#a-session-title').click()
+    expect(page.locator('#session-view-menu')).to_be_hidden()
+    expect(page.get_by_role('dialog', name='重命名会话', exact=True)).to_be_hidden()
 
     # The worker's turn is open but the owner is not live: no dot and pure end-time order.
     menu = open_menu(page)
@@ -148,7 +153,8 @@ def check_page(page, uid, data, screenshot=None):
     # Owner live and worker active: the running one leads with a dot and no end time; the head is
     # not rebuilt for that.
     probe = page.evaluate('document.querySelector(".dhead").__probe = Math.random()')
-    page.evaluate("uid => { S.live.add(uid); paintLive(); }", uid)
+    owner_live = True
+    page.evaluate("pollLive(true)")
     menu = open_menu(page)
     assert page.evaluate('document.querySelector(".dhead").__probe') == probe
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu

@@ -88,7 +88,7 @@ HEAD_STATE_JS = f"""() => {{
   const h2 = document.querySelector('.dhead h2'), brief = document.querySelector('.dbrief');
   const actions = document.querySelector('.dhead-actions'), more = document.querySelector('#a-more');
   const last = brief && !brief.hidden ? brief : h2;
-  const text = h2.querySelector('.session-view-switch > span, :scope > span');
+  const text = h2.querySelector('#a-session-title');
   return {{
     globals: [...actions.querySelectorAll('[id^="a-global-"]')]
       .sort((a, b) => a.dataset.order - b.dataset.order).map(id),
@@ -194,8 +194,8 @@ def check_head(page, width, tier, tiers, key, meta_order):
     assert state["more"] == remaining, (where, state)
     assert ("a-more" in state["inline"]) == remaining, (where, state)
     assert state["height"] <= 46 and not state["overflow"], (where, state)
-    if tier == "narrow":
-        assert not state["title_clipped"], (where, "a narrow title never yields to metadata", state)
+    if tier == "narrow" and state["title_clipped"]:
+        assert not placed, (where, "a narrow title never yields to foldable actions or metadata", state)
     # Keep every action and metadata item reachable, ordered and unclipped.
     # The framework migration does not require the same pixel packing threshold.
     n = len(placed)

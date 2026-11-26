@@ -155,7 +155,7 @@ def check_header_metadata_refresh(page, corpus, base):
             page.locator('#a-view-switch').click()  # legacy intentionally remounts
         child.click()
         expect(page.locator('#msgs')).to_contain_text('Claude agent answer')
-        expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child one')
+        expect(page.locator('#a-session-title')).to_have_text('Refreshed Claude child one')
         expect(page.locator('#session-view-menu')).to_be_hidden()
         button.dispose()
         header.dispose()
@@ -169,7 +169,7 @@ def check_header_metadata_refresh(page, corpus, base):
         header, button = page.locator('#detail > .dhead').element_handle(), main.element_handle()
         sidecar.write_text(json.dumps({'description': 'Refreshed Claude child two', 'agentType': 'reviewer'}))
         refresh_catalog(page)
-        expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child two')
+        expect(page.locator('#a-session-title')).to_have_text('Refreshed Claude child two')
         expect(page.locator(child_selector + ' b')).to_have_text('Refreshed Claude child two')
         assert_same_focused_header(page, header, button, main_selector)
         if not main.is_visible():

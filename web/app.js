@@ -7709,17 +7709,18 @@ function head(m, total) {
   const canToggleRun = !m.agent_id
     || (SdkView.available(m.uid, m.agent_id) && !SdkView.historyOnlyReason(m.uid, m.agent_id));
   const displayTitle = m.title || (m.source === 'kiro' ? '新建 Kiro 会话' : '');
-  const titleView = hasAgents ? `
+  const viewSwitch = hasAgents ? `
     <button class="session-view-switch" id="a-view-switch" type="button"
-      title="切换主会话/子代理" aria-label="切换主会话/子代理" aria-expanded="false">
-      <span id="a-session-title">${esc(displayTitle)}</span><i>⌄</i>
-    </button>` : `<span id="a-session-title">${esc(displayTitle)}</span>`;
+      title="切换主会话/子代理" aria-label="切换主会话/子代理"
+      aria-haspopup="menu" aria-controls="session-view-menu" aria-expanded="false">
+      <i aria-hidden="true">⌄</i>
+    </button>` : '';
   const menuView = hasAgents ? `
     <div class="session-view-menu" id="session-view-menu" hidden role="menu">${sessionViewRows(m)}</div>` : '';
   h.innerHTML = `
     <div class="dtitle">
       <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
-      <h2 class="${hasAgents ? 'has-session-views' : ''}">${titleIcon}${titleView}</h2>
+      <h2>${titleIcon}<span id="a-session-title">${esc(displayTitle)}</span>${viewSwitch}</h2>
       ${menuView}
       <div class="dhead-actions" aria-label="会话操作">
         ${consoleButtonMarkup()}
@@ -7791,21 +7792,21 @@ function head(m, total) {
     }
     if (SessionContentView.kind !== 'sdk') settle(boxes[0]);
   };
-  const viewSwitch = h.querySelector('#a-view-switch');
+  const viewButton = h.querySelector('#a-view-switch');
   const viewMenu = h.querySelector('#session-view-menu');
-  if (viewSwitch && viewMenu) {
+  if (viewButton && viewMenu) {
     const close = () => {
       viewMenu.hidden = true;
-      viewSwitch.setAttribute('aria-expanded', 'false');
+      viewButton.setAttribute('aria-expanded', 'false');
     };
-    viewSwitch.onclick = e => {
+    viewButton.onclick = e => {
       e.stopPropagation();
       // 起止时间和运行点按打开时的列表数据重画；列表刷新不重建标题栏，
       // 否则正在看的菜单会被换掉。
       if (viewMenu.hidden) viewMenu.innerHTML = sessionViewRows(m);
       viewMenu.hidden = !viewMenu.hidden;
-      viewSwitch.setAttribute('aria-expanded', String(!viewMenu.hidden));
-      if (!viewMenu.hidden) placeDropdown(viewMenu, viewSwitch);
+      viewButton.setAttribute('aria-expanded', String(!viewMenu.hidden));
+      if (!viewMenu.hidden) placeDropdown(viewMenu, viewButton);
       if (!viewMenu.hidden) setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
     };
     viewMenu.onclick = e => {
