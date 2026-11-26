@@ -1,0 +1,15 @@
+[Unit]
+Description=Log public HTTPS TCP retransmissions for SessionDock diagnostics
+After=nginx.service
+
+[Service]
+# The journal adds wall-clock time to the kernel timestamps printed by perf.
+ExecStart=/usr/bin/perf trace --all-cpus --time --no-syscalls --libtraceevent_print -e tcp:tcp_retransmit_skb --filter "sport == 443" -e tcp:tcp_retransmit_synack --filter "sport == 443"
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
