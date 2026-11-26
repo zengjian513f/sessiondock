@@ -40,6 +40,7 @@ order; `--jobs 1` runs everything serially in that order.
 [readonly_quota_browser.py](../tests/readonly_quota_browser.py) covers missing/unknown/known model quota groups, compact labels, delayed history, warm re-entry and narrow scrolling for Droid/Agy/Codex on node/Hub.
 [external_quota_browser.py](../tests/external_quota_browser.py) covers external Codex account refresh and shared snapshots on node/Hub.
 [codex_quota_order_browser.py](../tests/codex_quota_order_browser.py) covers concurrent Codex quota notification order, shared tabs, confirming reads, failure recovery and legitimate decreases/resets on node/Hub.
+[codex_reset_picker_browser.py](../tests/codex_reset_picker_browser.py) opens the native Codex reset-card picker during live context and quota updates, then checks card changes and redemption on node/Hub in wide, narrow, light and dark views.
 
 [quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
 Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
