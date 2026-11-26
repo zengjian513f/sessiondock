@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -15,6 +16,75 @@ from claude_sdk_fixtures import ClaudeFixture
 from history_fixtures import BINARY
 from hub_fixtures import FakeNode, Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
+
+
+def open_project_frame(page, base, project_url):
+    page.route(base + '/embed-fixture', lambda route: route.fulfill(
+        content_type='text/html',
+        body='<style>body{margin:0} iframe{width:100%;height:100dvh;border:0}</style>'
+             f'<iframe title="project" src="{escape(project_url, quote=True)}"></iframe>'))
+    page.goto(base + '/embed-fixture')
+    return page.frame_locator('iframe')
+
+
+def exercise_link_recovery(browser, base, project, theme, screenshots):
+    missing = 'claude:00000000-0000-4000-8000-000000000000'
+    project_url = base + '/?' + urlencode({'embedded_project': str(project), 'sid': missing})
+    page = browser.new_page(viewport={'width': 390, 'height': 760}, color_scheme=theme,
+                            service_workers='block')
+    frame = open_project_frame(page, base, project_url)
+    toggle = frame.get_by_role('button', name='会话列表', exact=True)
+    notice = frame.locator('#session-link-notice')
+    title = frame.locator('#a-session-title')
+    expect(notice).to_contain_text('找不到此会话')
+    expect(toggle).to_be_visible()
+    expect(frame.locator('#left')).to_be_hidden()
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'390-{theme}-missing-link.png'))
+    toggle.click()
+    row = frame.locator('#side .item').filter(has_text='earlier synthetic Claude prompt')
+    expect(row).to_be_visible()
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'390-{theme}-missing-link-list.png'))
+    row.click()
+    expect(title).to_have_text('earlier synthetic Claude prompt')
+    expect(notice).to_be_hidden()
+    frame.locator('html').evaluate('() => history.back()')
+    expect(notice).to_contain_text('找不到此会话')
+    expect(toggle).to_be_visible()
+    frame.locator('html').evaluate('() => history.forward()')
+    expect(title).to_have_text('earlier synthetic Claude prompt')
+    expect(notice).to_be_hidden()
+    frame.locator('html').evaluate('() => history.back()')
+    expect(notice).to_contain_text('找不到此会话')
+    toggle.click()
+    row.click()
+    expect(notice).to_be_hidden()
+    expect(frame.locator('#left')).to_be_hidden()
+    expect(title).to_have_text('earlier synthetic Claude prompt')
+    page.close()
+
+    page = browser.new_page(viewport={'width': 390, 'height': 760}, color_scheme=theme,
+                            service_workers='block')
+    catalog_available = False
+
+    def catalog(route):
+        if catalog_available:
+            route.continue_()
+        else:
+            route.fulfill(status=503)
+
+    page.route(lambda url: urlsplit(url).path == '/api/sessions', catalog)
+    frame = open_project_frame(page, base, project_url)
+    expect(frame.locator('#detail .empty')).to_have_text('从会话列表选择一个会话')
+    frame.get_by_role('button', name='会话列表', exact=True).click()
+    retry = frame.locator('#side .load-retry')
+    expect(retry).to_be_visible()
+    catalog_available = True
+    retry.click()
+    frame.locator('#side .item').filter(has_text='earlier synthetic Claude prompt').click()
+    expect(frame.locator('#a-session-title')).to_have_text('earlier synthetic Claude prompt')
+    page.close()
 
 
 def exercise(browser, base, project, width, theme, screenshots):
@@ -31,12 +101,7 @@ def exercise(browser, base, project, width, theme, screenshots):
         }));
     })()""")
     project_url = base + '/?' + urlencode({'embedded_project': str(project)})
-    page.route(base + '/embed-fixture', lambda route: route.fulfill(
-        content_type='text/html',
-        body=f'<style>body{{margin:0}} iframe{{width:100%;height:100dvh;border:0}}</style>'
-             f'<iframe title="project" src="{project_url}"></iframe>'))
-    page.goto(base + '/embed-fixture')
-    frame = page.frame_locator('iframe')
+    frame = open_project_frame(page, base, project_url)
     expect(frame.locator('html')).to_have_class('project-view')
     assert frame.locator('html').evaluate('() => window.removedWorkerScopes') == ['/']
     toggle = frame.get_by_role('button', name='会话列表', exact=True)
@@ -148,6 +213,8 @@ def main():
         stack.callback(hub.stop)
         with sync_playwright() as p:
             browser = p.chromium.launch()
+            for theme in ('dark', 'light'):
+                exercise_link_recovery(browser, f'http://127.0.0.1:{hub.port}', fixture.cwd, theme, args.screenshots)
             for width, theme in ((1100,'light'), (390,'dark'), (1100,'dark'), (390,'light')):
                 exercise(browser, f'http://127.0.0.1:{hub.port}', fixture.cwd, width, theme, args.screenshots)
             browser.close()

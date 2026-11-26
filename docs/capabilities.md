@@ -78,6 +78,7 @@ and inherits appearance and launch defaults from the full page.
 At 720 CSS pixels or below, the session list opens from the conversation
 header as a drawer. Opening or closing it preserves the active view and draft.
 Widening the frame restores the split view.
+Unavailable session links keep the list accessible so users can open another project session.
 
 ## Group cloning
 

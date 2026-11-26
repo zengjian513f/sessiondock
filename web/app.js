@@ -6169,6 +6169,7 @@ function updateSessionUrl(uid, agent, mode) {
   if (!url || mode === 'none' || url.href === location.href) return;
   const method = mode === 'replace' ? 'replaceState' : 'pushState';
   history[method](history.state, '', url);
+  if (PROJECT_VIEW.cwd) showSessionLinkNotice('');
 }
 function revealSessionInSidebar(uid, agent, catalog = null) {
   const target = sidebarRowNode(uid, agent, true);
@@ -13299,6 +13300,7 @@ async function waitForTermList() {
 }
 async function openExternalSession(spec, historyMode = 'replace') {
   if (!spec) return false;
+  if (PROJECT_VIEW.cwd) showSessionLinkNotice('');
   const sequence = ++deepLinkSequence, href = location.href, selected = S.sel;
   if (spec.startsWith('tmux:')) {
     // Launch receipts precede native history and arrive on a separate request.
@@ -13342,7 +13344,11 @@ async function openExternalSession(spec, historyMode = 'replace') {
     if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
     await openSession(route.uid, route.agent, {exact:true, historyMode, sidebarCatalog}); return true;
   }
-  if (PROJECT_VIEW.cwd || !HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
+  if (PROJECT_VIEW.cwd) {
+    showSessionLinkNotice('找不到此会话，请从会话列表选择其他会话。');
+    return true;
+  }
+  if (!HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
   let result;
   try {
     const response = await fetch(appUrl('api/sessions/resolve'), {
@@ -13376,6 +13382,7 @@ addEventListener('popstate', () => {
   const sid = new URL(location.href).searchParams.get('sid') || '';
   if (!sid) {
     ++deepLinkSequence;
+    if (PROJECT_VIEW.cwd) showSessionLinkNotice('');
     if (MOBILE.matches) showMobileList();
     else if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
   } else void openExternalSession(sid, 'none');
@@ -13384,11 +13391,14 @@ addEventListener('popstate', () => {
 // 恢复不了（列表失败、会话已不在）时退回列表，不写 mobilePage，下次刷新照旧恢复。
 if (document.body.classList.contains('mobile-detail') && !S.sel) {
   $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+  if (PROJECT_VIEW.cwd) ensureConsolePlaceholder();
 }
 function leaveBootDetail() {
   if (S.sel || !document.body.classList.contains('mobile-detail')) return;
   document.body.classList.remove('mobile-detail');
-  $('#detail').innerHTML = '<div class="empty">从左侧选择一个会话</div>';
+  const message = PROJECT_VIEW.cwd ? '从会话列表选择一个会话' : '从左侧选择一个会话';
+  $('#detail').replaceChildren(el('div', 'empty', message));
+  if (PROJECT_VIEW.cwd) ensureConsolePlaceholder();
   layoutHeader();
 }
 // An explicit link may name a just-created/restored file absent from the TTL cache.
