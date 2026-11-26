@@ -63,6 +63,11 @@ profile 覆盖 HOME 时须在对应 HOME 配置入口；`SESSIONDOCK_AGY_HOME` �
 不能代替全局规则入口。配置后以新会话验证；已有进程不保证重新加载规则。
 入口可读取只证明配置可用，实际读取哪些引用文档仍须以该会话的原生上下文或工具记录确认。
 
+Agy 会话内的委派规则由共享入口加载的 `agents/agy.md` 管理。委派须由父会话直接调用
+原生 `invoke_subagent`，多任务可分批。禁止用 `run_workflow` 或自动化启动其他主会话代跑。
+[动态工作流](https://antigravity.google/docs/dynamic-workflows) 的 `agent()` 会创建独立会话，
+即使选用同名的自定义子代理配置。SessionDock 按原生目录的父 ID 展示归属。
+
 ## 原生存储与只读镜像
 
 agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动发现它。
