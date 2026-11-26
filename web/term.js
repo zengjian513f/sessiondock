@@ -1997,11 +1997,12 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
   paintHeadDirectory();
   stickBottom($('#msgs'), true);
   watchBottom($('#msgs'));
-  $('#detail .mobile-back').onclick = showMobileList;
+  PROJECT_VIEW.bindListButton($('#detail .mobile-back'), showMobileList);
   bindConsoleButton($('#a-term'), S.sel);
   renderPendingSessionAction(info);
   bindSessionActions($('#detail .dhead'));
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
+  PROJECT_VIEW.setListOpen(false);
   showMobileDetail();
   T.uid = S.sel;
   renderComposer();

@@ -11,6 +11,22 @@
   align-items: center;
   padding-inline: 2px;
 }
-.project-view #project-view-tools strong { font-size: 12px; }
+.project-view #project-view-tools strong { font-size: 12px; flex: 1; }
 .project-view #project-view-tools .btn { min-height: 28px; }
+.project-view #project-list-close { order: 1; margin-inline-start: 4px; font-size: 17px; }
 .project-view .side-search { padding: 4px 7px; }
+
+@media (max-width: 720px) {
+  .project-view main { position: relative; }
+  .project-view body #left { display: none; }
+  .project-view body #right { display: flex; }
+  .project-view body.project-list-open #left {
+    display: flex; position: absolute; inset: 0 auto 0 0; z-index: 31;
+    width: min(360px, calc(100% - 44px)) !important;
+    border-right: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  .project-view #project-list-scrim:not([hidden]) {
+    position: absolute; inset: 0; z-index: 30;
+    background: var(--freeze-shade); cursor: pointer;
+  }
+}

@@ -1092,6 +1092,7 @@ function showMobileList() {
   layoutSessionHead();
   layoutHeader();
   syncSessionNotices();
+  PROJECT_VIEW.setListOpen(true);
 }
 
 function fmtSize(n) {
@@ -6074,7 +6075,7 @@ function ensureConsolePlaceholder(title = '控制台') {
   heading.innerHTML = `<div class="dtitle"><button class="mobile-back" type="button"
     title="返回会话列表" aria-label="返回会话列表">←</button><h2><span>${esc(title)}</span></h2>
     <div class="dhead-actions">${consoleButtonMarkup()}</div></div>`;
-  heading.querySelector('.mobile-back').onclick = showMobileList;
+  PROJECT_VIEW.bindListButton(heading.querySelector('.mobile-back'), showMobileList);
   $('#detail').prepend(heading);
   bindConsoleButton(heading.querySelector('#a-term'), S.sel, S.agent);
 }
@@ -6235,6 +6236,9 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   if (!selectedAgent) uid = followContinuedSession(uid, sidebarCatalog || S.sessions);
   if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
     uid = forkLeafUid(uid);
+  }
+  if (!follow && (historyMode === 'push' || uid !== S.sel || selectedAgent !== S.agent)) {
+    PROJECT_VIEW.setListOpen(false);
   }
   browserAuditEvent('session.opened', {agent: selectedAgent || '', cached: cache.has(viewKey(uid, selectedAgent))},
     {uid});
@@ -7518,7 +7522,8 @@ function closeDirectoryFilter(restoreFocus = false) {
 //   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'directory-filter', 'page-reload', 'transfer-tasks', 'session-cleanup', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'directory-filter', 'page-reload', 'transfer-tasks', 'session-cleanup', 'trash', 'report-bug', 'settings']
+  .filter(id => !PROJECT_VIEW.cwd || id !== 'new-session');
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -7798,7 +7803,7 @@ function head(m, total) {
       h.append(notice);
     }
   }
-  h.querySelector('.mobile-back').onclick = showMobileList;
+  PROJECT_VIEW.bindListButton(h.querySelector('.mobile-back'), showMobileList);
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
@@ -8404,7 +8409,7 @@ function showSessionLinkNotice(text, uid = '', actions = []) {
   if (!actions.length && !S.sel) {
     const heading = el('div', 'dhead');
     heading.innerHTML = '<div class="dtitle"><button class="mobile-back" type="button" title="返回会话列表" aria-label="返回会话列表">←</button><h2>会话链接</h2></div>';
-    heading.querySelector('button').onclick = showMobileList;
+    PROJECT_VIEW.bindListButton(heading.querySelector('button'), showMobileList);
     $('#detail').replaceChildren(heading);
   }
   if (!actions.length && MOBILE.matches) showMobileDetail();
@@ -12341,7 +12346,7 @@ window.addEventListener('resize', () => setSideWidth(
   parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
 MOBILE.addEventListener?.('change', e => {
   if (e.matches) {
-    const detailVisible = !!S.sel && store.get('mobilePage', 'list') === 'detail';
+    const detailVisible = !!S.sel && (PROJECT_VIEW.cwd || store.get('mobilePage', 'list') === 'detail');
     // 桌面终端跨进手机断点、而手机上次停在列表时，右栏即将被 CSS 隐藏。
     // 走与返回列表相同的暂存/停用流程，详情重新出现后由 restoreTermPane
     // 按可见尺寸激活；不能把仍活跃的终端视图留在 display:none 的祖先下面。

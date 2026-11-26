@@ -271,9 +271,10 @@
   <div id="node-notice" hidden role="status"></div>
   <div id="prog"><div class="bar"></div><span class="txt"></span></div>
   <main>
+    <div id="project-list-scrim" aria-hidden="true" hidden></div>
     <div id="left">
       <div class="side-search">
-        <div id="project-view-tools" hidden><strong>会话</strong></div>
+        <div id="project-view-tools" hidden><strong>会话</strong><button class="btn" id="project-list-close" type="button" aria-label="收起会话列表" title="收起会话列表" hidden>×</button></div>
         <div class="qbox">
           <input id="q" autocomplete="off" aria-label="搜索会话" placeholder="快速筛选… Enter 搜正文" title="无需回车：筛选标题、UUID / UID、目录、机器名、Agent 名和模型名；空格分词，双引号搜索短语；Enter 搜索对话正文">
           <div class="opts" id="search-mode" role="group" aria-label="关键词匹配方式">

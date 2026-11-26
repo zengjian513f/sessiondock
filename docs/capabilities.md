@@ -75,6 +75,9 @@ components render the matching project and its subdirectories. The existing
 launcher retains its machine, agent and model settings and uses the supplied
 path directly. The frame keeps its navigation and layout preferences separate
 and inherits appearance and launch defaults from the full page.
+At 720 CSS pixels or below, the session list opens from the conversation
+header as a drawer. Opening or closing it preserves the active view and draft.
+Widening the frame restores the split view.
 
 ## Group cloning
 
