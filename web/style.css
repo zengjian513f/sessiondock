@@ -2901,6 +2901,9 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
   box-shadow: none; overflow: visible; }
 .message-bubble { min-width: 0; overflow: hidden; border: 1px solid var(--border);
   border-color: inherit; border-radius: var(--bubble-radius); background: var(--bubble); box-shadow: var(--shadow); }
+/* Size text bubbles independently of the timestamp and actions above them. */
+.msg:not(.question, [data-role="thinking"]) > .message-bubble:has(> .mb) { width: fit-content; max-width: 100%; }
+.msg:is([data-role="user"], [data-role="command"], [data-role="answer"]) > .message-bubble { margin-inline-start: auto; }
 .message-header { display: flex; flex-wrap: wrap; align-items: center;
   gap: 2px 8px; padding: 0 2px 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .message-time { white-space: nowrap; font-variant-numeric: tabular-nums; }

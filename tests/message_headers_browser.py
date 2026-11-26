@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seven-source message dates/raw copy through SDK and conversation on node/Hub."""
+"""Message headers and bubble sizing through SDK and conversation on node/Hub."""
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,6 +21,19 @@ TEXT = ('检查 [报告](https://example.test/report?x=1&y=2#details) 与 '
         '```sh\nprintf "保留代码与链接"\n```\n\n'
         + '\n\n'.join(f'第 {i} 项：保留完整原文、换行及 Markdown 链接地址。' for i in range(18)))
 ANSWER = '已检查 [最终报告](https://example.test/result?q=中文#result)，请按原始地址打开。'
+SHORT = '继续'
+
+
+def check_short_bubble(message, *, right_aligned):
+    header = message.locator(':scope > .message-header')
+    bubble = message.locator(':scope > .message-bubble')
+    expect(header.locator('time')).to_be_visible()
+    title = header.bounding_box()
+    body = bubble.bounding_box()
+    assert body['width'] < title['width'], (body, title)
+    body_edge = body['x'] + (body['width'] if right_aligned else 0)
+    title_edge = title['x'] + (title['width'] if right_aligned else 0)
+    assert abs(body_edge - title_edge) < 1, (body, title)
 
 
 def exercise(browser, base, source, events, screenshots, mode):
@@ -36,7 +49,7 @@ def exercise(browser, base, source, events, screenshots, mode):
                    dict(role='user', text='没有原始时间的消息，不能伪造发送时间。', ts='invalid')]
         # Exercise both former divider triggers: a six-minute gap, then
         # continuous four-minute messages spanning more than twenty minutes.
-        history[2:2] = [dict(role='user', text=f'连续消息 {index + 1}', id=f'spacing-{index}',
+        history[2:2] = [dict(role='user', text=SHORT if index == 5 else f'连续消息 {index + 1}', id=f'spacing-{index}',
                             ts=(datetime.fromisoformat(ANSWER_STAMP.replace('Z', '+00:00'))
                                 + timedelta(minutes=4 * (index + 1))).isoformat())
                         for index in range(6)]
@@ -95,6 +108,10 @@ def exercise(browser, base, source, events, screenshots, mode):
             expect(missing).not_to_contain_text('时间未提供')
             expect(missing.locator('time')).not_to_have_attribute('datetime', '')
             if screenshots: page.screenshot(path=str(screenshots / f'{name}-{entry}.png'), full_page=True)
+            short = scope.locator('.msg[data-role="user"]').filter(has=page.get_by_text(SHORT, exact=True))
+            short.get_by_role('button', name='复制消息原文').hover()
+            if screenshots: page.screenshot(path=str(screenshots / f'{name}-{entry}-short.png'))
+            check_short_bubble(short, right_aligned=True)
         check(page.locator('.sdk-history'), 'sdk')
         chat = page.locator('#a-chat')
         if source not in ('kiro', 'codebuddy', 'droid'):
@@ -106,10 +123,15 @@ def exercise(browser, base, source, events, screenshots, mode):
         # later by the native replay, whose items contain no timestamp.
         user = {key: value for key, value in history[0].items() if key != 'ts'}
         answer = {key: value for key, value in history[1].items() if key != 'ts'}
+        short = {'id': 'header-short', 'role': 'user', 'text': SHORT, 'ts': STAMP}
         if source == 'codex':
             user = {'id': 'header-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': TEXT}]}
             answer = {'id': 'header-answer', 'type': 'agentMessage', 'text': ANSWER}
-        raw.update(items=[user, answer], running=True, turn={'id': 'header-turn', 'status': 'inProgress'})
+            short = {'id': 'header-short', 'type': 'userMessage', 'content': [{'type': 'text', 'text': SHORT}], 'ts': STAMP}
+        if source == 'agy':
+            short['native'] = {'step_index': 3}
+            raw['capabilities'].update(fork=True, revert=True)
+        raw.update(items=[user, answer, short], running=True, turn={'id': 'header-turn', 'status': 'inProgress'})
         events.publish()
         replay = page.locator('.sdk-live .msg').filter(has_text='已检查').first
         expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T08:03:49.000Z')
@@ -117,8 +139,15 @@ def exercise(browser, base, source, events, screenshots, mode):
         page.wait_for_timeout(3500)
         events.publish()
         expect(replay.locator('time')).to_have_attribute('datetime', '2026-11-05T08:03:49.000Z')
+        live_user = page.locator('.sdk-live .msg[data-role="user"]').filter(
+            has=page.get_by_text(SHORT, exact=True))
+        if source == 'agy':
+            expect(live_user.get_by_role('button', name='从此处之前分支')).to_be_visible()
+            expect(live_user.get_by_role('button', name='回退到此处之前')).to_be_visible()
+        live_user.get_by_role('button', name='复制消息原文').hover()
         if screenshots: page.screenshot(path=str(screenshots / f'{name}-replayed.png'), full_page=True)
-        live_text = '实时回复 [原始链接](https://example.test/live?a=1#stream)'
+        check_short_bubble(live_user, right_aligned=True)
+        live_text = '[实时回复](https://example.test/live?a=1#stream)'
         item = {'id': 'header-live', 'text': live_text,
                 **({'type': 'agentMessage'} if source == 'codex' else {'role': 'assistant'})}
         raw.update(items=[item], running=True, turn={'id': 'header-live-turn', 'status': 'inProgress'})
@@ -129,6 +158,7 @@ def exercise(browser, base, source, events, screenshots, mode):
         events.publish()
         expect(live.locator('time')).to_have_text('2026-11-05 15:57:52')
         expect(live.locator('time')).to_have_attribute('title', '后台接收时间 · 本地时间 · 2026-11-05T07:57:52Z')
+        check_short_bubble(live, right_aligned=False)
         # Real SDK items can arrive before their timestamped native record.
         # The history poll alone must fill in the date without another SDK event.
         history.append(dict(role='assistant', text=live_text, ts=STAMP, turn_id='header-live-turn',
@@ -179,7 +209,7 @@ def exercise(browser, base, source, events, screenshots, mode):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--sources', default='codex,claude,grok,agy,opencode,kiro,codebuddy')
+    parser.add_argument('--sources', default='codex,claude,grok,agy,opencode,kiro,codebuddy,droid')
     parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
