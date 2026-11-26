@@ -10,7 +10,7 @@ const CodexSdkView = {
   box: null, history: null, live: null, notice: null, input: null,
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, historyData: null,
-  limits: null, resetCards: null, redeemKeys: new Map(),
+  limits: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000, limitsRecordedAt: null, limitsFresh: false,
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
@@ -103,7 +103,7 @@ const CodexSdkView = {
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.replayOmitted = new Set(); this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
+    this.turn = null; this.replayOmitted = new Set(); this.summary = null; this.cachedUsage = null; this.limits = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = [];
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
@@ -311,7 +311,7 @@ const CodexSdkView = {
     this.limitsFresh = true;
     this.limitsObservedAt = capturedAt;
     this.limitsAccountAt = capturedAt;
-    this.resetCards = raw?.rateLimitResetCredits || null;
+    this.paintResetCards(raw?.rateLimitResetCredits);
     UsageUI.rememberCodexLimits(this.uid,raw,this.limitsObservedAt);
     this.paintGauges();
   },
@@ -401,27 +401,42 @@ const CodexSdkView = {
       creditNode.title = `金币余额（usage credits）${this.limitsRecordedAt ? `；记录于 ${UsageUI.time(this.limitsRecordedAt)}` : ''}`;
       creditNode.setAttribute('aria-label', creditNode.textContent.replace('🪙', '金币'));
     }
-    const cards = this.resetCards?.credits || [];
-    const holder = this.pane.querySelector('.sdk-reset');
-    const select = holder.querySelector('select');
-    const usable = cards.filter(row => !row.status || row.status === 'available');
-    holder.hidden = !(this.resetCards?.availableCount > 0) || (cards.length > 0 && !usable.length);
-    if (!holder.hidden) {
-      const chosen = select.value;
-      select.replaceChildren();
-      const count = this.resetCards.availableCount;
-      if (!cards.length) select.append(new Option(`重置卡 ×${count}`, ''));
-      for (const card of usable) {
-        const expires = card.expiresAt ? ` · ${new Date(card.expiresAt * 1000).toLocaleDateString(undefined, {year: '2-digit', month: 'numeric', day: 'numeric'})} 到期` : '';
-        const option = new Option(`${card.title || '限额重置卡'}${expires}`, card.id);
-        if (card.description) option.title = card.description;
-        select.append(option);
-      }
-      if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
-      select.title = `共 ${count} 张可兑换`;
-      holder.querySelector('#sdk-reset-use').textContent = `兑换 (${count})`;
-    }
     this.layoutToolbar();
+  },
+
+  paintResetCards(resetCards) {
+    const cards = resetCards?.credits || [];
+    const count = resetCards?.availableCount;
+    const holder = this.pane?.querySelector('.sdk-reset');
+    if (!holder) return;
+    const usable = cards.filter(row => !row.status || row.status === 'available');
+    const hidden = !(count > 0) || (cards.length > 0 && !usable.length);
+    if (holder.hidden !== hidden) holder.hidden = hidden;
+    if (hidden) return;
+
+    const select = holder.querySelector('select');
+    const options = usable.map(card => {
+      const expires = card.expiresAt ? ` · ${new Date(card.expiresAt * 1000).toLocaleDateString(undefined, {year: '2-digit', month: 'numeric', day: 'numeric'})} 到期` : '';
+      const option = new Option(`${card.title || '限额重置卡'}${expires}`, card.id);
+      if (card.description) option.title = card.description;
+      return option;
+    });
+    if (!cards.length) options.push(new Option(`重置卡 ×${count}`, ''));
+
+    // Replacing unchanged options makes the open native picker redraw on mobile.
+    const unchanged = options.length === select.options.length && options.every((option, index) => {
+      const current = select.options[index];
+      return current.value === option.value && current.textContent === option.textContent && current.title === option.title;
+    });
+    if (!unchanged) {
+      const chosen = select.value;
+      select.replaceChildren(...options);
+      if (options.some(option => option.value === chosen)) select.value = chosen;
+    }
+    const title = `共 ${count} 张可兑换`;
+    if (select.title !== title) select.title = title;
+    const button = holder.querySelector('#sdk-reset-use'), label = `兑换 (${count})`;
+    if (button.textContent !== label) button.textContent = label;
   },
 
   async redeem() {
