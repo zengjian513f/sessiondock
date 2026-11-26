@@ -3,6 +3,9 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
+- [ ] Orion 恢复 SSH 后补发后台任务底栏和日志查看的节点服务及前端
+  `16ad9c9c`（BUG-20261125-075551-33faa4）。本次正式发布探测 SSH 超时。
+
 - [ ] Orion 恢复 SSH 后补发前端 `62288915` 和节点服务 `0071d4e5`。前端包含 Codex 路径开头的消息排队修复
   （BUG-20261126-120840-7d7b1f）和文件夹筛选右键单选及恢复多选 `d51edf71`
   （BUG-20261126-120632-907ad1）。此前待补发功能包括 Codex 报告发送后的草稿清理
@@ -181,6 +184,11 @@
 - [ ] Droid mission 原生迁移：核实 missions/missionsV2 的 worker、handoff、云端与工作树依赖闭包，并分离 BYOK／runtime model 凭据。当前普通会话、settings 和文件回退快照可迁移；已识别 mission 指针明确提示未适配，不整目录盲拷。
 
 ## Kiro integration
+
+- [ ] 补 Kiro 会话级后台命令、输出和定时器的原生证据。现有 ACP 记录能确认子代理
+  归属，待核实已登录版本是否提供后台任务及其会话归属。见 [Kiro SDK](docs/kiro-sdk.md)。
+  `kiro_subagents_browser.py` 在改前发布和本次改动均于初始化取 UID 失败，待单独核对
+  测试的会话清单刷新。
 
 - [ ] BUG-20261108-114059-330a36 存量关系仍未恢复：Kiro
   `sess_f9ff3f5c-a5f1-4539-8f8c-d7279aa02152` 的直接发起者为 Codex
