@@ -7161,6 +7161,7 @@ function syncSessionGlobalActions(heading, list) {
       }
       proxy.title = proxy.ariaLabel = source.ariaLabel || source.title;
       proxy.disabled = source.disabled;
+      proxy.toggleAttribute('data-menu-only', source.hasAttribute('data-menu-only'));
       labelSessionAction(proxy);
     }
     if (source.hasAttribute('data-session-docked') !== enabled) {
@@ -7389,32 +7390,43 @@ function closeHeaderMenu(restoreFocus = false) {
   menu.hidden = true;
   const button = $('#header-more-btn');
   button?.setAttribute('aria-expanded', 'false');
+  layoutHeader();
   if (restoreFocus) button?.focus();
 }
 function layoutHeader() {
   const header = $('header'), filters = header?.querySelector('.header-filters');
   const more = $('#header-more'), menu = $('#header-menu');
-  if (!filters || !more || !menu) return;
+  if (!filters || !more || !menu || !menu.hidden) return;
   if (getComputedStyle(header).display === 'none') return;
   const squeezed = () => filters.scrollWidth > filters.clientWidth
     || header.scrollWidth > header.clientWidth;
   const picker = $('#node-picker');
   const canFoldNodes = !!(picker && !picker.hidden);
+  const nextActionIn = (button, container) => HEADER_ACTIONS.slice(HEADER_ACTIONS.indexOf(button.id) + 1)
+    .map(id => document.getElementById(id)).find(other => other.parentElement === container);
   const restoreButton = button => {
     button.querySelector(':scope > span.menu-label')?.remove();
     button.removeAttribute('role');
-    more.before(button);
+    button.removeAttribute('data-folded-menu-only');
+    (nextActionIn(button, more.parentElement) || more).before(button);
   };
   const foldButton = button => {
     let label = button.querySelector(':scope > span.menu-label');
     if (!label) button.appendChild(label = el('span', 'menu-label'));
     label.textContent = button.ariaLabel || button.title;
     button.setAttribute('role', 'menuitem');
-    menu.prepend(button);
+    button.toggleAttribute('data-folded-menu-only', button.hasAttribute('data-menu-only'));
+    menu.insertBefore(button, nextActionIn(button, menu) || menu.querySelector('[data-toolbar-menu]'));
   };
-  // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
+  for (const button of menu.querySelectorAll(':scope > [data-folded-menu-only]:not([data-menu-only])')) {
+    restoreButton(button);
+  }
   const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
     .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
+  for (const button of inlineButtons()) {
+    if (button.hasAttribute('data-menu-only')) foldButton(button);
+  }
+  more.hidden = !menu.children.length;
   if (MOBILE.matches && canFoldNodes) header.classList.add(HEADER_FOLD_NODES);
   if (squeezed()) {
     if (!header.classList.contains(HEADER_FOLD_LABELS)) {
@@ -13387,8 +13399,8 @@ async function cloneSessionGroup(uid, resumed = null) {
   const renderSelection = () => {
     const reason = blockedReason();
     notice.textContent = [reason, checkingDirectories ? '正在核验目标工作目录…' : directoryNotice, operationStarted && (backgroundAccepted
-      ? '关闭窗口后迁移仍会继续。可在工具栏「迁移任务」查看进度和结果。'
-      : '提交后，可在工具栏「迁移任务」查看进度和结果。')].filter(Boolean).join(' ');
+      ? '关闭窗口后迁移仍会继续。可通过「迁移任务」查看进度和结果。'
+      : '提交后，可通过「迁移任务」查看进度和结果。')].filter(Boolean).join(' ');
     notice.hidden = !notice.textContent;
     confirm.textContent = aborting ? '正在撤回…' : backgroundAccepted ? '后台迁移中' : busy && operationStarted ? '正在提交…' : uncertain ? '重试提交同一次迁移' : '迁移所选会话';
     confirm.disabled = backgroundAccepted || busy || planning || checkingDirectories || aborting || !plan || !!reason || !selectedUids.size || plannedVersion !== selectionVersion || plan?.target_node !== target.value;
@@ -13831,6 +13843,22 @@ function transferPhaseLabel(task) {
   return label;
 }
 let transferTasksLoading = false, transferTasksOpen = 0, transferTasksAt = 0;
+const TRANSFER_TASK_SHORTCUT_MS = 60 * 60 * 1000;
+let transferShortcutTimer;
+
+function syncTransferTaskShortcut(activity) {
+  clearTimeout(transferShortcutTimer);
+  const remaining = activity + TRANSFER_TASK_SHORTCUT_MS - Date.now();
+  const menuOnly = activity <= 0 || remaining <= 0;
+  const button = $('#transfer-tasks');
+  if (button.hasAttribute('data-menu-only') !== menuOnly) {
+    button.toggleAttribute('data-menu-only', menuOnly);
+    layoutHeader();
+    layoutSessionHead();
+  }
+  if (!menuOnly) transferShortcutTimer = setTimeout(() => syncTransferTaskShortcut(activity),
+    Math.min(remaining, TRANSFER_TASK_SHORTCUT_MS));
+}
 const transferControlReasons = new WeakMap();
 function paintTransferFreezeControls() {
   const mark = (control, uid) => {
@@ -13874,6 +13902,9 @@ async function refreshTransferTasks() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const {operations, recent = []} = await response.json();
     transferTasksOpen = operations.length; transferTasksAt = Date.now();
+    const activity = [...operations, ...recent].reduce((latest, task) =>
+      Math.max(latest, task.activity_ms || task.created_ms || 0), 0);
+    syncTransferTaskShortcut(activity);
     const button = $('#transfer-tasks');
     const count = button.querySelector('.transfer-task-count');
     if (count.textContent !== String(operations.length)) {

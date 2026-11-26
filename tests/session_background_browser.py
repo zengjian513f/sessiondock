@@ -88,7 +88,8 @@ def main():
         request = task['request']
         operation = request['operation_id']
         journal = hubroot/'transfers'/f'{operation}.json'
-        assert json.loads(journal.read_text())['execution_requested']
+        accepted = json.loads(journal.read_text())
+        assert accepted['execution_requested'] and accepted['activity_ms'] >= accepted['created_ms']
         repeated = page.request.post(huburl+'/api/session/transfer/start', data=request)
         assert repeated.status == 202 and repeated.json()['request'] == request
         conflict = page.request.post(huburl+'/api/session/transfer/start', data={**request, 'target_node':a.nid})
@@ -179,6 +180,10 @@ def main():
         page = context.new_page()
         page.goto(huburl,wait_until='networkidle')
         assert page.request.get(huburl+'/api/session/frozen').json()['uids'] == []
+        recent = page.request.get(huburl+'/api/session/transfers').json()['recent']
+        completed_tasks = [task for task in recent if task['request']['operation_id'] == operation]
+        assert [task['activity_ms'] for task in completed_tasks] == [saved['activity_ms']]
+        assert saved['activity_ms'] > accepted['activity_ms']
         panel = open_transfer_tasks(page)
         completed = panel.locator(f'tr[data-operation="{operation}"]')
         expect(completed).to_contain_text('已完成')

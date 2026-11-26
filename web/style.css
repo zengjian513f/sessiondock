@@ -2585,9 +2585,8 @@ header .btn[data-session-docked] { display: none; }
   .transfer-tasks-table th, .transfer-tasks-table td { padding-inline: 7px; }
 }
 .transfer-task-count { margin-left: 4px; font-size: 11px; }
-header .header-actions > #transfer-tasks { width: auto; padding-inline: 7px; gap: 4px; white-space: nowrap; }
+header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden])) { width: auto; padding-inline: 7px; gap: 4px; }
 #transfer-tasks .transfer-task-count { margin-left: 0; }
-#header-menu .transfer-task-label { display: none; }
 
 /* Node-owned session groups. */
 #view button[hidden] { display: none; }

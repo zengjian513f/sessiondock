@@ -7,7 +7,14 @@ use super::{Client, Registry, Target, client, namespace};
 use crate::transfer::TransferError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 const IDLE: Duration = Duration::from_secs(300);
 const RECENT_TASKS: usize = 20;
@@ -38,6 +45,8 @@ struct Journal {
     frozen_ready: bool,
     #[serde(default)]
     created_ms: u64,
+    #[serde(default)]
+    activity_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     move_seq: Option<u64>,
     request: Request,
@@ -55,6 +64,30 @@ struct Journal {
     error_code: Option<String>,
     #[serde(default)]
     transport: Option<transport::Report>,
+}
+
+impl Journal {
+    fn read(path: &Path) -> Result<Self, TransferError> {
+        let mut journal: Self = serde_json::from_slice(&fs::read(path)?)?;
+        if journal.activity_ms == 0 {
+            journal.activity_ms = fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(journal.created_ms, |age| age.as_millis() as u64);
+        }
+        Ok(journal)
+    }
+
+    fn activity_changed(&self, previous: &Self) -> bool {
+        self.phase != previous.phase
+            || self.execution_requested != previous.execution_requested
+            || self.cancel_requested != previous.cancel_requested
+            || self.frozen_ready != previous.frozen_ready
+            || self.bytes_sent != previous.bytes_sent
+            || self.bytes_total != previous.bytes_total
+            || self.error_code != previous.error_code
+    }
 }
 
 #[derive(Default)]
@@ -91,9 +124,10 @@ impl TaskIndex {
             .as_ref()
             .and_then(|result| result["target_uid"].as_str());
         self.recent.insert(
-            (journal.created_ms, id),
+            (journal.activity_ms, id),
             json!({"request":journal.request,"phase":journal.phase,"title":title,
-                "created_ms":journal.created_ms,"error":journal.error,"code":journal.error_code,
+                "created_ms":journal.created_ms,"activity_ms":journal.activity_ms,
+                "error":journal.error,"code":journal.error_code,
                 "target_uid":target_uid}),
         );
         if self.recent.len() > RECENT_TASKS {
@@ -134,10 +168,7 @@ impl Transfers {
             if path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
-            let mut journal: Journal = match fs::read(&path).and_then(|raw| {
-                serde_json::from_slice(&raw)
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            }) {
+            let mut journal = match Journal::read(&path) {
                 Ok(journal) => journal,
                 Err(error) => {
                     // A damaged transfer must not prevent the Hub from serving
@@ -236,7 +267,7 @@ impl Transfers {
         // A cancelled save may still be running in the blocking pool. Mutating
         // callers must observe it before deriving their next journal state.
         let _guard = self.saves.acquire(vec![id.to_owned()]).await;
-        Ok(serde_json::from_slice(&fs::read(self.path(id)?)?)?)
+        Journal::read(&self.path(id)?)
     }
     async fn save(&self, journal: &Journal) -> Result<(), TransferError> {
         let path = self.path(&journal.request.operation_id)?;
@@ -258,6 +289,17 @@ impl Transfers {
             .get(&journal.request.operation_id)
         {
             journal.cancel_requested |= previous.cancel_requested;
+            journal.activity_ms = if journal.activity_changed(previous) {
+                crate::session_links::now_ms()
+            } else {
+                previous.activity_ms
+            };
+        } else if matches!(journal.phase.as_str(), "complete" | "aborted") && path.exists() {
+            // Repeated saves of a finished task (such as link hydration) keep
+            // its completion time and replace the same recent-list entry.
+            journal.activity_ms = Journal::read(&path)?.activity_ms;
+        } else if journal.activity_ms == 0 {
+            journal.activity_ms = crate::session_links::now_ms();
         }
         tokio::task::spawn_blocking(move || {
             let _save_guard = save_guard;
@@ -447,7 +489,15 @@ impl Transfers {
     /// reopening completed journals or waiting for the operation's mutation gate.
     pub fn tasks(&self) -> Value {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        let operations: Vec<_> = tasks.unfinished.values().map(Self::public).collect();
+        let operations: Vec<_> = tasks
+            .unfinished
+            .values()
+            .map(|journal| {
+                let mut task = Self::public(journal);
+                task["activity_ms"] = journal.activity_ms.into();
+                task
+            })
+            .collect();
         let recent: Vec<_> = tasks.recent.values().rev().collect();
         json!({"operations":operations,"recent":recent})
     }
@@ -898,6 +948,7 @@ impl Transfers {
                 cancel_requested: false,
                 frozen_ready: false,
                 created_ms: crate::session_links::now_ms(),
+                activity_ms: 0,
                 move_seq: None,
                 request,
                 phase: "planned".into(),
@@ -1075,6 +1126,7 @@ impl Transfers {
                 cancel_requested: false,
                 frozen_ready: false,
                 created_ms: crate::session_links::now_ms(),
+                activity_ms: 0,
                 move_seq: None,
                 request: request.clone(),
                 phase: "planned".into(),
