@@ -77,6 +77,15 @@ struct Data {
 }
 
 impl Data {
+    fn foreground_request(&self) -> Option<&str> {
+        self.active.as_deref().map(|active| {
+            self.steers
+                .iter()
+                .rfind(|steer| steer.fifo || steer.after_cancel)
+                .map_or(active, |steer| steer.id.as_str())
+        })
+    }
+
     fn consumed(&self, request: &str) -> bool {
         self.items.iter().any(|item| {
             item["role"] == "user" && item["request_id"] == request && item["native_echo"] == true
@@ -113,6 +122,8 @@ struct Steer {
     received_at: Option<String>,
     #[serde(default)]
     fifo: bool,
+    #[serde(default)]
+    after_cancel: bool,
 }
 
 impl Steer {
@@ -467,6 +478,7 @@ impl Bridge {
                     text: content,
                     received_at: Some(crate::sdk_message_time::now()),
                     fifo,
+                    after_cancel: false,
                 };
                 let (sender, receiver) = oneshot::channel();
                 live.commands
@@ -488,7 +500,7 @@ impl Bridge {
                 let (sender, receiver) = oneshot::channel();
                 {
                     let data = live.data.lock().unwrap();
-                    let request = data.active.as_deref().or_else(|| {
+                    let request = data.foreground_request().or_else(|| {
                         data.items.iter().find(|item| {
                             item["role"] == "user" && item["status"] == "queued" && !is_control_input(item)
                         }).and_then(|item| item["request_id"].as_str())
@@ -801,7 +813,7 @@ impl Live {
             "progress":data.active.as_ref().map(|id|json!({"request_id":id})),
             "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
             "compact_available":data.runtime.is_some(),
-            "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling,"cancel_error":data.cancel_error,
+            "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling && !data.foreground_idle,"cancel_error":data.cancel_error,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"compact":data.compact,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
@@ -962,7 +974,7 @@ async fn actor(
                                     runtime.transcript.refresh(&process,&live,&turn).await;
                                     let value=&event["result"];
                                     let status=value["status"].as_str().unwrap_or("INVALID");
-                                    let evidence=transcript::conflicting_result(&process,&live,&turn,value).await;
+                                    let evidence=transcript::conflicting_result(&process,&live,&turn.id,value).await;
                                     let conflict=evidence["conflict"]==true;
                                     let historical_error=evidence["historical_error"]==true;
                                     let retried_error=evidence["retried_error"]==true;
@@ -1368,8 +1380,9 @@ async fn execute(
     // Preserve EOF completion only for bindings created before persistent runtimes.
     if !turn.persistent { native.close_input().await?; }
     let mut result = None;
-    let mut interrupted = native.cancelled(&turn.id);
-    if interrupted {
+    let mut foreground = live.data.lock().unwrap().foreground_request().unwrap_or(&turn.id).to_owned();
+    let mut cancelled = native.cancelled_request(&turn.id, &foreground);
+    if cancelled.as_deref() == Some(&foreground) {
         let mut data = live.data.lock().unwrap();
         data.cancelling = true;
         live.publish(&mut data);
@@ -1380,22 +1393,22 @@ async fn execute(
         // can acknowledge CancelCascadeInvocation even in that gap.
         let deferred_ready = {
             let data = live.data.lock().unwrap();
-            data.cancel_pending && data.consumed(&turn.id)
+            data.cancel_pending && data.consumed(&foreground)
         };
         if interrupt_reply.is_some() || deferred_ready {
-            let answer = native.interrupt(&turn.id).await;
+            let answer = native.interrupt(&turn.id, &foreground).await;
             log_turn("info","agy.sdk.interrupt",live,turn,json!({
                 "native_pid":native.pid(),"method":"CancelCascadeInvocation","kill_background_tasks":false,"sent":answer.is_ok(),
-                "stdout_offset":native.stdout_offset}));
-            interrupted = answer.is_ok();
+                "interrupt_request_id":foreground,"stdout_offset":native.stdout_offset}));
             {
                 let mut data = live.data.lock().unwrap();
                 data.cancel_pending = false;
                 data.cancel_error = answer.as_ref().err().cloned();
-                if interrupted {
+                if answer.is_ok() {
+                    cancelled = Some(foreground.clone());
                     data.cancelling = true;
                     data.foreground_idle = false;
-                    data.diagnostics.push_str("\n原生已接受当前回合取消；子代理和后台任务继续运行。Agy headless 的最终回执可能等待这些任务结束；等待期间不会发送终止信号。\n");
+                    data.diagnostics.push_str("\n原生已接受当前前台任务的取消请求。子代理和后台任务继续运行，前台空闲后可继续发送。\n");
                 }
                 live.publish(&mut data);
             }
@@ -1412,14 +1425,16 @@ async fn execute(
             _=live.stop.cancelled()=>{ native.terminate().await; return Err("agy_sdk_stopped".into()); }
             command=receiver.recv()=>match command {
                 Some(Command::Turn(turn))=>pending.push_back(turn),
-                Some(Command::Steer(steer,launch,reply))=>{
+                Some(Command::Steer(mut steer,launch,reply))=>{
                     if let Some(existing)=live.data.lock().unwrap().steer_outcomes.get(&steer.id).cloned() {
                         let _=reply.send(existing);
                         continue;
                     }
                     if let Some(launch)=launch {
-                        let ready=live.data.lock().unwrap().foreground_idle
-                            && launch==LaunchSettings::for_turn(turn) && !interrupted;
+                        let ready={
+                            let data=live.data.lock().unwrap();
+                            data.foreground_idle && !data.cancel_pending && launch==LaunchSettings::for_turn(turn)
+                        };
                         if !ready || !native.foreground_idle().await {
                             let mut data=live.data.lock().unwrap();
                             if data.foreground_idle {
@@ -1429,9 +1444,16 @@ async fn execute(
                             let _=reply.send(Err(FIFO_DEFERRED.into()));
                             continue;
                         }
-                    } else if interrupted {
-                        let _=reply.send(Err("agy_sdk_cancelling: 当前回合正在停止，无法发送引导。".into()));
-                        continue;
+                    } else {
+                        let (pending,cancelling,idle)={
+                            let data=live.data.lock().unwrap();
+                            (data.cancel_pending,data.cancelling,data.foreground_idle)
+                        };
+                        if pending || (cancelling && (!idle || !native.foreground_idle().await)) {
+                            let _=reply.send(Err("agy_sdk_cancelling: 当前回合正在停止，无法发送引导。".into()));
+                            continue;
+                        }
+                        steer.after_cancel=cancelling;
                     }
                     let answer=native.steer(&steer.id,&steer.text).await;
                     log_turn(if answer.is_ok() {"info"} else {"warn"},"agy.sdk.steer",live,turn,json!({
@@ -1444,6 +1466,11 @@ async fn execute(
                             let steers_snapshot={
                                 let mut data=live.data.lock().unwrap();
                                 data.foreground_idle=false;
+                                if steer.fifo || steer.after_cancel {
+                                    foreground=steer.id.clone();
+                                    data.cancelling=false;
+                                    data.cancel_error=None;
+                                }
                                 data.items.push(steer.item());
                                 data.steers.push(steer.clone());
                                 data.receipts.insert(steer.id.clone(),receipt.clone());
@@ -1471,13 +1498,13 @@ async fn execute(
                     let _=reply.send(result);
                 }
                 Some(Command::Interrupt(request,reply))=>{
-                    if request != turn.id {
+                    if request != foreground {
                         let _=reply.send(Err("agy_sdk_idle".into()));
-                    } else if interrupted {
+                    } else if cancelled.as_deref() == Some(&foreground) {
                         let _=reply.send(Ok(json!({"interrupted":true,"session_id":live.sid})));
                     } else {
                         let mut data=live.data.lock().unwrap();
-                        if data.consumed(&turn.id) {
+                        if data.consumed(&foreground) {
                             interrupt_reply=Some(reply);
                         } else {
                             if !data.cancel_pending {
@@ -1521,7 +1548,13 @@ async fn execute(
                             live.publish(&mut data);
                         }
                         let status=value["status"].as_str().unwrap_or("INVALID");
-                        let evidence=transcript::conflicting_result(process,live,turn,value).await;
+                        let interrupted=cancelled.as_deref()==Some(&foreground);
+                        // A delayed stream receipt can include output from
+                        // several foreground invocations. Read its native
+                        // evidence from the new input after a cancellation.
+                        let result_request=if cancelled.is_some() && !interrupted
+                            && live.data.lock().unwrap().consumed(&foreground) { &foreground } else { &turn.id };
+                        let evidence=transcript::conflicting_result(process,live,result_request,value).await;
                         let conflict=!interrupted && evidence["conflict"]==true;
                         let historical_error=!interrupted && evidence["historical_error"]==true;
                         let retried_error=!interrupted && evidence["retried_error"]==true;
@@ -1562,7 +1595,7 @@ async fn execute(
     }
     let status = native.finish(shutdown.clone()).await?;
     process_finished = true;
-    if interrupted {
+    if cancelled.as_deref() == Some(&foreground) {
         return Err(
             "agy_sdk_interrupted: 已通过原生接口取消当前 Agy 回合。".into(),
         );

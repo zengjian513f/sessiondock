@@ -603,10 +603,10 @@ impl Native {
         Ok(())
     }
 
-    pub fn cancelled(&self, turn: &str) -> bool {
+    pub fn cancelled_request(&self, turn: &str, foreground: &str) -> Option<String> {
         self.control
             .as_ref()
-            .is_some_and(|control| control.cancelled(turn))
+            .and_then(|control| control.cancelled_request(turn, foreground))
     }
 
     pub async fn compact(&mut self, request_id: &str) -> Result<(), String> {
@@ -691,11 +691,11 @@ impl Native {
         }
     }
 
-    pub async fn interrupt(&mut self, turn: &str) -> Result<(), String> {
+    pub async fn interrupt(&mut self, turn: &str, request: &str) -> Result<(), String> {
         let control = self.control.as_ref().ok_or(
             "agy_sdk_interrupt_unavailable: 此旧运行实例没有原生取消接口的授权；已保留运行中的任务，不会用信号或重启代替停止。"
         )?;
-        control.cancel(self.pid, &self.sid, turn).await
+        control.cancel(self.pid, &self.sid, turn, request).await
     }
 
     pub async fn steer(&mut self, request_id: &str, text: &str) -> Result<(), String> {

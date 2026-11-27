@@ -296,6 +296,119 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     return base
 
 
+def check_cancelled_fifo(page, base, fixture, uid, shots, label, restart_server):
+    if label == 'hub':
+        page.emulate_media(color_scheme='dark')
+        resize_sdk(page, uid, 390)
+    root = fixture.root
+    status = root / 'foreground-status'
+    mode = root / 'interrupt-mode'
+    consume = root / 'steer-consume-delay'
+    (root / 'native-echo-store').touch()
+    status.write_text('RUNNING')
+    mode.write_text('hold-result')
+    notice = page.locator('#sdk-composer .sdk-status')
+    stop = page.locator('#sdk-stop')
+    anchor = send(page, 'hold:cancel-fifo')['request_id']
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('request_id') == anchor and item.get('native_echo') for item in raw['items']))
+    pid = fixture.inputs('hold:cancel-fifo')[0]['pid']
+    current = 'cancel this FIFO input ' + label
+    follow_up = 'send before the headless result ' + label
+    redirected = 'send with Ctrl+Enter after stops ' + label
+    cancels_before = sum(event['kind'] == 'cancel' for event in fixture.events())
+    consume.touch()
+    status.write_text('IDLE')
+    send(page, current)
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('content') == current and item.get('fifo_control') and not item.get('native_echo')
+        for item in raw['items']))
+    status.write_text('RUNNING')
+    with page.expect_response('**/api/native-sdk/interrupt') as stopped:
+        stop.click()
+    assert stopped.value.json()['pending'], stopped.value.text()
+    expect(notice).to_have_text('等待接收输入')
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before
+    capture(page, shots, f'{label}-fifo-cancel-awaiting-input')
+    consume.unlink()
+    expect(notice).to_have_text('停止已受理', timeout=15000)
+    expect(stop).to_be_disabled()
+    capture(page, shots, f'{label}-fifo-cancel-accepted')
+
+    if restart_server:
+        base = restart_server()
+        page.goto(base, wait_until='domcontentloaded')
+    else:
+        page.reload(wait_until='domcontentloaded')
+    open_sdk(page, fixture, expect, uid=uid)
+    expect(notice).to_have_text('停止已受理')
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before + 1
+
+    # A cascade can already be idle while its executor is still cancelling.
+    status.write_text('IDLE,RUNNING,IDLE')
+    send(page, follow_up)
+    expect(page.locator('.sdk-queued').filter(has_text=follow_up)).to_be_visible()
+    expect(notice).to_have_text('停止已受理')
+    assert not fixture.steers(follow_up)
+    consume.touch()
+    status.write_text('IDLE')
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('content') == follow_up and item.get('fifo_control') for item in raw['items']))
+    status.write_text('RUNNING')
+    assert not (root / 'release/cancel-fifo').exists()
+    expect(stop).to_be_enabled()
+    consume.unlink()
+    expect(page.locator('.sdk-msgs')).to_contain_text('Agy steered: ' + follow_up)
+    capture(page, shots, f'{label}-fifo-continued-before-result')
+
+    if restart_server:
+        base = restart_server()
+        page.goto(base, wait_until='domcontentloaded')
+        open_sdk(page, fixture, expect, uid=uid)
+    wait_snapshot(page, uid, lambda raw: any(
+        item.get('content') == follow_up and item.get('native_echo') for item in raw['items']))
+    expect(stop).to_be_enabled()
+    with page.expect_response('**/api/native-sdk/interrupt') as stopped:
+        stop.click()
+    assert stopped.value.json()['interrupted'], stopped.value.text()
+    expect(notice).to_have_text('停止已受理')
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before + 2
+
+    status.write_text('IDLE')
+    expect(notice).to_have_text('等待回执', timeout=15000)
+    capture(page, shots, f'{label}-fifo-cancel-foreground-idle')
+    consume.touch()
+    box = page.locator('#sdk-input')
+    box.fill(redirected)
+    with page.expect_response('**/api/native-sdk/steer') as steered:
+        box.press('Control+Enter')
+    assert steered.value.ok, steered.value.text()
+    status.write_text('RUNNING')
+    consume.unlink()
+    expect(page.locator('.sdk-msgs')).to_contain_text('Agy steered: ' + redirected)
+    assert not (root / 'release/cancel-fifo').exists()
+
+    for text in (current, follow_up, redirected):
+        deliveries = fixture.steers(text)
+        assert len(deliveries) == 1 and deliveries[0]['pid'] == pid
+        assert not fixture.inputs(text)
+    assert len(fixture.inputs('hold:cancel-fifo')) == 1
+    assert not any(event['kind'] == 'signal' for event in fixture.events())
+    status.write_text('IDLE')
+    fixture.release('cancel-fifo')
+    snapshot = wait_snapshot(page, uid, lambda raw: not raw['running']
+                             and (raw.get('last_turn') or {}).get('id') == anchor)
+    assert snapshot['raw']['last_turn']['status'] == 'completed'
+    assert 'prior turn; current native response completed' in snapshot['raw']['diagnostics']
+    status.unlink()
+    mode.unlink()
+    (root / 'native-echo-store').unlink()
+    if label == 'hub':
+        page.emulate_media(color_scheme='light')
+        resize_sdk(page, uid, 1280)
+    return base
+
+
 def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
           restart_server=None, stream_recovery_only=False):
     errors = []
@@ -582,6 +695,7 @@ def check(page, base: str, fixture: AgyFixture, shots: Path | None, label: str,
         resize_sdk(page, uid, 1280)
         page.wait_for_function('NativeSdkView.connected')
     base = check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server)
+    base = check_cancelled_fifo(page, base, fixture, uid, shots, label, restart_server)
 
     # Uncertain transport loss before response body is retained as unknown and never replayed.
     send(page, 'hold:uncertain')

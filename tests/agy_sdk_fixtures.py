@@ -117,6 +117,7 @@ def interrupted(*_):
 signal.signal(signal.SIGINT,interrupted)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 cancelled=threading.Event()
+cancelled_with_result_pending=threading.Event()
 steered_queue=queue.Queue()
 rewound_index=None
 class ControlHandler(BaseHTTPRequestHandler):
@@ -139,8 +140,10 @@ class ControlHandler(BaseHTTPRequestHandler):
             update={'conversationId':sid if mode!='wrong-sid' else 'unrelated','contextWindowUsage':usage}
             foreground=root/'foreground-status'
             if foreground.exists():
-                status='CASCADE_RUN_STATUS_'+foreground.read_text().strip()
-                update.update(status=status,executableStatus=status,executorLoopStatus=status)
+                states=foreground.read_text().strip().split(',')
+                if len(states)==1: states*=3
+                update.update(zip(('status','executableStatus','executorLoopStatus'),
+                                  ('CASCADE_RUN_STATUS_'+state for state in states)))
             data=json.dumps({'update':update}).encode()
             framed=bytes([2 if mode=='end' else 0])+len(data).to_bytes(4,'big')+data
             self.send_response(200);self.send_header('Content-Type','application/connect+json');self.end_headers()
@@ -209,7 +212,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         record({'kind':'cancel','sid':sid,'pid':os.getpid(),'mode':mode})
         if mode == 'reject':
             self.send_response(503);self.end_headers();self.wfile.write(b'{}');return
-        if mode != 'pending': cancelled.set()
+        if mode == 'hold-result': cancelled_with_result_pending.set()
+        elif mode != 'pending': cancelled.set()
         self.send_response(200);self.end_headers();self.wfile.write(b'{}')
 control=ThreadingHTTPServer(('127.0.0.1',0),ControlHandler)
 threading.Thread(target=control.serve_forever,daemon=True).start()
@@ -440,8 +444,12 @@ for line in sys.stdin:
             step('agent_response',state='ACTIVE',text_delta='\n')
             step('agent_response',state='DONE',text_delta='\n');advance()
         steered_seen=False
-        deadline=time.monotonic()+(55 if token=='foreground' else 25)
+        deadline=time.monotonic()+(55 if token in ('foreground','cancel-fifo') else 25)
         while not (root/'release'/token).exists() and not cancelled.is_set():
+            if cancelled_with_result_pending.is_set():
+                cancelled_with_result_pending.clear()
+                native_record('ERROR_MESSAGE',stream_error,error=stream_error)
+                step('error_message',state='DONE');advance()
             if not (root/'steer-echo-delay').exists() and delayed_steps:
                 for event in delayed_steps:emit(event)
                 delayed_steps.clear()
@@ -480,6 +488,8 @@ for line in sys.stdin:
                 delayed_steps.clear()
                 result('ERROR',answer,stream_error)
                 (root/'foreground-result-written').touch()
+            elif token=='cancel-fifo':
+                result('ERROR',answer,stream_error)
             else:
                 result('SUCCESS',answer)
             continue

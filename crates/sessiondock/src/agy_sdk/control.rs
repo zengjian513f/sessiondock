@@ -16,6 +16,12 @@ pub(super) struct Control {
     temporary: bool,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CancellationReceipt {
+    turn_id: String,
+    request_id: String,
+}
+
 pub(super) fn foreground_idle(update: &serde_json::Value, sid: &str) -> bool {
     update["conversationId"] == sid
         && ["status", "executableStatus", "executorLoopStatus"]
@@ -74,11 +80,24 @@ impl Control {
         }))
     }
 
-    pub fn cancelled(&self, turn: &str) -> bool {
-        std::fs::read_to_string(self.directory.join("cancelled-turn")).is_ok_and(|id| id == turn)
+    pub fn cancelled_request(&self, turn: &str, foreground: &str) -> Option<String> {
+        let bytes = std::fs::read(self.directory.join("cancelled-turn")).ok()?;
+        if bytes == turn.as_bytes() {
+            // Older bridges recorded the stream turn and blocked any further
+            // delivery after cancelling its then-current foreground.
+            return Some(foreground.to_owned());
+        }
+        let receipt: CancellationReceipt = serde_json::from_slice(&bytes).ok()?;
+        (receipt.turn_id == turn).then_some(receipt.request_id)
     }
 
-    pub async fn cancel(&self, pid: u32, sid: &str, turn: &str) -> Result<(), String> {
+    pub async fn cancel(
+        &self,
+        pid: u32,
+        sid: &str,
+        turn: &str,
+        request: &str,
+    ) -> Result<(), String> {
         self.request(
             pid,
             "CancelCascadeInvocation",
@@ -86,10 +105,17 @@ impl Control {
             "killBackgroundTasks":false,"notifyParent":false}),
         )
         .await?;
-        tokio::fs::write(self.directory.join("cancelled-turn"), turn)
-            .await
-            .map_err(|_| "agy_sdk_interrupt_receipt: 原生已接受取消，但回执未持久化。")?;
-        Ok(())
+        let temporary = self.directory.join("cancelled-turn.tmp");
+        let receipt = CancellationReceipt {
+            turn_id: turn.to_owned(),
+            request_id: request.to_owned(),
+        };
+        let saved = async {
+            tokio::fs::write(&temporary, serde_json::to_vec(&receipt)?).await?;
+            tokio::fs::rename(&temporary, self.directory.join("cancelled-turn")).await
+        }
+        .await;
+        saved.map_err(|_| "agy_sdk_interrupt_receipt: 原生已接受取消，但回执未持久化。".into())
     }
     pub async fn rename(&self, pid: u32, sid: &str, title: &str) -> Result<(), String> {
         self.request(

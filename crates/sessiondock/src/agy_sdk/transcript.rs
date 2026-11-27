@@ -44,7 +44,7 @@ fn is_api_retry_error(text: &str) -> bool {
 pub(super) async fn conflicting_result(
     process: &ProcessConfig,
     live: &Live,
-    turn: &Turn,
+    request: &str,
     result: &Value,
 ) -> Value {
     const STREAM_ERROR: &str =
@@ -59,7 +59,7 @@ pub(super) async fn conflicting_result(
         let start = data
             .items
             .iter()
-            .position(|item| item["request_id"] == turn.id && item["role"] == "user");
+            .position(|item| item["request_id"] == request && item["role"] == "user");
         let user_index = start.and_then(|idx| data.items[idx]["native"]["step_index"].as_u64());
         let steps: std::collections::HashSet<u64> = start
             .map(|idx| {
