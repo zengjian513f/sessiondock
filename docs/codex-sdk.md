@@ -962,3 +962,9 @@ files on Vela: 30 `F_FULLFSYNC` samples per size, median 3.81 ms for 640 bytes a
 5.16 ms for 3 MiB (p95 3.98/6.05 ms). These local measurements do not justify
 weakening durable input/checkpoint ordering. Read separation, incremental storage
 and checkpoint coalescing remove the avoidable work instead.
+
+The browser opts into short disconnect recovery with `resume=1` and retains the
+last applied SSE event ID within the mounted pane. On reconnect, `cursor` can
+resume the same thread subscription and replay its missing events before a
+`resumed` acknowledgement. A fresh page, stale cursor or lost baseline receives
+the ordinary full snapshot. See the [shared replay contract](native-sdk.md).

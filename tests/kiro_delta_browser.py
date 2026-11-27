@@ -92,17 +92,33 @@ def exercise(browser, base, root, shots, label):
     expect(tool_node.locator('.tool-out')).to_contain_text('工具日志🙂起点')
     print(f'{label}: {len(output.encode())} byte tool output retained; 20 updates sent {size} bytes ({len(frames)} frames)', flush=True)
 
+    # The suspended EventSource misses an update following a >1 MB tool
+    # result. Reattach with its applied cursor and the same delta baseline.
+    mark = page.evaluate('sdkWire.length')
+    page.evaluate('''() => {const es=NativeSdkView.es; es.close(); es.dispatchEvent(new Event('error'));}''')
+    release.write_text('20')
+    page.wait_for_function('NativeSdkView.connected && NativeSdkView.items.some(i => i.text?.includes("增量20界🙂"))')
+    resume_frames = page.evaluate('n=>sdkWire.slice(n)', mark)
+    assert resume_frames and all(f['type'] != 'snapshot' for f in resume_frames), resume_frames
+    assert sum(f['bytes'] for f in resume_frames) < 10000, resume_frames
+    assert page.evaluate('NativeSdkView.es.url.includes("cursor=")')
+    assert prompt_count(root) == before + 1
     # A missing delta must recover by snapshot, never silently lose a chunk or resend input.
     full_before = page.evaluate('sdkWire.filter(f => f.type === "snapshot").length')
     page.evaluate('window.dropSdkDelta = true')
-    release.write_text('20')
-    page.wait_for_function('!window.dropSdkDelta')
     release.write_text('21')
-    page.wait_for_function('text => NativeSdkView.items.some(i => i.text?.includes(text))', arg='增量21界🙂')
-    page.wait_for_function('n => sdkWire.filter(f => f.type === "snapshot").length > n', arg=full_before)
-    assert prompt_count(root) == before + 1
+    page.wait_for_function('!window.dropSdkDelta')
     release.write_text('22')
     page.wait_for_function('text => NativeSdkView.items.some(i => i.text?.includes(text))', arg='增量22界🙂')
+    page.wait_for_function('n => sdkWire.filter(f => f.type === "snapshot").length > n', arg=full_before)
+    assert prompt_count(root) == before + 1
+    full_before = page.evaluate('sdkWire.filter(f => f.type === "snapshot").length')
+    page.evaluate("""() => {
+      NativeSdkView.sdkCursor = '00000000000000000000000000000000.1';
+      NativeSdkView.reconnect(true);
+    }""")
+    page.wait_for_function('n => sdkWire.filter(f => f.type === "snapshot").length > n', arg=full_before)
+    assert prompt_count(root) == before + 1
     page.reload(wait_until='domcontentloaded')
     page.wait_for_function('NativeSdkView.connected && NativeSdkView.running')
     page.wait_for_function('text => NativeSdkView.items.some(i => i.text?.includes(text))', arg='增量22界🙂')

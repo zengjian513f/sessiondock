@@ -520,6 +520,8 @@ fn response(result: Value) -> Value {
 
 #[derive(Deserialize)]
 pub struct Selected {
+    resume: Option<String>,
+    cursor: Option<String>,
     uid: String,
     #[serde(default)]
     agent: String,
@@ -535,6 +537,16 @@ pub async fn events(
     let source = target["source"].as_str().unwrap_or_default();
     let mut encoder = snapshot_delta::Encoder::new(query.snapshot_delta.as_deref() == Some("1"));
     let uid = target["uid"].as_str().unwrap_or(&query.uid);
+    let scope = super::sdk_resume::Scope(
+        "native_sdk",
+        uid.to_owned(),
+        query.agent.clone(),
+        query.snapshot_delta.as_deref() == Some("1"),
+    );
+    let resumable = query.resume.as_deref() == Some("1");
+    if resumable && let Some(response) = state.sdk_streams.resume(&scope, query.cursor.as_deref()) {
+        return Ok(response);
+    }
     let key = if query.agent.is_empty() {
         uid.to_owned()
     } else {
@@ -623,5 +635,9 @@ pub async fn events(
     response
         .headers_mut()
         .insert("cache-control", "no-cache".parse().unwrap());
-    Ok(response)
+    Ok(if resumable {
+        state.sdk_streams.start(scope, response)
+    } else {
+        response
+    })
 }

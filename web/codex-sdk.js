@@ -77,6 +77,7 @@ const CodexSdkView = {
   },
 
   close() {
+    this.sdkCursor = null;
     this.cancelSnapshotBuild();
     UsageUI.watchers.delete(this.pane);
     if(this.uid)UsageUI.remember(this.uid,this.agent,{usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
@@ -179,26 +180,42 @@ const CodexSdkView = {
     const uid = this.uid;
     const query = new URLSearchParams({uid, agent: this.agent || ''});
     if (this.observeOnly) query.set('observe', '1');
+    query.set('resume', '1');
+    if (this.sdkCursor) query.set('cursor', this.sdkCursor);
     const es = new EventSource(appUrl(`api/codex-sdk/events?${query}`));
     this.es = es;
+    let received = false;
+    es.addEventListener('resumed', () => {
+      if (!this.current(generation) || this.es !== es) return;
+      received = true;
+      this.setConnected(true);
+      this.paintStatus();
+    });
     es.addEventListener('sdk', event => {
       if (!this.current(generation) || this.es !== es) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
+      received = true;
       if (packet.type === 'snapshot') {
         measureBrowserWork('codex.snapshot', () => this.applySnapshot(packet.raw),
           {items: packet.raw?.items?.length || 0});
+        this.sdkCursor = event.lastEventId || null;
         return;
       }
       measureBrowserWork('codex.event', () => this.applyEvent(packet.method, packet.raw || {}),
         {method: packet.method, items: this.items.size});
+      if (this.es === es && packet.method !== 'bridge/reset') this.sdkCursor = event.lastEventId || null;
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
+      if (this.snapshotBuild) this.sdkCursor = null;
       this.cancelSnapshotBuild();
       this.setConnected(false);
       this.setNotice('载入中', 'connecting');
-      if (es.readyState === EventSource.CLOSED) {
+      if ((this.sdkCursor || query.has('cursor')) && (received || es.readyState !== EventSource.CLOSED)) {
+        es.close();
+        this.scheduleReconnect();
+      } else if (es.readyState === EventSource.CLOSED) {
         if (this.observeOnly) {
           this.es = null;
           this.readOnly = true;
@@ -713,6 +730,7 @@ const CodexSdkView = {
       return;
     }
     if (method === 'bridge/reset') {
+      this.sdkCursor = null;
       this.updateBackgroundTasks({});
       this.setConnected(false);
       queueUiChange({live: true});

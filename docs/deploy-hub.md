@@ -130,3 +130,9 @@ location <HUB_PATH>/ {
 
 同节点反代时，把外部 Host 加入 `SESSIONDOCK_PUBLIC_HOSTS`，否则 Hub
 返回 403 `local_only`。用 `sessiondock-hub --check-config` 核对。
+
+浏览器 SDK 实时流可在 Hub 前的内层 Nginx 压缩。让与
+`^/api/(?:codex-sdk|native-sdk)/events$` 匹配的独立 location 使用普通 Hub
+location 的同一组访问控制、代理头和超时，保留 `proxy_buffering off`。
+启用 `gzip on`、`gzip_types text/event-stream`、`gzip_comp_level 3`、
+`gzip_vary on` 和 `gzip_proxied any`。公网反代转发浏览器协商的编码。

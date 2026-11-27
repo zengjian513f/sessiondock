@@ -240,3 +240,10 @@ cwd/文件字段。Windows 使用 CIM 的命令行/父 PID、只读 PEB cwd 和 
 [Restart Manager 文件查询](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/nf-restartmanager-rmregisterresources)。
 浏览器验证：[公共占用准入](../tests/sdk_writers_browser.py)、
 [Kiro](../tests/kiro_sdk_browser.py)、[OpenCode](../tests/opencode_sdk_browser.py)。
+
+浏览器在 SDK 事件流上选择 `resume=1`。节点用 SSE 的 `id` 标记已发送的
+SDK 事件；同一面板断线后通过 `cursor` 提交最后应用的 ID，沿用相同快照增量基线。
+节点保留近期事件（至多 256 条、1 MiB）和短暂断线的订阅（约 45 秒）。
+能衔接时按顺序补发遗漏事件，以 `resumed` 确认完成。游标过期、服务重启、
+基线丢失或会话不匹配时重新从完整快照开始。首次打开、刷新或切换面板取得
+完整快照。缓存上限只影响重放，实时传送的大事件仍完整送达。心跳不占用重放窗口。

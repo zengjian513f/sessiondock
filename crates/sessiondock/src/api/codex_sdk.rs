@@ -105,6 +105,8 @@ pub(super) async fn thread_id(
 
 #[derive(Deserialize)]
 pub struct Target {
+    resume: Option<String>,
+    cursor: Option<String>,
     uid: String,
     #[serde(default)]
     agent: String,
@@ -229,6 +231,16 @@ pub async fn events(
 ) -> Result<Response, ApiError> {
     let sdk = service(&state)?;
     let thread = thread_id(&state, &query.uid, &query.agent).await?;
+    let scope = super::sdk_resume::Scope(
+        "codex_sdk",
+        thread.clone(),
+        query.agent.clone(),
+        query.observe.as_deref() == Some("1"),
+    );
+    let resumable = query.resume.as_deref() == Some("1");
+    if resumable && let Some(response) = state.sdk_streams.resume(&scope, query.cursor.as_deref()) {
+        return Ok(response);
+    }
     let attached = if query.observe.as_deref() == Some("1") {
         sdk.attach_existing(&thread).await
     } else {
@@ -274,7 +286,11 @@ pub async fn events(
     response
         .headers_mut()
         .insert("cache-control", "no-cache".parse().unwrap());
-    Ok(response)
+    Ok(if resumable {
+        state.sdk_streams.start(scope, response)
+    } else {
+        response
+    })
 }
 
 #[derive(Deserialize)]

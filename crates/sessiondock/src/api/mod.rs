@@ -29,6 +29,7 @@ mod read;
 mod relations;
 pub(crate) mod runtime;
 mod search;
+pub(crate) mod sdk_resume;
 mod shell_env;
 mod syntax;
 mod terminal;

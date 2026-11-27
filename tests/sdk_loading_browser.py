@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Retained Codex loading does not wait for fleet inventory or reopen the harness."""
 import argparse
+import asyncio
 from pathlib import Path
 import re
 import tempfile
@@ -71,6 +72,24 @@ def exercise(browser, base, peer, label, shots):
             page.wait_for_function('SdkView.connected', timeout=3000)
             assert native_counts() == before_native, (before_native, native_counts())
             assert len(opens) == before_opens, opens
+            # Disconnect only this page. The second page keeps its own live stream.
+            cursor = page.evaluate('CodexSdkView.sdkCursor')
+            assert cursor
+            page.evaluate("""() => {
+                const stream = CodexSdkView.es;
+                stream.close(); stream.dispatchEvent(new Event('error'));
+            }""")
+            note = f'Replayed progress {label} {width}'
+            asyncio.run_coroutine_threadsafe(
+                peer._agent('test-turn', f'resume-{label}-{width}', note, 'commentary'),
+                peer.loop).result(timeout=5)
+            expect(page.locator('.sdk-live')).to_contain_text(note)
+            expect(second.locator('.sdk-live')).to_contain_text(note)
+            page.wait_for_function('CodexSdkView.connected && CodexSdkView.es.url.includes("cursor=")')
+            latest = page.evaluate('CodexSdkView.sdkCursor')
+            assert latest != cursor and latest.split('.')[0] == cursor.split('.')[0]
+            assert native_counts() == before_native
+            expect(page.locator('#sdk-input')).to_have_value('Draft retained while another node is slow')
             assert not errors, errors
             print(f'PASS {label}/{width}: loaded in {elapsed} ms after owning node ready; '
                   f'fleet held={label == "hub"}, two pages and warm switch reuse native channel without open', flush=True)

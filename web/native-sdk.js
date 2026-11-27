@@ -363,6 +363,8 @@ const NativeSdkView = {
   },
 
   close() {
+    this.sdkCursor = null;
+    this.wireSnapshot = null;
     this.externalObserved = false;
     this.setConnected(false);
     CodexSdkCompose.close(this);
@@ -462,9 +464,16 @@ const NativeSdkView = {
     if (this.es || this.readOnly) return;
     const query = new URLSearchParams({uid:this.uid,agent:this.agent || ''});
     query.set('snapshot_delta', '1');
+    query.set('resume', '1');
+    if (this.sdkCursor) query.set('cursor', this.sdkCursor);
     const es = new EventSource(appUrl(`api/native-sdk/events?${query}`));
-    let snapshotRaw, snapshotVersion;
+    let {raw: snapshotRaw, version: snapshotVersion} = this.wireSnapshot || {};
     this.es = es;
+    es.addEventListener('resumed', () => {
+      if (!this.current(generation) || this.es !== es) return;
+      this.setConnected(true);
+      this.paintStatus();
+    });
     const activity = () => {
       if (!this.current(generation) || this.es !== es) return;
       clearTimeout(this.streamWatchdog);
@@ -485,8 +494,9 @@ const NativeSdkView = {
         SdkView.stopped(this.uid, this.agent);
         return;
       }
-      if (packet.method === 'bridge/reset') { this.reconnect(true); return; }
+      if (packet.method === 'bridge/reset') { this.sdkCursor = null; this.reconnect(true); return; }
       if (packet.type === 'input_queue') {
+        this.sdkCursor = event.lastEventId || null;
         this.observeInputReceipt(packet.raw);
         this.flushPendingSnapshot();
         const stick = this.nearBottom();
@@ -508,6 +518,7 @@ const NativeSdkView = {
           packet.raw = nativeSdkIsolateRaw(snapshotRaw);
           packet.type = 'snapshot';
         } catch {
+          this.sdkCursor = null;
           this.reconnect(true);
           return;
         }
@@ -518,6 +529,8 @@ const NativeSdkView = {
         if (snapshotRaw !== undefined) packet.raw = nativeSdkIsolateRaw(snapshotRaw);
       }
       if (packet.type === 'snapshot' || packet.method === 'snapshot') {
+        this.wireSnapshot = {raw:snapshotRaw, version:snapshotVersion};
+        this.sdkCursor = event.lastEventId || null;
         const nextRaw = packet.raw || {};
         this.observeInputReceipt(nextRaw);
         const now = performance.now();
@@ -543,15 +556,17 @@ const NativeSdkView = {
     });
     es.onerror = () => {
       if (!this.current(generation) || this.es !== es) return;
+      if (this.snapshotBuild) this.sdkCursor = null;
       this.cancelSnapshotBuild();
       this.setConnected(false); this.setNotice('载入中', 'connecting');
-      if (es.readyState === EventSource.CLOSED) this.reconnect(true);
+      if (this.sdkCursor || query.has('cursor') || es.readyState === EventSource.CLOSED) this.reconnect(true);
     };
   },
 
   retryOpen() { if (this.openFailed) { this.clearPendingSnapshot(); this.es?.close(); this.es = null; void this.start(this.generation); } },
   reconnect(observe = false) {
     this.flushPendingSnapshot();
+    if (this.snapshotBuild) this.sdkCursor = null;
     this.clearPendingSnapshot();
     this.cancelSnapshotBuild();
     clearTimeout(this.streamWatchdog);

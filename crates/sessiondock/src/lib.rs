@@ -661,6 +661,7 @@ fn build_app(
         service.clone().housekeeping(shutdown.clone());
     }
     let state = AppState {
+        sdk_streams: Arc::default(),
         agent_usage,
         quotas,
         cleanup_counts: Arc::new(cleanup::Counts::default()),
