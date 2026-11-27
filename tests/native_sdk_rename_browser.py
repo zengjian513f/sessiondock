@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright, expect
 from sdk_title_rename_fixtures import exercise_title_rename
-from history_fixtures import BINARY
+from history_fixtures import BINARY, REPO
 from native_sdk_footer_browser import provider
 from sdk_generalization_browser import open_view, send
 from kiro_sdk_fixtures import KiroFixture
@@ -25,10 +25,15 @@ def native(source,root,binary,extra):
         with provider(source,root,binary,extra) as base:yield base
         return
     for name in ('claude','codex','grok','state'):(root/name).mkdir()
-    fixture=KiroFixture(root,binary.with_name('ptyhost'))
+    # A backend-only release stage has no helper binaries. Use the existing
+    # test build alongside the private launcher and runtime directories.
+    def helper(name):
+        return next(path for path in (binary.with_name(name), REPO/'target/release'/name,
+                                      REPO/'target/debug'/name) if path.is_file())
+    fixture=KiroFixture(root,helper('ptyhost'))
     initialize('--initialize-lifecycle',root/'ledger',binary.resolve())
     with server(SimpleNamespace(root=root),binary,'off',{
-        **fixture.env,'SESSIONDOCK_NATIVE_SDKS':'auto','SESSIONDOCK_LIFECYCLE_DIR':str(root/'ledger'),
+        **fixture.env,'SESSIONDOCK_SDKHOST_BIN':str(helper('sdkhost')),'SESSIONDOCK_NATIVE_SDKS':'auto','SESSIONDOCK_LIFECYCLE_DIR':str(root/'ledger'),
         'SESSIONDOCK_PTYHOST_DIR':str(fixture.host_dir),'SESSIONDOCK_STATE_DIR':str(root/'state'),**extra}) as base:yield base
 
 def exercise(browser,base,source,root,shots,label):

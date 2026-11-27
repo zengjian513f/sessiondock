@@ -135,4 +135,6 @@ location <HUB_PATH>/ {
 `^/api/(?:codex-sdk|native-sdk)/events$` 匹配的独立 location 使用普通 Hub
 location 的同一组访问控制、代理头和超时，保留 `proxy_buffering off`。
 启用 `gzip on`、`gzip_types text/event-stream`、`gzip_comp_level 3`、
-`gzip_vary on` 和 `gzip_proxied any`。公网反代转发浏览器协商的编码。
+`gzip_vary on` 和 `gzip_proxied any`。公网反代转发浏览器协商的编码。内层代理用独立 access log 记录已结束的两个 SDK 请求的时间、
+接口（不含查询参数）、状态、实际响应编码、发送字节数和 gzip 压缩比，随 Nginx 日志轮转。
+统计时按发送字节加权，长连接在关闭后入账。
