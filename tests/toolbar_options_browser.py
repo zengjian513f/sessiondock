@@ -173,12 +173,62 @@ def check_directory_filter(context, page, payload, width, screenshots_dir):
     expect(checks).to_have_count(0)
     if screenshots_dir:
         page.screenshot(path=str(screenshots_dir / f'directory-empty-{width}.png'), full_page=True)
+    page.keyboard.press('Escape')
+    check_temporary_directories(page, payload, rows, width, screenshots_dir)
     payload.update(original)
     page.unroute('**/api/live*')
     page.unroute('**/api/search?*')
     page.reload(wait_until='networkidle')
     expect(items).to_have_count(7)
     print(f'PASS directory filter {width}px: shortcuts, snapshot, keyboard, search, scope, bulk, persistence, scrolling', flush=True)
+
+
+def check_temporary_directories(page, payload, rows, width, screenshots_dir):
+    paths = ['/tmp/first/task', '/tmp/second', '/tmp', '/tmp-project', '/workspace']
+    temporary = [dict(row, cwd=path) for row, path in zip(rows[:len(paths)], paths, strict=True)]
+    payload.update(sessions=temporary, sig='directory-temporary')
+    assert page.evaluate('pollSessions()')
+    menu = open_directory_filter(page)
+    if screenshots_dir:
+        page.screenshot(path=str(screenshots_dir / f'directory-tmp-{width}.png'), full_page=True)
+    expect(menu.locator('.directory-filter-row')).to_have_text(['/tmp/...', '/tmp-project', '/workspace'])
+    grouped = menu.get_by_role('checkbox', name='/tmp/...', exact=True)
+    grouped.uncheck()
+    items = page.locator('#side .item')
+    expect(items).to_have_count(2)
+    for row in temporary[3:]:
+        expect(page.locator(f'#side .item[data-uid="{row["uid"]}"]')).to_be_visible()
+    page.keyboard.press('Escape')
+
+    # Old browser preferences can contain individual paths in both selections.
+    page.evaluate("""paths => {
+      store.set('visibleDirectories', paths.slice(0, 1));
+      store.set('visibleDirectories.lastMultiple', [paths[0], paths[1], paths[4]]);
+    }""", paths)
+    page.reload(wait_until='networkidle')
+    expect(items).to_have_count(3)
+    menu = open_directory_filter(page)
+    expect(grouped).to_be_checked()
+    grouped.click(button='right')
+    expect(menu.get_by_role('checkbox', checked=True)).to_have_count(2)
+    expect(items).to_have_count(4)
+    menu.get_by_role('checkbox', name='/workspace', exact=True).uncheck()
+    page.keyboard.press('Escape')
+    temporary.append(dict(temporary[0], uid='claude:tmp-new', sid='tmp-new', cwd='/tmp/new',
+                          title='New temp session'))
+    payload.update(sig='directory-temporary-new')
+    assert page.evaluate('pollSessions()')
+    expect(items).to_have_count(4)
+    expect(items.filter(has_text='New temp session')).to_be_visible()
+    page.route('**/api/search?*', lambda route: route.fulfill(json={
+        'results': [dict(row, hits=1) for row in temporary],
+    }))
+    page.locator('#q').fill('temp')
+    page.locator('#q').press('Enter')
+    expect(page.locator('#side-search-label')).to_have_text('搜索结果')
+    expect(page.locator('#side-search-count')).to_have_text('4 条')
+    open_directory_filter(page).get_by_role('button', name='全选', exact=True).click()
+    expect(page.locator('#side-search-count')).to_have_text('6 条')
 
 
 def main():

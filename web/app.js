@@ -174,6 +174,11 @@ applyFont();
 // Keep explicit legacy nesting preferences; fresh profiles start collapsed.
 const initialChildMode = store.get('childMode',
   store.get('nest', null) === null ? 'hidden' : store.get('nest', false) ? 'nested' : 'flat');
+function directoryFilterKey(path) {
+  if (typeof path === 'string' && (path === '/tmp' || path.startsWith('/tmp/'))) return '/tmp/...';
+  return path;
+}
+const directoryFilterSelection = paths => new Set(paths.map(directoryFilterKey));
 const savedDirectories = store.get('visibleDirectories', null);
 
 const S = {
@@ -185,7 +190,7 @@ const S = {
   nest: initialChildMode === 'hidden' ? false : store.get('nest', false),
   nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
   off: new Set(store.get('off', [])),
-  directories: Array.isArray(savedDirectories) ? new Set(savedDirectories) : null,
+  directories: Array.isArray(savedDirectories) ? directoryFilterSelection(savedDirectories) : null,
   closed: new Set(store.get('closed', [])),
   searchClosed: new Set(),
   searchNestClosed: new Set(),
@@ -3413,8 +3418,8 @@ addEventListener('sessiondock-network-resumed', async () => {
   }
 });
 
-const sessionDirectory = s => s.cwd || '';
-const directorySelected = s => S.directories === null || S.directories.has(sessionDirectory(s));
+const sessionDirectoryFilterKey = s => directoryFilterKey(s.cwd || '');
+const directorySelected = s => S.directories === null || S.directories.has(sessionDirectoryFilterKey(s));
 
 function visible() {
   const eligible = s => PROJECT_VIEW.match(s) && !s.pending_delete && (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
@@ -7433,7 +7438,10 @@ function bindDirectoryFilter() {
     if (S.directories?.size === 1 && S.directories.has(path)) {
       const saved = store.get('visibleDirectories.lastMultiple', undefined);
       if (saved === null) apply(null);
-      else if (Array.isArray(saved) && saved.length > 1) apply(new Set(saved));
+      else if (Array.isArray(saved)) {
+        const directories = directoryFilterSelection(saved);
+        if (directories.size > 1) apply(directories);
+      }
     } else {
       apply(new Set([path]));
     }
@@ -7448,7 +7456,7 @@ function bindDirectoryFilter() {
     const latest = new Map();
     // The open menu keeps this snapshot even when list sync changes the sidebar.
     for (const session of sidebarSessions()) {
-      const path = sessionDirectory(session);
+      const path = sessionDirectoryFilterKey(session);
       latest.set(path, Math.max(latest.get(path) ?? -Infinity, Date.parse(session.updated) || 0));
     }
     const paths = [...latest.keys()].sort((a, b) => latest.get(b) - latest.get(a) || a.localeCompare(b));

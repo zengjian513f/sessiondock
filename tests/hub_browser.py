@@ -70,6 +70,7 @@ def check_directory_view(browser, hub, screenshot=None):
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    temporary = False
 
     def directories(route):
         headers = {key: value for key, value in route.request.headers.items()
@@ -77,7 +78,9 @@ def check_directory_view(browser, hub, screenshot=None):
         response = route.fetch(headers=headers)
         data = response.json()
         for row in data.get("sessions", []):
-            if row.get("node_id") == NID["c"]:
+            if temporary and row.get("node_id") in (NID["a"], NID["b"]):
+                row["cwd"] = f'/tmp/{row["node_name"]}/project'
+            elif row.get("node_id") == NID["c"]:
                 row["cwd"] = "/other/project"
             if row.get("node_id") == NID["b"]:
                 row["updated"] = "2026-09-08T00:00:00Z"
@@ -159,6 +162,22 @@ def check_directory_view(browser, hub, screenshot=None):
     page.set_viewport_size({'width': 390, 'height': 844})
     page.get_by_role('button', name='按目录聚合', exact=True).click()
     expect(page.locator('#side > .group')).to_have_count(2)
+
+    temporary = True
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
+    expect(page.locator('#side > .group')).to_have_count(3)
+    menu = open_directory_filter(page)
+    expect(menu.get_by_role('checkbox')).to_have_count(2)
+    menu.get_by_role('checkbox', name='/other/project', exact=True).uncheck()
+    expect(menu.get_by_role('checkbox', name='/tmp/...', exact=True)).to_be_checked()
+    expect(page.locator('#side > .group .gname')).to_have_text(
+        ['/tmp/NodeB/project', '/tmp/NodeA/project'])
+    if screenshot:
+        path = Path(screenshot)
+        page.screenshot(path=str(path.with_stem(path.stem + '-directory-tmp')), full_page=True)
+    page.keyboard.press('Escape')
+    page.get_by_role('button', name='NodeA 1', exact=True).click()
+    expect(page.locator('#side > .group .gname')).to_have_text(['/tmp/NodeB/project'])
     assert not errors, errors
     context.close()
 
