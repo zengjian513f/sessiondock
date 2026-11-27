@@ -137,6 +137,7 @@ def main():
                     with sqlite3.connect(native/'conversations'/(sid+'.db')) as c:
                         c.execute('DELETE FROM steps')
                         c.execute("INSERT INTO parent_references VALUES (0, X'0102')")
+                calls_before = len((root/'calls.jsonl').read_text().splitlines())
                 (native/'mode').write_text(mode);open_sid(base,sid);popup=menu()
                 with page.expect_response(lambda r:r.request.method=='DELETE',timeout=10000 if mode=='trust' else 40000) as response:popup.locator('[data-popup-action="ok"]').click()
                 assert response.value.status==500 and response.value.json()['code']=='agy_remove_failed',response.value.text()
@@ -144,6 +145,8 @@ def main():
                 if mode in ('wrong','refuse'):
                     phase='按完整会话 ID 核对选中行' if mode=='wrong' else '核对原生删除结果'
                     expect(page.locator('dialog.app-popup[open]')).to_contain_text(phase)
+                    if mode == 'wrong':
+                        expect(page.locator('dialog.app-popup[open]')).to_contain_text('未对应唯一选中的当前会话')
                     for width,theme in ((1280,'light'),(390,'dark')):
                         page.set_viewport_size({'width':width,'height':900})
                         page.evaluate('theme => document.documentElement.dataset.theme=theme',theme)
@@ -163,6 +166,10 @@ def main():
                         table='steps' if mode=='trust' else 'parent_references'
                         assert c.execute('SELECT COUNT(*) FROM '+table).fetchone()[0]==1
                 calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
+                attempt = calls[calls_before:]
+                assert sum(c.get('start') == sid for c in attempt) == (2 if mode == 'wrong' else 1), attempt
+                if mode == 'refuse':
+                    assert [c.get('input') for c in attempt].count('y') == 1, attempt
                 if mode in ('trust','wrong'):assert not any(c.get('sid')==sid and c.get('input') in ('\x1bOS','y') for c in calls)
                 if mode=='trust':assert not any(c.get('sid')==sid and 'input' in c for c in calls)
                 assert not list((root/'host').glob('.agy-delete-*'))
@@ -202,11 +209,16 @@ def main():
             page.reload();page.wait_for_function('T.listLoaded')
             assert not list((root/'host').glob('.agy-delete-*'))
             calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
-            for sid,resume_count in ((IDS[4],2),(IDS[5],1)):
+            for sid,starts,resumes,filters in ((IDS[4],1,4,5),(IDS[5],2,3,3)):
+                assert sum(c.get('start') == sid for c in calls) == starts,calls
                 inputs=[c['input'] for c in calls if c.get('sid')==sid and 'input' in c]
-                assert inputs.count('/resume\r')==resume_count,inputs
-                assert sum(sid in text for text in inputs)==2,inputs
+                assert inputs.count('/resume\r')==resumes,inputs
+                assert sum(sid in text for text in inputs)==filters,inputs
                 assert inputs.count('\x1bOS')==inputs.count('y')==1,inputs
+                assert inputs[-2:]==['\x1bOS','y'],inputs
+                if sid == IDS[4]:
+                    assert ('\x7f' * len(sid)) in inputs,inputs
+                assert inputs.count('\x1b')==2,inputs
             assert all(not process_alive(c['pid']) for c in calls if 'start' in c)
             assert not any(c.get('start') in EMPTY_IDS for c in calls)
             print('PASS Hub batch recovers reset pickers before confirming once, deletes the selected SIDs and cleans workers',flush=True)

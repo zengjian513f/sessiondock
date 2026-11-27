@@ -4,10 +4,12 @@ use super::launcher::Launcher;
 use ptyhost_client::{CaptureKind, ControlOp, ControlReply, HostClient, Limits};
 use rusqlite::{Connection, OpenFlags};
 use std::{path::Path, time::Duration};
+use tokio::time::Instant;
 
 pub(crate) static DELETE: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 const NAME: &str = "agy-delete";
+const SELECTION_RESTART_WAIT: Duration = Duration::from_secs(5);
 const FILTER_ECHO_WAIT: Duration = Duration::from_secs(1);
 
 fn present(home: &Path, sid: &str) -> Result<bool, String> {
@@ -147,7 +149,7 @@ async fn screen(client: &HostClient) -> Option<crate::delivery::driver::ScreenCa
 
 async fn wait_screen<T>(
     client: &HostClient,
-    accept: impl Fn(&crate::delivery::driver::ScreenCapture) -> Option<T>,
+    mut accept: impl FnMut(&crate::delivery::driver::ScreenCapture) -> Option<T>,
 ) -> Result<T, String> {
     loop {
         if let Some(frame) = screen(client).await {
@@ -217,35 +219,91 @@ async fn filter_picker(client: &HostClient, sid: &str) -> Result<(), String> {
 }
 
 enum Selection {
-    Current,
+    Current(usize),
     ReturnedToEditor,
+    SidInEditor,
     FilterCleared,
+    NoMatch,
 }
 
-async fn select_current(client: &HostClient, sid: &str) -> Result<(), String> {
-    filter_picker(client, sid).await?;
-    let echo_deadline = tokio::time::Instant::now() + FILTER_ECHO_WAIT;
-    let selection = wait_screen(client, |frame| {
-        if picker_row(&frame.text, sid).is_some() {
-            Some(Selection::Current)
-        } else if picker_rows(&frame.text).is_none() && empty_editor(frame) {
-            Some(Selection::ReturnedToEditor)
-        } else if tokio::time::Instant::now() >= echo_deadline && unfiltered_picker(&frame.text) {
-            Some(Selection::FilterCleared)
-        } else {
+async fn select_current(
+    client: &HostClient,
+    sid: &str,
+    last_view: &mut &'static str,
+) -> Result<usize, String> {
+    let mut refreshed = false;
+    loop {
+        filter_picker(client, sid).await?;
+        let echo_deadline = Instant::now() + FILTER_ECHO_WAIT;
+        let selection = wait_screen(client, |frame| {
+            if let Some(row) = picker_row(&frame.text, sid) {
+                return Some(Selection::Current(row.matches("[Delete? (y/n)]").count()));
+            }
+            if unfiltered_picker(&frame.text) {
+                *last_view = "搜索框为空";
+                return (Instant::now() >= echo_deadline).then_some(Selection::FilterCleared);
+            }
+            if let Some(mut rows) = picker_rows(&frame.text) {
+                *last_view =
+                    if rows.next().and_then(|row| row.strip_prefix("Search: ")) != Some(sid) {
+                        "未看到完整 ID 搜索回显"
+                    } else if rows.next() == Some("No matching conversations.") {
+                        if !refreshed && Instant::now() >= echo_deadline {
+                            return Some(Selection::NoMatch);
+                        }
+                        "完整 ID 无匹配项"
+                    } else {
+                        "完整 ID 未对应唯一选中的当前会话"
+                    };
+            } else if let Some(draft) = crate::conversation::agy_editor(frame) {
+                *last_view = "已返回编辑区";
+                if draft.is_empty() {
+                    return Some(Selection::ReturnedToEditor);
+                }
+                if draft == sid {
+                    return Some(Selection::SidInEditor);
+                }
+            } else {
+                *last_view = "未识别为可操作的选择器";
+            }
             None
+        })
+        .await?;
+        match selection {
+            Selection::Current(markers) => return Ok(markers),
+            Selection::ReturnedToEditor => open_picker(client).await?,
+            Selection::SidInEditor => {
+                // The picker closed as the SID was pasted. Remove only our own unsubmitted text.
+                send(client, &"\x7f".repeat(sid.chars().count())).await?;
+                wait_screen(client, |frame| empty_editor(frame).then_some(())).await?;
+                open_picker(client).await?;
+            }
+            Selection::NoMatch => {
+                // Escape clears the search or closes the menu, depending on the native version.
+                refreshed = true;
+                send(client, "\x1b").await?;
+                let in_picker = wait_screen(client, |frame| {
+                    if unfiltered_picker(&frame.text) {
+                        Some(true)
+                    } else {
+                        empty_editor(frame).then_some(false)
+                    }
+                })
+                .await?;
+                if in_picker {
+                    send(client, "\x1b").await?;
+                    wait_screen(client, |frame| empty_editor(frame).then_some(())).await?;
+                }
+                open_picker(client).await?;
+            }
+            Selection::FilterCleared => (),
         }
-    })
-    .await?;
-    match selection {
-        Selection::Current => return Ok(()),
-        Selection::ReturnedToEditor => open_picker(client).await?,
-        Selection::FilterCleared => (),
     }
-    // A redraw can drop the picker or its search. Retry only the search,
-    // before any destructive input, and prove the full SID again.
-    filter_picker(client, sid).await?;
-    wait_screen(client, |frame| picker_row(&frame.text, sid).map(|_| ())).await
+}
+
+enum PickerOutcome {
+    Deleted,
+    RestartSelection,
 }
 
 pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> Result<(), String> {
@@ -257,6 +315,24 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
     if remove_empty_payload(home, sid)? {
         return Ok(());
     }
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let mut can_restart = true;
+    loop {
+        match remove_with_picker(launcher, sid, cwd, home, deadline, can_restart).await? {
+            PickerOutcome::Deleted => return Ok(()),
+            PickerOutcome::RestartSelection => can_restart = false,
+        }
+    }
+}
+
+async fn remove_with_picker(
+    launcher: &Launcher,
+    sid: &str,
+    cwd: &Path,
+    home: &Path,
+    deadline: Instant,
+    can_restart: bool,
+) -> Result<PickerOutcome, String> {
     let id = super::store::fresh_request_id().map_err(|_| "无法创建 Agy 删除任务")?;
     let directory = launcher.host_dir().join(format!(".agy-delete-{id}"));
     let mut builder = std::fs::DirBuilder::new();
@@ -282,15 +358,29 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
             .map_err(|_| "Agy 启动项不可用")?;
         let mut child = command.spawn().map_err(|_| "Agy 删除终端启动失败")?;
         let mut stage = "等待原生编辑区";
+        let mut last_view = "尚无可用画面";
         let operation = async {
             wait_screen(&client, |frame| empty_editor(frame).then_some(())).await?;
             stage = "打开原生会话选择器";
             open_picker(&client).await?;
             stage = "按完整会话 ID 核对选中行";
-            select_current(&client, sid).await?;
-            let before = screen(&client).await.ok_or("Agy 会话选择画面丢失")?;
-            let selected = picker_row(&before.text, sid).ok_or("Agy 会话选择已变化")?;
-            let markers = selected.matches("[Delete? (y/n)]").count();
+            let selection = select_current(&client, sid, &mut last_view);
+            let markers = if can_restart {
+                match tokio::time::timeout(SELECTION_RESTART_WAIT, selection).await {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        // A cold picker can retain a stale catalog or lose its input on redraw.
+                        // Start with a fresh native list only before F4, inside the original deadline.
+                        crate::log::info(
+                            "agy.delete_selection_retry",
+                            serde_json::json!({"sid":sid,"view":last_view}),
+                        );
+                        return Ok(PickerOutcome::RestartSelection);
+                    }
+                }
+            } else {
+                selection.await?
+            };
             stage = "等待原生删除确认";
             send(&client, "\x1bOS").await?; // F4, advertised by the verified picker.
             wait_screen(&client, |c| {
@@ -304,11 +394,20 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
             while !deleted(home, sid)? {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            Ok::<_, String>(())
+            Ok::<_, String>(PickerOutcome::Deleted)
         };
-        let outcome = tokio::time::timeout(Duration::from_secs(25), operation)
+        let outcome = tokio::time::timeout_at(deadline, operation)
             .await
-            .unwrap_or_else(|_| Err(format!("Agy 原生删除超时（{stage}），请刷新列表核对后重试")));
+            .unwrap_or_else(|_| {
+                let detail = if stage == "按完整会话 ID 核对选中行" {
+                    format!("{stage}，{last_view}")
+                } else {
+                    stage.to_owned()
+                };
+                Err(format!(
+                    "Agy 原生删除超时（{detail}），请刷新列表核对后重试"
+                ))
+            });
         // Always stop the private worker, including partial/failed menu operations.
         let _ = client.request(NAME, ControlOp::Kill { force: true }).await;
         let _ = tokio::task::spawn_blocking(move || {
@@ -318,9 +417,12 @@ pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> 
         .await;
         // A lost terminal acknowledgement after confirmation is resolved by native state.
         if deleted(home, sid)? {
-            Ok(())
+            Ok(PickerOutcome::Deleted)
         } else {
-            outcome.and(Err("Agy 原生会话仍存在，删除未完成".into()))
+            match outcome? {
+                PickerOutcome::RestartSelection => Ok(PickerOutcome::RestartSelection),
+                PickerOutcome::Deleted => Err("Agy 原生会话仍存在，删除未完成".into()),
+            }
         }
     }
     .await;
