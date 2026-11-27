@@ -269,6 +269,7 @@ def price_sync_case(browser, binary, output):
         context.route('**/api/clients',lambda r:r.fulfill(json={'clients':[{'source':'codex','installed':True}]}))
         page=context.new_page();page.goto(base+'/quotas.html')
         cell=page.locator('[data-source="codex"] tbody .quota-api').first
+        tier_hint=cell.locator('.quota-api-tiers')
         expect(cell).not_to_contain_text('整轮');assert remote['calls']==0
         def report():return page.evaluate("fetch('api/usage').then(r=>r.json())")
         def wait_for(predicate):
@@ -286,6 +287,7 @@ def price_sync_case(browser, binary, output):
             before=report()['captured_at'];page.locator('#quota-refresh').click()
             result=wait_for(lambda r:r['captured_at']!=before);page.reload();return result
         result=refresh();expect(cell).to_contain_text('$5.39');expect(cell).to_contain_text('整轮')
+        expect(tier_hint).to_have_count(0)
         assert result['rows'][0]['unpriced']==0 and result['metrics']['bytes_read']==0
         assert remote['calls']==1 and result['price_sync']['updated_at']
         assert json.loads((directory/'prices.json').read_text())==custom
@@ -357,6 +359,8 @@ def price_sync_case(browser, binary, output):
         assert promotion['until'] == regular['from'] == '2027-03-01T08:00:00Z'
         expected = '$15.91' if iso(now-16) < '2027-03-01T08:00:00+00:00' else '$21.95'
         expect(cell).to_contain_text(expected)
+        expect(tier_hint).to_have_text('含 Fast、Ultrafast')
+        assert 'gpt-6.1-sol · Standard' in cell.get_attribute('title')
         assert 'gpt-6.1-sol · Fast：$2.17' in cell.get_attribute('title')
         assert 'gpt-sync-new · Ultrafast' in cell.get_attribute('title')
         assert '2 次调用未记录实际档位' in cell.get_attribute('title')
@@ -365,21 +369,42 @@ def price_sync_case(browser, binary, output):
         result = refresh(True)
         expect(cell).to_contain_text(expected)
         assert result['price_sync']['error'] and result['rows'][0]['unpriced'] == 0
-        page.screenshot(path=str(output/'price-tiers-node.png'),full_page=True)
-        page.set_viewport_size({'width':390,'height':950})
-        page.goto(f'http://127.0.0.1:{hub.port}/quotas.html')
-        page.evaluate("document.documentElement.dataset.theme='dark'")
-        expect(cell).to_contain_text(expected)
-        assert 'Ultrafast' in cell.get_attribute('aria-label')
-        page.locator('.quota-scroll').evaluate_all('nodes=>nodes.forEach(n=>n.scrollLeft=100)')
-        page.screenshot(path=str(output/'price-tiers-hub.png'),full_page=True)
+        for url, mode in ((base,'node'),(f'http://127.0.0.1:{hub.port}','hub')):
+            for modal in (False, True):
+                surface = 'settings' if modal else 'page'
+                for width, theme in ((1280,'light'),(1280,'dark'),(390,'light'),(390,'dark')):
+                    page.set_viewport_size({'width':width,'height':950})
+                    page.goto(url if modal else url+'/quotas.html')
+                    if modal:
+                        if width==390:
+                            page.locator('#header-more-btn').click()
+                        page.locator('#settings').click()
+                        page.get_by_role('tab',name='机器',exact=True).click()
+                        page.locator('#quota-open').click()
+                    page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                    expect(cell).to_contain_text(expected)
+                    expect(tier_hint).to_have_text('含 Fast、Ultrafast')
+                    assert 'Ultrafast' in cell.get_attribute('aria-label')
+                    if width==390:
+                        cell.evaluate('''cell => {
+                            const scroll = cell.closest('.quota-scroll');
+                            const machine = cell.closest('table').querySelector('tbody th');
+                            scroll.scrollLeft += cell.getBoundingClientRect().left
+                                - scroll.getBoundingClientRect().left - machine.getBoundingClientRect().width;
+                        }''')
+                    expect(tier_hint).to_be_in_viewport(ratio=1)
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                    page.screenshot(path=str(output/f'price-tiers-{mode}-{surface}-{width}-{theme}.png'),full_page=True)
 
+        page.set_viewport_size({'width':1280,'height':950})
         page.goto(base+'/quotas.html')
         append(path,*request('tier-unsupported',now-14,'gpt-sync-mini',100000,'fast'))
         result = refresh()
         assert result['rows'][0]['unpriced'] == 1
         expect(cell).to_contain_text('记录不完整')
         expect(cell).not_to_contain_text('整轮')
+        expect(tier_hint).to_have_text('含 Fast、Ultrafast')
+        page.screenshot(path=str(output/'price-tiers-incomplete.png'),full_page=True)
 
 
 def kiro_estimate_case(browser, binary, output):

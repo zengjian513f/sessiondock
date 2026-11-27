@@ -7,6 +7,7 @@ function initCycleUsage(changed) {
   const money=n=>Number.isFinite(n)?n.toLocaleString('en-US',{style:'currency',currency:'USD'}):'N/A';
   const range=(low,high)=>money(low)+(Number.isFinite(high) && high>low?`–${money(high)}`:'');
   const time=t=>t?new Date(t).toLocaleString():'N/A';
+  const tierLabels={standard:'Standard',fast:'Fast',ultrafast:'Ultrafast'};
   async function load(collect=false) {
     if(stopped || busy)return;
     if(document.hidden && !collect){schedule(60000);return;}
@@ -54,10 +55,19 @@ function initCycleUsage(changed) {
         }
       }
       if(row.base_api_usd!=null && !row.api_usd_max)detail.push(`不含长上下文加价：${money(row.base_api_usd)}`);
+      const pricedTiers=new Set();
       for(const part of row.models || []){
-        const tier={fast:'Fast',ultrafast:'Ultrafast',standard:''}[part.tier] ?? (part.tier?'未知档位':'');
+        const tier=source==='codex' && part.tier ? tierLabels[part.tier] ?? '未知档位' : '';
+        if(part.requests>part.unpriced)pricedTiers.add(part.tier);
         const calls=part.requests!=null?`，${part.requests} 次调用`:'';
         detail.push(`${part.model || '未知型号'}${tier?' · '+tier:''}：${range(part.api_usd,part.api_usd_max)}${calls}${part.unpriced?'（含未定价）':''}`);
+      }
+      const includedTiers=['fast','ultrafast'].filter(tier=>pricedTiers.has(tier));
+      if(source==='codex' && includedTiers.length){
+        const hint=document.createElement('small');
+        hint.className='quota-api-tiers';
+        hint.textContent=`含 ${includedTiers.map(tier=>tierLabels[tier]).join('、')}`;
+        cell.append(hint);
       }
       if(data.price_sync?.updated_at)detail.push(`OpenAI 价目上次同步：${time(data.price_sync.updated_at)}`);
       if(data.price_sync?.error)detail.push(data.price_sync.error);
