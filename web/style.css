@@ -2747,11 +2747,11 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
   .sdk-turn-metric:not([hidden]) { display: inline; }
 }
 .sdk-status-row > .sdk-status.external-cli-status { max-width: none; }
-.sdk-status-row > :is(.composer-run-action, .background-commands) { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
-.sdk-status-row > .background-commands { display: inline-flex; align-items: center; gap: 4px;
+.sdk-status-row > :is(.composer-run-action, .background-commands, .sdk-background-status) { flex: none; font: inherit; height: var(--sdk-status-row-height); min-height: 0; padding: 0 6px; }
+.sdk-status-row > :is(.background-commands, .sdk-background-status) { display: inline-flex; align-items: center; gap: 4px;
   white-space: nowrap; color: var(--muted); background: transparent; border-color: transparent; }
-.sdk-status-row > .background-commands:is(:hover, [aria-expanded="true"]) { color: var(--text); background: var(--hover); }
-.background-commands:focus-visible, .command-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sdk-status-row > :is(.background-commands, .sdk-background-status):is(:hover, [aria-expanded="true"]) { color: var(--text); background: var(--hover); }
+:is(.background-commands, .sdk-background-status, .command-option):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .background-commands .ui-icon { width: 14px; height: 14px; }
 .background-commands b { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 .sdk-status-row > .sdk-options { flex: none; }
@@ -2831,7 +2831,7 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
   .sdk-bar { width: 24px; }
 }
 @container sdk-footer (max-width: 400px) {
-  .sdk-status-row > .background-commands { padding-inline: 3px; }
+  .sdk-status-row > :is(.background-commands, .sdk-background-status) { padding-inline: 3px; }
   .background-commands .ui-icon { display: none; }
 }
 

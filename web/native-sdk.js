@@ -237,17 +237,18 @@ function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
     ? source === 'agy' ? agyAgentStepProgress(entry, reason) : history : null;
   const recordedTimers = source === 'agy' ? entry?.meta?.background_timers || [] : [];
   const commands = source === 'agy' ? entry?.meta?.background_commands || entry?.meta?.background_logs || [] : [];
-  const timers = running && !progress ? NativeSdkControls.pendingTimers(recordedTimers) : [];
+  const timers = running ? NativeSdkControls.pendingTimers(recordedTimers) : [];
+  const background = running && (timers.length ? '后台等待' : commands.length ? '后台运行'
+    : recordedTimers.length ? '等待回执' : '');
   const failure = entry?.msgs?.findLast(message => message.subtask_outcome && message.event_status === 'failed');
   const activity = entry?.activity;
   const failed = outcome ? outcome === 'failed' : !!failure || activity?.state === 'failed';
   const interrupted = outcome ? ['interrupted', 'cancelled', 'canceled'].includes(outcome) : activity?.state === 'aborted';
-  const label = progress?.label || (timers.length ? '后台定时任务等待中'
-    : running ? commands.length ? '后台运行' : recordedTimers.length ? '等待回执' : outcome === 'pending' ? '等待执行' : '处理中'
+  const label = progress?.label || (running ? outcome === 'pending' ? '等待执行' : background ? '前台待确认' : '处理中'
     : sdk ? 'SDK 已运行' : failed ? '执行失败' : interrupted ? '已中断'
     : outcome === 'completed' ? '已完成' : item && source !== 'codebuddy' ? '未运行' : '只读子会话');
   const lines = [label];
-  if (label === '等待回执') lines.push('定时已到，尚未收到触发或结束回执，无法确认任务仍在运行。');
+  if (label === '前台待确认') lines.push('已看到后台任务，尚无前台执行状态。');
   if (failed && !running) lines.push(failure?.text || activity?.error || '原生子代理已返回失败。');
   if (interrupted && !running && activity?.reason) lines.push(activity.reason);
   if (!progress && history) {
@@ -258,22 +259,12 @@ function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
   if (reason) lines.push(reason);
   const text = lines.join('\n');
   notice.querySelector('[role=status]').textContent = label;
-  notice.dataset.state = timers.length ? 'scheduled' : ['等待执行', '等待回执'].includes(label) ? 'waiting'
+  notice.dataset.state = label === '前台待确认' ? 'neutral' : label === '等待执行' ? 'waiting'
     : running ? 'working' : sdk || outcome === 'completed' ? 'ready' : interrupted ? 'warning' : 'idle';
   notice.classList.toggle('blocked', label === '执行失败');
   notice.hidden = false;
-  const menu = notice.parentElement.querySelector('.sdk-status-menu');
-  const detail = timers.length ? NativeSdkControls.timerDetails(timers, reason) : null;
-  if (detail) {
-    if (menu._statusDetail?.key !== detail.key) {
-      menu.dataset.statusLayout = detail.layout;
-      detail.render(menu);
-    }
-  } else {
-    delete menu.dataset.statusLayout;
-    if (!progress && menu.textContent !== text) menu.textContent = text;
-  }
-  menu._statusDetail = detail;
+  const menu = notice.parentElement.querySelector('.sdk-status-menu:not(.sdk-background-status-menu)');
+  if (!progress && menu.textContent !== text) menu.textContent = text;
   if (progress) SdkUI.methods.paintProgressDetail(notice, menu, progress);
   else {
     notice.title = text;
@@ -282,6 +273,12 @@ function paintAgentHistoryStatus(notice, uid, agent, item, reason) {
     metric.textContent = '';
   }
   ConversationUI.updateStatusDisclosure(notice, menu);
+  const backgroundText = background === '等待回执'
+    ? '定时已到，尚未收到触发或结束回执，无法确认任务仍在运行。'
+    : [label === '前台待确认' ? '已看到后台任务。' : '', reason].filter(Boolean).join('\n');
+  SdkUI.paintBackgroundStatus(notice, background, backgroundText,
+    timers.length ? NativeSdkControls.timerDetails(timers, backgroundText) : null);
+  if (SdkView.active?.notice === notice) SdkView.active.layoutToolbar();
   const delay = Number.isFinite(progress?.started) ? 1000 : timers[0]?.due - Date.now();
   if (Number.isFinite(delay)) notice._agentStatusTimer = setTimeout(() => {
     if (notice.isConnected && notice.getClientRects().length && S.sel === uid && S.agent === agent)
@@ -948,11 +945,40 @@ const NativeSdkView = {
     if (stick) this.scrollBottom();
   },
 
+  paintAgyBackgroundStatus(waiting, stopped) {
+    clearTimeout(this.timerStatusRefresh);
+    const agents = this.historyData?.taskAgents || [];
+    if (!waiting && !stopped && !agents.length) {
+      SdkUI.paintBackgroundStatus(this.notice);
+      return;
+    }
+    const timers = waiting ? NativeSdkControls.pendingTimers(this.historyData?.backgroundTimers || []) : [];
+    const raw = this.raw;
+    const receipt = stopped ? 'Agy 已停止当前前台任务。'
+      : !waiting ? '子代理有后台任务。'
+      : raw.foreground_cancelled
+      ? 'Agy 已停止当前前台任务，仍在等待回合结束回执。子代理和后台任务可以继续运行。收到回执前暂不能回退或分支。'
+      : 'Agy 前台已空闲，仍在等待回合结束回执。收到回执前暂不能回退或分支。';
+    const detail = timers.length || agents.length
+      ? NativeSdkControls.timerDetails(timers, receipt, raw.runtime_error, agents, this.uid) : null;
+    const label = stopped ? '已停止' : !waiting ? '后台运行' : detail ? '后台等待' : '等待回执';
+    const text = [receipt, raw.runtime_error].filter(Boolean).join('\n');
+    SdkUI.paintBackgroundStatus(this.notice, label, text, detail);
+    if (Number.isFinite(timers[0]?.due)) {
+      const generation = this.generation;
+      const wait = Math.min(Math.max(1, timers[0].due - Date.now()), 0x7fffffff);
+      this.timerStatusRefresh = setTimeout(() => {
+        if (this.current(generation)) this.paintStatus();
+      }, wait);
+    }
+  },
+
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
     const agy = this.uid.startsWith('agy:');
     const stop = this.pane.querySelector('#sdk-stop');
     const foregroundIdle = agy && raw.foreground_idle === true;
+    const awaitingResult = this.running && foregroundIdle;
     stop.hidden = (!this.running && !raw.retry?.delay_seconds) || foregroundIdle || this.capabilities.interrupt === false;
     stop.disabled = agy && (!!this.stopRequest || raw.cancel_pending === true || raw.cancel_requested === true);
     paintSelectedAgentStatus(this.uid, this.agent);
@@ -962,7 +988,7 @@ const NativeSdkView = {
     if(SdkUI.canSteer(this))send.title+='；Ctrl+Enter 引导当前任务';
     SdkUI.paintSend(this);
     if (this.uid.startsWith('agy:') && raw.compact_available && raw.compact?.state) {
-      clearTimeout(this.timerStatusRefresh);
+      this.paintAgyBackgroundStatus(false, false);
       const {state, error} = raw.compact;
       if (state === 'compacting') this.setNotice('压缩中', 'maintenance');
       else if (state === 'success') this.setNotice('压缩完成', 'ready');
@@ -989,6 +1015,9 @@ const NativeSdkView = {
       : this.historyData?.activity?.state === 'working' && !S.liveWorking.has(this.uid)
         && cache.get(viewKey(this.uid, this.agent))?.cli?.instance?.busy !== true ? 'incomplete' : '');
     const ended = !this.running && !this.requests.size && !pending;
+    const stopped = agy && ended && raw.last_turn?.status === 'interrupted';
+    const foregroundReady = awaitingResult || stopped;
+    if (agy && !this.agent) this.paintAgyBackgroundStatus(awaitingResult, stopped);
     const incomplete = ended && ['interrupted','incomplete','unknown'].includes(previous);
     const failed = ended && previous === 'failed';
     const compactFailed = raw.compact?.state === 'failed';
@@ -998,26 +1027,19 @@ const NativeSdkView = {
     const grokAgents = this.uid.startsWith('grok:') && Array.isArray(raw.native_tasks)
       ? raw.native_tasks.filter(key => typeof key === 'string' && key.startsWith('subagent_id:'))
         .map(key => key.slice('subagent_id:'.length)).filter(Boolean).sort() : [];
-    const grokBackground = grokAgents.length > 0 || (this.uid.startsWith('grok:')
-      && Array.isArray(raw.native_tasks) && raw.native_tasks.includes('unknown-subagent_id'));
+    if (this.uid.startsWith('grok:') && !this.agent) {
+      const agents = grokAgents.map(id => `子代理运行中 · ${id}`);
+      if (Array.isArray(raw.native_tasks) && raw.native_tasks.includes('unknown-subagent_id'))
+        agents.push('子代理运行中，原生通知未提供任务 ID。');
+      SdkUI.paintBackgroundStatus(this.notice, agents.length ? '子代理运行中' : '', agents.join('\n'));
+    }
     const requestingStop = agy && this.running && !foregroundIdle && this.stopRequest === 'requesting';
     const cancelError = agy && this.running && raw.cancel_error;
     const awaitingInput = agy && this.running && (raw.cancel_pending === true || this.stopRequest === 'pending');
     const awaitingCancel = agy && this.running && (raw.cancel_requested === true || this.stopRequest === 'accepted');
-    const awaitingResult = this.running && foregroundIdle;
-    const stoppedForeground = awaitingResult && raw.foreground_cancelled === true;
-    const timers = awaitingResult ? NativeSdkControls.pendingTimers(this.historyData?.backgroundTimers || []) : [];
-    const taskAgents = awaitingResult ? this.historyData?.taskAgents || [] : [];
-    const receiptDetails = stoppedForeground ? 'Agy 已停止当前前台任务，仍在等待回合结束回执。子代理和后台任务可以继续运行。'
-      : 'Agy 前台已空闲，仍在等待回合结束回执。';
-    const waitingText = stoppedForeground ? `已停止\n${receiptDetails}` : timers.length
-      ? '后台定时任务等待中'
-      : taskAgents.length ? '子代理有后台任务' : `等待回执\n${receiptDetails}`;
-    const kind = requestingStop ? 'waiting' : scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
-      : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length || taskAgents.length ? 'scheduled' : 'waiting')
-      : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting'
-      : grokBackground ? 'working' : 'ready';
-    clearTimeout(this.timerStatusRefresh);
+    const kind = foregroundReady ? 'ready' : requestingStop ? 'waiting' : scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+      : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting'
+      : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting' : 'ready';
     if (kind === 'working' && this.running && this.connected && !raw.cancel_requested) {
       const progress = nativeSdkTurnProgress(raw, this.uid.split(':', 1)[0]);
       if (progress) {
@@ -1025,31 +1047,20 @@ const NativeSdkView = {
         return;
       }
     }
-    if (kind === 'scheduled' && Number.isFinite(timers[0]?.due)) {
-      const generation = this.generation;
-      const wait = Math.min(Math.max(1, timers[0].due - Date.now()), 0x7fffffff);
-      this.timerStatusRefresh = setTimeout(() => {
-        if (this.current(generation)) this.paintStatus();
-      }, wait);
-    }
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
-    let text = requestingStop ? '正在请求停止' : scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+    let text = foregroundReady ? '就绪' : requestingStop ? '正在请求停止' : scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : cancelError ? `中断失败：${cancelError}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
       : awaitingInput ? '等待接收输入\nAgy 接收本轮输入后，SessionDock 会发送停止请求。'
       : awaitingCancel ? '停止已受理\n等待 Agy 确认前台空闲。子代理和后台任务会继续运行。收到回合结束回执前暂不能回退对话。'
-      : awaitingResult ? waitingText
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
       : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成'
-      : grokBackground ? ['后台运行', ...grokAgents.map(id => `子代理运行中 · ${id}`),
-        ...(raw.native_tasks.includes('unknown-subagent_id') ? ['子代理运行中，原生通知未提供任务 ID。'] : [])].join('\n')
       : '就绪';
-    if (raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
+    if (!foregroundReady && raw.runtime_error) text += `\n运行实例：${raw.runtime_error}`;
     if(this.nativeActionResult && !this.running && !this.requests.size && !error){
       this.setNotice(this.nativeActionResult.text,this.nativeActionResult.failed?'warning':'ready');
-    }else this.setNotice(text, kind, false, kind === 'scheduled'
-      ? NativeSdkControls.timerDetails(timers, receiptDetails, raw.runtime_error, taskAgents, this.uid) : null);
+    }else this.setNotice(text, kind);
   },
 
   paintHistory() {
@@ -1187,7 +1198,7 @@ const NativeSdkView = {
   async send(operation = 'turn') {
     if (!this.input || !this.pane) return;
     const source=this.uid.split(':')[0], composerSteer=['kiro','droid','agy'].includes(source);
-    if (operation === 'steer' && composerSteer && !this.running) operation = 'turn';
+    if (operation === 'steer' && composerSteer && (!this.running || SdkUI.agySteerBlocked(this))) operation = 'turn';
     const steer = operation === 'steer';
     if (steer && (!composerSteer || !this.running || !this.capabilities.steer)) {
       this.setNotice('当前没有可引导的运行中任务；请用 Enter 开始新回合。', 'blocked'); return;
@@ -1241,18 +1252,21 @@ const NativeSdkView = {
       if (stop.hidden || stop.disabled) return;
       this.stopRequest = 'requesting';
       this.paintStatus();
+      NativeSdkControls.paintQueue(this);
     }
     try {
       const receipt = await this.request('api/native-sdk/interrupt', {uid:this.uid});
       if (agy && this.current(generation)) {
         this.stopRequest = this.raw === raw ? (receipt.pending ? 'pending' : 'accepted') : null;
         this.paintStatus();
+        NativeSdkControls.paintQueue(this);
       }
     } catch (error) {
       if (!this.current(generation)) return;
       if (agy) {
         this.stopRequest = null;
         this.paintStatus();
+        NativeSdkControls.paintQueue(this);
         if (error.code === 'agy_sdk_idle') {
           if (this.running && !this.raw.foreground_idle) this.setNotice('前台已空闲', 'waiting');
           return;

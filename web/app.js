@@ -2341,10 +2341,10 @@ function paintItemStatus(node) {
   badge.title = badge.ariaLabel = count ? `${count} 条新内容，${label}` : label;
 }
 
-function sessionBackgroundWorking(uid) {
+function sessionBackgroundWorking(uid, includeActivity = true) {
   if (!uid || !S.live.has(uid)) return false;
   const row = indexedSessions().byUid.get(uid);
-  return S.liveWorking.has(uid) || row?.background > 0
+  return (includeActivity && S.liveWorking.has(uid)) || row?.background > 0
     || (row?.agent_items || []).some(item => agentRunning(uid, item));
 }
 
@@ -8218,12 +8218,14 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
     button.onmousedown = event => event.preventDefault();
     notice.after(button);
   } else notice.after(button);
-  button.hidden = !!historyOnly || !!(agent && mode === 'cli') || externalAcp || (!external && !idle && !busy);
+  const discovering = mode === 'sdk' && SdkView.discovering;
+  button.hidden = discovering || !!historyOnly || !!(agent && mode === 'cli') || externalAcp || (!external && !idle && !busy);
+  if (discovering) return;
   notice.classList.toggle('external-cli-status', external);
   if (!observingAgent && !externalAcp && (external || idle && !busy && !view?.openFailed)) {
     const text = external ? '正在外部CLI运行' : '未运行';
     notice.querySelector('[role=status]').textContent = text;
-    notice.dataset.state = external ? 'ready' : 'idle';
+    notice.dataset.state = external ? 'neutral' : 'idle';
     notice.classList.remove('blocked');
     notice.hidden = false;
   }
@@ -8234,7 +8236,7 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   const reason = S.liveExternalSdk.has(uid) ? '外部 ACP 会话仅可查看，请在原程序中操作。'
     : external && mode === 'sdk' && !sessionStopCapable() ? '此节点不支持停止外部 CLI。'
     : sessionStartUnavailable(row, mode);
-  button.disabled = busy || !!reason || (mode === 'sdk' && SdkView.discovering);
+  button.disabled = busy || !!reason;
   button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
   button.onclick = () => runComposerSession(uid, agent, mode, external);
   if (observingAgent) {
@@ -11166,6 +11168,7 @@ function renderActivity(activity) {
   n.title = activity?.error || activity?.reason || label;
   if (!S.agent) {
     clearTimeout(n._agentStatusTimer);
+    SdkUI.paintBackgroundStatus(n);
     n.querySelector('.sdk-turn-metric')?.remove();
     delete details.dataset.statusLayout;
     details._statusDetail = null;

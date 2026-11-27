@@ -145,6 +145,16 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && !window.__grokSnapshot.requests.length")
     page.locator("#sdk-input").fill("background-task");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.native_tasks?.length>0")
+    notice = page.locator('#sdk-composer .sdk-status')
+    expect(notice).to_have_text('就绪')
+    expect(notice).to_have_attribute('data-state', 'ready')
+    background = page.locator('#sdk-composer .sdk-background-status')
+    expect(background).to_have_text('子代理运行中')
+    background.click()
+    expect(page.locator('#sdk-background-status-menu')).to_contain_text('synthetic-child')
+    page.keyboard.press('Escape')
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'background-sdk-ready.png'))
     raw = snapshot(page, uid)
     assert raw["background_commands"] == [
         {"task": "synthetic-bg", "command": "synthetic daemon", "output_available": True}
@@ -213,6 +223,7 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     page,uid=page_for(context,base,fixture)
     page.locator("#sdk-input").fill("clear-background");page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && !window.__grokSnapshot.native_tasks?.length")
+    expect(page.locator('#sdk-composer .sdk-background-status')).to_be_hidden()
     assert not snapshot(page, uid)["background_timers"]
     assert not snapshot(page, uid)["background_commands"]
     assert api(page, "background_output", request)["raw"] is None

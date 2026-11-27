@@ -88,7 +88,8 @@ def select_agent(page, agent):
 
 
 def check_scheduler(page, footer, screenshots, label):
-    expect(footer.locator('.sdk-status [role=status]')).to_have_text('后台定时任务等待中')
+    expect(footer.locator('.sdk-status [role=status]')).to_have_text('前台待确认')
+    expect(footer.locator('.sdk-background-status')).to_have_text('后台等待')
     menu = open_footer(page, footer, {}, screenshots, label, extra=2)
     expect(menu.locator('.task-commands')).to_be_hidden()
     expect(menu.locator('.task-timers')).to_contain_text('检查分片进度')
@@ -105,8 +106,9 @@ def check_scheduler(page, footer, screenshots, label):
 
 
 def check_overdue(page, footer, screenshots, label):
-    expect(footer.locator('.sdk-status [role=status]')).to_have_text('等待回执')
-    expect(footer.locator('.sdk-status')).to_have_attribute('data-state', 'waiting')
+    expect(footer.locator('.sdk-status [role=status]')).to_have_text('前台待确认')
+    expect(footer.locator('.sdk-status')).to_have_attribute('data-state', 'neutral')
+    expect(footer.locator('.sdk-background-status')).to_have_text('等待回执')
     menu = open_footer(page, footer, {}, screenshots, label, extra=1)
     expect(menu.locator('.task-timers')).to_be_hidden()
     menu.locator('.task-overdue summary').click()
@@ -117,7 +119,7 @@ def check_overdue(page, footer, screenshots, label):
     }''', arg=menu.get_attribute('id'))
     page.screenshot(path=str(screenshots / f'{label}-expanded.png'))
     page.keyboard.press('Escape')
-    footer.locator('.sdk-status').click()
+    footer.locator('.sdk-background-status').click()
     expect(footer.locator('.sdk-status-menu:popover-open')).to_contain_text('无法确认任务仍在运行')
     page.screenshot(path=str(screenshots / f'{label}-status.png'))
     page.keyboard.press('Escape')
@@ -245,9 +247,10 @@ def check_timer_receipts(page, footer, native, screenshots, label):
     for view, selector in [('chat', '#conversation-status'), ('sdk', '#sdk-composer .sdk-status-row')]:
         page.locator('#a-' + view).click()
         row = page.locator(selector)
-        expect(row.locator('.sdk-status [role=status]')).to_have_text('等待回执')
-        expect(row.locator('.sdk-status')).to_have_attribute('data-state', 'waiting')
-        row.locator('.sdk-status').click()
+        expect(row.locator('.sdk-status [role=status]')).to_have_text('前台待确认')
+        expect(row.locator('.sdk-status')).to_have_attribute('data-state', 'neutral')
+        expect(row.locator('.sdk-background-status')).to_have_text('等待回执')
+        row.locator('.sdk-background-status').click()
         expect(row.locator('.sdk-status-menu:popover-open')).to_contain_text('无法确认任务仍在运行')
         page.screenshot(path=str(screenshots / f'{label}-{view}-awaiting-receipt.png'))
         page.keyboard.press('Escape')
@@ -290,8 +293,11 @@ def check_foreground(page, sdk, fixture, log, screenshots, label):
     with sqlite3.connect(native / 'conversations' / f'{parent}.db') as db:
         db.executemany('INSERT INTO steps VALUES (?,1,3,0,?)', [(20, b''), (21, b'')])
     (fixture.peer.root / 'foreground-status').write_text('IDLE')
-    expect(sdk.locator('.sdk-status').get_by_role('status')).to_have_text('等待回执', timeout=20000)
+    expect(sdk.locator('.sdk-status').get_by_role('status')).to_have_text('就绪', timeout=20000)
+    expect(sdk.locator('.sdk-status')).to_have_attribute('data-state', 'ready')
+    expect(sdk.locator('.sdk-background-status')).to_have_text('等待回执')
     expect(sdk.get_by_role('button', name='后台任务 1', exact=True)).to_be_visible(timeout=20000)
+    assert sdk.locator('.sdk-status ~ .sdk-background-status').is_visible()
     page.screenshot(path=str(screenshots / f'{label}-waiting-with-task.png'))
     viewer = open_footer(page, sdk, {20: 'python merge.py'}, screenshots, label + '-active')
     assert page.evaluate('NativeSdkView.running')
@@ -434,7 +440,8 @@ def run(args):
                             check_overdue(page, sdk, args.screenshots, label + '-overdue-sdk')
                             select_agent(page, CHILD)
                             page.locator('#a-sdk').click()
-                            expect(sdk.locator('.sdk-status [role=status]')).to_have_text('后台运行')
+                            expect(sdk.locator('.sdk-status [role=status]')).to_have_text('前台待确认')
+                            expect(sdk.locator('.sdk-background-status')).to_have_text('后台运行')
                             menu = open_footer(page, sdk, child_tasks, args.screenshots, label + '-child-sdk')
                             page.keyboard.press('Escape')
                             page.locator('#a-chat').click()

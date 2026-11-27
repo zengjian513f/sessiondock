@@ -71,23 +71,28 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.screenshot(path=str(screenshots / (label + '-sdk.png')))
     # A completed native turn can still own local or cross-node work.
     # Fleet-only changes must update both the marker and SDK footer.
+    ready = page.locator('#sdk-composer .sdk-status')
+    background_status = page.locator('#sdk-composer .sdk-background-status')
     for kind in ('local', 'remote'):
         background['kind'] = kind
         page.evaluate('refreshLive(true)')
         expect(marker).to_have_class(re.compile(r'\bturn-working\b'))
-        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('后台运行')
+        expect(ready).to_have_text('就绪')
+        expect(ready).to_have_attribute('data-state', 'ready')
+        expect(background_status).to_have_text('后台运行')
         expect(page.locator('#sdk-send')).to_have_text('发送')
         page.locator('#sdk-input').fill('background draft')
         expect(page.locator('#sdk-send')).to_be_enabled()
-        page.locator('#sdk-composer .sdk-status').click()
-        expect(page.locator('#sdk-status-menu')).to_contain_text('主回合已结束')
+        background_status.click()
+        expect(page.locator('#sdk-background-status-menu')).to_contain_text('主回合已结束')
         page.keyboard.press('Escape')
         if screenshots:
             page.screenshot(path=str(screenshots / (label + '-' + kind + '-background.png')))
         background['kind'] = ''
         page.evaluate('refreshLive(true)')
         expect(marker).not_to_have_class(re.compile(r'\bturn-working\b'))
-        expect(page.locator('#sdk-composer .sdk-status')).to_contain_text('就绪')
+        expect(ready).to_have_text('就绪')
+        expect(background_status).to_be_hidden()
         expect(page.locator('#sdk-input')).to_have_value('background draft')
     page.locator('#sdk-input').fill('')
     assert not errors, errors

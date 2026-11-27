@@ -110,6 +110,8 @@ def exercise(browser, base, source, peer, screenshots, label):
         expect(page.locator('.sdk-history .msg').first).to_be_visible(timeout=1000)
         expect(page.locator('#sdk-send')).to_be_disabled()
         page.wait_for_function("SdkView.discovering && SdkView.selection?.mode === 'loading'")
+        expect(page.locator('#sdk-composer .sdk-status')).to_have_text('确认状态中')
+        expect(page.locator('#sdk-composer .composer-run-action')).to_be_hidden()
         assert page.evaluate('window.sdkOpenCount') == count
         capture('cached-pending')
         page.unroute('**/api/live?*force=1*', hold_live)

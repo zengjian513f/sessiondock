@@ -992,12 +992,17 @@ const CodexSdkView = {
     if (!this.pane) return;
     paintSelectedAgentStatus(this.uid, this.agent);
     if (this.stopped) {
+      SdkUI.paintBackgroundStatus(this.notice);
       this.pane.querySelector('#sdk-send').disabled = true;
       this.pane.querySelector('#sdk-stop').hidden = true;
       this.setNotice('会话已停止；重新打开 SDK 可继续。', 'idle', true);
       return;
     }
     const active = !!this.turn;
+    const background = !this.agent && sessionBackgroundWorking(this.uid, !active);
+    SdkUI.paintBackgroundStatus(this.notice, background ? '后台运行' : '',
+      active || this.summary?.capacity_retry ? '仍有后台任务或子代理运行。'
+        : '主回合已结束，仍有后台任务或子代理运行。可以发送新消息。');
     this.pane.querySelector('#sdk-stop').hidden = !active && !this.summary?.capacity_retry;
     const send = this.pane.querySelector('#sdk-send');
     sdkSyncSettings(this);
@@ -1046,10 +1051,6 @@ const CodexSdkView = {
           : unfinished ? 'SDK 已空闲，原生回合未写入结束事件' : '';
         parts.push('已中断' + (reason ? '：' + reason : ''));
         kind = 'warning';
-      }
-      else if (!this.agent && sessionBackgroundWorking(this.uid)) {
-        parts.push('后台运行：主回合已结束，仍有后台任务或子代理运行；可以发送新消息。');
-        kind = 'working';
       }
       else if (compact?.status === 'completed') parts.push('压缩完成');
       else parts.push('就绪');

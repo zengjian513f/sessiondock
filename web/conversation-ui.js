@@ -123,7 +123,7 @@ const ConversationUI = {
     const up = above > below;
     const height = Math.max(0, up ? above : below) / zoom;
     menu.style.maxHeight = `${taskList ? Math.min(420, height) : height}px`;
-    const left = taskList ? box.left : box.right - width;
+    const left = taskList || menu.classList.contains('sdk-background-status-menu') ? box.left : box.right - width;
     menu.style.left = `${Math.max(edge, Math.min(left, innerWidth - edge - width)) / zoom}px`;
     menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
   },

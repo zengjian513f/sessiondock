@@ -26,7 +26,7 @@ GRANDCHILD = 'a6000000-0000-4000-8000-000000000013'
 MISSING = 'a6000000-0000-4000-8000-000000000014'
 ORPHAN = 'a6000000-0000-4000-8000-000000000015'
 COMPLETED = 'a6000000-0000-4000-8000-000000000016'
-TIMER_WAIT = '后台定时任务等待中'
+TIMER_WAIT = '后台等待'
 HISTORY_START = datetime.now(timezone.utc) - timedelta(minutes=1)
 
 
@@ -72,11 +72,17 @@ def expect_child_header(page, running):
 def expect_read_only_child(page, status_row, state, screenshot=None, detail_text=None):
     row = page.locator(status_row)
     status = row.locator('.sdk-status')
-    expect(status.locator('[role=status]')).to_have_text(state)
+    expect(status.locator('[role=status]')).to_have_text('前台待确认' if state == TIMER_WAIT else state)
     expect_child_header(page, state != '未运行')
     expect(row.locator('.composer-run-action')).to_be_hidden()
     expect(page.locator('#a-session-toggle')).to_have_count(0)
-    status.click()
+    if state == TIMER_WAIT:
+        expect(status).to_have_attribute('data-state', 'neutral')
+        background = row.locator('.sdk-background-status')
+        expect(background).to_have_text(TIMER_WAIT)
+        background.click()
+    else:
+        status.click()
     details = row.locator('.sdk-status-menu:popover-open')
     expect(details).to_contain_text('Agy 子代理由主会话管理')
     if state == TIMER_WAIT:

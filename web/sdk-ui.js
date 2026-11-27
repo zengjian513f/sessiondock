@@ -155,14 +155,30 @@ const SdkUI = {
     return ['codex','kiro'].includes(source) || ['droid','agy'].includes(source) && !!view.capabilities?.steer;
   },
 
+  agySteerBlocked(view) {
+    return view.uid.startsWith('agy:') && (view.raw?.foreground_idle === true
+      || view.raw?.cancel_pending === true || view.raw?.cancel_requested === true || !!view.stopRequest);
+  },
+
+  agyCanSend(view) {
+    const launch = view.uid.startsWith('agy:') && view.raw?.fifo_continuation;
+    return !!launch?.defaults && !!launch.active && !view.raw.input_queue?.some(row => row.operation === 'turn')
+      && ['model', 'effort', 'mode'].every(field =>
+        !view.settingChoices?.has(field) && launch.defaults[field] === launch.active[field]);
+  },
+
   paintSend(view) {
     const button = view.pane?.querySelector('#sdk-send');
     if (!button || !view.steerSend) return;
     const active = view.uid.startsWith('codex:') ? !!view.turn : view.running;
     const supported = this.canSteer(view);
-    const steer = supported && active && (view.steerSend.ctrl || view.steerSend.held);
-    const label = steer ? '引导' : active ? '排队' : '发送';
-    const title = steer ? '引导当前任务' : supported ? '点击发送／排队；按住 Ctrl 点击或手机长按可引导当前任务' : active ? '当前任务结束后发送；尚未投递的排队消息可撤销' : '开始新回合';
+    const canSteer = supported && active && !this.agySteerBlocked(view);
+    const steer = canSteer && (view.steerSend.ctrl || view.steerSend.held);
+    const queued = active && !this.agyCanSend(view);
+    const label = steer ? '引导' : queued ? '排队' : '发送';
+    let title = queued ? '等当前任务腾出发送位置；尚未投递的消息可撤销' : '发送消息';
+    if (steer) title = '引导当前任务';
+    else if (canSteer) title += '；按住 Ctrl 点击或手机长按可引导当前任务';
     // Keyboard events also arrive for ordinary typing. Replacing unchanged text
     // invalidates ancestor :has() rules and needlessly restyles long histories.
     if (button.textContent !== label) button.textContent = label;
@@ -856,6 +872,45 @@ const SdkUI = {
       };
     });
   },
+  paintBackgroundStatus(notice, label, text, detail = null) {
+    const row = notice.parentElement;
+    let button = row.querySelector('.sdk-background-status');
+    let menu = row.querySelector('.sdk-background-status-menu');
+    if (!label) {
+      if (button) button.hidden = true;
+      if (menu?.matches(':popover-open')) menu.hidePopover();
+      return;
+    }
+    if (!button) {
+      button = el('button', 'btn sdk-background-status');
+      button.type = 'button';
+      menu = el('div', 'new-model-menu sdk-toolbar-menu sdk-status-menu sdk-background-status-menu');
+      menu.id = `${row.id || 'sdk'}-background-status-menu`;
+      menu.setAttribute('popover', 'auto');
+      menu.setAttribute('role', 'dialog');
+      menu.setAttribute('aria-label', '后台状态详情');
+      button.setAttribute('aria-controls', menu.id);
+      button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-expanded', 'false');
+      notice.after(button, menu);
+      ConversationUI.bindPopover(button, menu, row);
+    }
+    button.hidden = false;
+    if (button.textContent !== label) button.textContent = label;
+    button.title = text;
+    if (detail ? menu._statusDetail?.key !== detail.key : menu._statusDetail || menu.textContent !== text) {
+      menu._statusDetail = detail;
+      if (detail) {
+        menu.dataset.statusLayout = detail.layout;
+        detail.render(menu);
+      } else {
+        delete menu.dataset.statusLayout;
+        menu.textContent = text;
+      }
+      if (menu.matches(':popover-open')) ConversationUI.placePopover(menu, button);
+    }
+  },
+
   layoutFooter(view, controls) {
     view.footerLayoutControls = controls;
     if (view.footerLayoutFrame != null) return;
@@ -876,7 +931,8 @@ const SdkUI = {
     const controlsMetaKey = JSON.stringify([rowWidth, row.querySelector('.composer-run-action')?.hidden,
       [...menu.querySelectorAll('.sdk-control-note, .sdk-reset, .sdk-other-quotas')].map(n => [n.hidden, n.textContent]),
       list.map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
-    const signature = JSON.stringify([view.notice.textContent, gauges.textContent,
+    const background = row.querySelector('.sdk-background-status:not([hidden])');
+    const signature = JSON.stringify([view.notice.textContent, background?.textContent, gauges.textContent,
       row.querySelector(':scope > .sdk-credits')?.textContent,
       row.querySelector('.background-commands')?.textContent, controlsMetaKey]);
     const hadLayout = Boolean(row.dataset.footerLayout);

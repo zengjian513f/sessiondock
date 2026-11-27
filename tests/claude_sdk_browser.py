@@ -77,6 +77,7 @@ def wait_snapshot(page, uid, predicate):
 
 def start_sdk_if_needed(page):
     # SDK starts only from the explicit footer action; clicking the editor never starts it.
+    page.wait_for_function('!SdkView.discovering')
     action = page.locator('#sdk-composer .composer-run-action')
     if action.is_visible():
         action.click()

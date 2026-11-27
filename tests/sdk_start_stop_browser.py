@@ -60,6 +60,7 @@ def exercise(browser, base, source, screenshots, label):
         notice = page.locator('#composer-input-status')
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-external.png'))
         expect(page.locator('#conversation-status .sdk-status')).to_have_text('正在外部CLI运行')
+        expect(page.locator('#conversation-status .sdk-status')).to_have_attribute('data-state', 'neutral')
         expect(page.locator('#conversation-status .composer-run-action')).to_have_text('接管')
         expect(notice).not_to_contain_text('点击输入框启动')
         writes = []
