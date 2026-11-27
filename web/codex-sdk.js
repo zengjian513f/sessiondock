@@ -1023,7 +1023,7 @@ const CodexSdkView = {
     this.paintQueue();
     this.paintGauges();
     if (this.stopRequest) {
-      this.setNotice(this.stopRequest.accepted ? '正在停止\n等待原生确认当前回合结束。' : '正在请求停止', 'waiting');
+      this.setNotice(this.stopRequest.accepted ? '正在停止\n等待原生确认当前回合结束。若久无响应，可在标题栏停止 SDK 模式。' : '正在请求停止', 'waiting');
       return;
     }
     const status = this.summary?.status || {};

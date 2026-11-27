@@ -1042,7 +1042,7 @@ const NativeSdkView = {
       }
     }
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
-    let text = requestingStop ? '正在请求停止' : stopping ? '正在停止\n等待原生确认当前回合结束。' : scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+    let text = requestingStop ? '正在请求停止' : stopping ? '正在停止\n等待原生确认当前回合结束。若久无响应，可在标题栏停止 SDK 模式。' : scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : cancelError ? `中断失败：${cancelError}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`

@@ -82,9 +82,10 @@ def exercise(browser, base, root, shots, label):
     gate.touch()
     page.locator("#sdk-stop").click()
     status = page.locator(".sdk-status-row > .sdk-status:visible")
-    expect(status).to_have_attribute("title", re.compile("^正在停止：.*停止SDK模式"), timeout=5000)
+    expect(status).to_have_attribute("title", re.compile("在标题栏停止 SDK 模式"), timeout=5000)
     expect(status).to_have_text("正在停止")
     expect(page.locator("#sdk-stop")).to_be_visible()
+    expect(page.locator("#sdk-stop")).to_be_disabled()
     if shots:
         page.screenshot(path=str(shots / f"kiro-stopping-{label}-1280-light.png"), full_page=True)
     gate.unlink()

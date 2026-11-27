@@ -2364,7 +2364,7 @@ function sessionTurn(uid) {
   return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
 }
 function turnLabel(turn, uid) {
-  if (turn === 'working' && NativeSdkView.uid === uid && !NativeSdkView.agent && NativeSdkView.connected
+  if (NativeSdkView.uid === uid && !NativeSdkView.agent && NativeSdkView.connected && NativeSdkView.running
       && uid.startsWith('agy:') && NativeSdkView.raw?.foreground_idle && !NativeSdkView.raw?.error)
     return ' · 前台就绪，等待回执';
   if (turn === 'working' && CodexSdkView.uid === uid && !CodexSdkView.agent && CodexSdkView.connected
