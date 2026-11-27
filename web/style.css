@@ -2735,6 +2735,16 @@ header .header-actions > #transfer-tasks:has(.transfer-task-count:not([hidden]))
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
+.sdk-operation-records { margin-block: 8px; padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted); background: var(--panel); font-size: 12px; overflow-wrap: anywhere; }
+.sdk-operation-records summary { cursor: pointer; }
+.sdk-operation-records ol { margin: 6px 0 0; padding-left: 1.4em; }
+.sdk-operation-records li + li { margin-top: 4px; }
+.sdk-operation-records time { margin-right: .65em; font-variant-numeric: tabular-nums; }
+.sdk-operation-records .blocked, .sdk-input-feedback.blocked { color: var(--danger); }
+.sdk-input-feedback { margin: 0 8px 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere;
+  max-height: 5em; overflow-y: auto; }
+.sdk-bubble-menu [aria-disabled="true"] { opacity: .58; }
 .sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 8px; min-width: 0;
   /* One fixed height before and after the controls arrive: no reflow on ready. */
   height: var(--sdk-status-row-height); --sdk-status-row-height: 24px; }

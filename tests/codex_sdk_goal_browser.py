@@ -132,23 +132,19 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(pane.locator('.sdk-status')).to_have_attribute('data-state', 'working')
     command('/goal resume')
     expect(box).to_have_value('')
-    expect(pane.locator('#sdk-status-menu')).to_contain_text('目标已恢复')
+    expect(pane.locator('.sdk-input-feedback')).to_contain_text('目标已恢复')
     assert fake.goal == {**before, 'status': 'active'}
     assert len(fake.methods('thread/goal/set')) == 1
     if screenshots:
-        pane.locator('.sdk-status').click()
         page.screenshot(path=str(screenshots / (label + '-resumed.png')))
-        page.keyboard.press('Escape')
 
     for rejection in ['No goal is currently set.', 'goals feature is disabled', 'Method not found']:
         fake.reject = rejection
         command('/goal resume')
-        expect(pane.locator('#sdk-status-menu')).to_contain_text(rejection)
+        expect(pane.locator('.sdk-input-feedback')).to_contain_text(rejection)
         expect(box).to_have_value('/goal resume')
     if screenshots:
-        pane.locator('.sdk-status').click()
         page.screenshot(path=str(screenshots / (label + '-rejected.png')))
-        page.keyboard.press('Escape')
     fake.reject = None
 
     fake.hold = True
@@ -178,7 +174,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     count = len(fake.methods('thread/goal/set'))
     for unsupported in ['/goal resume extra', '/goal new objective']:
         command(unsupported)
-        expect(pane.locator('#sdk-status-menu')).to_contain_text('不支持的命令')
+        expect(pane.locator('.sdk-input-feedback')).to_contain_text('不支持的命令')
         expect(box).to_have_value(unsupported)
     assert len(fake.methods('thread/goal/set')) == count
     command('/goal resume')
@@ -264,7 +260,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     icon_state('unset', '未设置', '--muted')
     page.keyboard.press('Escape')
     command('/help')
-    expect(pane.locator('#sdk-status-menu')).to_contain_text('/goal resume')
+    expect(pane.locator('.sdk-input-feedback')).to_contain_text('/goal resume')
     assert not fake.methods('turn/start') and not fake.methods('turn/steer') and not fake.methods('turn/interrupt')
     expect(pane.locator('.sdk-queued')).to_have_count(0)
     assert not errors, errors

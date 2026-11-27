@@ -432,6 +432,13 @@ for line in sys.stdin:
         advance()
         result('SUCCESS',answer)
         continue
+    if text=='hold:rewind-echo':
+        from datetime import datetime, timezone
+        stamp=datetime.now(timezone.utc).isoformat()
+        for prompt in ('核对报告','检查任务进度'):
+            task=f'Created At: {stamp}\nTool is running as a background task with task id: {sid}/task-{index}\nTask Description: Timer: 1h, Prompt: {prompt}'
+            native_record('GENERIC',task,created_at=stamp,status='RUNNING')
+            advance()
     if text.startswith('hold:'):
         token=text.split(':',1)[1]
         assert Path(token).name==token

@@ -538,7 +538,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(week.locator("b")).to_have_text("0%")
             expect(reset.locator("option")).to_have_count(1)
             expect(reset.locator("option")).to_contain_text("Reset A")
-            expect(pane.locator("#sdk-status-menu")).to_contain_text("已兑换")
+            expect(pane.locator(".sdk-input-feedback")).to_contain_text("已兑换")
 
             # A question card, steering into the running turn, then interrupt.
             box = pane.locator("#sdk-input")

@@ -304,7 +304,7 @@ const NativeSdkControls = {
           const generation=view.generation,value=select.value;
           try{
             await this.settings(view,{[key]:key==='fast_mode'?value==='true':value});
-          }catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}
+          }catch(error){if(view.current(generation))view.setFeedback(`设置失败：${error.message}`,true);}
         };
       }
       const names=source==='droid' && key==='mode'?{auto:'执行模式',spec:'计划模式'}:source==='droid' && key==='autonomy_level'?{off:'自主权限关闭',low:'低自主权限',medium:'中自主权限',high:'高自主权限'}:key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',autopilot:'Autopilot',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
@@ -379,7 +379,7 @@ const NativeSdkControls = {
           if(edit)await CodexSdkCompose.recall(view,item.edit_text ?? item.text ?? item.prompt?.text ?? '',cancel);
           else await cancel();
         }
-        catch(error){if(view.current(generation))view.setNotice(error.message,'blocked');}
+        catch(error){if(view.current(generation))view.setFeedback(error.message,true);}
         finally{holder._nativeQueueBusy=false;if(view.current(generation)){delete holder.dataset.state;this.paintQueue(view);}}
       };
     };
@@ -424,8 +424,25 @@ const NativeSdkControls = {
   rewindResult(view,response) {
     const native=response.native || response.raw?.native || {};
     const failed=!!(native.failedRestoreCount || native.failedDeleteCount);
-    view.nativeActionResult={failed,text:`${failed?'回退部分失败':'回退完成'}：恢复 ${native.restoredCount ?? '未知'} 个文件，删除 ${native.deletedCount ?? '未知'} 个文件；恢复失败 ${native.failedRestoreCount ?? '未知'}，删除失败 ${native.failedDeleteCount ?? '未知'}。已在新会话中继续，原会话保留。`};
-    view.paintStatus();
+    SdkUI.logOperation(view, `${failed?'回退部分失败':'回退完成'}：恢复 ${native.restoredCount ?? '未知'} 个文件，删除 ${native.deletedCount ?? '未知'} 个文件；恢复失败 ${native.failedRestoreCount ?? '未知'}，删除失败 ${native.failedDeleteCount ?? '未知'}。已在新会话中继续，原会话保留。`, failed);
+  },
+  historyUnavailable(view) {
+    if (!view.uid.startsWith('agy:') || view.readOnly) return '';
+    if (!view.connected) return '请等 SDK 重新连上，再操作对话历史。';
+    if (view.raw?.compact?.state === 'compacting') return '请等压缩完成，再操作对话历史。';
+    if (!view.running) return '';
+    return view.raw?.foreground_idle || view.stopRequest || view.raw?.cancel_requested
+      ? '正在等待回合结束回执，收到后可以回退或分支。'
+      : '请等当前回合结束，再回退或分支。';
+  },
+  paintHistoryAvailability(view) {
+    const reason = this.historyUnavailable(view);
+    if (view.historyActionReason === reason) return;
+    if (view.historyActionReason && view.pane.querySelector('.sdk-input-feedback').textContent === view.historyActionReason)
+      view.setFeedback('');
+    view.historyActionReason = reason;
+    for (const button of view.pane.querySelectorAll('[data-sdk-history-action]'))
+      SdkUI.paintHistoryAction(button, reason);
   },
   async droidRewind(view,body) {
     const generation=view.generation;
@@ -458,16 +475,21 @@ const NativeSdkControls = {
   async action(view,method,body={}) {
     const generation=view.generation,droid=view.uid.startsWith('droid:');
     const agyCompact=method==='compact' && view.uid.startsWith('agy:');
+    view.setFeedback('');
+    if (['fork', 'revert', 'compact'].includes(method)) {
+      const unavailable = this.historyUnavailable(view);
+      if (unavailable) { view.setFeedback(unavailable); return false; }
+    }
     if(agyCompact && (view.nativeActionPending || view.running || view.raw?.compact?.state==='compacting')){
-      view.setNotice('请等待当前 Agy 操作结束后压缩。','blocked');return false;
+      view.setFeedback('请等待当前 Agy 操作结束后压缩。',true);return false;
     }
     if(agyCompact && view.capabilities.compact===true && view.raw?.compact_available!==true){
-      view.setNotice('压缩需要此会话已有 Agy SDK 运行实例。','blocked');return false;
+      view.setFeedback('压缩需要此会话已有 Agy SDK 运行实例。',true);return false;
     }
     if(droid && view.nativeActionPending){view.setNotice('会话操作正在进行，请稍候。');return false;}
-    if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setNotice('当前原生接口尚未提供按消息分支，输入已保留。','blocked');return false;}
+    if(droid && method==='fork' && (body.before!=null || body.prompt_index!=null) && !view.capabilities.fork_before){view.setFeedback('当前原生接口尚未提供按消息分支，输入已保留。',true);return false;}
     const kiroAllowed=view.uid.startsWith('kiro:') && method==='compact' && view.capabilities.compact!==false;
-    if(!this.supportsAction(view,method) && !kiroAllowed){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
+    if(!this.supportsAction(view,method) && !kiroAllowed){view.setFeedback('当前原生接口未提供此操作',true);return false;}
     if(droid || agyCompact){view.nativeActionPending=true;this.paint(view);}
     try{
       if(droid && method==='compact' && view.capabilities.compact_creates_session && !await appConfirm('压缩当前上下文？原生将压缩会话记录；若生成新会话，将切换到新会话继续。',{ok:'压缩'}))return false;
@@ -570,17 +592,31 @@ const NativeSdkControls = {
       if(['revert','unrevert','revert_commit','rewind'].includes(method)){
         await view.refreshHistory(generation,true);
         if(body.restore_text && view.current(generation))await CodexSdkActions.restoreInput(view,body.restore_text);
+        if(!view.current(generation))return true;
       }
       if(method==='compact'){
-        if(agyCompact){await view.refreshHistory(generation,true);return true;}
+        if(agyCompact){
+          await view.refreshHistory(generation,true);
+          if(view.current(generation) && response.compact?.state==='success')SdkUI.logOperation(view, '压缩完成。');
+          return true;
+        }
         if(droid){await view.refreshHistory(generation,true);if(!view.current(generation))return true;void this.loadUsage(view,false);}
-        if(view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:response.raw?.compact || response.compact || {state:'success'}};
+        const compact = response.raw?.compact || response.compact;
+        if(view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:compact || {}};
+        SdkUI.logOperation(view, compact?.state==='success' ? '压缩完成。' : '已请求压缩。');
         view.paintStatus();
-      }else view.setNotice('原生操作已接受');return true;
+      }else{
+        const opencode = view.uid.startsWith('opencode:');
+        const label = {revert:opencode ? '已暂存回退' : response.reverted===true ? '回退完成' : '已请求回退',
+          rewind:view.uid.startsWith('grok:') ? '回退完成' : '已请求回退',
+          unrevert:'已撤销回退', revert_commit:'回退已提交'}[method] || '操作已受理';
+        SdkUI.logOperation(view, label);
+      }
+      return true;
     }catch(error){
       if(view.current(generation)){
         if(method==='compact' && !agyCompact && view.raw?.compact?.state==='compacting')view.raw={...view.raw,status:'idle',compact:{state:'failed',error:error.message}};
-        view.setNotice(`操作失败：${error.message}`,'blocked');
+        view.setFeedback(`操作失败：${error.message}`,true);
       }
       return false;
     }finally{
@@ -606,15 +642,15 @@ const NativeSdkControls = {
     }else if(command==='rename'){return this.rename(view,text,arg);
     }else if(command==='stop'){await view.interrupt();success=true;}
     else if(['model','effort','mode'].includes(command)){
-      if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
+      if(!arg)view.setFeedback(`用法：/${command} 值`,true);
       else {await this.settings(view,{[command]:arg});success=true;}
     }else if(command==='plan'){
       await this.settings(view,{mode:arg || (view.uid.startsWith('droid:')?'spec':'plan')});
       success=true;
     }else if(command==='compact' && arg && view.uid.startsWith('agy:')){
-      view.setNotice('用法：/compact（无需参数）','blocked');
+      view.setFeedback('用法：/compact（无需参数）',true);
     }else if(['fork','compact','revert','rewind','shell'].includes(command))success=await this.action(view,command,{...(command==='shell'?{command:arg}:command==='fork'&&arg?(view.uid.startsWith('kiro:')?{messageId:arg}:{before:arg}):{}),...(view.uid.startsWith('droid:')?{command_text:text}:{})});
-    else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
+    else view.setFeedback(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,true);
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}
     return true;
   },
@@ -624,7 +660,7 @@ const NativeSdkControls = {
     const audit=(phase,data={})=>browserAuditEvent('sdk.rename.'+phase,{source:uid.split(':')[0],...data},{uid,requestId});
     audit('invoked',{dialog:!argument});
     if(view.capabilities.rename!==true){
-      view.setNotice('当前原生机器接口尚未提供改名；输入已保留。','blocked');
+      view.setFeedback('当前原生机器接口尚未提供改名；输入已保留。',true);
       audit('finished',{outcome:'unsupported'});return true;
     }
     try{
@@ -643,7 +679,7 @@ const NativeSdkControls = {
       await view.request('api/native-sdk/rename',{uid,title,request_id:requestId});
       audit('finished',{outcome:'succeeded'});
       if(current()){
-        view.setNotice('会话已重命名');
+        SdkUI.logOperation(view, '会话已重命名。');
         // Refreshing the inventory can replace the view. Consume only this
         // successful Droid command before that replacement, preserving edits.
         if(uid.startsWith('droid:')){
@@ -656,7 +692,7 @@ const NativeSdkControls = {
       if(current() && input?.value===text){input.value='';view.fitInput();CodexSdkCompose.input(view);}
     }catch(error){
       audit('finished',{outcome:'failed'});
-      if(current())view.setNotice(`改名失败：${error.message}`,'blocked');
+      if(current())view.setFeedback(`改名失败：${error.message}`,true);
     }
     return true;
   },
@@ -702,32 +738,32 @@ const NativeSdkControls = {
       if(!view.capabilities[method] || method==='fork' && droid && !view.capabilities.fork_before)continue;
       items.push([label,async()=>{
         await this.action(view,method,{...(grok?{prompt_index:Number(identity.slice(7))}:method==='fork' || droid?{before:identity}:{message_id:identity}),restore_text:item.text || item.content || ''});
-      },tooltip]);
+      },tooltip,view.uid.startsWith('agy:')]);
     }
     SdkUI.decorateUserBubble(view,node,items);
   },
   decorateAssistant(view,node) {
     SdkUI.decorateUserBubble(view,node,[
       ['从此处创建分支',()=>this.assistantFork(view,node),
-        '保留到此回复创建分支：携带截至此回复的对话在新会话继续，原会话保持不变'],
+        '保留到此回复创建分支：携带截至此回复的对话在新会话继续，原会话保持不变',view.uid.startsWith('agy:')],
     ]);
   },
   async assistantFork(view,node) {
     const {nextUser,hasGap}=SdkUI.nextUserBubble(view,node);
     if(hasGap){
-      view.setNotice('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。','blocked');
+      view.setFeedback('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。',true);
       return false;
     }
     if(!nextUser){
       if(view.running){
-        view.setNotice('当前回合尚未结束；请等待回复完成后再创建分支。','blocked');
+        view.setFeedback('当前回合尚未结束；请等待回复完成后再创建分支。',true);
         return false;
       }
       return this.action(view,'fork',{});
     }
     const identity=this.messageIdentity(view,nextUser._sdkMessage);
     if(!identity){
-      view.setNotice('后续消息尚未分配原生分支位置；可在最后一轮回复上创建分支。','blocked');
+      view.setFeedback('后续消息尚未分配原生分支位置；可在最后一轮回复上创建分支。',true);
       return false;
     }
     return this.action(view,'fork',view.uid.startsWith('grok:')
@@ -757,6 +793,6 @@ const NativeSdkControls = {
         });
       }
     }
-    for(const [label,action] of [['提交','accept'],['拒绝','decline'],['取消','cancel']]){const button=el('button','btn',label);button.type='button';button.onclick=()=>{try{view.answer(request,{action,...(action==='accept' && request.mode!=='url'?{content:Object.fromEntries(readers.map(read=>read()).filter(Boolean))}:{})},card);}catch(error){view.setNotice(error.message,'blocked');}};body.append(button);}card.append(body);return card;
+    for(const [label,action] of [['提交','accept'],['拒绝','decline'],['取消','cancel']]){const button=el('button','btn',label);button.type='button';button.onclick=()=>{try{view.answer(request,{action,...(action==='accept' && request.mode!=='url'?{content:Object.fromEntries(readers.map(read=>read()).filter(Boolean))}:{})},card);}catch(error){view.setFeedback(error.message,true);}};body.append(button);}card.append(body);return card;
   },
 };

@@ -116,7 +116,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.route('**/api/codex-sdk/queue', lambda route: route.fulfill(status=409,
         content_type='application/json', body='{"error":"synthetic cancellation conflict"}'), times=1)
     row('撤回后编辑').get_by_role('button', name='撤回编辑', exact=True).click()
-    expect(page.locator('#sdk-status-menu')).to_contain_text('synthetic cancellation conflict')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('synthetic cancellation conflict')
     expect(box).to_have_value('已有草稿')
     click_while_streaming(row('撤回后编辑').get_by_role('button', name='撤回编辑', exact=True), 'edit')
     expect(row('撤回后编辑')).to_have_count(0)
@@ -136,7 +136,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.route('**/api/codex-sdk/turn', lose_reply)
     box.fill(cancel_text); send.click()
     expect(row('撤销这条')).to_be_visible()
-    expect(page.locator('#sdk-status-menu')).to_contain_text('发送失败')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('发送失败')
     expect(box).to_have_value(cancel_text)
     page.unroute('**/api/codex-sdk/turn', lose_reply)
     page.reload(wait_until='networkidle')

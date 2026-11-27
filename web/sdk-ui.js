@@ -76,7 +76,8 @@ const SdkUI = {
     pane.setAttribute('aria-label', `${name} SDK`);
     pane.classList.add('sdk-pane');
     pane.innerHTML = `<div class="sdk-view">
-      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
+      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div>
+        <details class="sdk-operation-records" hidden><summary class="sdk-operation-log"></summary><ol aria-label="操作记录"></ol></details></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
           <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '载入中'}</span><span class="sdk-turn-metric" aria-hidden="true" hidden></span></button>
@@ -89,12 +90,16 @@ const SdkUI = {
             <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作"></div>
           </div></div>
         </div>
+        <div class="sdk-input-feedback" role="status" hidden></div>
         <div class="composer-row">
           <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" aria-label="消息" placeholder="通过 ${esc(name)} SDK 发送"></textarea></div>
           <div class="cbtns"><button class="btn" id="sdk-stop" type="button" hidden title="中断当前回合">停止</button><button class="btn go" id="sdk-send" type="button">发送</button></div>
         </div>
       </div></div>`;
     view.box = pane.querySelector('.sdk-msgs');
+    view.reconnecting = false;
+    view.stopRequest = null;
+    this.paintOperationLog(view);
     // Same notion of an active turn as the send button (paintSend).
     view.box._followLive = () => !!(view.uid?.startsWith('codex:') ? view.turn : view.running);
     watchBottom(view.box);
@@ -120,6 +125,10 @@ const SdkUI = {
     view.input.disabled = true;
     pane.querySelector('#sdk-send').disabled = true;
     view.input.oninput = () => { view.fitInput(); CodexSdkCompose.input(view); };
+    view.input.onfocus = () => {
+      const reason = this.sendUnavailable(view);
+      if (reason && !pane.querySelector('.sdk-input-feedback').textContent) view.setFeedback(reason, false, true);
+    };
     view.input.onblur = event => PathCompletion.close(event.currentTarget);
     view.input.onkeydown = event => {
       if (PathCompletion.key(view.input, event, () => view.uid)) return;
@@ -145,9 +154,60 @@ const SdkUI = {
         const generation = view.generation, value = event.target.value;
         if (!value && !(kind === 'effort' && event.target.selectedOptions[0]?.disabled === false)) return;
         try { await settings(view, {[kind]: value}); }
-        catch (error) { if (view.current(generation)) view.setNotice(`设置失败：${error.message}`, 'blocked', true); }
+        catch (error) { if (view.current(generation)) view.setFeedback(`设置失败：${error.message}`, true); }
       };
     }
+  },
+
+  operationLogs: null,
+  operationEntries(view) {
+    if (!this.operationLogs) {
+      try { this.operationLogs = new Map(JSON.parse(sessionStorage.getItem('sessiondock.sdkOperationLogs') || '[]')); }
+      catch { this.operationLogs = new Map(); }
+    }
+    return this.operationLogs.get(viewKey(view.uid, view.agent)) || [];
+  },
+  logOperation(view, text, failed = false) {
+    const entries = this.operationEntries(view);
+    const key = viewKey(view.uid, view.agent);
+    this.operationLogs.delete(key);
+    this.operationLogs.set(key, [...entries.slice(-9), {text, failed, at: Date.now()}]);
+    if (this.operationLogs.size > 30) this.operationLogs.delete(this.operationLogs.keys().next().value);
+    try { sessionStorage.setItem('sessiondock.sdkOperationLogs', JSON.stringify([...this.operationLogs])); } catch {}
+    this.paintOperationLog(view);
+    stickBottom(view.box);
+  },
+  paintOperationLog(view) {
+    const records = view.box.querySelector('.sdk-operation-records');
+    const entries = this.operationEntries(view);
+    records.hidden = !entries.length;
+    if (!entries.length) return;
+    const last = entries.at(-1);
+    const summary = records.querySelector('summary');
+    summary.textContent = `操作记录 · ${last.text}`;
+    summary.classList.toggle('blocked', last.failed);
+    records.querySelector('ol').replaceChildren(...entries.map(({text, failed, at}) => {
+      const item = el('li', failed ? 'blocked' : '');
+      const time = el('time');
+      const date = new Date(at);
+      time.dateTime = date.toISOString();
+      time.textContent = ConversationUI.messageTimeFormatter.format(date);
+      item.append(time, document.createTextNode(text));
+      return item;
+    }));
+  },
+  sendUnavailable(view) {
+    if (SdkView.discovering) return '正在确认会话状态，确认后可以发送。';
+    if (view.externalObserved || S.liveExternalSdk.has(view.uid)) return '此会话由外部程序控制，请回原程序发送。';
+    if (view.readOnly && composerExternalCli(view.uid, view.agent)) return '此会话正在外部 CLI 运行，请回原终端发送。';
+    if (view.agent && view.readOnly) return '当前子会话只读，请切回主会话发送。';
+    if (view.readOnly || view.stopped || view.openFailed) return 'SDK 未运行，请先启动。';
+    if (view.reconnecting) return '正在重连，草稿已保留。';
+    if (!view.connected) return '正在载入 SDK，载入后可以发送。';
+    if (view.settingChoices?.size) return '正在确认设置，确认后可以发送。';
+    if (CodexSdkCompose.states.get(view)?.sending || view.pane.querySelector('#sdk-send').hasAttribute('aria-busy'))
+      return '正在提交上一条消息，请稍候。';
+    return '';
   },
 
   canSteer(view) {
@@ -304,19 +364,29 @@ const SdkUI = {
     const menu = el('div', 'sdk-bubble-menu');
     menu.setAttribute('role', 'group');
     menu.setAttribute('aria-label', '消息操作');
-    for (const [label, handler, tooltip] of items) {
+    for (const [label, handler, tooltip, guarded] of items) {
       const button = el('button', 'message-action');
       button.innerHTML = uiIcon(label.includes('回退') ? 'undo' : 'fork');
       button.type = 'button';
       button.title = tooltip || label;
       button.setAttribute('aria-label', label);
+      if (guarded) {
+        button.dataset.sdkHistoryAction = tooltip || label;
+        this.paintHistoryAction(button, view.historyActionReason);
+      }
       button.onclick = async () => {
+        if (guarded && view.historyActionReason) { view.setFeedback(view.historyActionReason); return; }
         button.disabled = true;
         try { await handler(); } finally { button.disabled = false; }
       };
       menu.append(button);
     }
     node.querySelector(':scope > .message-header .message-actions')?.append(menu);
+  },
+
+  paintHistoryAction(button, reason) {
+    button.title = reason || button.dataset.sdkHistoryAction;
+    button.setAttribute('aria-disabled', String(!!reason));
   },
 
   nextUserBubble(view, node) {
@@ -628,8 +698,17 @@ const SdkUI = {
         ConversationUI.updateStatusDisclosure(notice, menu);
       }
     },
+    setFeedback(text, failed = false, unavailable = false) {
+      const feedback = this.pane?.querySelector('.sdk-input-feedback');
+      if (!feedback) return;
+      feedback.hidden = !text;
+      if (feedback.textContent !== (text || '')) feedback.textContent = text || '';
+      feedback.classList.toggle('blocked', failed);
+      feedback.toggleAttribute('data-send-unavailable', unavailable);
+    },
     setNotice(text, kind = '', sticky = false, detail = null) {
       if (!this.notice) return;
+      if (!kind) { this.setFeedback(text); return; }
       this.clearTurnProgress();
       this.baseNotice = [text, kind, sticky, detail];
       if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
@@ -819,8 +898,13 @@ const SdkUI = {
 
     setConnected(connected) {
       this.connected = connected;
+      if (connected) this.reconnecting = false;
       if (!connected) this.clearTurnProgress();
-      if (this.pane) sdkSyncSettings(this);
+      if (this.pane) {
+        if (!connected) this.pane.querySelector('#sdk-stop').disabled = true;
+        if (this === NativeSdkView) NativeSdkControls.paintHistoryAvailability(this);
+        sdkSyncSettings(this);
+      }
       if (!this.uid || this.agent) return;
       paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(this.uid)}"]`));
       if (S.sel === this.uid) paintHeaderTurn();

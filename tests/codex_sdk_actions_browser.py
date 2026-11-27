@@ -180,6 +180,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_have_value('')
     expect(pane.locator(".sdk-history")).to_contain_text("retained answer")
     expect(pane.locator(".sdk-history")).not_to_contain_text("remove this answer")
+    expect(pane.locator('.sdk-operation-log')).to_contain_text('回退完成')
+    expect(pane.locator('.sdk-status')).to_have_text('就绪')
 
     box.fill("/revert " + TURN2)
     send.click()
@@ -226,18 +228,20 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     asyncio.run_coroutine_threadsafe(fake.notify("item/completed", {
         "turnId": "compact-turn", "item": {"id": "compact-item", "type": "contextCompaction"}
     }), fake.loop).result(5)
-    expect(pane.locator('.sdk-status')).to_have_text('压缩完成')
+    expect(pane.locator('.sdk-operation-log')).to_contain_text('压缩完成')
+    expect(pane.locator('.sdk-status')).to_have_text('就绪')
     expect(pane.locator('.sdk-status')).to_have_attribute('data-state', 'ready')
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     expect(progress).to_have_count(0)
     page.reload(wait_until="networkidle")
-    expect(pane.locator('.sdk-status')).to_have_text('压缩完成')
+    expect(pane.locator('.sdk-status')).to_have_text('就绪')
+    expect(pane.locator('.sdk-operation-log')).to_contain_text('压缩完成')
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     expect(progress).to_have_count(0)
     assert fake.methods("thread/compact/start")[-1]["params"] == {"threadId": THREAD}
     box.fill("/compact extra")
     send.click()
-    expect(pane.locator("#sdk-status-menu")).to_contain_text("无需参数")
+    expect(pane.locator(".sdk-input-feedback")).to_contain_text("无需参数")
     expect(box).to_have_value("/compact extra")
     assert len(fake.methods("thread/compact/start")) == 1
 
@@ -295,7 +299,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     with page.expect_response('**/api/codex-sdk/fork') as rejected:
         confirmation.get_by_role('button', name='分支', exact=True).click()
     assert rejected.value.status == 502, (rejected.value.status, rejected.value.json())
-    expect(pane.locator("#sdk-status-menu")).to_contain_text("turn not found")
+    expect(pane.locator(".sdk-input-feedback")).to_contain_text("turn not found")
     expect(box).to_have_value("/fork reject-this-turn")
     assert page.evaluate("S.sel") == source_uid
 

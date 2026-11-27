@@ -57,7 +57,8 @@ def exercise_compaction(page, fixture, footer, screenshots):
         page.keyboard.press('Escape')
         (fixture.root/'compact-hold').unlink()
     assert compacted.value.ok,compacted.value.text()
-    expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('压缩完成')
+    expect(page.locator('.sdk-operation-log')).to_contain_text('压缩完成')
+    expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('就绪')
     expect(footer).to_have_attribute('title',re.compile('已用 12.5%'))
     expect(page.locator('#sdk-input')).to_have_value('压缩时保留草稿')
     page.screenshot(path=str(screenshots/'agy-compacted-390-dark.png'),full_page=True)
@@ -69,7 +70,7 @@ def exercise_compaction(page, fixture, footer, screenshots):
     with page.expect_response('**/api/native-sdk/compact') as failed:
         page.locator('#sdk-send').click()
     assert not failed.value.ok
-    expect(page.locator('.native-sdk-pane .sdk-status')).to_have_attribute('title',re.compile('Agy 未写入新的压缩检查点'))
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('Agy 未写入新的压缩检查点')
     expect(page.locator('#sdk-input')).to_have_value('/compact')
     (fixture.root/'compact-no-checkpoint').unlink()
     with page.expect_response('**/api/native-sdk/compact') as retried:
@@ -326,6 +327,7 @@ def main():
                     page.locator('#sdk-input').fill('/context');page.locator('#sdk-send').click()
                     page.wait_for_function('!NativeSdkView.loadingUsage')
                     assert len(fixture.inputs())==before
+                    (fixture.root/'foreground-status').write_text('RUNNING')
                     send(page,'hold:context')
                     page.wait_for_function('NativeSdkView.running')
                     (fixture.root/'context-usage.json').write_text(json.dumps({'estimatedTokensUsed':128000,'maxContextTokens':256000}))
@@ -341,13 +343,15 @@ def main():
                         page.keyboard.press('Escape')
                     page.locator('#sdk-stop').click()
                     page.wait_for_function('!NativeSdkView.running')
+                    (fixture.root/'foreground-status').write_text('IDLE')
                     page.reload(wait_until='domcontentloaded')
                     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('已用 50.0%'),timeout=15000)
                     with page.expect_response('**/api/native-sdk/compact') as compacted:
                         compact_button(page).click()
                     assert compacted.value.ok,compacted.value.text()
                     expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('已用 12.5%'))
-                    expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('压缩完成')
+                    expect(page.locator('.sdk-operation-log')).to_contain_text('压缩完成')
+                    expect(page.locator('.native-sdk-pane .sdk-status')).to_have_text('就绪')
                     page.screenshot(path=str(args.screenshots/'agy-compacted-hub-390-dark.png'),full_page=True)
                     page.close()
                     print('PASS Agy context through Hub: busy refresh, slash, cancellation and reload',flush=True)

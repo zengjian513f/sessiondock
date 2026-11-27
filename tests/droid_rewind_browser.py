@@ -52,11 +52,9 @@ def check(f, base, screenshots):
         assert repeated.ok,repeated.text()
         assert receipt(repeated.json())['uid']==result['uid']
         expect(page.locator('#sdk-input')).to_be_enabled()
-        page.locator('.native-sdk-pane .sdk-status').click()
-        expect(page.locator('#sdk-status-menu')).to_be_visible()
-        expect(page.locator('#sdk-status-menu')).to_contain_text('恢复 1 个文件')
+        expect(page.locator('.sdk-operation-log')).to_contain_text('恢复 1 个文件')
+        expect(page.locator('.native-sdk-pane .sdk-status')).not_to_contain_text('回退完成')
         if screenshots:page.screenshot(path=str(screenshots/'rewind-result-mobile-dark.png'),full_page=True)
-        page.keyboard.press('Escape')
         assert existing.read_text()=='BEFORE\n' and not created.exists()
         assert f.path.read_text()==original
         bindings=json.loads((f.root/'state/native-sdk-bindings.json').read_text())
@@ -121,6 +119,8 @@ def check_long_history(f, base, screenshots, label):
         branch = receipt(response.value.json())['uid']
         assert branch != uid
         page.wait_for_function('uid => NativeSdkView.uid === uid && NativeSdkView.connected', arg=branch)
+        expect(page.locator('.sdk-operation-log')).to_contain_text('回退完成')
+        expect(page.locator('#sdk-composer .sdk-status')).not_to_contain_text('回退完成')
         expect(history.locator('.history-gap')).to_be_visible()
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-long-rewind-wide.png'), full_page=True)

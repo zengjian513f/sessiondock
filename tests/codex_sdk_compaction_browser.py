@@ -135,7 +135,7 @@ def main():
                         page.route('**/api/codex-sdk/queue', lambda route: route.fulfill(status=503,
                             json={'error': 'synthetic dismiss failure'}), times=1)
                         ended.get_by_role('button', name='移除提示').click()
-                        expect(page.locator('#sdk-status-menu')).to_contain_text('移除提示失败')
+                        expect(page.locator('.sdk-input-feedback')).to_contain_text('移除提示失败')
                         expect(accepted).to_be_visible()
                         if args.screenshots: page.screenshot(path=str(args.screenshots/f'receipt-{mode}-{width}.png'))
                         receipt_id = accepted.get_attribute('data-receipt-id')

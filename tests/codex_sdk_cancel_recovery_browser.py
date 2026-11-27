@@ -24,6 +24,7 @@ from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from media_browser import PNG
 from node_auth_fixtures import TOKEN, node_env
+from sdk_ui_fixtures import start_sdk
 
 
 def exercise(browser, base, fake, width, theme, screenshots, label):
@@ -40,6 +41,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     try:
         page.goto(base, wait_until='domcontentloaded')
         page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
+        start_sdk(page)
         uid = page.evaluate('S.sel')
         box, send = page.locator('#sdk-input'), page.locator('#sdk-send')
         expect(box).to_be_enabled()
@@ -71,7 +73,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.route('**/api/codex-sdk/turn', lose_reply, times=1)
         send.click()
         expect(page.locator('.sdk-queued')).to_contain_text(text)
-        expect(page.locator('#sdk-status-menu')).to_contain_text('发送失败')
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('发送失败')
         expect(box).to_have_value(text)
         cancelled_id = submissions[-1]['request_id']
         original = submissions[-1]
@@ -89,7 +91,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.route('**/api/codex-sdk/queue', lose_reply, times=1)
         page.locator('.sdk-queued [data-queue-action="cancel"]').click()
         expect(page.locator('.sdk-queued')).to_have_count(0)
-        expect(page.locator('#sdk-status-menu')).to_contain_text('队列操作失败')
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('队列操作失败')
         expect(box).to_have_value(text)
         page.reload(wait_until='domcontentloaded')
         expect(box).to_have_value(text)
@@ -102,7 +104,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         with page.expect_response('**/api/codex-sdk/turn') as cancelled:
             send.click()
         assert cancelled.value.json()['raw']['state'] == 'cancelled'
-        expect(page.locator('#sdk-status-menu')).to_contain_text('该消息已撤销，草稿已保留')
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('该消息已撤销，草稿已保留')
         expect(box).to_have_value(text)
         expect(page.get_by_role('textbox', name='引用文字')).to_have_value(quote)
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(3)
@@ -115,12 +117,9 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.wait_for_function('!composerDraft(S.sel).sdkSubmission')
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-cancelled-draft.png'))
-        page.locator('#sdk-composer .sdk-status').click()
-        expect(page.locator('#sdk-status-menu')).to_be_visible()
-        expect(page.locator('#sdk-status-menu')).to_contain_text('该消息已撤销，草稿已保留；请再次发送。')
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('该消息已撤销，草稿已保留；请再次发送。')
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-cancelled-notice.png'))
-        page.keyboard.press('Escape')
 
         # Persist the cleared identity across another reload, then let only
         # this explicit user click create and consume a new submission.

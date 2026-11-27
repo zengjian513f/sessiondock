@@ -282,7 +282,7 @@ const CodexSdkCompose = {
         throw new Error(payload.draft.storageError || '草稿尚未保存');
     }
     if (this.states.get(view) === payload.state)
-      view.setNotice('该消息已撤销，草稿已保留；请再次发送。', 'blocked');
+      view.setFeedback('该消息已撤销，草稿已保留；请再次发送。', true);
     return false;
   },
 

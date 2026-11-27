@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -76,11 +77,17 @@ def check_pending_cancel(page, base, fixture, uid, shots, label, restart_server)
 
     # An explicit rewind during the accepted cancellation is a conflict.
     message = page.locator('.sdk-msgs .msg[data-role="user"]').filter(has_text='hold:uncertain')
-    message.locator('.sdk-bubble-menu').get_by_role('button', name='回退到此处之前', exact=True).click()
-    with page.expect_response('**/api/native-sdk/revert') as reverted:
-        page.locator('dialog.app-popup[open]').get_by_role('button', name='回退', exact=True).click()
-    assert reverted.value.status == 409, reverted.value.text()
-    error = reverted.value.json()
+    revert = message.locator('.sdk-bubble-menu').get_by_role('button', name='回退到此处之前', exact=True)
+    expect(revert).to_have_attribute('aria-disabled', 'true')
+    expect(revert).to_have_attribute('title', re.compile('等待回合结束回执'))
+    revert.press('Enter')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('收到后可以回退或分支')
+    expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
+    message_id = message.evaluate('node => NativeSdkControls.messageIdentity(NativeSdkView, node._messageData)')
+    reverted = page.request.post(base + '/api/native-sdk/revert', data={'uid': uid, 'message_id': message_id,
+                                 'request_id': 'guarded-revert-check'})
+    assert reverted.status == 409, reverted.text()
+    error = reverted.json()
     assert error['code'] == 'agy_sdk_history_busy' and '结束回执' in error['error'], error
     expect(message).to_have_count(1)
 
@@ -156,6 +163,8 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     expect(notice).to_have_attribute('data-state', 'ready')
     expect(background).to_have_text('后台等待')
     expect(page.locator('#sdk-send')).to_have_text('发送')
+    expect(page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')).to_have_attribute(
+        'title', re.compile('前台就绪，等待回执'))
     raw = wait_snapshot(page, uid, lambda raw: raw['foreground_idle'])['raw']
     assert all(item['content'].strip() for item in raw['items'] if item['role'] == 'assistant')
     expect(page.locator('.sdk-msgs')).to_contain_text('Agy running foreground')

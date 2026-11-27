@@ -86,7 +86,10 @@ def expect_read_only_child(page, status_row, state, screenshot=None, detail_text
     details = row.locator('.sdk-status-menu:popover-open')
     expect(details).to_contain_text('Agy 子代理由主会话管理')
     if state == TIMER_WAIT:
-        expect(details.locator('.sdk-timer-item')).to_have_count(1)
+        expect(details).not_to_contain_text('Check training progress.')
+        page.keyboard.press('Escape')
+        row.get_by_role('button', name='后台任务 1').click()
+        details = row.locator('.background-command-list:popover-open')
         expect(details).to_contain_text('Check training progress.')
         expect(details).to_contain_text('预计触发')
         expect(details).to_contain_text('设置于')

@@ -17,6 +17,7 @@ from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_queue_browser import QueueServer
 from history_fixtures import BINARY, codex_row, encoded
+from sdk_ui_fixtures import start_sdk
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
@@ -59,6 +60,7 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     page.goto(base, wait_until='networkidle')
     expect(page.locator('html')).to_have_attribute('data-theme', theme)
     page.locator('#side .item').filter(has_text='earlier synthetic question').first.click()
+    start_sdk(page)
     page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
     box, send = page.locator('#sdk-input'), page.locator('#sdk-send')
     status = page.locator('.sdk-pane .sdk-status')
@@ -76,6 +78,7 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
         # A node restart or changed owner can default to a terminal/chat view.
         if not page.locator('#sdk-input').is_visible():
             page.locator('#a-sdk').click()
+        start_sdk(page)
         page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
         expect(page.locator('html')).to_have_attribute('data-theme', theme)
 
@@ -88,16 +91,27 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     box.fill('停止本轮后应保留中断结果，不能只显示空闲 · ' + label)
     send.click()
     expect(send).to_have_text('排队')
-    page.locator('#sdk-stop').click()
+    stop = page.locator('#sdk-stop')
+    requests = []
+    page.route('**/api/codex-sdk/interrupt', lambda route: requests.append(route))
+    stop.click()
+    expect(status).to_have_text('正在请求停止')
+    expect(stop).to_be_disabled()
+    stop.press('Enter')
+    assert len(requests) == 1
+    capture('requesting-stop')
+    requests[0].continue_()
+    page.unroute('**/api/codex-sdk/interrupt')
     expect(send).to_have_text('发送')
     capture('after-stop')
     # The fake intentionally writes no turn_aborted: only the live native RPC
     # carries the outcome, exactly what the bridge used to discard.
-    expect(status).to_have_text('已中断')
-    expect(status).to_have_attribute('data-state', 'warning')
+    expect(status).to_have_text('就绪')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('上一回合已中断')
     capture('live-interrupted')
     reload()
-    expect(status).to_have_text('已中断')
+    expect(status).to_have_text('就绪')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('上一回合已中断')
     assert page.evaluate('CodexSdkView.summary.last_turn.status') == 'interrupted'
     box.fill('新回合和正常完成必须撤销之前的中断 · ' + label)
     send.click()
@@ -116,8 +130,8 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     cli_missing = True
     append('task_started', turn_id='sdk-idle-missing-ending')
     reload()
-    expect(status).to_have_text('已中断')
-    expect(status).to_have_attribute('data-state', 'warning')
+    expect(status).to_have_text('就绪')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('原生回合未写入结束事件')
     capture('sdk-idle-missing-ending')
     append('task_complete', turn_id='sdk-idle-missing-ending')
     reload()
@@ -128,14 +142,15 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     fake.disconnect()
     append('turn_aborted', turn_id='persisted-interruption')
     reload()
-    expect(status).to_have_text('已中断')
+    expect(status).to_have_text('就绪')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('上一回合已中断')
     capture('native-interrupted')
 
     # The report's shape: task_started, no ending, newer ready/idle screen.
     append('task_started', turn_id='missing-native-ending')
     cli['observed_at'] = time.time() + 3
     reload()
-    expect(status).to_have_text('已中断')
+    expect(status).to_have_text('就绪')
     expect(page.locator('#sdk-status-menu')).to_contain_text('原生回合未写入结束事件')
     capture('missing-ending')
     # Only CLI metadata changes; unchanged history must still repaint status.
@@ -144,11 +159,12 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     cli['observed_at'] = time.time() + 3
     cli['instance'] = {'running': True, 'busy': True}
     page.wait_for_function('cache.get(viewKey(S.sel))?.cli?.instance?.busy === true')
-    expect(status).not_to_have_text('已中断')
+    expect(page.locator('#sdk-status-menu')).not_to_contain_text('原生回合未写入结束事件')
     cli['observed_at'] = time.time() + 3
     cli['instance'] = {'running': True, 'busy': False}
     page.wait_for_function('cache.get(viewKey(S.sel))?.cli?.instance?.busy === false')
-    expect(status).to_have_text('已中断')
+    expect(status).to_have_text('就绪')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('原生回合未写入结束事件')
     assert page.evaluate('CodexSdkView.historyData.end') == checkpoint
     only_cli = False
     append('task_complete', turn_id='missing-native-ending')

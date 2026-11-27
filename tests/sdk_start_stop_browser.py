@@ -121,6 +121,7 @@ def exercise(browser, base, source, screenshots, label):
         page.locator('#sdk-input').fill('draft before explicit start')
         page.locator('#sdk-input').press('Enter')
         expect(page.locator('#sdk-input')).to_have_value('draft before explicit start' + ('\n' if width < 720 else ''))
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('请先启动')
         assert not opens, opens
         assert not page.evaluate('uid => S.liveSdk.has(uid)', uid)
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-cold.png'))

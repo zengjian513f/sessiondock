@@ -142,7 +142,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     fake.reject_policy = True
     if not tier.is_visible(): page.locator('#sdk-more').click()
     tier.select_option('ultrafast')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('切换服务档位失败')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('切换服务档位失败')
     expect(tier).to_have_value('priority')
     expect(tier).to_be_enabled()
     fake.reject_policy = False
@@ -195,7 +195,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     fake.reject_policy = True
     if not approval.is_visible(): page.locator('#sdk-more').click()
     approval.select_option('untrusted')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic policy rejected')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('Synthetic policy rejected')
     expect(approval).to_have_value('never')
     expect(approval).to_be_enabled()
     fake.reject_policy = False
@@ -212,11 +212,12 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.locator('#sdk-input').click()
 
     send('/unknown-goal-command')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('不支持的命令')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('不支持的命令')
     expect(box).to_have_value('/unknown-goal-command')
-    assert not [row for row in fake.received if row.get('method', '').startswith('thread/goal/')]
+    assert not [row for row in fake.received if row.get('method', '').startswith('thread/goal/')
+                and row['method'] != 'thread/goal/get']
     send('/help')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('/goal resume')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('/goal resume')
     normal_color = box.evaluate('(el) => getComputedStyle(el).color')
     box.fill('!')
     expect(box).to_have_class('shell-mode')
@@ -225,7 +226,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(box).not_to_have_class('shell-mode')
     for empty in ["!", "/shell"]:
         send(empty)
-        expect(page.locator("#sdk-status-menu")).to_contain_text("用法")
+        expect(page.locator(".sdk-input-feedback")).to_contain_text("用法")
         expect(box).to_have_value(empty)
         expect(page.locator("#sdk-controls-dialog")).to_have_count(0)
     send("!printf 'synthetic output' | cat")
@@ -233,10 +234,10 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator(".sdk-live")).to_contain_text("synthetic shell output")
     assert fake.methods("thread/shellCommand")[-1]["params"]["command"] == "printf 'synthetic output' | cat"
     send("/shell synthetic-error")
-    expect(page.locator("#sdk-status-menu")).to_contain_text("Synthetic shell failed")
+    expect(page.locator(".sdk-input-feedback")).to_contain_text("Synthetic shell failed")
     expect(box).to_have_value("/shell synthetic-error")
     send("/unknown-control")
-    expect(page.locator("#sdk-status-menu")).to_contain_text("不支持的命令")
+    expect(page.locator(".sdk-input-feedback")).to_contain_text("不支持的命令")
     expect(box).to_have_value("/unknown-control")
     assert len(fake.methods("turn/start")) == starts, "a control became a model message"
     if screenshots:
@@ -253,10 +254,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator("#sdk-input")).to_have_value("")
     # A reset reconnects to this same thread and reads its current controls.
     resumed = len(fake.methods("thread/resume"))
-    # Reconnect now preserves the view and draft; observe the actual reopen.
-    with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/open')) as reopened:
+    # A known SDK reconnects through its events endpoint without issuing open.
+    with page.expect_response(lambda r: '/api/codex-sdk/events?' in r.url) as reopened:
         fake.disconnect()
     assert reopened.value.ok
+    page.wait_for_function('CodexSdkView.connected')
     assert len(fake.methods("thread/resume")) > resumed
     expect(page.locator('#sdk-tier')).to_have_value('priority')
     expect(page.locator("#sdk-mode")).to_have_value("default")

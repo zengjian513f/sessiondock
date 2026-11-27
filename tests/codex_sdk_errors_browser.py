@@ -17,6 +17,7 @@ from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_queue_browser import QueueServer
 from history_fixtures import BINARY, codex_row, encoded
+from sdk_ui_fixtures import start_sdk
 
 
 class ErrorsServer(QueueServer):
@@ -68,7 +69,7 @@ def exercise(browser, base, fake, width, theme, screenshots):
     box, send, status = page.locator('#sdk-input'), page.locator('#sdk-send'), page.locator('.sdk-pane .sdk-status')
     expect(box).to_be_enabled()
     box.click()
-    page.wait_for_function('CodexSdkView.connected === true')
+    start_sdk(page)
 
     def submit(text):
         box.fill(text)
@@ -139,6 +140,7 @@ def exercise(browser, base, fake, width, theme, screenshots):
         closedSdkStream.close();
         closedSdkStream.dispatchEvent(new Event('error'));
     }''')
+    expect(status).not_to_have_text('载入中')
     page.wait_for_function('CodexSdkView.es !== closedSdkStream && CodexSdkView.es?.readyState === 1')
     expect(box).to_have_value('断线后仍应保留的未发送草稿 · ' + label)
     expect(page.locator('#sdk-status-menu')).not_to_contain_text('error')
@@ -154,19 +156,20 @@ def exercise(browser, base, fake, width, theme, screenshots):
     expect(page.locator('#sdk-status-menu')).to_contain_text('Final upstream failure')
     fake.finish('failed')
     expect(send).to_have_text('发送')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('Final upstream failure')
     reload()
-    expect(page.locator('#sdk-status-menu')).to_contain_text('错误：Final upstream failure')
-    expect(status).to_have_class('sdk-status blocked')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('上一回合失败：Final upstream failure')
+    expect(status).to_have_text('就绪')
     screenshot('final-failure')
 
     submit('仅 completed failed 带错误，没有单独 error 通知 · ' + label)
     expect(page.locator('#sdk-status-menu')).not_to_contain_text('Final upstream failure')
     fake.finish('failed', 'Failure supplied only by turn.error · 原生最终错误')
     expect(page.locator('#sdk-status-menu')).to_contain_text('Failure supplied only by turn.error')
-    expect(status).to_have_class('sdk-status blocked')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('Failure supplied only by turn.error')
     reload()
     expect(page.locator('#sdk-status-menu')).to_contain_text('Failure supplied only by turn.error')
-    expect(status).to_have_class('sdk-status blocked')
+    expect(status).to_have_text('就绪')
     screenshot('turn-failure')
 
     submit('容量错误前的用户请求 · ' + label)

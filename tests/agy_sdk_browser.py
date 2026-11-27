@@ -312,7 +312,7 @@ def exercise(browser, base, fixture, screenshots=None):
         assert len(fixture.inputs()) == before, 'slash query must never reach NDJSON user input'
         page.locator('#sdk-input').fill('/unknown-native-command')
         page.locator('#sdk-send').click()
-        expect(page.locator('.native-sdk-pane #sdk-status-menu')).to_contain_text('尚未映射')
+        expect(page.locator('.native-sdk-pane .sdk-input-feedback')).to_contain_text('尚未映射')
         expect(page.locator('#sdk-input')).to_have_value('/unknown-native-command')
         assert len(fixture.inputs()) == before
         page.locator('#sdk-input').fill('')
@@ -625,8 +625,8 @@ def exercise(browser, base, fixture, screenshots=None):
         context.close()
 
 
-def exercise_rewind_echo(browser, base, fixture, screenshots):
-    sid = 'a6400000-0000-4000-8000-000000000064'
+def exercise_rewind_echo(browser, base, fixture, screenshots, width=1280):
+    sid = 'a6400000-0000-4000-8000-000000000064' if width >= 720 else 'a6400000-0000-4000-8000-000000000065'
     title = 'Agy rewind echo'
     fixture.seed(sid)
     with sqlite3.connect(fixture.native / 'conversation_summaries.db') as db:
@@ -635,15 +635,18 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
         db.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB,metadata BLOB)')
         db.executemany('INSERT INTO steps (idx,step_type,status) VALUES (?,?,3)', [(0, 14), (1, 1)])
     (fixture.root / 'native-echo-store').touch()
+    (fixture.root / 'rewind-reply-delay').unlink(missing_ok=True)
     fixture.release('rewind-echo')
     prompt = 'hold:rewind-echo'
     abandoned = '这条旧消息已回退'
-    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    theme = 'dark' if width < 720 else 'light'
+    context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme,
+                                  service_workers='block')
     try:
         page = context.new_page()
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
-        row = page.locator('#side .item[data-uid]').filter(has_text=title)
+        row = page.locator('#side .item[data-uid]').filter(has=page.locator(f'a[href*="{sid}"]'))
         uid = row.get_attribute('data-uid', timeout=20000)
         select_sdk(page, uid)
         watch(page, uid)
@@ -656,7 +659,7 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
         idle(page)
         old = history.locator('.msg[data-role="user"]').filter(has_text=abandoned)
         expect(old).to_be_visible(timeout=20000)
-        if screenshots:
+        if screenshots and width == 1280:
             page.screenshot(path=str(screenshots / 'agy-rewind-before.png'), full_page=True)
         old.get_by_role('button', name='回退到此处之前', exact=True).click()
         with page.expect_response('**/api/native-sdk/revert') as reverted:
@@ -665,10 +668,32 @@ def exercise_rewind_echo(browser, base, fixture, screenshots):
         expect(composer).to_have_value(abandoned)
         expect(old).to_have_count(0)
         expect(live).not_to_contain_text(abandoned)
+        footer = page.locator('#sdk-composer .sdk-status-row')
+        status = footer.locator('.sdk-status')
+        operation = page.locator('.sdk-msgs .sdk-operation-log').filter(has_text='回退完成')
+        background = footer.get_by_role('button', name='后台任务 2', exact=True)
+        expect(status.get_by_role('status')).to_have_text('就绪')
+        expect(status).to_have_attribute('data-state', 'ready')
+        expect(footer).not_to_contain_text('回退完成')
+        expect(operation).to_contain_text('操作记录')
+        expect(operation).to_be_in_viewport()
+        operation.click()
+        expect(page.locator('.sdk-operation-records ol li time')).to_be_visible()
+        operation.click()
+        expect(background).to_be_in_viewport()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'agy-rewind-log-{width}-{theme}.png'), full_page=True)
+        background.click()
+        expect(page.get_by_role('dialog', name='后台任务')).to_contain_text('核对报告')
+        page.keyboard.press('Escape')
+        expect(operation).to_be_visible()
+        if width < 720:
+            return
         # Repeat a message already present in retained history. The new
         # delivery must use the reused index, even without a stream echo.
         (fixture.root / 'rewind-reply-delay').touch()
         receipt = send(page, prompt)
+        expect(operation).to_have_count(1)
         old_reply = history.locator('.msg[data-role="assistant"]').filter(has_text=abandoned)
         new_reply = history.locator('.msg[data-role="assistant"]').filter(has_text='回退后的新回复。')
         users = history.locator('.msg[data-role="user"]').filter(has_text=prompt)
@@ -865,6 +890,8 @@ def main():
                         blocked_input, warm_input = exercise(browser, base, fixture, args.screenshots)
                     if not args.writer_check_only:
                         exercise_rewind_echo(browser, base, fixture, args.screenshots)
+                        if args.rewind_echo_only:
+                            exercise_rewind_echo(browser, base, fixture, args.screenshots, width=390)
                 finally:
                     browser.close()
         if not args.rewind_echo_only:

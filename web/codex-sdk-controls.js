@@ -32,7 +32,7 @@ const CodexSdkControls = {
       if (!mode) return;
       event.target.disabled = true;
       try { await this.settings(view, {mode}); }
-      catch (error) { if (this.current(view, state)) view.setNotice(`切换模式失败：${error.message}`, 'blocked', true); }
+      catch (error) { if (this.current(view, state)) view.setFeedback(`切换模式失败：${error.message}`, true); }
       finally { if (this.current(view, state)) { event.target.disabled = false; this.paint(view); } }
     };
     pickers.insertBefore(label, pickers.querySelector('#sdk-more'));
@@ -45,7 +45,7 @@ const CodexSdkControls = {
       event.target.disabled = true;
       this.paintTier(view);
       try { await this.settings(view, {service_tier}); }
-      catch (error) { if (this.current(view, state)) view.setNotice(`切换服务档位失败：${error.message}`, 'blocked', true); }
+      catch (error) { if (this.current(view, state)) view.setFeedback(`切换服务档位失败：${error.message}`, true); }
       finally { if (this.current(view, state)) { event.target.disabled = false; this.paintTier(view); } }
     };
     pickers.insertBefore(tier, label);
@@ -141,9 +141,12 @@ const CodexSdkControls = {
       await operation();
       if (!this.current(view, state)) return;
       if (dialog?.isConnected) dialog.querySelector('#sdk-controls-result').textContent = success;
-      view.setNotice(success, '', true);
+      view.setFeedback(success);
     } catch (error) {
-      if (this.current(view, state) && dialog?.isConnected) { this.error(dialog, error.message); view.setNotice(error.message, 'blocked', true); }
+      if (this.current(view, state)) {
+        if (dialog?.isConnected) this.error(dialog, error.message);
+        view.setFeedback(error.message, true);
+      }
     } finally {
       if (this.current(view, state)) { button.disabled = false; button.removeAttribute('aria-busy'); this.paint(view); }
     }
@@ -276,6 +279,11 @@ function sdkSyncSettings(view) {
     if (pending) select.setAttribute('aria-busy', 'true'); else select.removeAttribute('aria-busy');
   }
   const button = view.pane.querySelector('#sdk-send');
-  button.disabled = unavailable || pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
+  button.disabled = unavailable || pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending
+    || button.hasAttribute('aria-busy');
+  const reason = button.disabled ? SdkUI.sendUnavailable(view) : '';
+  if (button.disabled) button.title = reason;
+  const feedback = view.pane.querySelector('.sdk-input-feedback[data-send-unavailable]');
+  if (feedback && feedback.textContent !== reason) view.setFeedback(reason, false, !!reason);
   CodexSdkCompose.states.get(view)?.initialSendReady?.();
 }

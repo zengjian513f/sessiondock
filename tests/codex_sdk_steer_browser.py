@@ -87,7 +87,7 @@ def exercise(browser,base,fake,width,theme,screenshots,label):
         payloads.append(route.request.post_data_json);route.fetch();route.abort()
     page.route('**/api/codex-sdk/turn',lose)
     box.fill('lost reply '+label);box.press('Control+Enter')
-    expect(page.locator('#sdk-status-menu')).to_contain_text('发送失败')
+    expect(page.locator('.sdk-input-feedback')).to_contain_text('发送失败')
     expect(box).to_have_value('lost reply '+label)
     page.unroute('**/api/codex-sdk/turn',lose)
     page.reload(wait_until='networkidle')

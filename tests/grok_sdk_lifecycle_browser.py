@@ -134,7 +134,19 @@ def idle_checks(browser,base,fixture,marker,screenshots):
     page.close();advance(observer,marker,620)
     assert alive(pid),"active task was reclaimed after the browser left"
     page,uid=page_for(context,base,fixture)
-    page.locator("#sdk-stop").click();page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+    pending_stop = []
+    page.route('**/api/native-sdk/interrupt', lambda route: pending_stop.append(route))
+    stop = page.locator('#sdk-stop')
+    stop.click()
+    expect(stop).to_be_disabled()
+    expect(page.locator('#sdk-composer .sdk-status')).to_have_text('正在请求停止')
+    stop.press('Enter')
+    assert len(pending_stop) == 1
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'grok-stop-requesting-wide.png'))
+    pending_stop[0].continue_()
+    page.unroute('**/api/native-sdk/interrupt')
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
     page.locator("#sdk-input").fill("approval idle protection");page.locator("#sdk-send").click()
     expect(page.get_by_role("button",name="Allow once",exact=True)).to_be_visible()
     page.close();advance(observer,marker,620)

@@ -90,7 +90,7 @@ const CodexSdkActions = {
         await view.request('api/codex-sdk/rename', {uid, name, request_id:requestId});
         renameAudit('finished',{outcome:'succeeded'});
         succeeded = true;
-        if (current()) view.setNotice('会话已重命名。');
+        if (current()) SdkUI.logOperation(view, '会话已重命名。');
         await loadTermList(true);
         await loadSessions(true, true);
         const pending = view.pending(uid);
@@ -110,7 +110,7 @@ const CodexSdkActions = {
             input.value = ''; view.fitInput(); CodexSdkCompose.input(view);
           }
           if (await this.finishRevert(view, generation, operation))
-            view.setNotice('对话已回退；工作区文件保持原样。');
+            SdkUI.logOperation(view, '回退完成。');
         }
         succeeded = true;
       } else if (action === 'compact') {
@@ -122,7 +122,7 @@ const CodexSdkActions = {
         const target = argument ? this.reviewTarget(argument) : await this.chooseReview();
         if (!target || !current()) return true;
         await view.request('api/codex-sdk/review', {uid, target});
-        if (current()) view.setNotice('已启动代码审查。');
+        if (current()) SdkUI.logOperation(view, '已请求代码审查。');
         succeeded = true;
       }
       if (succeeded && !preserveDraft && current() && input?.value === text) {
@@ -131,7 +131,7 @@ const CodexSdkActions = {
       }
     } catch (error) {
       renameAudit('finished',{outcome:'failed'});
-      if (current()) view.setNotice(`会话操作失败：${error.message}`, 'blocked');
+      if (current()) view.setFeedback(`会话操作失败：${error.message}`, true);
     } finally {
       if (this.pending === operation) this.pending = false;
       if (current()) this.paint(view);
@@ -176,18 +176,18 @@ const CodexSdkActions = {
     if (this.pending) return;
     const {nextUser, hasGap} = SdkUI.nextUserBubble(view, node);
     if (hasGap) {
-      view.setNotice('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。', 'blocked');
+      view.setFeedback('此回复后存在折叠的历史缺口；请先展开紧随其后的历史记录再创建分支。', true);
       return;
     }
     let beforeTurn = null;
     if (nextUser) {
       beforeTurn = nextUser._sdkMessage?.turn_id || nextUser.dataset.turnId || null;
       if (!beforeTurn) {
-        view.setNotice('后续消息尚未分配原生轮次标识；可在最后一轮回复上创建分支。', 'blocked');
+        view.setFeedback('后续消息尚未分配原生轮次标识；可在最后一轮回复上创建分支。', true);
         return;
       }
     } else if (view.turn) {
-      view.setNotice('当前回合尚未结束；请等待回复完成后再创建分支。', 'blocked');
+      view.setFeedback('当前回合尚未结束；请等待回复完成后再创建分支。', true);
       return;
     }
     const generation = view.generation, uid = view.uid, operation = {};
@@ -204,7 +204,7 @@ const CodexSdkActions = {
       if (!current()) return;
       await this.openFork(view, response);
     } catch (error) {
-      if (current()) view.setNotice(`消息操作失败：${error.message}`, 'blocked', true);
+      if (current()) view.setFeedback(`消息操作失败：${error.message}`, true);
     } finally {
       if (this.pending === operation) this.pending = false;
       if (current()) this.paint(view);
@@ -257,8 +257,11 @@ const CodexSdkActions = {
         operation.timelineUid = uid;
         await view.request('api/codex-sdk/revert', {uid, before_turn_id:message.turn_id});
         if (!current()) return;
-        if (await this.finishRevert(view, generation, operation))
+        if (await this.finishRevert(view, generation, operation)) {
+          const resultUid = view.uid, resultGeneration = view.generation;
           await this.restoreInput(view, String(message.text || ''));
+          if (view.current(resultGeneration) && view.uid === resultUid) SdkUI.logOperation(view, '回退完成。');
+        }
       } else {
         if (!await appConfirm('从这条消息之前创建分支？原会话保持不变，消息内容将追加到新分支的输入框。', {ok:'分支'})) return;
         if (!current()) return;
@@ -267,7 +270,7 @@ const CodexSdkActions = {
         await this.openFork(view, response);
         if (view.uid === response.uid) await this.restoreInput(view, String(message.text || ''));
       }
-    } catch (error) { if (current()) view.setNotice(`消息操作失败：${error.message}`, 'blocked', true); }
+    } catch (error) { if (current()) view.setFeedback(`消息操作失败：${error.message}`, true); }
     finally {
       if (this.pending === operation) this.pending = false;
       this.paint(view);

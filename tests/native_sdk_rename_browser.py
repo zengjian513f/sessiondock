@@ -83,12 +83,12 @@ def exercise(browser,base,source,root,shots,label):
     assert not turns,'rename was submitted as a model turn'
     if source in ('kiro','agy'):
         send(page,'/rename reject rename')
-        expect(page.locator('#sdk-status-menu')).to_contain_text('改名失败')
+        expect(page.locator('.sdk-input-feedback')).to_contain_text('改名失败')
         expect(box).to_have_value('/rename reject rename')
         expect(page.locator('.dhead h2')).to_have_text(title+' dialog')
         if source=='kiro':
             send(page,'/rename unconfirmed rename')
-            expect(page.locator('#sdk-status-menu')).to_contain_text('原生未确认改名')
+            expect(page.locator('.sdk-input-feedback')).to_contain_text('原生未确认改名')
             expect(box).to_have_value('/rename unconfirmed rename')
         # A new draft typed while a native mutation is pending must survive.
         gate=(root/'fake-native-store' if source=='kiro' else root)/'rename-hold';gate.touch()

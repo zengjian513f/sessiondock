@@ -2336,7 +2336,7 @@ function paintItemStatus(node) {
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
   const running = (status.children && !status.sdk ? '原生子代理仍在运行' : S.liveExternalSdk.has(uid) ? '外部 ACP 会话运行中' : status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
-    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
+    + turnLabel(turn, uid) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   const label = frozen ? '会话已暂停' : retained ? '已停止，等待原生卸载' : active ? running : '会话已退出';
   badge.title = badge.ariaLabel = count ? `${count} 条新内容，${label}` : label;
 }
@@ -2363,7 +2363,15 @@ function sessionTurn(uid) {
   if (state !== 'waiting' && sessionBackgroundWorking(uid)) state = 'working';
   return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
 }
-const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
+function turnLabel(turn, uid) {
+  if (turn === 'working' && NativeSdkView.uid === uid && !NativeSdkView.agent && NativeSdkView.connected
+      && uid.startsWith('agy:') && NativeSdkView.raw?.foreground_idle && !NativeSdkView.raw?.error)
+    return ' · 前台就绪，等待回执';
+  if (turn === 'working' && CodexSdkView.uid === uid && !CodexSdkView.agent && CodexSdkView.connected
+      && !CodexSdkView.turn && !CodexSdkView.summary?.capacity_retry && sessionBackgroundWorking(uid))
+    return ' · 后台运行';
+  return ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
+}
 
 function paintTurn(uid) {
   paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
@@ -2442,7 +2450,7 @@ function paintHeaderBadge(h, uid) {
     : status.sdk ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
   h.title = h.ariaLabel = frozen ? '会话已暂停' : retained ? '已停止，等待原生卸载'
     : !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
-    : active ? running + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '')
+    : active ? running + turnLabel(turn, uid) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '')
     : '会话已退出';
 }
 

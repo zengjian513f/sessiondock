@@ -517,7 +517,7 @@ def fork_restart_check(fixture, binary):
             retried = post(page, 'fork', failed.value.request.post_data_json, ok=False)
             assert 'already attempted' in json.dumps(retried), retried
             assert len(fixture.frames('spawn')) == count, 'unknown native fork was dispatched twice'
-            expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('操作失败')
+            expect(page.locator('.sdk-pane .sdk-input-feedback')).to_contain_text('操作失败')
             fork = page.locator('.sdk-history .msg[data-role="assistant"]').last.get_by_role('button', name='从此处创建分支', exact=True)
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
                 fork.click()

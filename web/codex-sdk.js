@@ -210,8 +210,9 @@ const CodexSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       if (this.snapshotBuild) this.sdkCursor = null;
       this.cancelSnapshotBuild();
+      this.reconnecting ||= this.connected;
       this.setConnected(false);
-      this.setNotice('载入中', 'connecting');
+      this.setNotice(this.reconnecting ? '重连中' : '载入中', 'connecting');
       if ((this.sdkCursor || query.has('cursor')) && (received || es.readyState !== EventSource.CLOSED)) {
         es.close();
         this.scheduleReconnect();
@@ -479,13 +480,11 @@ const CodexSdkView = {
       UsageUI.rememberQuota(this.uid,data.quota);
       if (!this.applyLimits(data.raw.limits, data.captured_at)) void this.loadLimits();
       const outcome = data.raw.outcome?.outcome;
-      this.setNotice({reset: '已兑换，限额窗口已重置。', alreadyRedeemed: '这张卡此前已兑换，已刷新用量。',
+      this.setFeedback({reset: '已兑换，限额窗口已重置。', alreadyRedeemed: '这张卡此前已兑换，已刷新用量。',
         nothingToReset: '当前没有可重置的限额窗口，未消耗卡片。', noCredit: '没有可用的重置卡。'}[outcome]
-        || `兑换结果：${outcome || '未知'}`, outcome === 'reset' || outcome === 'alreadyRedeemed' ? '' : 'blocked');
-      this.noticeHold = Date.now() + 8000;
+        || `兑换结果：${outcome || '未知'}`, outcome !== 'reset' && outcome !== 'alreadyRedeemed');
     } catch (error) {
-      this.setNotice(`兑换失败：${error.message}`, 'blocked');
-      this.noticeHold = Date.now() + 8000;
+      this.setFeedback(`兑换失败：${error.message}`, true);
     } finally {
       if (this.pane) button.disabled = select.disabled = false;
     }
@@ -732,9 +731,10 @@ const CodexSdkView = {
     if (method === 'bridge/reset') {
       this.sdkCursor = null;
       this.updateBackgroundTasks({});
+      this.reconnecting ||= this.connected;
       this.setConnected(false);
       queueUiChange({live: true});
-      this.setNotice('载入中', 'connecting');
+      this.setNotice(this.reconnecting ? '重连中' : '载入中', 'connecting');
       this.es?.close();
       this.scheduleReconnect();
       return;
@@ -810,10 +810,13 @@ const CodexSdkView = {
           this.summary.retry_error = raw.willRetry === true ? raw.error : null;
           this.summary.last_error = raw.willRetry === true ? null : raw.error;
         }
+        if (raw.willRetry !== true && raw.error?.message) this.setFeedback(`执行失败：${raw.error.message}`, true);
         this.paintStatus();
         return;
     }
     const item = raw.item;
+    if (method === 'item/completed' && item?.type === 'contextCompaction' && this.items.get(item.id)?.status !== 'completed')
+      SdkUI.logOperation(this, '压缩完成。');
     if (method === 'item/started' || method === 'item/completed') {
       if (item) {
         item.sdk_active = method === 'item/started';
@@ -859,7 +862,10 @@ const CodexSdkView = {
           this.summary.retry_error = null;
           if (raw.turn?.status === 'completed') this.summary.last_error = null;
         }
-        if (raw.turn?.status === 'failed' && raw.turn.error && this.summary) this.summary.last_error = raw.turn.error;
+        if (raw.turn?.status === 'failed' && raw.turn.error) {
+          if (this.summary) this.summary.last_error = raw.turn.error;
+          if (raw.turn.error.message) this.setFeedback(`执行失败：${raw.turn.error.message}`, true);
+        }
         this.scheduleHistory();
         this.loadLimits();
         break;
@@ -1003,7 +1009,12 @@ const CodexSdkView = {
     SdkUI.paintBackgroundStatus(this.notice, background ? '后台运行' : '',
       active || this.summary?.capacity_retry ? '仍有后台任务或子代理运行。'
         : '主回合已结束，仍有后台任务或子代理运行。可以发送新消息。');
-    this.pane.querySelector('#sdk-stop').hidden = !active && !this.summary?.capacity_retry;
+    const stop = this.pane.querySelector('#sdk-stop');
+    const stopTarget = this.turn?.id || this.summary?.capacity_retry?.retry_at || null;
+    stop.hidden = !active && !this.summary?.capacity_retry;
+    if (this.stopRequest && (stop.hidden || this.stopRequest.target !== stopTarget)) this.stopRequest = null;
+    stop.disabled = !this.connected || !!this.stopRequest;
+    if (this.reconnecting) { this.setNotice('重连中', 'connecting'); return; }
     const send = this.pane.querySelector('#sdk-send');
     sdkSyncSettings(this);
     send.textContent = active ? '排队' : '发送';
@@ -1011,8 +1022,10 @@ const CodexSdkView = {
     SdkUI.paintSend(this);
     this.paintQueue();
     this.paintGauges();
-    // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
-    if (this.noticeHold > Date.now()) return;
+    if (this.stopRequest) {
+      this.setNotice(this.stopRequest.accepted ? '正在停止\n等待原生确认当前回合结束。' : '正在请求停止', 'waiting');
+      return;
+    }
     const status = this.summary?.status || {};
     const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent);
     // Idle describes the daemon's availability, not the preceding turn's
@@ -1029,7 +1042,8 @@ const CodexSdkView = {
     const nativeError = !active && status.type === 'systemError'
       && this.historyData?.activity?.state === 'failed'
       ? this.historyData.activity.error : null;
-    const errorText = this.summary?.last_error?.message || nativeError;
+    const lastError = this.summary?.last_error?.message;
+    const errorText = (active || status.type === 'systemError' ? lastError : null) || nativeError;
     const capacityRetry = this.summary?.capacity_retry;
     if (capacityRetry) {
       parts.push(`正在重试，${capacityRetry.delay_seconds} 秒后自动重试（${new Date(capacityRetry.retry_at).toLocaleTimeString()}）；可停止重试。${capacityRetry.error?.message || ''}`);
@@ -1049,13 +1063,12 @@ const CodexSdkView = {
       else if (interrupted) {
         const reason = observed.activity?.state === 'aborted' ? observed.activity.reason
           : unfinished ? 'SDK 已空闲，原生回合未写入结束事件' : '';
-        parts.push('已中断' + (reason ? '：' + reason : ''));
-        kind = 'warning';
+        parts.push('就绪\n上一回合已中断' + (reason ? '：' + reason : ''));
       }
-      else if (compact?.status === 'completed') parts.push('压缩完成');
+      else if (lastError) parts.push(`就绪\n上一回合失败：${lastError}`);
       else parts.push('就绪');
     }
-    this.setNotice(parts.join(' '), !capacityRetry && (this.summary?.last_error || status.type === 'systemError') ? 'blocked' : kind);
+    this.setNotice(parts.join(' '), kind);
   },
 
   // ---------------------------------------------------------------- 操作
@@ -1091,7 +1104,7 @@ const CodexSdkView = {
         const generation = this.generation;
         holder._sdkQueueBusy = true; dismiss.disabled = true;
         try { await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action: 'dismiss'}); }
-        catch (error) { if (this.current(generation)) this.setNotice(`移除提示失败：${error.message}`, 'blocked', true); }
+        catch (error) { if (this.current(generation)) this.setFeedback(`移除提示失败：${error.message}`, true); }
         finally {
           holder._sdkQueueBusy = false; holder._sdkQueueContents = null;
           if (this.current(generation)) this.paintQueue();
@@ -1127,7 +1140,7 @@ const CodexSdkView = {
               }
             }
           }
-          catch (error) { if (this.current(generation)) this.setNotice(`队列操作失败：${error.message}`, 'blocked', true); }
+          catch (error) { if (this.current(generation)) this.setFeedback(`队列操作失败：${error.message}`, true); }
           finally {
             holder._sdkQueueBusy = false;
             holder._sdkQueueContents = null;
@@ -1146,7 +1159,8 @@ const CodexSdkView = {
     const expectedTurn = this.turn?.id, steer = operation === 'steer' && !!expectedTurn;
     const generation = this.generation;
     const button = this.pane.querySelector('#sdk-send');
-    if (button.disabled) return;
+    if (button.disabled) { this.setFeedback(SdkUI.sendUnavailable(this), false, true); return; }
+    this.setFeedback('');
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
     let steerRequest, steerOutcome;
@@ -1160,7 +1174,7 @@ const CodexSdkView = {
       }
       // A leading slash can be part of a path or ordinary prose.
       if (!steer && /^\/[a-z][a-z0-9_-]*(?:\s|$)/i.test(text)) {
-        this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
+        this.setFeedback('不支持的命令。输入 /help 查看可用命令；草稿已保留。', true);
         return;
       }
       const request_id = await CodexSdkCompose.submission(payload, null, null, this.agent, steer ? 'steer' : undefined);
@@ -1178,7 +1192,7 @@ const CodexSdkView = {
       }
       await CodexSdkCompose.sent(this, payload);
     } catch (error) {
-      if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
+      if (this.current(generation)) this.setFeedback(`发送失败：${error.message}`, true);
     } finally {
       if(steerRequest)browserAuditEvent('sdk.steer.finished',{source:'codex',outcome:steerOutcome || 'unconfirmed'},{uid:auditUid,requestId:steerRequest});
       if (this.current(generation)) CodexSdkCompose.failed(this);
@@ -1204,7 +1218,7 @@ const CodexSdkView = {
         break;
       }
       case 'status': this.setNotice(`模型：${this.summary?.settings?.model || '未返回'}；推理强度：${this.summary?.settings?.effort || '未返回'}；${this.turn ? '运行中' : '空闲'}`); break;
-      case 'stop': await this.request('api/codex-sdk/interrupt', {uid: this.uid}); break;
+      case 'stop': await this.interrupt(); break;
       case 'new': document.querySelector('#new-session')?.click(); break;
     }
     if (this.input?.value === text) { this.input.value = ''; this.fitInput(); CodexSdkCompose.input(this); }
@@ -1213,10 +1227,24 @@ const CodexSdkView = {
 
   async interrupt() {
     const generation = this.generation;
+    const stop = this.pane.querySelector('#sdk-stop');
+    if (stop.hidden || stop.disabled) return;
+    const request = {target: this.turn?.id || this.summary?.capacity_retry?.retry_at || null, accepted: false};
+    this.setFeedback('');
+    this.stopRequest = request;
+    this.paintStatus();
     try {
       await this.request('api/codex-sdk/interrupt', {uid: this.uid});
+      if (this.current(generation) && this.stopRequest === request) {
+        request.accepted = true;
+        this.paintStatus();
+      }
     } catch (error) {
-      if (this.current(generation)) this.setNotice(`中断失败：${error.message}`, 'blocked');
+      if (this.current(generation) && this.stopRequest === request) {
+        this.stopRequest = null;
+        this.paintStatus();
+        this.setFeedback(`中断失败：${error.message}`, true);
+      }
     }
   },
 
@@ -1229,7 +1257,7 @@ const CodexSdkView = {
     } catch (error) {
       if (this.current(generation)) {
         card.querySelectorAll('button, input, textarea').forEach(control => { control.disabled = false; });
-        this.setNotice(`回答失败：${error.message}`, 'blocked');
+        this.setFeedback(`回答失败：${error.message}`, true);
       }
     }
   },
@@ -1519,7 +1547,7 @@ const CodexSdkQuestions = {
       const card = requestCard(request, async result => {
         const answers = questions.map((q, i) => result.answers[String(i)]?.answers?.[0] || '');
         if (answers.some(answer => !answer)) {
-          view.setNotice('请回答每个问题后提交。', 'blocked');
+          view.setFeedback('请回答每个问题后提交。', true);
           return;
         }
         const generation = view.generation;
@@ -1537,10 +1565,10 @@ const CodexSdkQuestions = {
         } catch (error) {
           if (!view.current(generation)) return;
           if (this.answered.has(key)) {
-            view.setNotice(`回答已保存到队列，立即引导失败：${error.message}。可在队列中重试。`, 'blocked');
+            view.setFeedback(`回答已保存到队列，立即引导失败：${error.message}。可在队列中重试。`, true);
           } else {
             card.querySelectorAll('button, input').forEach(control => { control.disabled = false; });
-            view.setNotice(`回答失败：${error.message}`, 'blocked');
+            view.setFeedback(`回答失败：${error.message}`, true);
           }
         }
       });
