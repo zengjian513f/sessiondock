@@ -50,7 +50,7 @@ const ConversationUI = {
   },
 
   resizeInput(input, {minHeight = 0, maxHeight = 240} = {}) {
-    if (!input) return;
+    if (!input || CSS.supports('field-sizing', 'content')) return;
     input.style.height = 'auto';
     const height = input.scrollHeight;
     input.style.height = Math.min(maxHeight, Math.max(minHeight, height)) + 'px';

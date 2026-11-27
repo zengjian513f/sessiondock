@@ -74,7 +74,7 @@ DELTA（BUG-20261012-023202-d4294d）：新建会话自动接续到原生历史�
 
 ### 外观
 
-设置对话框 `#settings-dialog`，三个标签：外观、功能、机器。上次标签在 `settingsTab`，默认 `appearance`（`showSettingsTab` / `openSettings`）。副标题：「界面偏好保存在浏览器」。
+设置对话框 `#settings-dialog`，三个标签：外观、功能、机器。上次标签在 `settingsTab`，默认 `appearance`（`showSettingsTab` / `openSettings`）。副标题：「界面偏好保存在浏览器」。DELTA：Tab 进入已选标签；左右方向键、Home 和 End 移动焦点，Enter 或空格激活。机器名称框中，输入法确认候选字时保留焦点，普通 Enter 完成编辑。
 
 外观（`applyTheme`、`applyFont`、`applyInterfaceScale`）：
 
@@ -126,6 +126,8 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 ## 2. 侧栏：嵌套、筛选、分组、多选、未读、深链、资源
 
 渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`web/list-sync.js`](../web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。收到列表失效（`sessions`）或连接基线（`initial`）时派发页面事件 `sessiondock-ui-sessions`，分组和迁移任务据此刷新。选中会话的正文订阅之外，SSE 正常时仍每 20 秒兜底对账一次（`tickSync` / `BACKUP_MS`）：正文订阅可能静默停滞而 `readyState` 仍为 open，这一兜底不是冗余，保留不变。空闲请求预算：[`tests/idle_requests_browser.py`](../tests/idle_requests_browser.py)。
+
+DELTA：主会话和子代理标题可用 Tab 聚焦、Enter 打开；星标与展开按钮保持独立。
 
 ### 四种列表
 
@@ -301,7 +303,7 @@ DELTA：侧栏资源列及旧偏好已移除；会话资源从右侧「资源」
 
 输入框 `#q`，占位：「快速筛选… Enter 搜正文」。无需回车即筛选标题、UUID/UID、目录、机器名、Agent 名和模型名。空格分词，双引号是短语。
 
-打字：`cancelSearch()` 退出全文结果，120ms 后 `renderSide` 做本地筛选（`matchesSearch` / `searchTerms`）。Esc 清空并退出。大小写、全词、正则、AND/OR 存在 `opts`，默认全关、`mode: 'all'`（按钮显示 AND）。
+打字：`cancelSearch()` 退出全文结果，120ms 后 `renderSide` 做本地筛选（`matchesSearch` / `searchTerms`）。Esc 清空并退出。DELTA：组字期间的 Enter 与 Esc 交给输入法。大小写、全词、正则、AND/OR 存在 `opts`，默认全关、`mode: 'all'`（按钮显示 AND）。
 
 - AND：全部词，可以落在不同消息。OR：任一词。
 - 正则：整段输入当一个表达式，不拆词，AND/OR 按钮禁用。本地先 `reTerm`，无效则「正则无效」，不发全盘请求。正则匹配在 worker（[`web/regex-worker.js`](../web/regex-worker.js)）里，可取消。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。

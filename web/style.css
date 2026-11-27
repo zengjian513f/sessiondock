@@ -136,7 +136,8 @@ html, body {
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55;
   max-height: min(420px, 55dvh); overflow: auto;
 }
-.app-popup .btn.danger { color: #e5484d; border-color: currentColor; }
+.app-popup .btn.danger { color: var(--diff-del-fg); border-color: currentColor; }
+.app-popup .btn.danger:hover { background: var(--diff-del-fg); border-color: var(--diff-del-fg); color: var(--panel); }
 #float-stack {
   position: fixed; inset: 0; z-index: 10000; pointer-events: none;
   display: flex; flex-direction: column; align-items: center; justify-content: safe center;
@@ -236,6 +237,7 @@ header {
 .seg button.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel-2)); color: var(--text); }
 .seg button.on:hover { background: color-mix(in srgb, var(--accent) 20%, var(--panel-2)); }
 .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg .chip.on b { color: inherit; }
 .seg b { font-weight: 400; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 /* 机器配色板。哪台机器用哪个色在中央注册表里配，这里只定义可选的颜色本身。 */
 [data-node-color="blue"] { --node-color: light-dark(#1d4ed8, #93c5fd); }
@@ -307,12 +309,12 @@ header {
   font-family: "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.4;
 }
 .opts button:hover { background: var(--hover); color: var(--text); }
-.opts button.on { background: var(--accent); color: #fff; }
+.opts button.on { background: var(--brand-a); color: var(--panel); }
 .opts button:disabled { opacity: .45; cursor: default; }
 .opts button:disabled:hover { background: transparent; color: var(--muted); }
 #search-mode-toggle {
   width: 36px; padding-inline: 4px; opacity: 1;
-  background: var(--accent); color: #fff;
+  background: var(--brand-a); color: var(--panel);
 }
 #stat { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 #stat:empty { display: none; }
@@ -1031,6 +1033,7 @@ body.dragging #drag { will-change: transform; }
 .item-star .ui-icon { width: 15px; height: 15px; }
 @media (hover: none) { .item-star { opacity: .58; } .item-star.on { opacity: 1; } }
 .cwd-machine { flex: none; white-space: nowrap; }
+#side .item.sel :is(.m, .cwd, .cwd-path, .nest-inactive) { color: color-mix(in srgb, var(--text) 25%, var(--muted)); }
 .cwd-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
 /* Only the final directory, or the ancestors needed to tell it apart on screen, is tinted. */
 .cwd-path .cwd-leaf { color: var(--cwd-color, inherit); }
@@ -2124,6 +2127,12 @@ body.stale-build #composer-input-status { display: none; }
   background: var(--panel-2); color: var(--text); outline: none;
   font: inherit; line-height: 1.5;
 }
+@supports (field-sizing: content) {
+  #cinput, #sdk-input, #bug-report-description, #continue-session-description {
+    field-sizing: content; max-height: 180px; overflow-y: auto;
+  }
+  #sdk-input { max-height: 240px; }
+}
 #cinput:focus, #sdk-input:focus, #bug-report-description:focus, #continue-session-description:focus { border-color: var(--accent); }
 #sdk-input.shell-mode { color: var(--tool); border-color: var(--tool); }
 .cbtns { display: flex; gap: 6px; flex: none; height: var(--composer-control-height); }
@@ -2144,6 +2153,9 @@ body.stale-build #composer-input-status { display: none; }
   width: 14px; height: 14px; box-sizing: border-box;
   border: 2px solid #22c55e; border-right-color: transparent; border-radius: 50%;
   animation: send-spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cbtns .btn.go[aria-busy="true"]::after, #prog .bar.idle { animation: none; }
 }
 @keyframes send-spin { to { transform: rotate(360deg); } }
 

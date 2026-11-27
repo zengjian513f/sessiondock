@@ -60,7 +60,9 @@ async def exercise(browser, base, data, stale_payload, width, height):
 
     async def open_main():
         nonlocal pane
-        await page.locator(f'#side .item[data-uid="{data.uid(MAIN)}"]').click()
+        title = page.locator(f'#side .item[data-uid="{data.uid(MAIN)}"]').get_by_role("link")
+        await title.focus()
+        await title.press("Enter")
         await expect(page.locator("#msgs")).to_contain_text("PaneSentinel")
         disclosure = page.locator('#msgs .msg[data-role="user"] button.disclosure').last
         await expect(disclosure).to_contain_text("展开全文")
@@ -123,6 +125,7 @@ async def exercise(browser, base, data, stale_payload, width, height):
         await expect(page.locator("#side-search-label")).to_have_text("筛选结果")
         await expect(rows.first).to_have_attribute("data-uid", data.uid(MAIN))
         await q.fill("BodyNeedle")
+        await q.dispatch_event("keydown", {"key": "Enter", "isComposing": True})
         await expect(rows).to_have_count(0)
         assert not requests, "Typing a local filter issued a fulltext request"
         await run(lambda: q.press("Enter"), 1, mode="all")

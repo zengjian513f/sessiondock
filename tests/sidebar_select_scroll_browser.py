@@ -63,14 +63,8 @@ def last_row_state(page):
 
 def run(page):
     page.wait_for_function(('S.sessions.length === %d && T.listLoaded' % COUNT))
-    page.evaluate(r"""() => {
-      S.view = 'date';
-      S.nest = true;
-      store.set('view', 'date');
-      store.set('nest', true);
-      renderView();
-      renderSide();
-    }""")
+    page.locator('#view [data-v=date]').click()
+    page.locator('#nest-toggle').click()
     page.wait_for_function("document.querySelectorAll('#side .item[data-uid]').length === %d && document.querySelector('#view [data-v=date]').classList.contains('on') && document.querySelector('#nest-toggle').getAttribute('aria-pressed') === 'true'" % COUNT)
     uids = page.evaluate("() => [...document.querySelectorAll('#side .item[data-uid]')].map(n => n.dataset.uid)")
     first, last = uids[0], uids[-1]

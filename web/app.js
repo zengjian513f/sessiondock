@@ -5172,12 +5172,26 @@ function nestLeadMarkup(r) {
   return `<span class="nest-lead" aria-hidden="${r.kids || r.inactive ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
 }
 
+// Let modified clicks follow the link natively. Ordinary clicks (including
+// Enter) use the row action, which also handles selection and pending sessions.
+$('#side').addEventListener('click', event => {
+  if (!event.target.closest('a.t')) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) event.stopPropagation();
+  else event.preventDefault();
+}, true);
+
+function sidebarTitle(session, agent = null) {
+  const title = agent ? agent.title : session.title;
+  const url = rowSessionUrl(session, session.uid, agent?.id, session.pending);
+  return `<a class="t" draggable="false" href="${esc(url.href)}" title="${esc(title)}">${hl(title)}</a>`;
+}
+
 function agentRow(s, a, depth) {
   const it = el('div', 'item sd-session-card agent tree',
     `${nestLeadMarkup({s, agent: a, depth, kids: 0, closed: false})}
      <span class="ico">${icon(s.source)}<span class="item-status"></span><span class="agent-mark" title="子代理" aria-hidden="true">${uiIcon('tree')}</span></span>
      <div class="body">
-       <div class="t" title="${esc(a.title)}">${hl(a.title)}</div>
+       ${sidebarTitle(s, a)}
        <div class="m">${esc(agentMeta(s.uid, a))}</div>
        ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
      </div>`);
@@ -5345,7 +5359,7 @@ function createSidebarRow(r, picked = pickedSessions) {
     `${nestLeadMarkup(r)}
      <span class="ico">${icon(s.source)}<span class="item-status"></span></span>
      <div class="body">
-       <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
+       ${sidebarTitle(s)}
        <div class="m">${esc(meta)}</div>
        <div class="nest-inactive"${!r.inactive || r.closed ? ' hidden' : ''}>${r.inactive ? `有 ${r.inactive} 个不活跃会话（已被筛选隐藏）` : ''}</div>
        ${S.view === 'date' || S.view === 'directory'
@@ -6160,7 +6174,11 @@ function sessionUrl(uid, agent = null) {
   const pending = !row?.sid && typeof T !== 'undefined'
     ? T.pending.find(item => pendingUid(item.name) === uid) : null;
   if (!row?.sid && !pending) return null;
-  const node = (row || pending).node_id;
+  return rowSessionUrl(pending || row, uid, agent, !!pending);
+}
+
+function rowSessionUrl(row, uid, agent, pending) {
+  const node = row.node_id;
   const url = new URL(location.href);
   url.searchParams.set('sid', pending
     ? uid.replace(`tmux:${node}~`, 'tmux:')
@@ -6985,7 +7003,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   const renderedLength = msgs.length;
   const d = $('#detail');
   disposeMessageObservers($('#msgs'));
-  d.innerHTML = '';
+  d.replaceChildren();
   const entry = cache.get(viewKey(uid, agent));
   d.appendChild(head(meta, entryTotal(entry || {msgs})));
   syncSessionNotices();
@@ -11164,7 +11182,7 @@ function pendingHistoryQuestion(entry) {
   const answered = new Set((entry.msgs || [])
     .filter(m => ['answer', 'tool_result'].includes(m.role) && m.call_id)
     .map(m => m.call_id));
-  return [...(entry.msgs || [])].reverse().find(
+  return (entry.msgs || []).findLast(
     m => m.role === 'question' && m.call_id && !answered.has(m.call_id)) || null;
 }
 
@@ -12532,7 +12550,7 @@ $('#trash-list').onclick = async e => {
     return;
   }
   const subject = trashTreeSize(item) ? `会话树「${item.title}」（${trashTreeSize(item)} 个会话）` : `「${item.title}」`;
-  if (!await appConfirm(`彻底删除${subject}?\n\n文件将从磁盘移除, 不可恢复。${trashCascadeWarning([item])}`)) return;
+  if (!await appConfirm(`彻底删除${subject}?\n\n文件将从磁盘移除, 不可恢复。${trashCascadeWarning([item])}`, {ok:'彻底删除', danger:true})) return;
   const d = await trashPost('api/trash/purge', { id: item.id, uids: trashCascadeUids([item]) }, btn);
   if (!d) return;
   if (await loadTrash({ keepNote: true })) {
@@ -12544,7 +12562,7 @@ $('#trash-list').onclick = async e => {
 
 async function purgeAllTrash() {
   if (!trashItems.length || trashBusy) return;
-  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个${trashItems.some(trashTreeSize) ? '回收站条目（包含完整会话树）' : '会话'}, 不可恢复。${trashCascadeWarning(trashItems)}`)) return;
+  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个${trashItems.some(trashTreeSize) ? '回收站条目（包含完整会话树）' : '会话'}, 不可恢复。${trashCascadeWarning(trashItems)}`, {ok:'清空回收站', danger:true})) return;
   const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
     { all: true, uids: trashCascadeUids(trashItems) }, $('#trash-purge-all'));
   if (!d) return;
@@ -12746,7 +12764,11 @@ function machineRow(target) {
     name.maxLength = 80;
     name.setAttribute('aria-label', `${target.name} 的名称`);
     name.onchange = () => void saveMachine(target, {name: name.value}, name);
-    name.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); name.blur(); } };
+    name.onkeydown = event => {
+      if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      name.blur();
+    };
     head.append(name);
   }
   row.append(head);
@@ -13126,6 +13148,7 @@ function showSettingsTab(name) {
     const on = tab.dataset.tab === name;
     tab.classList.toggle('on', on);
     tab.ariaSelected = String(on);
+    tab.tabIndex = on ? 0 : -1;
   }
   $('#settings-appearance').hidden = name !== 'appearance';
   $('#settings-features').hidden = name !== 'features';
@@ -13143,9 +13166,24 @@ function showSettingsTab(name) {
   }
 }
 
-for (const tab of document.querySelectorAll('.settings-tab')) {
+const settingsTabs = [...document.querySelectorAll('.settings-tab')];
+for (const [index, tab] of settingsTabs.entries()) {
   tab.onclick = () => showSettingsTab(tab.dataset.tab);
+  tab.onkeydown = event => {
+    const last = settingsTabs.length - 1;
+    const next = {ArrowLeft: index === 0 ? last : index - 1,
+      ArrowRight: index === last ? 0 : index + 1, Home: 0, End: last}[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    for (const candidate of settingsTabs) candidate.tabIndex = candidate === settingsTabs[next] ? 0 : -1;
+    settingsTabs[next].focus();
+  };
 }
+
+$('.settings-tabs').addEventListener('focusout', event => {
+  if (event.currentTarget.contains(event.relatedTarget)) return;
+  for (const tab of settingsTabs) tab.tabIndex = tab.ariaSelected === 'true' ? 0 : -1;
+});
 
 for (const select of document.querySelectorAll('[data-agent-start-mode]')) {
   select.onchange = () => {

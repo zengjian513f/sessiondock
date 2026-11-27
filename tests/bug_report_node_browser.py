@@ -206,7 +206,7 @@ def check_report_scroll(page):
             page.locator('#bug-report-attach-menu [data-attach=image]').click()
         # Keep the tall input for the reachability check, but submit an empty
         # draft so no report or CLI is created by the layout scenarios.
-        input_height = textarea.evaluate("element => element.style.height")
+        input_height = textarea.evaluate("element => getComputedStyle(element).height")
         textarea.fill('')
         textarea.evaluate("(element, height) => element.style.height = height", input_height)
         wait_drafts(page)
@@ -250,6 +250,10 @@ def check_send_busy_width(page, boundary):
     assert busy["text"] == "发送" and busy["busy"] == "true", busy
     assert abs(busy["width"] - idle) < 0.51, (idle, busy)
     assert "send-spin" in (busy["spin"] or ""), busy
+    page.emulate_media(reduced_motion='reduce')
+    assert page.locator('#bug-report-go').evaluate(
+        "el => getComputedStyle(el, '::after').animationName") == 'none'
+    page.emulate_media(reduced_motion='no-preference')
     deadline = time.monotonic() + 10
     while not boundary.pending:
         assert time.monotonic() < deadline, ('bug-report not intercepted', busy, boundary.calls)

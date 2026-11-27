@@ -17,6 +17,7 @@ globalThis.SessionDockSearch = Object.freeze({
     };
 
     $('#q').onkeydown = async e => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Escape') { cancelSearch(true); showSessionCount(); renderSide(); return; }
       if (e.key !== 'Enter') return;
       runSearch();

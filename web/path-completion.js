@@ -38,11 +38,11 @@ const PathCompletion = {
 
   close(input) {
     const state = this.states.get(input);
-    state?.abort.abort(); clearTimeout(state?.timeout); clearTimeout(state?.refresh); state?.box.remove();
+    if (!state) return;
+    state.abort.abort(); clearTimeout(state.timeout); clearTimeout(state.refresh); state.box.remove();
     this.states.delete(input);
     input.removeAttribute('aria-controls');
     input.removeAttribute('aria-activedescendant');
-    input.setAttribute('aria-expanded', 'false');
   },
 
   bind(input) {
@@ -143,7 +143,6 @@ const PathCompletion = {
     this.states.set(input, state);
     input.setAttribute('aria-controls', box.id);
     input.removeAttribute('aria-activedescendant');
-    input.setAttribute('aria-expanded', 'true');
     if (composing) return;
     if (autoFill) void this.load(input, state);
     else state.refresh = setTimeout(() => { if (this.valid(input, state)) void this.load(input, state); }, 100);

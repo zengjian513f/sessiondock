@@ -213,6 +213,13 @@ def exercise(browser, base, width, height):
         open_settings(page)
 
         select_tab(page, "appearance")
+        page.keyboard.press("ArrowRight")
+        expect(page.get_by_role("tab", name="功能")).to_be_focused()
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("tabpanel", name="功能")).to_be_visible()
+        page.keyboard.press("Home")
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("tabpanel", name="外观")).to_be_visible()
         expect_option(page.locator("#setting-theme"), "system", "跟随系统")
         expect(page.locator("html")).to_have_attribute("data-theme", "light")
         expect_option(page.locator("#setting-font"), "ubuntu", "Ubuntu Sans Mono（26.04 默认）")

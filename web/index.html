@@ -339,7 +339,7 @@
             <div id="input-history" class="input-history hidden" role="listbox"
               aria-label="输入历史"></div>
             <textarea id="cinput" rows="1" enterkeyhint="enter" placeholder="输入内容"
-              aria-controls="input-history" aria-expanded="false"></textarea>
+              aria-label="输入内容" aria-haspopup="listbox" aria-keyshortcuts="ArrowUp"></textarea>
           </div>
           <div class="cbtns">
             <button class="btn" id="cesc"
@@ -594,13 +594,13 @@
     </div>
     <div class="settings-tabs" role="tablist" aria-label="设置分类">
       <button type="button" class="settings-tab on" role="tab" aria-selected="true"
-              aria-controls="settings-appearance" data-tab="appearance">外观</button>
+              id="settings-tab-appearance" aria-controls="settings-appearance" data-tab="appearance">外观</button>
       <button type="button" class="settings-tab" role="tab" aria-selected="false"
-              aria-controls="settings-features" data-tab="features">功能</button>
+              id="settings-tab-features" tabindex="-1" aria-controls="settings-features" data-tab="features">功能</button>
       <button type="button" class="settings-tab" role="tab" aria-selected="false"
-              aria-controls="settings-machines" data-tab="machines">机器</button>
+              id="settings-tab-machines" tabindex="-1" aria-controls="settings-machines" data-tab="machines">机器</button>
     </div>
-    <div id="settings-appearance" class="settings-pane" role="tabpanel">
+    <div id="settings-appearance" class="settings-pane" role="tabpanel" aria-labelledby="settings-tab-appearance">
     <div class="setting-row">
       <label for="setting-scale"><b>界面缩放</b><small>拖动或双指调整，所有布局生效</small></label>
       <div class="setting-scale-control">
@@ -638,7 +638,7 @@
       <button type="button" class="btn" data-pwa-install-button>安装到桌面</button>
     </div>
     </div>
-    <div id="settings-features" class="settings-pane" role="tabpanel" hidden>
+    <div id="settings-features" class="settings-pane" role="tabpanel" aria-labelledby="settings-tab-features" hidden>
     <label class="setting-row" for="setting-sleep">
       <span><b>自动休眠</b><small>无操作时暂停同步，按 Resume 恢复；会话继续运行</small></span>
       <select id="setting-sleep">
@@ -694,7 +694,7 @@
     <label class="setting-row"><span><b>OpenCode</b></span><select data-agent-start-mode="opencode" aria-label="OpenCode 启动方式"><option value="sdk">SDK</option><option value="cli">CLI</option></select></label>
     </section>
     </div>
-    <div id="settings-machines" class="settings-pane" role="tabpanel" hidden>
+    <div id="settings-machines" class="settings-pane" role="tabpanel" aria-labelledby="settings-tab-machines" hidden>
       <p class="setting-group-title">机器<small>保存在中央服务端，所有浏览器一致。接入和移除机器仍在服务器上操作</small></p>
       <div id="machine-rows"></div>
       <p class="setting-group-title">AI 客户端</p>

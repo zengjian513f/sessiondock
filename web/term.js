@@ -4792,7 +4792,7 @@ function closeComposerHistory() {
   composerHistoryPicker.seq++;
   box.classList.add('hidden');
   box.replaceChildren();
-  $('#cinput').setAttribute('aria-expanded', 'false');
+  if ($('#cinput').getAttribute('aria-controls') === box.id) $('#cinput').removeAttribute('aria-controls');
   $('#cinput').removeAttribute('aria-activedescendant');
 }
 
@@ -4819,7 +4819,7 @@ function renderComposerHistory(state = 'ready') {
   const box = $('#input-history');
   box.replaceChildren();
   box.classList.remove('hidden');
-  $('#cinput').setAttribute('aria-expanded', 'true');
+  $('#cinput').setAttribute('aria-controls', box.id);
   const head = el('div', 'input-history-head');
   head.appendChild(el('span', '', '输入历史'));
   const position = el('span', 'input-history-position',

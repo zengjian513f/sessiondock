@@ -60,7 +60,7 @@
         dialog.remove();
         resolve(value);
       };
-      let primary = null;
+      let initialFocus;
       for (const spec of buttons) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -69,22 +69,22 @@
         button.textContent = spec.label;
         button.onclick = () => finish(spec.value);
         actions.appendChild(button);
-        if (spec.primary) primary = button;
+        if (spec.initialFocus) initialFocus = button;
       }
       const cancel = buttons.find(spec => spec.action === 'cancel') || buttons[0];
       close.onclick = () => finish(cancel.value);
       dialog.addEventListener('cancel', event => { event.preventDefault(); finish(cancel.value); });
       document.body.appendChild(dialog);
       dialog.showModal();
-      (primary || actions.lastElementChild)?.focus();
+      initialFocus?.focus();
     });
   }
 
   globalThis.appAlert = message => popup('alert', message,
-    [{label: '知道了', action: 'ok', value: undefined, primary: true, className: 'btn primary'}]);
+    [{label: '知道了', action: 'ok', value: undefined, initialFocus: true, className: 'btn primary'}]);
   globalThis.appConfirm = (message, {ok = '确定', cancel = '取消', danger = false} = {}) => popup('confirm', message, [
-    {label: cancel, action: 'cancel', value: false},
-    {label: ok, action: 'ok', value: true, primary: true, className: danger ? 'btn danger' : 'btn primary'},
+    {label: cancel, action: 'cancel', value: false, initialFocus: danger},
+    {label: ok, action: 'ok', value: true, initialFocus: !danger, className: danger ? 'btn danger' : 'btn primary'},
   ]);
   /** 浮动提示卡的容器：页面中央一列，卡片之间不重叠。 */
   globalThis.floatStack = () => {

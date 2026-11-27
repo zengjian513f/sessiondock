@@ -93,7 +93,12 @@ def main():
                 assert before=={p.relative_to(trash):p.read_bytes() for p in trash.rglob('*') if p.is_file()}
                 page.locator('.trash-item [data-act=purge]').first.click();confirm(page,True)
                 expect(page.locator('.trash-item')).to_have_count(2);assert len(list(trash.iterdir()))==2
-                page.locator('#trash-purge-all').click();confirm(page,False)
+                page.locator('#trash-purge-all').click()
+                popup = page.locator('dialog.app-popup[open]')
+                expect(popup.get_by_role('button', name='清空回收站')).to_be_visible()
+                expect(popup.get_by_role('button', name='取消')).to_be_focused()
+                page.keyboard.press('Enter')
+                expect(popup).to_have_count(0)
                 assert len(list(trash.iterdir()))==2
                 page.locator('#trash-purge-all').click();confirm(page,True)
                 expect(page.locator('#trash-list')).to_contain_text('没有已删除的会话')

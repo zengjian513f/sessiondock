@@ -81,7 +81,8 @@ def history_paths(page, editor):
     expect(picker).to_be_visible()
     expect(options).to_have_count(3)
     expect(selected).to_contain_text('editor history second')
-    expect(editor).to_have_attribute('aria-expanded', 'true')
+    expect(editor).to_have_attribute('aria-controls', 'input-history')
+    assert editor.get_attribute('aria-expanded') is None
     expect(editor).to_have_attribute('aria-activedescendant', 'input-history-option-2')
     composing_key(editor, 'ArrowUp')
     composing_key(editor, 'Enter')
@@ -102,7 +103,8 @@ def history_paths(page, editor):
     editor.press('Escape')
     expect(picker).to_be_hidden()
     expect(editor).to_have_value('')
-    expect(editor).to_have_attribute('aria-expanded', 'false')
+    assert editor.get_attribute('aria-controls') is None
+    assert editor.get_attribute('aria-expanded') is None
     editor.press('ArrowUp')
     expect(picker).to_be_visible()
     page.locator('#msgs').click(position={'x': 3, 'y': 3})
@@ -149,24 +151,22 @@ def attachments(page, editor):
 
 def sizing(page, editor):
     type_text(editor, 'line 0')
-    measure = 'el => ({height:parseFloat(el.style.height), overflow:el.style.overflowY})'
-    page.wait_for_function("document.querySelector('#cinput').style.overflowY === 'hidden'")
-    baseline = editor.evaluate(measure)['height']
+    baseline = editor.evaluate('el => el.offsetHeight')
     for index in range(1, 3):
         editor.press('Shift+Enter')
         editor.press_sequentially(f'line {index}')
     expect(editor).to_have_value('line 0\nline 1\nline 2')
-    page.wait_for_function("height => parseFloat(document.querySelector('#cinput').style.height) > height",
+    page.wait_for_function("height => document.querySelector('#cinput').offsetHeight > height",
                            arg=baseline)
     for index in range(3, 24):
         editor.press('Shift+Enter')
         editor.press_sequentially(f'line {index}')
     page.wait_for_function("""() => {const el=document.querySelector('#cinput');
-        return el.style.height === '180px' && el.style.overflowY === 'auto'
+        return el.offsetHeight === 180 && getComputedStyle(el).overflowY === 'auto'
             && el.scrollHeight > el.clientHeight;}""")
     type_text(editor, 'short')
     page.wait_for_function("""height => {const el=document.querySelector('#cinput');
-        return Math.abs(parseFloat(el.style.height)-height) < 1 && el.style.overflowY === 'hidden';} """,
+        return el.offsetHeight === height && el.scrollHeight <= el.clientHeight + 1;} """,
                            arg=baseline)
     expect(editor).to_have_value('short')
 

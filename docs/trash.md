@@ -27,6 +27,8 @@ deletion receipt, without starting a CLI or rewriting the shared index.
 See [Agy](agy.md) for the verified interface
 and its evidence boundary. Whole-tree deletion remains unsupported for Agy.
 
+DELTA: Single-entry and whole-bin purge confirmations initially focus Cancel. The action button names the requested purge.
+
 DELTA: deleting a fork parent marks it **待删除**, hides it from the ordinary
 list and search, and creates a recoverable trash entry. Its native histories stay
 in place while any descendant exists, including descendants in the recycle bin.
