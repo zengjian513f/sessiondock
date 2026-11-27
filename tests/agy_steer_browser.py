@@ -368,15 +368,34 @@ def check_cancelled_fifo(page, base, fixture, uid, shots, label, restart_server)
     wait_snapshot(page, uid, lambda raw: any(
         item.get('content') == follow_up and item.get('native_echo') for item in raw['items']))
     expect(stop).to_be_enabled()
+    held = []
+    page.route('**/api/native-sdk/interrupt', lambda route: held.append(route), times=1)
     with page.expect_response('**/api/native-sdk/interrupt') as stopped:
         stop.click()
+        expect(notice).to_have_text('正在请求停止')
+        expect(stop).to_be_disabled()
+        assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before + 1
+        capture(page, shots, f'{label}-fifo-cancel-requesting')
+        held.pop().continue_()
     assert stopped.value.json()['interrupted'], stopped.value.text()
     expect(notice).to_have_text('停止已受理')
     assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before + 2
 
     status.write_text('IDLE')
-    expect(notice).to_have_text('等待回执', timeout=15000)
+    expect(notice).to_have_text('已停止', timeout=15000)
+    expect(stop).to_be_hidden()
+    notice.click()
+    details = page.locator('#sdk-status-menu')
+    expect(details).to_contain_text('后台任务可以继续运行')
+    page.keyboard.press('Escape')
     capture(page, shots, f'{label}-fifo-cancel-foreground-idle')
+    page.reload(wait_until='domcontentloaded')
+    open_sdk(page, fixture, expect, uid=uid)
+    expect(notice).to_have_text('已停止')
+    expect(stop).to_be_hidden()
+    duplicate = page.request.post(base + '/api/native-sdk/interrupt', data={'uid': uid})
+    assert duplicate.status == 409 and duplicate.json()['code'] == 'agy_sdk_idle', duplicate.text()
+    assert sum(event['kind'] == 'cancel' for event in fixture.events()) == cancels_before + 2
     consume.touch()
     box = page.locator('#sdk-input')
     box.fill(redirected)

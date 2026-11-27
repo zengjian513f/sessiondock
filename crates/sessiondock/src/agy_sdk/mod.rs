@@ -813,7 +813,8 @@ impl Live {
             "progress":data.active.as_ref().map(|id|json!({"request_id":id})),
             "foreground_idle":data.foreground_idle,"fifo_continuation":continuation,
             "compact_available":data.runtime.is_some(),
-            "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling && !data.foreground_idle,"cancel_error":data.cancel_error,
+            "cancel_pending":data.cancel_pending,"cancel_requested":data.cancelling && !data.foreground_idle,
+            "foreground_cancelled":data.cancelling && data.foreground_idle,"cancel_error":data.cancel_error,
             "items":items,"steers":steers,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"context_usage":data.context_usage,"compact":data.compact,"usage_errors":data.usage_errors,"settings":{"mode":data.mode,"applies":"next_turn"},
@@ -1498,21 +1499,19 @@ async fn execute(
                     let _=reply.send(result);
                 }
                 Some(Command::Interrupt(request,reply))=>{
-                    if request != foreground {
+                    let mut data=live.data.lock().unwrap();
+                    if request != foreground || data.foreground_idle {
                         let _=reply.send(Err("agy_sdk_idle".into()));
                     } else if cancelled.as_deref() == Some(&foreground) {
                         let _=reply.send(Ok(json!({"interrupted":true,"session_id":live.sid})));
+                    } else if data.consumed(&foreground) {
+                        interrupt_reply=Some(reply);
                     } else {
-                        let mut data=live.data.lock().unwrap();
-                        if data.consumed(&foreground) {
-                            interrupt_reply=Some(reply);
-                        } else {
-                            if !data.cancel_pending {
-                                data.cancel_pending=true;
-                                live.publish(&mut data);
-                            }
-                            let _=reply.send(Ok(json!({"interrupted":false,"pending":true,"session_id":live.sid})));
+                        if !data.cancel_pending {
+                            data.cancel_pending=true;
+                            live.publish(&mut data);
                         }
+                        let _=reply.send(Ok(json!({"interrupted":false,"pending":true,"session_id":live.sid})));
                     }
                 }
                 None=>{ native.terminate().await;return Err("agy_sdk_shutdown".into()); }

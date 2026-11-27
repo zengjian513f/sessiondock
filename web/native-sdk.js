@@ -322,6 +322,7 @@ const NativeSdkView = {
     this.lastSnapshotAt = 0; this.clearPendingSnapshot();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
+    this.stopRequest = null;
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
     this.historyNotices = null;
     this.agyReplayTailComplete = null;
@@ -782,6 +783,7 @@ const NativeSdkView = {
       if (after && before !== after) void loadSessions(true, true);
     }
     this.raw = raw;
+    if (this.stopRequest !== 'requesting') this.stopRequest = null;
     this.updateBackgroundTasks(raw);
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
@@ -936,10 +938,6 @@ const NativeSdkView = {
     for (const [key] of this.requests) if (!requests.has(key)) this.live.querySelector(`[data-sdk-request="${CSS.escape(key)}"]`)?.remove();
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
     this.requests = requests;
-    const stop = this.pane.querySelector('#sdk-stop');
-    stop.hidden = (!this.running && !this.raw?.retry?.delay_seconds) || this.capabilities.interrupt === false;
-    stop.disabled = this.uid.startsWith('agy:')
-      && (this.raw.cancel_pending === true || this.raw.cancel_requested === true);
     this.paintStatus();
     NativeSdkControls.paint(this);
     if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
@@ -952,6 +950,11 @@ const NativeSdkView = {
 
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
+    const agy = this.uid.startsWith('agy:');
+    const stop = this.pane.querySelector('#sdk-stop');
+    const foregroundIdle = agy && raw.foreground_idle === true;
+    stop.hidden = (!this.running && !raw.retry?.delay_seconds) || foregroundIdle || this.capabilities.interrupt === false;
+    stop.disabled = agy && (!!this.stopRequest || raw.cancel_pending === true || raw.cancel_requested === true);
     paintSelectedAgentStatus(this.uid, this.agent);
     const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
     sdkSyncSettings(this);
@@ -997,18 +1000,20 @@ const NativeSdkView = {
         .map(key => key.slice('subagent_id:'.length)).filter(Boolean).sort() : [];
     const grokBackground = grokAgents.length > 0 || (this.uid.startsWith('grok:')
       && Array.isArray(raw.native_tasks) && raw.native_tasks.includes('unknown-subagent_id'));
-    const agy = this.uid.startsWith('agy:');
+    const requestingStop = agy && this.running && !foregroundIdle && this.stopRequest === 'requesting';
     const cancelError = agy && this.running && raw.cancel_error;
-    const awaitingInput = agy && this.running && raw.cancel_pending === true;
-    const awaitingCancel = agy && this.running && raw.cancel_requested === true;
-    const awaitingResult = agy && this.running && raw.foreground_idle === true && !awaitingCancel;
+    const awaitingInput = agy && this.running && (raw.cancel_pending === true || this.stopRequest === 'pending');
+    const awaitingCancel = agy && this.running && (raw.cancel_requested === true || this.stopRequest === 'accepted');
+    const awaitingResult = this.running && foregroundIdle;
+    const stoppedForeground = awaitingResult && raw.foreground_cancelled === true;
     const timers = awaitingResult ? NativeSdkControls.pendingTimers(this.historyData?.backgroundTimers || []) : [];
     const taskAgents = awaitingResult ? this.historyData?.taskAgents || [] : [];
-    const receiptDetails = 'Agy 前台已空闲，仍在等待回合结束回执。';
-    const waitingText = timers.length
+    const receiptDetails = stoppedForeground ? 'Agy 已停止当前前台任务，仍在等待回合结束回执。子代理和后台任务可以继续运行。'
+      : 'Agy 前台已空闲，仍在等待回合结束回执。';
+    const waitingText = stoppedForeground ? `已停止\n${receiptDetails}` : timers.length
       ? '后台定时任务等待中'
       : taskAgents.length ? '子代理有后台任务' : `等待回执\n${receiptDetails}`;
-    const kind = scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+    const kind = requestingStop ? 'waiting' : scheduledRetry ? 'retrying' : error ? (warning ? 'warning' : 'blocked') : cancelError ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : awaitingInput || awaitingCancel ? 'waiting' : awaitingResult ? (timers.length || taskAgents.length ? 'scheduled' : 'waiting')
       : this.running ? 'working' : paused || incomplete ? 'warning' : pending ? 'waiting'
       : grokBackground ? 'working' : 'ready';
@@ -1028,12 +1033,12 @@ const NativeSdkView = {
       }, wait);
     }
     const outcome = previous === 'interrupted' ? '已中断' : previous === 'unknown' ? '结果待核对' : '未完成：上一回合未正常结束';
-    let text = scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
+    let text = requestingStop ? '正在请求停止' : scheduledRetry ? retryText : error ? `${warning ? (uncertain ? '结果待核对' : outcome) : '错误'}：${typeof error === 'string' ? error : error.message || JSON.stringify(error)}`
       : cancelError ? `中断失败：${cancelError}`
       : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答')
       : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}`
       : awaitingInput ? '等待接收输入\nAgy 接收本轮输入后，SessionDock 会发送停止请求。'
-      : awaitingCancel ? '停止已受理\n等待 Agy 回传本回合的结束回执。子代理和后台任务会继续运行。收到回执前暂不能回退对话。'
+      : awaitingCancel ? '停止已受理\n等待 Agy 确认前台空闲。子代理和后台任务会继续运行。收到回合结束回执前暂不能回退对话。'
       : awaitingResult ? waitingText
       : this.running ? (raw.cancel_requested ? '正在停止：已发送中断，等待原生结束当前回合；长时间无响应可停止SDK模式' : '处理中') : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送'
       : incomplete ? outcome : raw.compact?.state === 'success' ? '压缩完成'
@@ -1229,8 +1234,32 @@ const NativeSdkView = {
   },
   async interrupt() {
     const generation = this.generation;
-    try { await this.request('api/native-sdk/interrupt', {uid:this.uid}); }
-    catch (error) { if (this.current(generation)) this.setNotice(`中断失败：${error.message}`, 'blocked'); }
+    const agy = this.uid.startsWith('agy:');
+    const raw = this.raw;
+    if (agy) {
+      const stop = this.pane.querySelector('#sdk-stop');
+      if (stop.hidden || stop.disabled) return;
+      this.stopRequest = 'requesting';
+      this.paintStatus();
+    }
+    try {
+      const receipt = await this.request('api/native-sdk/interrupt', {uid:this.uid});
+      if (agy && this.current(generation)) {
+        this.stopRequest = this.raw === raw ? (receipt.pending ? 'pending' : 'accepted') : null;
+        this.paintStatus();
+      }
+    } catch (error) {
+      if (!this.current(generation)) return;
+      if (agy) {
+        this.stopRequest = null;
+        this.paintStatus();
+        if (error.code === 'agy_sdk_idle') {
+          if (this.running && !this.raw.foreground_idle) this.setNotice('前台已空闲', 'waiting');
+          return;
+        }
+      }
+      this.setNotice(`中断失败：${error.message}`, 'blocked');
+    }
   },
 };
 

@@ -19,6 +19,8 @@ use tokio::sync::broadcast;
 fn failure(message: String) -> ApiError {
     let (status, code) = if message.starts_with("agy_sdk_history_busy:") {
         (StatusCode::CONFLICT, "agy_sdk_history_busy")
+    } else if message == "agy_sdk_idle" {
+        (StatusCode::CONFLICT, "agy_sdk_idle")
     } else if message.contains("kiro_sdk_session_busy") {
         (StatusCode::CONFLICT, "kiro_sdk_session_busy")
     } else if message.contains("session_busy") || message.contains("独立 OpenCode") {
