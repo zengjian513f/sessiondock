@@ -150,10 +150,17 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     background = page.locator('#sdk-composer .sdk-background-status')
     send(page, '__UNRECOVERED_STREAM__')
     expect(notice).to_have_text('错误')
+    # Like a long-lived Agy process, the host may persist this stdin input
+    # without including its echo in the output later replayed by the node.
+    omit_echo = root / 'omit-foreground-echo'
+    if restart_server:
+        omit_echo.touch()
     foreground = send(page, 'hold:foreground')['request_id']
-    wait_snapshot(page, uid, lambda raw: any(
+    started = wait_snapshot(page, uid, lambda raw: any(
         item.get('native_echo') and item.get('content') == 'hold:foreground'
-        for item in raw['items']))
+        for item in raw['items']))['raw']
+    first_step = next(item['native_id'] for item in started['items'] if item.get('request_id') == foreground)
+    omit_echo.unlink(missing_ok=True)
     pid = fixture.inputs('hold:foreground')[0]['pid']
     details = page.locator('#sdk-background-status-menu')
     expect(notice.get_by_role('status')).to_have_text('处理中')
@@ -305,12 +312,33 @@ def check_foreground_fifo(page, base, fixture, uid, shots, label, restart_server
     raw = snapshot['raw']
     assert raw['last_turn']['status'] == 'completed' and raw['error'] is None, (raw['last_turn'], raw['error'])
     assert 'prior turn; current native response completed' in raw['diagnostics']
+    users = {item['request_id']: item for item in raw['items'] if item['role'] == 'user'}
+    assert users[foreground]['native_id'] == first_step
+    for text in (first, second):
+        request = fixture.steers(text)[0]['request_id']
+        assert users[request]['native']['client_message_id'] == request
     expect(notice).to_have_text('就绪', timeout=20000)
     messages = page.locator('.sdk-msgs')
-    expect(messages.get_by_text(second, exact=True)).to_have_count(1)
+    prompts = messages.locator('.msg[data-role=user]')
+    page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
+    stored = page.locator('.sdk-history .msg[data-role=user]').filter(has_text=second)
+    expect(stored).to_have_count(1)
+    for text in (first, second):
+        expect(prompts.filter(has_text=text)).to_have_count(1)
+    expect(prompts.filter(has_text=re.compile(r'hold:foreground'))).to_have_count(1)
     expect(messages).to_contain_text('Agy steered: '+second)
+    earlier = prompts.filter(has_text=first)
+    assert earlier.evaluate('(node, next) => !!(node.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)',
+                            stored.element_handle())
     assert all(len(fixture.steers(text)) == 1 for text in (first, second))
     capture(page, shots, f'{label}-foreground-fifo-completed')
+    if shots:
+        page.emulate_media(color_scheme='dark')
+        resize_sdk(page, uid, 390)
+        messages.evaluate('box => box.scrollTop = box.scrollHeight')
+        capture(page, shots, f'{label}-foreground-fifo-completed-narrow')
+        page.emulate_media(color_scheme='light')
+        resize_sdk(page, uid, 1280)
     status.unlink()
     (root / 'native-echo-store').unlink()
     return base

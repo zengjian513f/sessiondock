@@ -1739,36 +1739,7 @@ fn project(live: &Live, turn: &Turn, step: &Value, received: Option<String>) -> 
     }
     let mut saw_assistant = false;
     if kind == "user_input" {
-        let target = data
-            .items
-            .iter()
-            .position(|item| item["role"] == "user" && item["native_id"] == native_id)
-            .or_else(|| {
-                let pending = data.items.iter().position(|item| {
-                    item["role"] == "user"
-                        && item["native_id"].is_null()
-                        && item["status"] != "unknown"
-                        && if step["client_message_id"].is_null() {
-                            item["request_id"] == turn.id || is_control_input(item)
-                        } else {
-                            item["request_id"] == step["client_message_id"]
-                        }
-                });
-                // Unkeyed NDJSON must not guess the identity of a FIFO
-                // continuation or skip over it to an explicit steer.
-                pending.filter(|&index| {
-                    step["client_message_id"].is_string()
-                        || data.items[index]["fifo_control"] != true
-                })
-            });
-        if let Some(index) = target {
-            let item = &mut data.items[index];
-            time.stamp(item);
-            item["native_id"] = json!(native_id);
-            item["native"] = step.clone();
-            item["native_echo"] = json!(true);
-            item["status"] = json!("accepted");
-        }
+        echo::project_user(&mut data, turn, step, &native_id, &time);
     } else {
         let index = if let Some(index) = data.items.iter().position(|item| item["id"] == native_id)
         {

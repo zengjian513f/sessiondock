@@ -1,5 +1,6 @@
 //! Agy can persist input before emitting its headless user_input notification.
-use super::{Live, Turn, is_control_input, project, transport::ProcessConfig};
+use super::{Data, Live, Turn, is_control_input, project, transport::ProcessConfig};
+use crate::sdk_message_time::MessageTime;
 use crate::sessions::agy::steps::bytes_field;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -7,6 +8,74 @@ use std::{path::Path, time::Duration};
 
 fn unbound(item: &Value) -> bool {
     item["role"] == "user" && item["native_id"].is_null() && item["status"] != "unknown"
+}
+
+pub(super) fn project_user(
+    data: &mut Data,
+    turn: &Turn,
+    step: &Value,
+    native_id: &str,
+    time: &MessageTime,
+) {
+    let claimed = data
+        .items
+        .iter()
+        .position(|item| item["role"] == "user" && item["native_id"] == native_id);
+    let request = step["client_message_id"]
+        .as_str()
+        .filter(|id| !id.is_empty());
+    let target = if let Some(request) = request {
+        // A native request ID, including one read from SQLite, takes
+        // precedence over a step tentatively bound by an unkeyed frame.
+        data.items.iter().position(|item| {
+            item["role"] == "user"
+                && item["request_id"] == request
+                && (item["native_id"] == native_id || unbound(item))
+        })
+    } else {
+        claimed.or_else(|| {
+            // The stdin echo may be absent from the replay. Its stored
+            // checkpoint allows SQLite to identify it without consuming
+            // the next control request's anonymous notification.
+            if turn.recovering && turn.first_native_step.is_some() && !data.steers.is_empty() {
+                return None;
+            }
+            data.items
+                .iter()
+                .position(|item| {
+                    unbound(item) && (item["request_id"] == turn.id || is_control_input(item))
+                })
+                // Do not skip over an unbound FIFO continuation to a steer.
+                .filter(|&index| data.items[index]["fifo_control"] != true)
+        })
+    };
+    if let Some(index) = target {
+        if let Some(other) = claimed.filter(|&other| other != index) {
+            let request = &data.items[other]["request_id"];
+            let status = if *request == data.last_turn["id"] {
+                data.last_turn["status"].clone()
+            } else if request.as_str() == data.active.as_deref() {
+                json!("running")
+            } else {
+                json!("queued")
+            };
+            let obsolete = data.items[other].as_object_mut().unwrap();
+            for key in ["native_id", "native", "native_echo", "ts"] {
+                obsolete.remove(key);
+            }
+            obsolete.insert("status".into(), status);
+        }
+        let item = &mut data.items[index];
+        let mut evidence = step.clone();
+        if request.is_none() && item["native"]["client_message_id"].is_string() {
+            evidence["client_message_id"] = item["native"]["client_message_id"].clone();
+        }
+        time.stamp(item);
+        item["native_id"] = json!(native_id);
+        item["native"] = evidence;
+        item["native_echo"] = json!(true);
+        item["status"] = json!("accepted");
+    }
 }
 
 pub(super) fn pending(live: &Live, turn: Option<&Turn>) -> bool {

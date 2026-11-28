@@ -257,7 +257,7 @@ for line in sys.stdin:
     rewind_created='2026-10-18T00:01:00Z'
     native_record('USER_INPUT',content,input_text=text,**({'created_at':rewind_created} if rewind_reply else {}))
     # A reused index can be persisted without another headless notification.
-    if index!=rewound_index:
+    if index!=rewound_index and not (text=='hold:foreground' and (root/'omit-foreground-echo').exists()):
         step('user_input',state='DONE')
     rewound_index=None
     advance()
