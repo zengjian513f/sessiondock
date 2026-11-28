@@ -4,10 +4,19 @@
 // settings and protocol actions; history uses the ordinary conversation cache.
 const SdkUI = {
   historyViews: new Map(),
+  processChoiceVersion: 0,
   characterCount(text) {
     let count = 0;
     for (const character of text) count++;
     return count;
+  },
+  recordedTurnOutcome(view, activity, {idle, completed = false}) {
+    if (activity?.state === 'aborted') return 'interrupted';
+    if (activity?.state === 'failed') return 'failed';
+    if (completed) return 'completed';
+    if (idle && view.historyData?.activity?.state === 'working' && !S.liveWorking.has(view.uid)
+        && cache.get(viewKey(view.uid, view.agent))?.cli?.instance?.busy !== true) return 'incomplete';
+    return '';
   },
   retainHistory(view) {
     if (!view.history?._sdkPlan) return;
@@ -117,6 +126,7 @@ const SdkUI = {
       renderFormulae(view.history);
     }
     if (historyReady && !view.history._sdkPlan) view.history.innerHTML = '<div class="spin">正在读取会话…</div>';
+    view.processChoices = view.history._sdkProcessChoices ||= new Map();
     view.live = pane.querySelector('.sdk-live');
     view.toolGroupNodes = new Map();
     view.notice = pane.querySelector('.sdk-status');
@@ -416,11 +426,8 @@ const SdkUI = {
       for (const node of topNodes) if (node.matches?.('.msg[data-role="assistant"].sdk-user-actions')) clear(node);
       return;
     }
-    const tailComplete = codex
-      ? !view.turn && !(!view.connected && ['working', 'waiting'].includes(view.historyData?.activity?.state))
-      : view.connected
-        ? !view.running && !(view.requests?.size || view.raw?.requests?.length)
-        : view.historyTailComplete !== false;
+    const tailComplete = !codex && !view.connected
+      ? view.historyTailComplete !== false : view.turnTailComplete();
     const canForkBefore = userNode => {
       const msg = userNode?._sdkMessage;
       if (codex) return Boolean(msg?.turn_id || userNode?.dataset.turnId);
@@ -504,12 +511,61 @@ const SdkUI = {
     updateMatchNav();
   },
 
-  foldLiveTurns(view, messages, {tailComplete}) {
+  processKey(turn) {
+    const first = turn.items[0];
+    const step = first.native_step_index ?? first.native?.step_index;
+    const identity = step != null ? ['step', step]
+      : first.native_item_id ? ['item', first.native_item_id]
+      : first.call_id ? ['call', first.call_id]
+      : first.id || first.native_id ? ['id', first.id || first.native_id]
+      : ['position', turn.key, first.ts, first.text];
+    return JSON.stringify([first.role, identity]);
+  },
+
+  liveTurnKey(turn) {
+    return JSON.stringify([turn.key, String(turn.items[0].id)]);
+  },
+
+  processChoiceKeys(view, plan) {
+    const keys = new Map();
+    let input = null, segment = 0;
+    for (const item of plan) {
+      if (item.gap) input = null;
+      if (item.m?.role === 'user') {
+        const identity = view === CodexSdkView ? item.m.turn_id
+          : NativeSdkControls.messageIdentity(view, item.m);
+        if (identity !== input) { input = identity; segment = 0; }
+      }
+      if (!item.turn) continue;
+      const identities = [this.processKey(item.turn)];
+      // Some native histories project only the user identity shared by the
+      // replay. Separate process segments after that input, including continuations.
+      if (input != null) identities.push(JSON.stringify(['input', input, segment++]));
+      keys.set(item.turn, identities);
+    }
+    return keys;
+  },
+
+  processChoice(view, keys) {
+    let latest;
+    for (const key of keys) {
+      const choice = view.processChoices.get(key);
+      if (choice && (!latest || choice.version > latest.version)) latest = choice;
+    }
+    return latest?.open;
+  },
+
+  rememberProcessChoice(view, node, keys) {
+    const choices = view.processChoices;
+    node._onFoldChoice = open => {
+      const choice = {open, version: ++this.processChoiceVersion};
+      for (const key of keys) choices.set(key, choice);
+    };
+  },
+
+  foldLiveTurns(view, messages, {plan, choices: choiceKeys}) {
     // Native snapshots can replay the whole session. Apply the same completed
     // turn boundaries as history, but retain the streaming message/tool nodes.
-    const plan = backendPlan(messages, {tailComplete, openTail: !tailComplete})
-      || planTurnsLocal(messages.map(message => ({...message,
-        turn_id: message.turn_id || String(message.id)})), {tailComplete, openTail: !tailComplete});
     const previous = view.liveTurns, groups = new Map(), membership = new Map();
     const place = (parent, nodes) => {
       let before = parent.firstElementChild;
@@ -521,15 +577,15 @@ const SdkUI = {
     for (const {turn, open} of plan) {
       if (!turn) continue;
       const ids = turn.items.map(item => String(item.id));
-      const key = `${turn.key}:${ids[0]}`;
-      const shape = JSON.stringify([ids, turn.summary || turnProcessSummary(turn.items),
-        turn.hasConclusion, turn.inferred, turn.interrupted]);
+      const key = this.liveTurnKey(turn), choices = choiceKeys.get(turn);
+      const summary = turnProcessSummary(turn.items);
+      const shape = JSON.stringify([ids, summary, turn.hasConclusion, turn.inferred, turn.interrupted]);
       let node = previous.get(key);
       if (!node || node._sdkTurnShape !== shape) {
-        const expanded = node ? !node.classList.contains('folded') : open;
+        const expanded = this.processChoice(view, choices) ?? (node ? !node.classList.contains('folded') : open);
         // Adapters own message identities. Materialize deferred nodes on first
         // expansion without creating a second copy from the nested plan.
-        node = turnProcessNode({...turn, plan: [], materialize: () => {
+        node = turnProcessNode({...turn, summary, plan: [], materialize: () => {
           const generation = view.generation;
           let index = 0;
           const paint = () => {
@@ -546,6 +602,7 @@ const SdkUI = {
         }}, expanded);
         node._sdkTurnShape = shape;
       }
+      this.rememberProcessChoice(view, node, choices);
       node._turnItems = turn.items;
       place(node.querySelector('.turn-process-body'), ids.map(id => view.nodes.get(id)).filter(Boolean));
       groups.set(key, node);
@@ -564,8 +621,6 @@ const SdkUI = {
   paintHistory(view, messages, {tailComplete = true, decorate, actions = '', keepToolGroups = false,
     partial = view.historyData.partial} = {}) {
     S.autoOpen = 0; S.markCapped = false;
-    const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
-      .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
     const split = partial ? Math.min(partial.head, messages.length) : 0;
     const visible = message => message.event_kind !== 'compact';
     const plan = partial
@@ -573,6 +628,7 @@ const SdkUI = {
          {gap: {uid: view.uid, agent: view.agent, omitted: partial.omitted}},
          ...planTurns(messages.slice(split).filter(visible), {tailComplete, openTail: !tailComplete})]
       : planTurns(messages.filter(visible), {tailComplete, openTail: !tailComplete});
+    const choiceKeys = this.processChoiceKeys(view, plan);
     // History appends and native replay joins usually leave the older turns
     // untouched. Reuse their nodes, including text selections and disclosures.
     const equalContent = (a, b) => {
@@ -616,23 +672,26 @@ const SdkUI = {
       // Compare that slot's complete message data before reusing its UI.
       const prior = old.get(key(item)) || (previous?.actions === actions ? previous.entries[entries.length] : null);
       let node = prior?.node;
+      const choices = choiceKeys.get(item.turn);
+      const choice = choices ? this.processChoice(view, choices) : undefined;
       if (!node || kept.has(node) || node.parentNode !== view.history || !unchanged(prior.plan, item)) {
         // An open turn can adopt the group currently at the insertion point.
         const anchor = item.turn && openedToolGroups.length && before
           ? view.history.insertBefore(document.createComment(''), before) : null;
-        const keepOpen = item.turn && openedToolGroups.length && !folds.has(String(item.turn.key))
+        const keepOpen = item.turn && openedToolGroups.length
           && item.turn.plan.some(part => part.g && openedGroupIndex(part.g) >= 0);
-        [node] = buildPlan(view.history, [keepOpen ? {...item, open: true} : item],
+        const open = choice ?? (keepOpen || item.open);
+        [node] = buildPlan(view.history, [item.turn ? {...item, open} : item],
           anchor || before, keepToolGroups ? buildGroup : groupNode);
         anchor?.remove();
         if (item.m) node._sdkMessage = item.m;
         if (decorate) decorate(node, item.m);
-        if (item.turn && folds.has(node.dataset.turnId))
-          folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
+        if (choice === false) node._fold?.();
       } else {
         if (item.m) node._sdkMessage = item.m;
         if (node !== before) view.history.insertBefore(node, before);
       }
+      if (choices) this.rememberProcessChoice(view, node, choices);
       before = node.nextSibling;
       // Activity annotates interruption fields in place; media continuation
       // replaces media fields. Retain the displayed fields, not that mutable row.
@@ -737,29 +796,37 @@ const SdkUI = {
       this.clearTurnProgress();
       this.baseNotice = [text, kind, sticky, detail];
       if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
-      this.notice.querySelector('[role=status]').textContent = ConversationUI.statusSummary(text, kind);
-      this.notice.title = text;
-      this.notice.hidden = !text;
+      const state = composerRunState(this.uid, this.agent, 'sdk', this);
+      if (state.status) {
+        if (kind === 'blocked') text = [state.status.text, text].join('\n');
+        else { text = state.status.text; detail = null; }
+        kind = state.status.kind;
+      }
       this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
       this.notice.dataset.state = kind || 'neutral';
       this.notice.dataset.sticky = sticky ? '1' : '';
       const details = this.pane.querySelector('#sdk-status-menu');
-      const observedAgent = this.readOnly && this.agent
-        && ['idle', 'connecting', 'ready', 'neutral'].includes(this.notice.dataset.state);
-      const changed = !observedAgent && (detail ? details._statusDetail?.key !== detail.key
-        : !!details._statusDetail || details.textContent !== text);
-      if (changed) {
-        details._statusDetail = detail;
-        if (detail) {
-          details.dataset.statusLayout = detail.layout;
-          detail.render(details);
-        } else {
-          delete details.dataset.statusLayout;
-          details.textContent = text;
+      if (!state.discovering && state.observingAgent && ['idle', 'connecting', 'ready', 'neutral'].includes(kind)) {
+        paintComposerAgentStatus(this.notice, this.uid, this.agent, state);
+      } else {
+        clearTimeout(this.notice._agentStatusTimer);
+        this.notice.querySelector('[role=status]').textContent = state.status?.text ?? ConversationUI.statusSummary(text, kind);
+        this.notice.title = text;
+        this.notice.hidden = !text;
+        if (detail ? details._statusDetail?.key !== detail.key
+            : !!details._statusDetail || details.textContent !== text) {
+          details._statusDetail = detail;
+          if (detail) {
+            details.dataset.statusLayout = detail.layout;
+            detail.render(details);
+          } else {
+            delete details.dataset.statusLayout;
+            details.textContent = text;
+          }
+          if (details.matches(':popover-open')) this.placeMenu(details, this.notice);
         }
-        if (details.matches(':popover-open')) this.placeMenu(details, this.notice);
       }
-      paintComposerRunControl(this.notice, this.uid, this.agent, 'sdk', this);
+      paintComposerRunControl(this.notice, this.uid, this.agent, 'sdk', state);
       this.updateStatusDisclosure();
       this.layoutToolbar();
       sdkSyncSettings(this);

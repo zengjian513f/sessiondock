@@ -100,6 +100,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.locator('#detail .mobile-back').click()
     external.click()
     expect(page.locator('.sdk-pane .sdk-status [role="status"]')).to_have_text('正在外部CLI运行')
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('title', re.compile(r'^正在外部CLI运行'))
     expect(page.locator('.sdk-pane .composer-run-action')).to_have_text('接管')
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bsdk\b'))
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\btmux\b'))

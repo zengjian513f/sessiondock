@@ -431,6 +431,9 @@ def fake_cli():
                 record("attachment", "cron-end", None, attachment={"type": "session_cron_carry",
                        "tasks": [], "ended": ["cron-beta"]})
             stream_text("streaming Claude progress", message_id, hold=content == 'progress-hold')
+            if content == 'presentation-resume':
+                assistant([{"type": "thinking", "thinking": "Claude resumed process detail"}],
+                          f"presentation-{message_id}-resume")
             if content == 'presentation-heavy':
                 for index in range(160):
                     assistant([{"type": "thinking", "thinking": f"Presentation thinking {index}\n" * 20}],
@@ -479,6 +482,16 @@ def fake_cli():
                 time.sleep(.1)
                 os._exit(17)
             send({"type": "system", "subtype": "session_state_changed", "state": "idle", "sdk_host_only": True})
+            if content == 'presentation-resume':
+                gate = log.with_name("presentation-state")
+                for state_name in ("running", "idle"):
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline and not interrupted.is_set():
+                        if gate.is_file() and gate.read_text().strip() == state_name:
+                            send({"type": "system", "subtype": "session_state_changed",
+                                  "state": state_name, "sdk_host_only": True})
+                            break
+                        interrupted.wait(.02)
 
     threading.Thread(target=turns, daemon=True).start()
     with log.open("a") as stream:

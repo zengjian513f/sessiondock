@@ -7853,7 +7853,10 @@ function head(m, total) {
     const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
     turnMode.title = turnMode.ariaLabel = label;
     labelSessionAction(turnMode);
-    if (SessionContentView.kind === 'sdk') SdkView.applyHistoryFoldPreference?.();
+    if (SessionContentView.kind === 'sdk') {
+      SdkView.active?.processChoices?.clear();
+      SdkView.applyHistoryFoldPreference?.();
+    }
     const boxes = SessionContentView.kind === 'sdk' ? [SdkView.history, SdkView.live] : [$('#msgs')];
     for (const box of boxes) {
       box?.querySelectorAll(':scope > .turn-process').forEach(
@@ -8209,8 +8212,7 @@ function composerExternalCli(uid, agent = null) {
   const live = sessionLiveStatus(uid);
   return !agent && live.live && !live.tmux && !live.sdk && !(typeof takenOver === 'function' && takenOver(uid));
 }
-function paintComposerRunControl(notice, uid, agent, mode, view = null) {
-  if (!notice || !uid) return;
+function composerRunState(uid, agent, mode, view = null) {
   const row = agent ? {...sessionRunRow(uid), agent_id:agent} : sessionRunRow(uid);
   const historyOnly = SdkView.historyOnlyReason(uid, agent);
   const observingAgent = agent && (mode === 'cli' || view?.readOnly);
@@ -8219,6 +8221,16 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   const busy = ConsoleUI.busy.has(uid);
   const idle = mode === 'sdk' ? view?.readOnly || view?.openFailed
     : !agent && !sessionModeActive(row, 'cli');
+  const discovering = mode === 'sdk' && SdkView.discovering;
+  const status = !discovering && !observingAgent && !externalAcp
+    && (external || idle && !busy && !view?.openFailed)
+    ? external ? {text: '正在外部CLI运行', kind: 'neutral'} : {text: '未运行', kind: 'idle'}
+    : null;
+  return {row, historyOnly, observingAgent, external, externalAcp, busy, idle, discovering, status};
+}
+function paintComposerRunControl(notice, uid, agent, mode, state) {
+  if (!notice || !uid) return;
+  const {row, historyOnly, external, externalAcp, busy, idle, discovering} = state;
   let button = notice.parentElement.querySelector('.composer-run-action');
   if (!button) {
     button = el('button', 'btn composer-run-action');
@@ -8226,17 +8238,9 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
     button.onmousedown = event => event.preventDefault();
     notice.after(button);
   } else notice.after(button);
-  const discovering = mode === 'sdk' && SdkView.discovering;
   button.hidden = discovering || !!historyOnly || !!(agent && mode === 'cli') || externalAcp || (!external && !idle && !busy);
   if (discovering) return;
-  notice.classList.toggle('external-cli-status', external);
-  if (!observingAgent && !externalAcp && (external || idle && !busy && !view?.openFailed)) {
-    const text = external ? '正在外部CLI运行' : '未运行';
-    notice.querySelector('[role=status]').textContent = text;
-    notice.dataset.state = external ? 'neutral' : 'idle';
-    notice.classList.remove('blocked');
-    notice.hidden = false;
-  }
+  notice.classList.toggle('external-cli-status', external && !state.observingAgent);
   const action = external ? '接管' : mode === 'sdk' && codexAgentLoaded(uid, agent) ? '连接' : '启动';
   button.textContent = action;
   button.setAttribute('aria-label', action);
@@ -8247,13 +8251,10 @@ function paintComposerRunControl(notice, uid, agent, mode, view = null) {
   button.disabled = busy || !!reason;
   button.title = reason || `${action}${mode === 'sdk' ? ' SDK' : ' CLI'}会话`;
   button.onclick = () => runComposerSession(uid, agent, mode, external);
-  if (observingAgent) {
-    notice.classList.remove('external-cli-status');
-    clearTimeout(notice._agentStatusTimer);
-    if (['idle', 'connecting', 'ready', 'neutral'].includes(notice.dataset.state))
-      paintAgentHistoryStatus(notice, uid, agent, observedAgentItem(uid, agent,
-        row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items), historyOnly);
-  }
+}
+function paintComposerAgentStatus(notice, uid, agent, {row, historyOnly}) {
+  paintAgentHistoryStatus(notice, uid, agent, observedAgentItem(uid, agent,
+    row?.agent_items || cache.get(viewKey(uid, agent))?.meta.agent_items), historyOnly);
 }
 function refreshComposerRunControls() {
   if (S.sel && $('#conversation-status'))
@@ -8261,7 +8262,9 @@ function refreshComposerRunControls() {
   const view = SdkView.active;
   if (view?.pane && view.baseNotice) {
     if (view.notice?.dataset.turnProgress) {
-      paintComposerRunControl(view.notice, view.uid, view.agent, 'sdk', view);
+      const state = composerRunState(view.uid, view.agent, 'sdk', view);
+      if (state.status) view.setNotice(...view.baseNotice);
+      else paintComposerRunControl(view.notice, view.uid, view.agent, 'sdk', state);
     } else {
       view.setNotice(...view.baseNotice);
     }
@@ -8681,7 +8684,8 @@ function turnKey(messages, conclusion) {
   const native = values.find(m => m?.turn_id)?.turn_id;
   if (native) return native;
   const first = messages[0] || conclusion?.[0] || {};
-  return `${first.ts || 'turn'}:${String(first.text || '').slice(0, 80)}`;
+  const preview = String(first.text || '').match(/^.{0,80}/su)[0];
+  return `${first.ts || 'turn'}:${preview}`;
 }
 
 /** 单轮外层折叠。用户输入和最终结论仍是普通顶层气泡，中间过程才进入合集；
@@ -9729,7 +9733,11 @@ function turnProcessNode(turn, initiallyOpen = false, buildGroup = groupNode) {
   const openAtAnchor = () => mutateKeepingMessageAnchor(toolbar, open);
   n._foldAtAnchor = foldAtAnchor;
   n._openAtAnchor = openAtAnchor;
-  toggle.onclick = () => n.classList.contains('folded') ? openAtAnchor() : foldAtAnchor();
+  toggle.onclick = () => {
+    const expanded = n.classList.contains('folded');
+    n._onFoldChoice?.(expanded);
+    if (expanded) openAtAnchor(); else foldAtAnchor();
+  };
   toStart.onclick = () => jumpWithinConversation(n, 'start');
   toConclusion.onclick = () => {
     let target = n.nextElementSibling;
@@ -11145,8 +11153,9 @@ function renderActivity(activity) {
   activity = observed.activity;
   const compacting = observed.compacting;
   const labels = {working: '处理中', waiting: '待回答', aborted: '已中断', failed: '执行失败'};
-  const label = compacting ? '压缩中' : labels[activity?.state]
-    || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行');
+  const state = composerRunState(S.sel, S.agent, 'cli');
+  const label = state.status?.text || (compacting ? '压缩中' : labels[activity?.state]
+    || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行'));
   let details = row.querySelector('#conversation-status-menu');
   if (!details) {
     details = el('div', 'new-model-menu sdk-toolbar-menu sdk-status-menu');
@@ -11173,14 +11182,19 @@ function renderActivity(activity) {
     n.append(metric);
   }
   n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
-  n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
-    || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
-  n.classList.toggle('blocked', activity?.state === 'failed');
+  n.dataset.state = state.status?.kind || (compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
+    || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle')));
+  n.classList.toggle('blocked', n.dataset.state === 'blocked');
   n.hidden = false;
-  n.querySelector('[role=status]').textContent = label;
-  n.title = activity?.error || activity?.reason || label;
-  if (!S.agent) {
+  if (state.observingAgent && ['idle', 'connecting', 'ready', 'neutral'].includes(n.dataset.state)) {
+    paintComposerAgentStatus(n, S.sel, S.agent, state);
+  } else {
     clearTimeout(n._agentStatusTimer);
+    n.querySelector('[role=status]').textContent = label;
+    const knownDetail = activity?.error || activity?.reason;
+    n.title = state.status && knownDetail ? [label, knownDetail].join('\n') : knownDetail || label;
+  }
+  if (!S.agent) {
     SdkUI.paintBackgroundStatus(n);
     n.querySelector('.sdk-turn-metric')?.remove();
     delete details.dataset.statusLayout;
@@ -11189,7 +11203,7 @@ function renderActivity(activity) {
   }
   paintConversationBackgroundTasks(row);
   renderConversationUsage(row, S.sel);
-  paintComposerRunControl(n, S.sel, S.agent, 'cli');
+  paintComposerRunControl(n, S.sel, S.agent, 'cli', state);
   ConversationUI.updateStatusDisclosure(n, details);
 }
 

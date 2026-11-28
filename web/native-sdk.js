@@ -37,14 +37,14 @@ function nativeSdkIsolateRaw(raw) {
 // Full transcripts contain tool results and metadata absent from headless
 // replay. Retain the persisted prefix, including its pagination gap, and join
 // only newer native steps. A user turn ID alone cannot locate that boundary.
-function nativeSdkAgyHistoryJoin(view) {
+function nativeSdkAgyHistoryJoin(view, raw = view.raw) {
   if (!view.uid?.startsWith('agy:')) return null;
   const messages = view.historyData?.messages || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (Number.isInteger(message.native_step_index)
         && ['DONE', 'ERROR'].includes(message.native_step_status))
-      return nativeSdkAgyJoinNotices(view, message.native_step_index, i + 1);
+      return nativeSdkAgyJoinNotices(view, raw, message.native_step_index, i + 1);
   }
   return null;
 }
@@ -55,11 +55,11 @@ function nativeSdkAgyStep(item) {
   return match ? Number(match[1]) : null;
 }
 
-function nativeSdkAgyJoinNotices(view, step, cut) {
+function nativeSdkAgyJoinNotices(view, raw, step, cut) {
   const messages = view.historyData.messages, notices = new Map();
   const head = view.historyData.partial?.head;
   let anchor = null, addedHead = 0;
-  for (const item of view.raw?.items || []) {
+  for (const item of raw?.items || []) {
     const index = nativeSdkAgyStep(item);
     if (index !== null) {
       anchor = Math.max(anchor ?? index, index);
@@ -689,12 +689,11 @@ const NativeSdkView = {
     return {...values, model:selected.variants[level], effort:''};
   },
 
-  snapshotItems(raw, historyTools = []) {
+  snapshotItems(raw, join, historyTools) {
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
     if (this.uid.startsWith('kiro:'))
       return rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')));
     if (!this.uid.startsWith('agy:')) return rawItems;
-    const join = nativeSdkAgyHistoryJoin({uid: this.uid, historyData: this.historyData, raw});
     const live = rawItems.filter(item => {
       if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
       if (join?.notices.has(item)) return false;
@@ -730,26 +729,46 @@ const NativeSdkView = {
     return entry.mapped;
   },
 
-  foldedSnapshotIds(raw) {
+  turnTailComplete(raw = this.raw) {
+    return !raw?.running && !raw?.requests?.length;
+  },
+
+  snapshotPresentation(raw) {
+    const source = this.uid.split(':')[0], history = this.historyData;
+    const join = nativeSdkAgyHistoryJoin(this, raw);
+    const historyTools = [];
+    const rawItems = this.snapshotItems(raw, join, historyTools);
+    const messages = rawItems.map(item => this.mapSnapshotItem(item, source));
+    const tailComplete = this.turnTailComplete(raw);
+    const options = {tailComplete, openTail: !tailComplete};
     const hidden = new Set(), presentation = raw.presentation;
-    if (!S.compactTurns || S.term || presentation?.version !== 1) return hidden;
-    const complete = !raw.running && !raw.requests?.length;
+    let plan = null, choices = null;
     // A history join can cut a server turn. Only defer nodes when the exact
     // displayed slice can use the server plan; the legacy fallback stays eager.
-    const messages = this.snapshotItems(raw).map(item => this.mapSnapshotItem(item, this.uid.split(':')[0]));
-    const byId = new Map(messages.map(item => [String(item.id), item]));
-    rememberPresentation(presentation.ids.map(id => byId.get(id)), presentation);
-    const plan = backendPlan(messages, {tailComplete: complete});
-    if (!plan) return hidden;
-    for (const {turn} of plan) {
-      if (!turn) continue;
-      const ids = turn.items.map(item => String(item.id));
-      const previous = this.liveTurns.get(`${turn.key}:${ids[0]}`);
-      if (previous && (previous._sdkMaterialized || !previous.classList.contains('folded'))) continue;
-      for (const item of turn.items)
-        if (['assistant', 'thinking', 'tool', 'tool_result'].includes(item.role)) hidden.add(String(item.id));
+    if (presentation?.version === 1 && Array.isArray(presentation.ids)) {
+      const byId = new Map(messages.map(item => [String(item.id), item]));
+      rememberPresentation(presentation.ids.map(id => byId.get(String(id))), presentation);
+      plan = backendPlan(messages, options);
+      if (plan && S.compactTurns && !S.term) {
+        choices = SdkUI.processChoiceKeys(this, plan);
+        for (const [turn, keys] of choices) {
+          const previous = this.liveTurns.get(SdkUI.liveTurnKey(turn));
+          const open = SdkUI.processChoice(this, keys) ?? (previous
+            && (previous._sdkMaterialized || !previous.classList.contains('folded')));
+          if (open) continue;
+          for (const item of turn.items)
+            if (['assistant', 'thinking', 'tool', 'tool_result'].includes(item.role)) hidden.add(String(item.id));
+        }
+      }
     }
-    return hidden;
+    return {history, join, rawItems, messages, historyTools, tailComplete, hidden,
+      turns: () => {
+        plan ??= planTurnsLocal(messages.map(message => ({...message,
+          turn_id: message.turn_id || String(message.id)})), options);
+        choices ??= SdkUI.processChoiceKeys(this, plan);
+        return {plan, choices};
+      },
+      compactTurns: S.compactTurns, term: S.term};
   },
 
   applySnapshot(raw) {
@@ -759,9 +778,10 @@ const NativeSdkView = {
       if (raw !== this.raw) this.snapshotBuild.latest = raw;
       return;
     }
-    const hidden = this.foldedSnapshotIds(raw);
-    const missing = this.snapshotItems(raw).filter(item => !hidden.has(String(item?.id)) && !this.nodes.has(String(item?.id)));
-    if (missing.length < 80) { this.applySnapshotNow(raw); return; }
+    const display = this.snapshotPresentation(raw);
+    const missing = display.rawItems.filter(item => !display.hidden.has(String(item?.id))
+      && !this.nodes.has(String(item?.id)));
+    if (missing.length < 80) { this.applySnapshotNow(raw, null, display); return; }
     const job = {generation: this.generation, raw, latest: null, nodes: new Map(), index: 0, timer: 0};
     this.snapshotBuild = job;
     const source = this.uid.split(':')[0];
@@ -777,13 +797,15 @@ const NativeSdkView = {
       }, {source});
       if (job.index < missing.length) { job.timer = setTimeout(prepare, 0); return; }
       this.snapshotBuild = null;
-      measureBrowserWork('native.commit', () => this.applySnapshotNow(job.raw, job.nodes), {source});
+      measureBrowserWork('native.commit', () => this.applySnapshotNow(job.raw, job.nodes, display), {source});
       if (job.latest) this.applySnapshot(job.latest);
     };
     job.timer = setTimeout(prepare, 0);
   },
 
-  applySnapshotNow(raw, prepared = null) {
+  applySnapshotNow(raw, prepared, display) {
+    if (display.history !== this.historyData || display.compactTurns !== S.compactTurns
+        || display.term !== S.term) display = this.snapshotPresentation(raw);
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
     const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
@@ -815,15 +837,8 @@ const NativeSdkView = {
     this.capabilities = {...this.capabilities, ...raw.capabilities};
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const source = String(this.uid).split(':')[0];
-    const historyTools = [];
-    const filteredRaw = this.snapshotItems(raw, historyTools);
+    const {rawItems: filteredRaw, messages: mappedItems, historyTools, tailComplete, hidden} = display;
     this.agyHistoryTools = historyTools.map(item => this.mapSnapshotItem(item, source));
-    const mappedItems = filteredRaw.map(item => this.mapSnapshotItem(item, source));
-    const presentation = raw.presentation;
-    if (presentation?.version === 1 && Array.isArray(presentation.ids)) {
-      const byId = new Map(mappedItems.map(item => [String(item.id), item]));
-      rememberPresentation(presentation.ids.map(id => byId.get(id)), presentation);
-    }
     this.items = mappedItems;
     this.setConnected(true);
     if (source === 'agy') {
@@ -833,10 +848,8 @@ const NativeSdkView = {
       this.agyReplayTailComplete ??= this.historyTailComplete !== false;
       if (completed) this.agyReplayTailComplete = true;
     }
-    this.paintHistory();
+    this.paintHistory(display.join);
     const requests = new Map((raw.requests || []).map(request => [request.key, request]));
-    const tailComplete = !this.running && !requests.size;
-    const hidden = this.foldedSnapshotIds(raw);
     const turnMetaKey = item => `${item.role || ''}\0${item.turn_id ?? ''}\0${item.phase || ''}\0${item.interrupted ? 1 : 0}\0${item.silent ? 1 : 0}\0${item.event_kind || ''}\0${item.subtask_outcome ? 1 : 0}`;
     let canPatchInPlace = Array.isArray(this.renderedItemIds)
       && this.renderedItemIds.length === mappedItems.length
@@ -848,7 +861,9 @@ const NativeSdkView = {
         const item = mappedItems[i], rawItem = filteredRaw[i], id = String(item.id);
         if (this.renderedItemIds[i] !== id) { canPatchInPlace = false; break; }
         const old = this.nodes.get(id);
-        if (!old || !old.isConnected) { canPatchInPlace = false; break; }
+        if (!old || !old.isConnected || (old._sdkMaterialize && !hidden.has(id))) {
+          canPatchInPlace = false; break;
+        }
         if (rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) continue;
         if (!old._updateMessage || old.dataset.role !== item.role
             || old.parentElement !== this.live || old._sdkTurnMeta !== turnMetaKey(item)
@@ -881,7 +896,8 @@ const NativeSdkView = {
         const item = mappedItems[i], rawItem = filteredRaw[i];
         const id = String(item.id); ids.add(id);
         const old = this.nodes.get(id);
-        if (old && rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) {
+        const reusable = old && (!old._sdkMaterialize || hidden.has(id));
+        if (reusable && rawItem && typeof rawItem === 'object' && old._sdkRawItem === rawItem && old._sdkItemTs === item.ts) {
           old._sdkMessage = item;
           if (old._sdkToolMessage) old._sdkToolMessage = item;
           continue;
@@ -898,7 +914,7 @@ const NativeSdkView = {
         // Every snapshot replays the whole item list. Rebuilding an unchanged
         // tool would drop its async syntax colours until the worker repaints,
         // so the live tail flickered between colour and plain text.
-        if (old) {
+        if (reusable && !old._sdkMaterialize) {
           const shape = JSON.stringify(item);
           const oldShape = old._sdkItemShape ??= JSON.stringify(old._sdkToolMessage);
           if (oldShape === shape) {
@@ -947,7 +963,7 @@ const NativeSdkView = {
         this.nodes.set(id, node);
       }
       for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
-      SdkUI.foldLiveTurns(this, this.items, {tailComplete});
+      SdkUI.foldLiveTurns(this, this.items, display.turns());
       SdkUI.groupTools(this);
       SdkUI.syncAssistantBubbles(this);
       this.renderedItemIds = mappedItems.map(item => String(item.id));
@@ -1016,12 +1032,8 @@ const NativeSdkView = {
     const historyCompleted=this.uid.startsWith('claude:') && tail?.role==='assistant'
       && tail.phase==='final' && !tail.interrupted;
     const previous = raw.last_turn?.status || (raw.error_kind === 'interrupted' ? 'interrupted'
-      : observed.activity?.state === 'aborted' ? 'interrupted'
-      : observed.activity?.state === 'failed' ? 'failed'
-      : historyCompleted ? 'completed'
-      : this.historyData?.activity?.state === 'working' && !S.liveWorking.has(this.uid)
-        && cache.get(viewKey(this.uid, this.agent))?.cli?.instance?.busy !== true ? 'incomplete' : '');
-    const ended = !this.running && !this.requests.size && !pending;
+      : SdkUI.recordedTurnOutcome(this, observed.activity, {idle: this.turnTailComplete(), completed: historyCompleted}));
+    const ended = this.turnTailComplete() && !pending;
     const stopped = agy && ended && raw.last_turn?.status === 'interrupted';
     const foregroundReady = awaitingResult || stopped;
     if (agy && !this.agent) this.paintAgyBackgroundStatus(awaitingResult, stopped);
@@ -1069,7 +1081,7 @@ const NativeSdkView = {
     this.setNotice(text, kind);
   },
 
-  paintHistory() {
+  paintHistory(joined = undefined) {
     if (!this.history || !this.historyData) return;
     if (this.usageHistoryModel !== this.historyData.model) {
       this.usageHistoryModel = this.historyData.model;
@@ -1093,7 +1105,7 @@ const NativeSdkView = {
     // During reconnect the last accepted snapshot still owns the Agy join
     // and its disclosure state.
     const hasSnapshot = this.connected || this.agyReplayTailComplete !== null;
-    const join = hasSnapshot && nativeSdkAgyHistoryJoin(this);
+    const join = hasSnapshot && (joined === undefined ? nativeSdkAgyHistoryJoin(this) : joined);
     const first = this.items?.find(item => item.role === 'user');
     if (join) {
       cut = join.cut; messages = messages.slice(0, cut);
@@ -1118,7 +1130,7 @@ const NativeSdkView = {
         : S.live.has(this.uid) || S.liveSdk.has(this.uid) || S.liveExternalSdk.has(this.uid) || childLive);
     // The Agy join can trim a running transcript step without ending the turn.
     const tailComplete = (!join && cut < fullMessages.length)
-      || (hasSnapshot ? !this.running && !(this.requests?.size || this.raw?.requests?.length)
+      || (hasSnapshot ? this.turnTailComplete()
         && !(join && this.agyReplayTailComplete === false) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_before,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
     const notices = JSON.stringify(join ? [...join.notices.values()] : []);

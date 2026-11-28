@@ -908,6 +908,10 @@ SDK 实时流启用时暂停额外的历史 watch，落盘历史仍由增量轮�
 离开 SDK 后恢复当前会话 watch。此行为避免 HTTP/1 两个标签页占满连接池后
 撤销/停止请求无法发送，见[双标签页回归](../tests/sdk_multitab_browser.py)。
 
+DELTA：按原生回合或消息身份接续实时与落盘消息。当前回合尚未落盘时保留已加载历史，
+相同正文不构成同一条输入的证据。已连接快照确认没有活动回合时，较旧的历史运行状态
+不再阻止末轮折叠。见[Codex 历史接续回归](../tests/codex_sdk_history_gap_browser.py)。
+
 [codex_sdk_browser.py](../tests/codex_sdk_browser.py) with
 [codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py), and
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py) for node/Hub

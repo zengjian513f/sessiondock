@@ -17,6 +17,61 @@ OLD = '不是，你要进行系统复核。这是很早的输入，必须留在�
 TURN = 'long-active-turn'
 
 
+def repeated_input_rows():
+    rows = [codex_row('session_meta', {'id': THREAD, 'cwd': '/synthetic/sdk-gap'})]
+    for turn, prompt, reply in [('old-same-text', '继续', '旧回复必须保留'),
+                                ('old-next-turn', '新问题', '后续历史也必须保留')]:
+        for role, text in [('user', prompt), ('assistant', reply)]:
+            if turn == 'old-next-turn' and role == 'assistant':
+                rows.append(codex_row('response_item', {'type': 'reasoning', 'id': 'old-thinking',
+                    'turn_id': turn, 'summary': [{'type': 'summary_text', 'text': '尚未写入结束事件'}]}))
+            rows.append(codex_row('response_item', {'type': 'message', 'role': role,
+                'id': f'{turn}-{role}', 'turn_id': turn,
+                'phase': ('commentary' if turn == 'old-next-turn' else 'final_answer')
+                    if role == 'assistant' else None,
+                'content': [{'type': 'input_text' if role == 'user' else 'output_text', 'text': text}]}))
+    rows.append(codex_row('event_msg', {'type': 'task_started', 'turn_id': 'old-next-turn'}))
+    return rows
+
+
+def exercise_repeated_input(browser, base, events, shots, label):
+    for width, theme in [(1440, 'dark'), (390, 'light')]:
+        context = browser.new_context(viewport={'width': width, 'height': 960}, color_scheme=theme,
+                                      service_workers='block')
+        page = context.new_page()
+        active = {'turn': {'id': 'new-turn', 'status': 'inProgress'}, 'requests': [],
+            'items': [{'id': 'new-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': '继续'}]},
+                      {'id': 'new-answer', 'type': 'agentMessage', 'text': '新的实时回复'}],
+            'summary': {'settings': {}, 'queue': [], 'status': {'type': 'active'}}}
+        events.packet = {'type': 'snapshot', 'seq': 0, 'raw': active}
+        context.route('**/api/codex-sdk/open', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
+        context.route('**/api/codex-sdk/events?*', lambda r: r.continue_(url=events.url))
+        for endpoint in ('models', 'limits'):
+            context.route(f'**/api/codex-sdk/{endpoint}*', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
+        page.goto(base, wait_until='domcontentloaded')
+        page.wait_for_function('T.listLoaded')
+        page.locator('#side .item[data-uid^="codex:"]').first.click()
+        if page.locator('.sdk-pane').count() == 0: page.locator('#a-sdk').click()
+        history = page.locator('.sdk-history')
+        expect(page.locator('.sdk-live')).to_contain_text('新的实时回复')
+        expect(history).to_contain_text('旧回复必须保留')
+        expect(history).to_contain_text('后续历史也必须保留')
+        expect(page.locator('.sdk-msgs .msg[data-role="user"]').filter(has_text='继续')).to_have_count(2)
+        if shots: page.screenshot(path=str(shots/f'{label}-{width}-{theme}-repeated.png'), full_page=True)
+        page.wait_for_function("CodexSdkView.historyData?.activity?.state === 'working'")
+        events.publish({'type': 'snapshot', 'seq': 1, 'raw': {**active, 'turn': None, 'items': [],
+            'summary': {**active['summary'], 'status': {'type': 'idle'},
+                        'last_turn': {'id': 'old-next-turn', 'status': 'interrupted'}}}})
+        status = page.locator('.sdk-pane .sdk-status')
+        expect(status.locator('[role="status"]')).to_have_text('就绪')
+        expect(status).to_have_attribute('title', '就绪\n上一回合已中断')
+        expect(history.locator('.turn-process.folded')).to_have_count(1)
+        history.locator('.turn-process.folded .fold-toggle').first.click()
+        expect(history.get_by_text('后续历史也必须保留', exact=True)).to_be_visible()
+        context.close()
+        print(f'PASS {label} {width} {theme}: same-text input keeps prior history and interrupted status folds the tail', flush=True)
+
+
 def corpus_rows():
     rows = [codex_row('session_meta', {'id': THREAD, 'cwd': '/synthetic/sdk-gap'})]
     items = []
@@ -116,22 +171,27 @@ def main():
     ap.add_argument('--screenshots', type=Path)
     args = ap.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='sd-codex-gap-') as tmp, sync_playwright() as pw:
-        root = Path(tmp); corpus = build(root)
-        rows, items = corpus_rows()
-        corpus.paths['sdk'].write_bytes(b''.join(encoded(row) for row in rows))
-        extra = node_env(root, free_port(), '127.0.0.0/8')
-        with StatusDaemon(root/'app.sock', corpus.paths['sdk'], THREAD), server(corpus, args.binary, root/'app.sock', extra) as base, snapshots() as events:
-            browser = pw.chromium.launch(headless=True)
-            try:
-                exercise(browser, base, events, items, args.screenshots, 'node')
+    def run(browser, rows, check):
+        with tempfile.TemporaryDirectory(prefix='sd-codex-history-') as tmp:
+            root = Path(tmp); corpus = build(root)
+            corpus.paths['sdk'].write_bytes(b''.join(encoded(row) for row in rows))
+            extra = node_env(root, free_port(), '127.0.0.0/8')
+            with StatusDaemon(root/'app.sock', corpus.paths['sdk'], THREAD), server(corpus, args.binary, root/'app.sock', extra) as base, snapshots() as events:
+                check(browser, base, events, args.screenshots, 'node')
                 hub_root = root/'hub'; hub_root.mkdir()
                 hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
                           [SimpleNamespace(name='GapNode', token=TOKEN, port=int(extra['SESSIONDOCK_NODE_BIND'].rsplit(':',1)[1]))])
                 hub.start()
-                try: exercise(browser, f'http://127.0.0.1:{hub.port}', events, items, args.screenshots, 'hub')
+                try: check(browser, f'http://127.0.0.1:{hub.port}', events, args.screenshots, 'hub')
                 finally: hub.stop()
-            finally: browser.close()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        try:
+            run(browser, repeated_input_rows(), exercise_repeated_input)
+            rows, items = corpus_rows()
+            run(browser, rows, lambda b, base, events, shots, label: exercise(b, base, events, items, shots, label))
+        finally:
+            browser.close()
 
 
 if __name__ == '__main__': main()

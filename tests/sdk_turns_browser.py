@@ -41,6 +41,14 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
                                 'text': '\n'.join(f'检查结果 {line}' for line in range(18))}}])
             history.append({'id': f'final-{turn}', 'role': 'assistant', 'turn_id': identity,
                             'text': f'第 {turn + 1} 轮最终结论：检查已完成。', 'phase': 'final'})
+            if source == 'agy' and turn == 1:
+                history.extend([
+                    {'id': 'continuation-thought', 'role': 'thinking', 'turn_id': identity,
+                     'text': '同一原生回合的补充检查。'},
+                    {'id': 'continuation-final', 'role': 'assistant', 'turn_id': identity,
+                     'text': '补充检查完成。', 'phase': 'final'},
+                ])
+        completed_groups = 4 if source == 'agy' else 3
         # One historical round precedes the native snapshot; the snapshot itself
         # replays two completed rounds and an unfinished tail (as Kiro does).
         for index, item in enumerate(history):
@@ -123,7 +131,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             print('BASELINE', name, 'process groups', groups.count(), flush=True)
             context.close()
             return
-        expect(groups).to_have_count(3)
+        expect(groups).to_have_count(completed_groups)
         expect(page.locator('.sdk-pane .turn-process.has-error')).to_have_count(0)
         expect(groups.first.locator('.turn-stats')).to_contain_text('调用报错 1')
         assert groups.first.locator('.turn-preview').evaluate(
@@ -131,7 +139,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
 
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(0)
         toggle()
-        expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(3)
+        expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(completed_groups)
         replay = groups.nth(1)
         page.locator('.sdk-msgs').hover()
         page.mouse.wheel(0, -100000)
@@ -185,11 +193,27 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
             raw['last_turn'] = {'status': 'completed'}
         events.publish()
         expect(page.locator('.sdk-msgs')).to_contain_text('第 4 轮最终结论')
-        expect(groups).to_have_count(4)
+        expect(groups).to_have_count(completed_groups + 1)
         assert page.evaluate('historyProbe === document.querySelector(".sdk-history .msg")'), name
         expect(replay.locator('.turn-process-body')).to_be_visible()
+        if source == 'agy':
+            raw['items'] = []
+            events.publish()
+            expect(page.locator('.sdk-live .turn-process')).to_have_count(0)
+            expect(page.locator('.sdk-history .turn-process')).to_have_count(completed_groups + 1)
+            segments = page.locator('.sdk-history .turn-process[data-turn-id="turn-1"]')
+            expect(segments).to_have_count(2)
+            expect(segments.first.locator('.turn-process-body')).to_be_visible()
+            expect(segments.last).to_have_class(re.compile(r'\bfolded\b'))
+            capture('fold-choice-in-history')
+            segments.first.locator('.turn-preview .fold-toggle').click()
+            raw['items'] = native
+            events.publish()
+            replayed = page.locator('.sdk-live .turn-process[data-turn-id="turn-1"]')
+            expect(replayed).to_have_count(2)
+            expect(replayed.first).to_have_class(re.compile(r'\bfolded\b'))
         toggle()  # expand all, including the newly completed tail
-        expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(4)
+        expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(completed_groups + 1)
         toggle()
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(0)
         groups.last.hover()
@@ -202,7 +226,7 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         page.wait_for_function('T.listLoaded')
         page.locator('#a-sdk').click()
         expect(page.locator('.sdk-msgs')).to_contain_text('第 4 轮最终结论')
-        expect(groups).to_have_count(4)
+        expect(groups).to_have_count(completed_groups + 1)
         expect(page.locator('.sdk-pane .turn-process:not(.folded)')).to_have_count(0)
         assert not errors, errors
         context.unroute_all(behavior='wait')

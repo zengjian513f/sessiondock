@@ -71,6 +71,11 @@ created_at）；缺字段的新消息记录后台 `received_at`。stdio 优先�
 压缩进度与结果使用状态栏，不创建实时压缩气泡；SDK 历史不重复显示
 `event_kind:compact` 提示，保留原生历史、分页和普通对话记录。
 
+每份原生快照先按实际显示范围确定回合计划，延迟构建与实时折叠使用同一份计划。
+历史和实时区相互接续时，有共同身份的过程段保留各自的手动展开状态。
+原生增量让回合重新运行时，已移出折叠段的记录立即恢复正文。验收见
+[折叠与落盘接续](../tests/sdk_turns_browser.py) 和 [原生增量恢复](../tests/presentation_browser.py)。
+
 DELTA（BUG-20261121-111133-589aa4）：八种 SDK 共用回合进度底栏。Claude、CodeBuddy
 使用原生流式内容块，Grok 和 Kiro 使用 ACP 的思考／回复增量，Droid 使用正文／思考
 增量及工具回执，OpenCode 使用原生未结束的消息片段，Agy 使用当前回合的 ACTIVE 步骤。

@@ -526,6 +526,11 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 历史
 
+  turnTailComplete() {
+    return !this.turn && (this.connected
+      || !['working', 'waiting'].includes(this.historyData?.activity?.state));
+  },
+
   paintHistory() {
     const data = this.historyData;
     if (!data || !this.history) return;
@@ -534,28 +539,30 @@ const CodexSdkView = {
       void this.loadRecordedUsage(this.generation);
     }
     let messages = data?.messages || [];
-    let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
-    const userText = this.activeUserText();
-    const nativeStart = this.turn?.id ? messages.findIndex(message =>
-      message.turn_id === this.turn.id && (userText || message.role !== 'user')) : -1;
+    let tailComplete = this.turnTailComplete();
+    const turnId = this.turn?.id;
+    const replayUser = turnId && [...this.items.values()].find(item => item.type === 'userMessage');
+    const nativeStart = turnId ? messages.findIndex(message =>
+      message.turn_id === turnId && (replayUser || message.role !== 'user')) : -1;
     const partial = data.partial;
     const tailStart = partial?.head || 0;
-    const firstTailItem = partial && this.turn
-      ? messages.slice(tailStart).find(message => message.turn_id === this.turn.id) : null;
-    const crossesGap = firstTailItem
-      && !(firstTailItem.role === 'user' && String(firstTailItem.text || '').trim() === userText);
+    const firstTailItem = partial && turnId
+      ? messages.slice(tailStart).find(message => message.turn_id === turnId) : null;
+    const crossesGap = firstTailItem && (nativeStart < tailStart || firstTailItem.role !== 'user'
+      || !firstTailItem.native_item_id || firstTailItem.native_item_id !== replayUser?.id);
     this.replayOmitted = new Set();
     this.messageTimeReplayStart = null;
-    if (crossesGap) {
+    if (crossesGap || (turnId && nativeStart < 0)) {
       // A turn can span hours and the omitted middle. Turn identity alone does
       // not locate its replay relative to the history gap. Join at an actual
       // native item in the loaded tail, retaining all history before that item.
       const items = [...this.items.values()];
       const indices = new Map(items.map((item, index) => [item.id, index]));
+      const start = crossesGap ? tailStart : 0;
       let joined = false;
-      for (let i = tailStart; i < messages.length; i++) {
+      for (let i = start; i < messages.length; i++) {
         const message = messages[i], index = indices.get(message.native_item_id);
-        if (message.turn_id !== this.turn.id || index == null || !itemMessage(items[index])) continue;
+        if ((message.turn_id && message.turn_id !== turnId) || index == null || !itemMessage(items[index])) continue;
         this.replayOmitted = new Set(items.slice(0, index).map(item => item.id));
         this.messageTimeReplayStart = i;
         messages = messages.slice(0, i);
@@ -565,22 +572,11 @@ const CodexSdkView = {
       // Older records may lack item IDs. Keep their authoritative paginated
       // history until an identifiable overlap arrives; never relocate replay
       // before the gap into the live tail or discard loaded native messages.
-      if (!joined) this.replayOmitted = new Set(items.map(item => item.id));
-      tailComplete = false;
+      if (crossesGap && !joined) this.replayOmitted = new Set(items.map(item => item.id));
     } else if (nativeStart >= 0) {
       this.messageTimeReplayStart = nativeStart;
       messages = messages.slice(0, nativeStart);
       tailComplete = true;
-    } else if (userText) {
-      // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
-          this.messageTimeReplayStart = i;
-          messages = messages.slice(0, i);
-          tailComplete = true;
-          break;
-        }
-      }
     }
     SdkUI.paintHistory(this, messages, {tailComplete,
       decorate: (node, message) => CodexSdkActions.decorate(this, node, message)});
@@ -602,14 +598,6 @@ const CodexSdkView = {
     SdkUI.groupTools(this);
     SdkUI.syncAssistantBubbles(this);
     if (this.summary) this.paintStatus();
-  },
-
-  activeUserText() {
-    if (!this.turn) return '';
-    for (const item of this.items.values()) {
-      if (item.type === 'userMessage') return (item.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('\n').trim();
-    }
-    return '';
   },
 
   // ---------------------------------------------------------------- 事件
@@ -1030,12 +1018,9 @@ const CodexSdkView = {
     const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent);
     // Idle describes the daemon's availability, not the preceding turn's
     // outcome. Prefer an observed native completion over older disk history.
-    const cliBusy = cache.get(viewKey(this.uid, this.agent))?.cli?.instance?.busy === true;
-    const unfinished = !active && !this.summary?.last_turn && status.type === 'idle'
-      && this.historyData?.activity?.state === 'working' && !cliBusy
-      && !S.liveWorking.has(this.uid);
-    const interrupted = !active && (this.summary?.last_turn?.status === 'interrupted'
-      || (!this.summary?.last_turn && observed.activity?.state === 'aborted') || unfinished);
+    const previous = this.summary?.last_turn ? this.summary.last_turn.status
+      : SdkUI.recordedTurnOutcome(this, observed.activity, {idle: status.type === 'idle'});
+    const interrupted = !active && ['interrupted', 'incomplete'].includes(previous);
     const compact = [...this.items.values()].findLast(item => item.type === 'contextCompaction');
     const parts = [];
     let kind = 'ready';
@@ -1062,7 +1047,7 @@ const CodexSdkView = {
       }
       else if (interrupted) {
         const reason = observed.activity?.state === 'aborted' ? observed.activity.reason
-          : unfinished ? 'SDK 已空闲，原生回合未写入结束事件' : '';
+          : previous === 'incomplete' ? 'SDK 已空闲，原生回合未写入结束事件' : '';
         parts.push('就绪\n上一回合已中断' + (reason ? '：' + reason : ''));
       }
       else if (lastError) parts.push(`就绪\n上一回合失败：${lastError}`);
