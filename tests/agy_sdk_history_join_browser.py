@@ -40,13 +40,16 @@ def exercise_tool_join(browser, base, peer, label, screenshots):
     tools = [item(index, 'tool', name=call['name'], input=call['args'])
              for index, call in enumerate(calls, 2)]
     tools[-1]['status'] = 'ACTIVE'
+    running_result = {**results[-1], 'status': 'RUNNING', 'content': '配置 9 写入中。'}
+    initial_user = item(0, 'user', content='请写入八份配置并核对结果。', request_id='fixture-active')
     user = item(10, 'user', content='另外，请检查输出目录。')
     later_tool = item(11, 'tool', name='read_file', input={'Path': '/synthetic/output.txt'},
                       result='输出目录核对完成。')
     for width, theme in [(1280, 'light'), (390, 'dark')]:
-        path = write_transcript(peer.native, SID, [prompt, planner, *results[:-1]])
+        write_transcript(peer.native, SID, [prompt, planner, *results[:-1], running_result])
         with snapshots(replay=False) as events:
-            raw = {'running': True, 'items': [*tools, user], 'requests': [], 'capabilities': {}}
+            raw = {'running': True, 'items': [initial_user, *tools], 'requests': [], 'capabilities': {},
+                   'progress': {'request_id': 'fixture-active'}}
             events.packet = {'type': 'snapshot', 'seq': 0, 'raw': raw}
             context = browser.new_context(viewport={'width': width, 'height': 820}, color_scheme=theme)
             page = context.new_page()
@@ -66,6 +69,13 @@ def exercise_tool_join(browser, base, peer, label, screenshots):
             page.wait_for_function('NativeSdkView.es?.readyState === EventSource.OPEN')
             events.publish()
             box = page.locator('.sdk-msgs')
+            expect(page.locator('#sdk-composer .sdk-status [role=status]')).to_have_text('执行工具')
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-active-tool.png'))
+            expect(box.locator('.turn-process.folded')).to_have_count(0)
+            expect(box.locator('.tool-active-tail').get_by_text('运行中…', exact=True)).to_be_visible()
+            raw['items'].append(user)
+            events.publish()
             expect(box.get_by_text('另外，请检查输出目录。', exact=True)).to_be_visible()
             group = box.locator('.grp')
             if screenshots:
@@ -77,8 +87,7 @@ def exercise_tool_join(browser, base, peer, label, screenshots):
             expect(group.get_by_text('配置 8 已写入。', exact=True)).to_be_visible()
             args = group.get_by_role('button', name='展开原始参数').first
             args.click()
-            with path.open('ab') as file:
-                file.write(encoded(results[-1]) + encoded(followup))
+            write_transcript(peer.native, SID, [prompt, planner, *results, followup])
             page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
             expect(history_users).to_have_count(2)
             expect(group.get_by_role('button', name='收起工具调用组')).to_be_visible()

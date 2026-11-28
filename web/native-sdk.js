@@ -1116,7 +1116,8 @@ const NativeSdkView = {
       || (!this.readOnly && !this.openFailed)
       || (observed ? ['working', 'waiting'].includes(observed.state)
         : S.live.has(this.uid) || S.liveSdk.has(this.uid) || S.liveExternalSdk.has(this.uid) || childLive);
-    const tailComplete = cut < fullMessages.length
+    // The Agy join can trim a running transcript step without ending the turn.
+    const tailComplete = (!join && cut < fullMessages.length)
       || (hasSnapshot ? !this.running && !(this.requests?.size || this.raw?.requests?.length)
         && !(join && this.agyReplayTailComplete === false) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_before,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
