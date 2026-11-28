@@ -8846,13 +8846,13 @@ function planTurnsLocal(msgs, {
   return out;
 }
 
-function buildPlan(box, plan, before) {
+function buildPlan(box, plan, before, buildGroup = groupNode) {
   const built = [];
   for (let i = 0; i < plan.length; i++) {
     const p = plan[i];
     const n = p.gap ? historyGapNode(p.gap)
-      : (p.turn ? turnProcessNode(p.turn, p.open)
-        : (p.g ? groupNode(p.g, p.open) : msgNode(p.m)));
+      : (p.turn ? turnProcessNode(p.turn, p.open, buildGroup)
+        : (p.g ? buildGroup(p.g, p.open) : msgNode(p.m)));
     // 整页渲染出来的已折叠回合已经封口。后续只带 activity 的 SSE 不应
     // 再把它拆掉重建；否则搜索时刚自动展开并高亮的懒加载正文会被替换掉。
     if (p.sealedTurnHead || (p.m && isTurnStart(p.m) && plan[i + 1]?.turn)) {
@@ -9314,6 +9314,9 @@ function toolEntry(m) {
   if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
   entry.insertAdjacentHTML('beforeend', nativeFileLinks(m.native_files));
   appendToolResult(entry, m.result, m);
+  // A live Agy step joined to history can arrive before it has any output.
+  if (!m.result && String(m.id || '').startsWith('agy:') && m.status === 'in_progress')
+    entry.appendChild(el('div', 'tool-status', '运行中…'));
   return entry;
 }
 
@@ -9638,7 +9641,7 @@ function turnProcessSummary(items) {
 
 /** 已完成回合的外层过程合集。折叠态只造摘要 DOM；第一次展开才渲染 Markdown、
  *  diff 和现有工具组，大会话既减少高度，也避免为不可见过程支付首屏成本。 */
-function turnProcessNode(turn, initiallyOpen = false) {
+function turnProcessNode(turn, initiallyOpen = false, buildGroup = groupNode) {
   const items = turn.items || [];
   const summary = turn.summary || turnProcessSummary(items);
   const n = el('div', 'msg turn-process folded');
@@ -9690,7 +9693,7 @@ function turnProcessNode(turn, initiallyOpen = false) {
       if (generation !== renderSeq && !n.isConnected) return;
       const started = performance.now(), fragment = document.createDocumentFragment();
       while (offset < plan.length && performance.now() - started < 8) {
-        buildPlan(fragment, [plan[offset++]], null);
+        buildPlan(fragment, [plan[offset++]], null, buildGroup);
       }
       body.appendChild(fragment);
       if (S.term && n.isConnected) { markMatches(body); updateMatchNav(); }
@@ -9765,7 +9768,8 @@ function paintGroupPreview(peek, items) {
     peek._groupPreview = {count, outline, rows: []};
   }
   const {count, outline, rows} = peek._groupPreview;
-  const label = `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`;
+  const agyResults = calls.length ? items.filter(m => m.role === 'tool_result' && m.native_type === 'GENERIC').length : 0;
+  const label = `🔧 ×${visible.length}${agyResults ? ` · ${agyResults} 项结果` : ''}${hasErr ? ' ⚠' : ''}`;
   if (count.textContent !== label) count.textContent = label;
   heads.forEach((head, i) => {
     if (rows[i]?.head === head) return;
@@ -9793,7 +9797,7 @@ function paintGroupPreview(peek, items) {
 }
 
 /** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
-function syncGroupNode(n, items) {
+function syncGroupNode(n, items, equalContent = null) {
   if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
   if (!n._toolsMaterialized) {
     n._toolItems = items;
@@ -9812,7 +9816,8 @@ function syncGroupNode(n, items) {
   const reused = new Set();
   items.forEach((m, i) => {
     const prev = byId.get(m.call_id || `#${i}`);
-    if (prev?.entry && prev.m.role === m.role && !reused.has(prev.entry)) {
+    if (prev?.entry && prev.m.role === m.role && !reused.has(prev.entry)
+        && (!equalContent || equalContent(prev.m, m))) {
       if (m.role === 'tool' && m.result && !prev.m.result) {
         appendToolResult(prev.entry, m.result, m);
       }

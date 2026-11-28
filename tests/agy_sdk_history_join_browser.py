@@ -23,6 +23,82 @@ def expand_turns(page):
         page.locator('.sdk-msgs .turn-process.folded > .turn-toolbar .fold-toggle').first.click()
 
 
+def exercise_tool_join(browser, base, peer, label, screenshots):
+    prompt = record(0, 'USER_INPUT', '请写入八份配置并核对结果。')
+    planner = record(1, 'PLANNER_RESPONSE', '', thinking='先写入配置，再逐份核对。')
+    calls = [{'name': 'write_file', 'args': {'Path': f'/synthetic/config-{index}.json',
+                                           'Content': '{"enabled":true}', 'Overwrite': True}}
+             for index in range(2, 10)]
+    planner['tool_calls'] = calls
+    results = [record(index, 'GENERIC', f'配置 {index} 已写入。') for index in range(2, 10)]
+    followup = record(10, 'USER_INPUT', '另外，请检查输出目录。')
+
+    def item(index, role, **fields):
+        return {'id': f'agy:{SID}:step:{index}', 'native': {'step_index': index},
+                'role': role, 'status': 'DONE', **fields}
+
+    tools = [item(index, 'tool', name=call['name'], input=call['args'])
+             for index, call in enumerate(calls, 2)]
+    tools[-1]['status'] = 'ACTIVE'
+    user = item(10, 'user', content='另外，请检查输出目录。')
+    later_tool = item(11, 'tool', name='read_file', input={'Path': '/synthetic/output.txt'},
+                      result='输出目录核对完成。')
+    for width, theme in [(1280, 'light'), (390, 'dark')]:
+        path = write_transcript(peer.native, SID, [prompt, planner, *results[:-1]])
+        with snapshots(replay=False) as events:
+            raw = {'running': True, 'items': [*tools, user], 'requests': [], 'capabilities': {}}
+            events.packet = {'type': 'snapshot', 'seq': 0, 'raw': raw}
+            context = browser.new_context(viewport={'width': width, 'height': 820}, color_scheme=theme)
+            page = context.new_page()
+            context.route('**/api/native-sdk/open', lambda route: route.fulfill(json={'ok': True, 'raw': {}}))
+            context.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=events.url))
+            page.request.get(base + '/api/sessions?force=1')
+            page.goto(base); page.wait_for_function('T.listLoaded')
+            page.locator('#side .item[data-uid^="agy:"]').first.click()
+            page.locator('#a-sdk').click()
+            if page.evaluate('SdkView.readOnly'):
+                if not page.locator('#a-session-toggle').is_visible():
+                    page.locator('#a-more').click()
+                page.locator('#a-session-toggle').click()
+            history_users = page.locator('.sdk-history [data-role=user]')
+            expect(history_users).to_have_count(1)
+            expect(history_users).to_contain_text('八份配置')
+            page.wait_for_function('NativeSdkView.es?.readyState === EventSource.OPEN')
+            events.publish()
+            box = page.locator('.sdk-msgs')
+            expect(box.get_by_text('另外，请检查输出目录。', exact=True)).to_be_visible()
+            group = box.locator('.grp')
+            if screenshots:
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-tool-join.png'))
+            expect(group).to_have_count(1)
+            expect(group.locator('.group-count')).to_contain_text('7 项结果')
+            group.get_by_role('button', name='展开工具调用组').click()
+            expect(group.get_by_text('运行中…', exact=True)).to_be_visible()
+            expect(group.get_by_text('配置 8 已写入。', exact=True)).to_be_visible()
+            args = group.get_by_role('button', name='展开原始参数').first
+            args.click()
+            with path.open('ab') as file:
+                file.write(encoded(results[-1]) + encoded(followup))
+            page.evaluate('NativeSdkView.refreshHistory(NativeSdkView.generation, true)')
+            expect(history_users).to_have_count(2)
+            expect(group.get_by_role('button', name='收起工具调用组')).to_be_visible()
+            expect(group.get_by_role('button', name='收起原始参数').first).to_be_visible()
+            expect(group.get_by_text('配置 9 已写入。', exact=True)).to_be_visible()
+            expect(group.get_by_text('运行中…', exact=True)).to_have_count(0)
+            expect(group.locator('.group-count')).to_contain_text('8 项结果')
+            expect(group.locator('[data-role=tool_result]')).to_have_count(8)
+            raw['items'].append(later_tool)
+            events.publish()
+            expect(group).to_have_count(2)
+            expect(group.last.get_by_text('输出目录核对完成。', exact=True)).to_be_visible()
+            assert group.last.evaluate('node => !!node.closest(".sdk-live")')
+            if screenshots:
+                box.evaluate('box => box.scrollTop = box.scrollHeight')
+                page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-tool-next.png'))
+            context.close()
+            print(f'PASS {label} {width} {theme}: tool group spans the live join and retains native results', flush=True)
+
+
 def exercise_idle_replay(browser, base, peer, label, screenshots):
     reasoning = '已落盘的核对过程，原生回合只有工具结果。'
     result = '已落盘的工具结果，实时快照只带工具通知。'
@@ -374,6 +450,7 @@ def main():
             try:
                 exercise(browser, base, peer, 'node', args.screenshots)
                 exercise_idle_replay(browser, base, peer, 'node', args.screenshots)
+                exercise_tool_join(browser, base, peer, 'node', args.screenshots)
                 hub_root = root / 'hub'; hub_root.mkdir()
                 hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hub_root,
                           [SimpleNamespace(name='JoinNode', token=TOKEN,
@@ -382,6 +459,7 @@ def main():
                 try:
                     exercise(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
                     exercise_idle_replay(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
+                    exercise_tool_join(browser, f'http://127.0.0.1:{hub.port}', peer, 'hub', args.screenshots)
                 finally: hub.stop()
             finally: browser.close()
         transport_root = root / 'transport'; transport_root.mkdir()

@@ -323,6 +323,7 @@ const NativeSdkView = {
     this.initialLastTurn = undefined;
     this.historyRenderedData = null; this.historyCut = null; this.historyTailComplete = null;
     this.historyNotices = null;
+    this.agyHistoryTools = []; this.historyRenderedTools = [];
     this.agyReplayTailComplete = null;
     this.nativeModel = this.nativeEffort = null;
     this.usageHistoryModel = undefined;
@@ -688,19 +689,30 @@ const NativeSdkView = {
     return {...values, model:selected.variants[level], effort:''};
   },
 
-  snapshotItems(raw) {
+  snapshotItems(raw, historyTools = []) {
     const rawItems = Array.isArray(raw.items) ? raw.items : [];
-    const agyJoin = nativeSdkAgyHistoryJoin({uid: this.uid, historyData: this.historyData, raw});
-    return this.uid.startsWith('kiro:')
-      ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
-      : this.uid.startsWith('agy:')
-      ? rawItems.filter(item => {
-        if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
-        if (agyJoin?.notices.has(item)) return false;
-        const step = nativeSdkAgyStep(item);
-        return !agyJoin || step === null || step > agyJoin.step;
-      })
-      : rawItems;
+    if (this.uid.startsWith('kiro:'))
+      return rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')));
+    if (!this.uid.startsWith('agy:')) return rawItems;
+    const join = nativeSdkAgyHistoryJoin({uid: this.uid, historyData: this.historyData, raw});
+    const live = rawItems.filter(item => {
+      if (item?.role === 'system' && item.native_type === 'checkpoint') return false;
+      if (join?.notices.has(item)) return false;
+      const step = nativeSdkAgyStep(item);
+      return !join || step === null || step > join.step;
+    });
+    // A rolling transcript boundary can bisect one consecutive run of tools.
+    // Plan that run together before handing the remaining items to the live
+    // renderer. On catch-up the original step filter still prefers the record.
+    if (join && join.cut > (this.historyData.partial?.head || 0)
+        && isGroupableTool(this.historyData.messages[join.cut - 1])
+        && ![...join.notices.values()].some(notice => notice.at === join.cut)) {
+      for (const item of live) {
+        if (!isGroupableTool(item) || nativeSdkAgyStep(item) === null) break;
+        historyTools.push(item);
+      }
+    }
+    return historyTools.length ? live.slice(historyTools.length) : live;
   },
 
   mapSnapshotItem(rawItem, source) {
@@ -803,7 +815,9 @@ const NativeSdkView = {
     this.capabilities = {...this.capabilities, ...raw.capabilities};
     if (kiroConfigChanged) void this.loadModels(this.generation);
     const source = String(this.uid).split(':')[0];
-    const filteredRaw = this.snapshotItems(raw);
+    const historyTools = [];
+    const filteredRaw = this.snapshotItems(raw, historyTools);
+    this.agyHistoryTools = historyTools.map(item => this.mapSnapshotItem(item, source));
     const mappedItems = filteredRaw.map(item => this.mapSnapshotItem(item, source));
     const presentation = raw.presentation;
     if (presentation?.version === 1 && Array.isArray(presentation.ids)) {
@@ -1107,14 +1121,20 @@ const NativeSdkView = {
         && !(join && this.agyReplayTailComplete === false) : !livePending);
     const actions=JSON.stringify([this.capabilities.fork,this.capabilities.fork_before,this.capabilities.fork_at_message,this.capabilities.revert,this.capabilities.rewind]);
     const notices = JSON.stringify(join ? [...join.notices.values()] : []);
+    const tools = join ? this.agyHistoryTools.filter(tool => nativeSdkAgyStep(tool) > join.step) : [];
     if (this.historyRenderedData === this.historyData && this.historyCut === cut
         && this.historyNotices === notices
+        && this.historyRenderedTools.length === tools.length
+        && this.historyRenderedTools.every((tool, index) => tool === tools[index])
         && this.historyActions===actions && this.historyTailComplete === tailComplete) return;
     this.historyNotices = notices;
     this.historyActions=actions;
     this.historyRenderedData = this.historyData; this.historyCut = cut;
+    this.historyRenderedTools = tools;
     this.historyTailComplete = tailComplete;
-    SdkUI.paintHistory(this, messages, {tailComplete, actions, partial: join ? join.partial : this.historyData.partial,
+    if (tools.length) messages = messages.concat(tools);
+    SdkUI.paintHistory(this, messages, {tailComplete, actions, keepToolGroups: !!join,
+      partial: join ? join.partial : this.historyData.partial,
       decorate:(node, message) => NativeSdkControls.decorate(this,node,message)});
   },
 

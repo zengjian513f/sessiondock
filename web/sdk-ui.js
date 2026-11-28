@@ -561,7 +561,8 @@ const SdkUI = {
     view.liveTurns = groups;
   },
 
-  paintHistory(view, messages, {tailComplete = true, decorate, actions = '', partial = view.historyData.partial} = {}) {
+  paintHistory(view, messages, {tailComplete = true, decorate, actions = '', keepToolGroups = false,
+    partial = view.historyData.partial} = {}) {
     S.autoOpen = 0; S.markCapped = false;
     const folds = new Map([...view.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
@@ -583,6 +584,22 @@ const SdkUI = {
         && keys.every(key => Object.hasOwn(b, key) && equalContent(a[key], b[key]));
     };
     const equalItems = (a, b) => a?.length === b?.length && a.every((item, i) => equalContent(item, b[i]));
+    // A joined tool run can move under a newly completed turn. Keep a group
+    // the user opened, including the controls of its unchanged tool rows.
+    const openedToolGroups = keepToolGroups
+      ? [...view.history.querySelectorAll('.grp')].filter(group => group._userOpened) : [];
+    const openedGroupIndex = items => openedToolGroups.findIndex(group =>
+      equalContent(group._toolItems?.[0], items[0]));
+    const buildGroup = (items, open) => {
+      const index = openedGroupIndex(items);
+      if (index < 0) return groupNode(items, open);
+      const [previousGroup] = openedToolGroups.splice(index, 1);
+      const group = previousGroup._toolsBuilding ? groupNode(items, open) : previousGroup;
+      if (group === previousGroup) syncGroupNode(group, items, equalContent);
+      group._userOpened = true;
+      group._open();
+      return group;
+    };
     const key = p => p.m || p.g?.[0] || p.turn?.items[0] || 'gap';
     const unchanged = (a, b) => a.m ? equalContent(a.m, b.m)
       : a.g ? !!b.g && equalItems(a.g, b.g) && a.open === b.open
@@ -600,7 +617,14 @@ const SdkUI = {
       const prior = old.get(key(item)) || (previous?.actions === actions ? previous.entries[entries.length] : null);
       let node = prior?.node;
       if (!node || kept.has(node) || node.parentNode !== view.history || !unchanged(prior.plan, item)) {
-        [node] = buildPlan(view.history, [item], before);
+        // An open turn can adopt the group currently at the insertion point.
+        const anchor = item.turn && openedToolGroups.length && before
+          ? view.history.insertBefore(document.createComment(''), before) : null;
+        const keepOpen = item.turn && openedToolGroups.length && !folds.has(String(item.turn.key))
+          && item.turn.plan.some(part => part.g && openedGroupIndex(part.g) >= 0);
+        [node] = buildPlan(view.history, [keepOpen ? {...item, open: true} : item],
+          anchor || before, keepToolGroups ? buildGroup : groupNode);
+        anchor?.remove();
         if (item.m) node._sdkMessage = item.m;
         if (decorate) decorate(node, item.m);
         if (item.turn && folds.has(node.dataset.turnId))
@@ -621,6 +645,7 @@ const SdkUI = {
     for (const node of [...view.history.childNodes]) if (!kept.has(node)) node.remove();
     view.history._sdkPlan = {entries, actions};
     this.syncAssistantBubbles(view);
+    if (keepToolGroups) ConversationUI.refreshToolTails(view.box);
     markMatches(view.history);
     updateMatchNav();
     // History is only part of a snapshot: live tools may still be unpacked.
