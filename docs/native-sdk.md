@@ -75,6 +75,9 @@ created_at）；缺字段的新消息记录后台 `received_at`。stdio 优先�
 历史和实时区相互接续时，有共同身份的过程段保留各自的手动展开状态。
 原生增量让回合重新运行时，已移出折叠段的记录立即恢复正文。验收见
 [折叠与落盘接续](../tests/sdk_turns_browser.py) 和 [原生增量恢复](../tests/presentation_browser.py)。
+原生实时工具组按稳定身份原位更新。Droid 的折叠工具组只构建可见的尾调用，
+其他调用在展开时分批构建，尾调用交接保留参数等手动展开状态。
+[实时工具组回归](../tests/sdk_progress_browser.py)覆盖长工具组追加、拆分、合并和草稿编辑。
 
 DELTA（BUG-20261121-111133-589aa4）：八种 SDK 共用回合进度底栏。Claude、CodeBuddy
 使用原生流式内容块，Grok 和 Kiro 使用 ACP 的思考／回复增量，Droid 使用正文／思考

@@ -411,9 +411,11 @@ const NativeSdkView = {
     this.pendingSnapshot = null;
     if (!this.current(pending.generation)) return;
     this.seq = pending.seq ?? this.seq;
-    this.lastSnapshotAt = performance.now();
     measureBrowserWork('native.snapshot', () => this.applySnapshot(pending.raw || {}),
       {source: this.uid.split(':')[0], items: pending.raw?.items?.length || 0});
+    // Time the gap from the end of the paint. An expensive paint must still
+    // yield, even if an entire frame elapsed before the next SSE event.
+    this.lastSnapshotAt = performance.now();
   },
 
   async start(generation, reconnecting = false, observing = false) {
@@ -537,14 +539,14 @@ const NativeSdkView = {
         if (!nextRaw.running) {
           this.clearPendingSnapshot();
           this.seq = packet.seq ?? this.seq;
-          this.lastSnapshotAt = now;
           measureBrowserWork('native.snapshot', () => this.applySnapshot(nextRaw),
             {source: this.uid.split(':')[0], items: nextRaw.items?.length || 0});
+          this.lastSnapshotAt = performance.now();
         } else if (!this.snapshotTimer && now - (this.lastSnapshotAt || 0) >= 16) {
           this.seq = packet.seq ?? this.seq;
-          this.lastSnapshotAt = now;
           measureBrowserWork('native.snapshot', () => this.applySnapshot(nextRaw),
             {source: this.uid.split(':')[0], items: nextRaw.items?.length || 0});
+          this.lastSnapshotAt = performance.now();
         } else {
           this.pendingSnapshot = {generation, seq: packet.seq, raw: nextRaw};
           if (!this.snapshotTimer) {
@@ -779,12 +781,13 @@ const NativeSdkView = {
       return;
     }
     const display = this.snapshotPresentation(raw);
-    const missing = display.rawItems.filter(item => !display.hidden.has(String(item?.id))
-      && !this.nodes.has(String(item?.id)));
+    const source = this.uid.split(':')[0];
+    const missing = display.rawItems.filter((item, index) => !display.hidden.has(String(item?.id))
+      && !this.nodes.has(String(item?.id))
+      && !(source === 'droid' && isGroupableTool(display.messages[index])));
     if (missing.length < 80) { this.applySnapshotNow(raw, null, display); return; }
     const job = {generation: this.generation, raw, latest: null, nodes: new Map(), index: 0, timer: 0};
     this.snapshotBuild = job;
-    const source = this.uid.split(':')[0];
     const prepare = () => {
       if (this.snapshotBuild !== job || !this.current(job.generation)) return;
       measureBrowserWork('native.prepare', () => {
@@ -798,7 +801,11 @@ const NativeSdkView = {
       if (job.index < missing.length) { job.timer = setTimeout(prepare, 0); return; }
       this.snapshotBuild = null;
       measureBrowserWork('native.commit', () => this.applySnapshotNow(job.raw, job.nodes, display), {source});
-      if (job.latest) this.applySnapshot(job.latest);
+      this.lastSnapshotAt = performance.now();
+      if (job.latest && !this.pendingSnapshot) {
+        this.pendingSnapshot = {generation:job.generation, raw:job.latest};
+        this.snapshotTimer = setTimeout(() => this.flushPendingSnapshot(), 16);
+      }
     };
     job.timer = setTimeout(prepare, 0);
   },
@@ -890,7 +897,6 @@ const NativeSdkView = {
       SdkUI.syncAssistantBubbles(this);
       if (updatedAny) updateMatchNav();
     } else {
-      SdkUI.ungroupTools(this);
       const ids = new Set();
       for (let i = 0; i < mappedItems.length; i++) {
         const item = mappedItems[i], rawItem = filteredRaw[i];
@@ -926,7 +932,7 @@ const NativeSdkView = {
             continue;
           }
         }
-        const toolState = item.role === 'tool' ? ConversationUI.toolState(old) : null;
+        const toolState = item.role === 'tool' ? old?._sdkSavedToolState || ConversationUI.toolState(old) : null;
         const ready = prepared?.get(rawItem);
         const create = () => {
           const node = ready && ready.ts === item.ts ? ready.node : msgNode(item);
@@ -942,8 +948,36 @@ const NativeSdkView = {
             if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
           }
           NativeSdkControls.decorate(this,node,item);
-          ConversationUI.restoreToolState(node, toolState);
           return node;
+        };
+        const createVisible = () => {
+          if (source !== 'droid' || !isGroupableTool(item)) {
+            const node = create();
+            ConversationUI.restoreToolState(node, toolState);
+            return node;
+          }
+          const stub = el('div', 'msg sdk-tool-placeholder');
+          stub.dataset.sdkItem = id;
+          stub.dataset.role = item.role;
+          stub._sdkMessage = stub._sdkToolMessage = item;
+          stub._sdkRawItem = rawItem; stub._sdkItemTs = item.ts;
+          stub._sdkSavedToolState = toolState;
+          stub._sdkMaterializeTool = () => {
+            if (this.nodes.get(id) !== stub) return null;
+            const rendered = create();
+            rendered._sdkReleaseToolBody = () => {
+              if (this.nodes.get(id) !== rendered) return;
+              // Preserve disclosures even when a newer tool takes over the live tail.
+              stub._sdkSavedToolState = ConversationUI.toolState(rendered);
+              rendered.replaceWith(stub);
+              this.nodes.set(id, stub);
+            };
+            ConversationUI.restoreToolState(rendered, stub._sdkSavedToolState);
+            stub.replaceWith(rendered);
+            this.nodes.set(id, rendered);
+            return rendered;
+          };
+          return stub;
         };
         let node;
         if (hidden.has(id)) {
@@ -954,17 +988,16 @@ const NativeSdkView = {
           node._sdkMessage = item;
           node._sdkMaterialize = () => {
             if (this.nodes.get(id) !== node) return;
-            const rendered = create();
+            const rendered = createVisible();
             node.replaceWith(rendered);
             this.nodes.set(id, rendered);
           };
-        } else node = create();
-        if (old) old.replaceWith(node); else this.live.append(node);
+        } else node = createVisible();
+        if (old) old.replaceWith(node);
         this.nodes.set(id, node);
       }
       for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
       SdkUI.foldLiveTurns(this, this.items, display.turns());
-      SdkUI.groupTools(this);
       SdkUI.syncAssistantBubbles(this);
       this.renderedItemIds = mappedItems.map(item => String(item.id));
       this.renderedTailComplete = tailComplete;

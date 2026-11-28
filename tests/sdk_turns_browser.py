@@ -178,7 +178,14 @@ def exercise(browser, base, source, events, screenshots, label, baseline=False):
         assert page.evaluate('historyProbe === document.querySelector(".sdk-history .msg")'), name
         if source != 'codex':
             expect(tool.locator('.tool-args')).to_be_visible()
-            expect(page.locator('[data-sdk-item="tool-3-7"] .tool-toggle')).to_have_attribute('aria-expanded', 'false')
+            previous_tail = page.locator('[data-sdk-item="tool-3-7"]')
+            if source == 'droid':
+                expect(previous_tail).to_have_class(re.compile(r'\bsdk-tool-placeholder\b'))
+                tail_group = previous_tail.locator('xpath=..').locator(':scope > .group-preview .fold-toggle')
+                tail_group.click()
+            expect(previous_tail.locator('.tool-toggle')).to_have_attribute('aria-expanded', 'false')
+            if source == 'droid':
+                tail_group.click()
             expect(page.locator('[data-sdk-item="new-tool"] .tool-out')).to_be_visible()
             capture('tool-expanded')
             assert page.evaluate("window.turnProbe === document.querySelector('[data-sdk-item=\"think-3-7\"]')")

@@ -455,12 +455,16 @@ const SdkUI = {
     }
   },
 
-  ungroupTools(view) {
+  initToolGroups(view) {
     const identity = `${view.uid}:${view.agent || ''}`;
     if (view.toolGroupIdentity !== identity) {
       view.toolGroupIdentity = identity; view.toolGroupChoices = new Map();
       view.toolGroupNodes = new Map();
     }
+  },
+
+  ungroupTools(view) {
+    this.initToolGroups(view);
     // A snapshot can reconcile history after already unpacking the live tools.
     // Keep the saved groups through that nested pass until grouping commits.
     view.toolGroupNodes ||= new Map();
@@ -484,13 +488,7 @@ const SdkUI = {
           const running = view.running ?? (view.turn?.status === 'inProgress');
           const previous = view.toolGroupNodes?.get(key);
           const group = previous || groupNode(items, !!running, run);
-          if (previous) {
-            const currentRun = new Set(run);
-            for (const stale of [...previous.querySelectorAll(':scope > [data-sdk-item]')]) {
-              if (!currentRun.has(stale)) stale.remove();
-            }
-            group._syncExternalTools(items, run);
-          }
+          if (previous) group._syncExternalTools(items, run);
           group.classList.add('sdk-tool-group');
           group.dataset.toolGroupKey = key;
           parent.insertBefore(group, anchor);
@@ -506,9 +504,7 @@ const SdkUI = {
       flush();
     }
     view.toolGroupNodes = retained;
-    ConversationUI.refreshToolTails(view.box);
-    markMatches(view.live);
-    updateMatchNav();
+    this.refreshLiveTools(view);
   },
 
   processKey(turn) {
@@ -524,6 +520,44 @@ const SdkUI = {
 
   liveTurnKey(turn) {
     return JSON.stringify([turn.key, String(turn.items[0].id)]);
+  },
+
+  placeLiveTools(view, parent, nodes, previous, groups) {
+    let before = parent.firstElementChild;
+    const place = node => {
+      if (node === before) before = before.nextElementSibling;
+      else parent.insertBefore(node, before);
+    };
+    const groupable = node => !node._sdkMaterialize && node._sdkToolMessage
+      && isGroupableTool(node._sdkToolMessage);
+    for (let start = 0; start < nodes.length;) {
+      if (!groupable(nodes[start])) {
+        place(nodes[start++]);
+        continue;
+      }
+      let end = start + 1;
+      while (end < nodes.length && groupable(nodes[end])) end++;
+      if (end - start < GROUP_MIN) {
+        while (start < end) place(nodes[start++]);
+        continue;
+      }
+      const run = nodes.slice(start, end), key = run[0].dataset.sdkItem;
+      const items = run.map(node => node._sdkToolMessage);
+      const earlier = previous.get(key);
+      // Building or updating a group can move the current insertion anchor.
+      if (run.includes(before)) {
+        const members = new Set(run);
+        while (members.has(before)) before = before.nextElementSibling;
+      }
+      const group = earlier || groupNode(items, view.running, run);
+      if (earlier) group._syncExternalTools(items, run);
+      group.classList.add('sdk-tool-group');
+      group.dataset.toolGroupKey = key;
+      if (!earlier && view.toolGroupChoices.get(key)) { group._userOpened = true; group._open(); }
+      place(group);
+      groups.set(key, group);
+      start = end;
+    }
   },
 
   processChoiceKeys(view, plan) {
@@ -566,14 +600,10 @@ const SdkUI = {
   foldLiveTurns(view, messages, {plan, choices: choiceKeys}) {
     // Native snapshots can replay the whole session. Apply the same completed
     // turn boundaries as history, but retain the streaming message/tool nodes.
+    this.initToolGroups(view);
     const previous = view.liveTurns, groups = new Map(), membership = new Map();
-    const place = (parent, nodes) => {
-      let before = parent.firstElementChild;
-      for (const node of nodes) {
-        if (node === before) before = before.nextElementSibling;
-        else parent.insertBefore(node, before);
-      }
-    };
+    const previousTools = view.toolGroupNodes, tools = new Map();
+    const nodesFor = ids => ids.map(id => view.nodes.get(id)).filter(Boolean);
     for (const {turn, open} of plan) {
       if (!turn) continue;
       const ids = turn.items.map(item => String(item.id));
@@ -587,15 +617,27 @@ const SdkUI = {
         // expansion without creating a second copy from the nested plan.
         node = turnProcessNode({...turn, summary, plan: [], materialize: () => {
           const generation = view.generation;
-          let index = 0;
+          let index = 0, changed = false;
           const paint = () => {
             if (view.generation !== generation || !node.isConnected) return;
             node._sdkMaterialized = true;
             const started = performance.now();
-            while (index < ids.length && performance.now() - started < 8)
-              view.nodes.get(ids[index++])?._sdkMaterialize?.();
+            while (index < ids.length && performance.now() - started < 8) {
+              const deferred = view.nodes.get(ids[index++])?._sdkMaterialize;
+              if (deferred) { deferred(); changed = true; }
+            }
             if (index < ids.length) setTimeout(paint, 0);
-            else { SdkUI.groupTools(view); SdkUI.syncAssistantBubbles(view); }
+            else if (changed) {
+              const body = node.querySelector('.turn-process-body');
+              const prior = new Map([...body.children].filter(child => child.dataset.toolGroupKey)
+                .map(child => [child.dataset.toolGroupKey, child]));
+              const next = new Map();
+              this.placeLiveTools(view, body, nodesFor(ids), prior, next);
+              this.retainLiveTools(view, prior, next);
+              for (const [key, group] of next) view.toolGroupNodes.set(key, group);
+              this.refreshLiveTools(view);
+              this.syncAssistantBubbles(view);
+            }
           };
           // The fold node is placed after construction, including initially-open turns.
           queueMicrotask(paint);
@@ -604,7 +646,7 @@ const SdkUI = {
       }
       this.rememberProcessChoice(view, node, choices);
       node._turnItems = turn.items;
-      place(node.querySelector('.turn-process-body'), ids.map(id => view.nodes.get(id)).filter(Boolean));
+      this.placeLiveTools(view, node.querySelector('.turn-process-body'), nodesFor(ids), previousTools, tools);
       groups.set(key, node);
       for (const id of ids) membership.set(id, node);
     }
@@ -613,9 +655,27 @@ const SdkUI = {
       const id = String(message.id), node = membership.get(id) || view.nodes.get(id);
       if (node && !seen.has(node)) { ordered.push(node); seen.add(node); }
     }
-    place(view.live, ordered);
+    this.placeLiveTools(view, view.live, ordered, previousTools, tools);
     for (const [key, node] of previous) if (groups.get(key) !== node) node.remove();
     view.liveTurns = groups;
+    this.retainLiveTools(view, previousTools, tools);
+    view.toolGroupNodes = tools;
+    this.refreshLiveTools(view);
+  },
+
+  retainLiveTools(view, previous, next) {
+    for (const [key, group] of previous) {
+      if (next.has(key)) continue;
+      view.toolGroupChoices.set(key, !!group._userOpened);
+      group.remove();
+      view.toolGroupNodes.delete(key);
+    }
+  },
+
+  refreshLiveTools(view) {
+    ConversationUI.refreshToolTails(view.box);
+    markMatches(view.live);
+    updateMatchNav();
   },
 
   paintHistory(view, messages, {tailComplete = true, decorate, actions = '', keepToolGroups = false,

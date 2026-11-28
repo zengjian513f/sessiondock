@@ -9858,12 +9858,30 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
   const peek = preview.querySelector('.peek');
   peek.classList.add('group-peek');
   n._toolsMaterialized = !!externalNodes;
-  if (externalNodes) n.append(...externalNodes);
+  const deferredExternalTools = externalNodes?.some(node => node._sdkMaterializeTool || node._sdkReleaseToolBody);
+  if (externalNodes) for (const node of externalNodes) {
+    node.classList.remove('tool-active-tail');
+    n.appendChild(node);
+  }
   const fold = () => {
     n.classList.add('folded');
     toggle.setAttribute('aria-expanded', 'false');
     toggle.title = '展开工具调用组';
     toggle.setAttribute('aria-label', toggle.title);
+  };
+  let externalPaint = 0, externalOpened = false, externalTail = null;
+  const paintExternalTools = () => {
+    if (externalPaint || !n.querySelector(':scope > .sdk-tool-placeholder')) return;
+    const paint = () => {
+      externalPaint = 0;
+      if (!n.isConnected || n.classList.contains('folded')) return;
+      const started = performance.now();
+      for (const stub of n.querySelectorAll(':scope > .sdk-tool-placeholder')) {
+        stub._sdkMaterializeTool();
+        if (performance.now() - started >= 8) { paintExternalTools(); break; }
+      }
+    };
+    externalPaint = setTimeout(paint, 0);
   };
   const open = () => {
     if (!n._toolsMaterialized) {
@@ -9897,6 +9915,7 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
       paint();
     }
     n.classList.remove('folded');
+    if (deferredExternalTools) { externalOpened = true; paintExternalTools(); }
     for (const child of n.children) resumeToolSyntax(child);
     toggle.setAttribute('aria-expanded', 'true');
     toggle.title = '收起工具调用组';
@@ -9917,21 +9936,48 @@ function groupNode(items, initiallyOpen = false, externalNodes = null) {
       }
       n._activeItem = active ? last : null;
     }
-    const children = [...n.children].filter(child => child.matches('.tool-entry, [data-sdk-item]'));
-    children.forEach((child, index) => {
-      const tail = !!active && index === children.length - 1;
-      child.classList.toggle('tool-active-tail', tail);
-      if (tail || !n.classList.contains('folded')) resumeToolSyntax(child);
-    });
+    if (deferredExternalTools) {
+      let tail = active ? n.lastElementChild : null;
+      if (tail && tail.dataset.sdkItem === undefined) tail = tail.previousElementSibling;
+      if (externalTail && externalTail !== tail && externalTail.parentElement === n) {
+        externalTail.classList.remove('tool-active-tail');
+        if (!externalOpened) externalTail._sdkReleaseToolBody?.();
+      }
+      externalTail = tail?._sdkMaterializeTool?.() || tail;
+      externalTail?.classList.add('tool-active-tail');
+      if (externalTail) resumeToolSyntax(externalTail);
+      if (!n.classList.contains('folded')) paintExternalTools();
+    } else {
+      const children = [...n.children].filter(child => child.matches('.tool-entry, [data-sdk-item]'));
+      children.forEach((child, index) => {
+        const tail = !!active && index === children.length - 1;
+        child.classList.toggle('tool-active-tail', tail);
+        if (tail || !n.classList.contains('folded')) resumeToolSyntax(child);
+      });
+    }
     n.classList.toggle('has-active-tool', !!active);
     paintGroupPreview(peek, active ? all.slice(0, -1) : all);
     preview.hidden = active && all.length === 1;
   };
   n._syncExternalTools = (items, nodes) => {
+    let changed = n._toolItems.length !== items.length || n._toolItems.some((item, index) => item !== items[index]);
     n._toolItems = items;
     const action = n.querySelector(':scope > .disclosure');
-    for (const node of nodes) n.insertBefore(node, action);
-    n._refreshToolTail();
+    const members = new Set(nodes);
+    for (const child of [...n.children]) {
+      if (child.dataset.sdkItem !== undefined && !members.has(child)) { child.remove(); changed = true; }
+    }
+    let before = action;
+    for (let index = nodes.length - 1; index >= 0; index--) {
+      const node = nodes[index];
+      if (node.parentElement !== n || node.nextElementSibling !== before) {
+        if (node.parentElement !== n) node.classList.remove('tool-active-tail');
+        n.insertBefore(node, before);
+        changed = true;
+      }
+      before = node;
+    }
+    if (changed) n._refreshToolTail();
   };
   n._setTailAtEnd = enabled => {
     if (n._tailAtEnd === enabled) return;

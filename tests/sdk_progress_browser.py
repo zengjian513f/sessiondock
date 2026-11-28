@@ -206,6 +206,106 @@ def exercise(browser, base, source, label, screenshots):
             print(f'PASS {label} {source} {width}/{theme}: phase, counts, approval, reload, completion', flush=True)
 
 
+def exercise_large_tool_run(browser, base, label, screenshots):
+    with snapshots() as events:
+        page = browser.new_page(viewport={'width': 1280, 'height': 900}, color_scheme='light',
+                                service_workers='block')
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.route('**/api/native-sdk/open', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
+        page.route('**/api/native-sdk/events?*', lambda r: r.continue_(url=events.url))
+        for endpoint in ('models', 'usage', 'agents'):
+            page.route(f'**/api/native-sdk/{endpoint}*', lambda r: r.fulfill(json={'ok': True, 'raw': {}}))
+
+        def tool(index):
+            return {'id': f'large-read-{index}', 'role': 'tool', 'name': 'Read', 'status': 'completed',
+                    'summary': f'Read record-{index}.md',
+                    'input': {'file_path': f'/synthetic/record-{index}.md'},
+                    'result': {'role': 'tool_result', 'text': f'Output for synthetic record {index}'}}
+
+        initial = [{'role': 'user', 'id': 'large-prompt', 'text': 'Read the synthetic records'},
+                   *(tool(index) for index in range(920))]
+        raw = {'running': True, 'requests': [], 'items': initial, 'capabilities': {'interrupt': True}}
+        events.packet = {'type': 'snapshot', 'seq': 0, 'snapshot_version': 0, 'raw': raw}
+        page.goto(base, wait_until='domcontentloaded')
+        page.locator('#side .item[data-uid^="droid:"]').first.click()
+        if not page.locator('#sdk-input').is_visible():
+            page.locator('#a-sdk').click()
+        start_sdk(page)
+
+        live = page.locator('.sdk-live')
+        group = live.locator(':scope > .sdk-tool-group')
+        expect(group.locator(':scope > [data-sdk-item]')).to_have_count(920)
+        expect(group.locator(':scope > .tool-msg')).to_have_count(1)
+        folded_nodes = live.locator('*').count()
+        tail_args = group.locator('[data-sdk-item="large-read-919"] .tool-toggle')
+        tail_args.click()
+        expect(tail_args).to_have_attribute('aria-expanded', 'true')
+
+        def splice(version, start, count, values):
+            events.publish({'type': 'snapshot_delta', 'seq': version, 'snapshot_base': version - 1,
+                            'snapshot_version': version, 'raw': {'kind': 'object', 'remove': [],
+                                'fields': [['items', {'kind': 'splice', 'start': start,
+                                                     'delete': count, 'values': values}]]}})
+
+        splice(1, len(initial), 0, [tool(920)])
+        expect(group.locator('.tool-active-tail')).to_contain_text('synthetic record 920')
+        expect(group.locator(':scope > .tool-msg')).to_have_count(1)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-droid-large-folded.png'))
+        first = group.locator('[data-sdk-item="large-read-0"]')
+        group.locator('.group-preview .fold-toggle').click()
+        expect(first).to_contain_text('synthetic record 0')
+        expect(tail_args).to_have_attribute('aria-expanded', 'true')
+        expect(group.locator(':scope > .tool-msg')).to_have_count(921)
+        open_nodes = live.locator('*').count()
+        draft = page.locator('#sdk-input')
+        draft.click()
+        draft.press('ControlOrMeta+a')
+        draft.press_sequentially('draft kept while tools update')
+        page.evaluate("""() => {
+          const live = NativeSdkView.live;
+          const group = live.querySelector('.sdk-tool-group');
+          const first = group.querySelector('[data-sdk-item="large-read-0"]');
+          window.detached = 0;
+          window.observeLargeRun = new MutationObserver(records => {
+            for (const record of records)
+              for (const node of record.removedNodes)
+                if (node === group || node === first) window.detached++;
+          });
+          observeLargeRun.observe(live, {childList:true});
+          observeLargeRun.observe(group, {childList:true});
+        }""")
+
+        splice(2, len(initial), 1, [tool(921), {'role': 'thinking', 'id': 'between-reads',
+                                               'text': 'Next batch of synthetic reads'},
+                                    tool(922), tool(923), tool(924)])
+        expect(live.locator(':scope > .sdk-tool-group')).to_have_count(2)
+        expect(live.locator('[data-sdk-item="large-read-920"]')).to_have_count(0)
+        expect(live.locator('[data-sdk-item="between-reads"]')).to_contain_text('Next batch')
+        expect(first).to_be_visible()
+        expect(draft).to_be_focused()
+        expect(draft).to_have_value('draft kept while tools update')
+        assert page.evaluate('window.detached') == 0, 'retained tool group or first tool was detached'
+        page.evaluate('observeLargeRun.disconnect()')
+
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-droid-large-wide.png'))
+        splice(3, len(initial) + 1, 1, [])
+        expect(group.locator(':scope > [data-sdk-item]')).to_have_count(924)
+        page.set_viewport_size({'width': 390, 'height': 900})
+        page.emulate_media(color_scheme='dark')
+        page.evaluate('showMobileDetail()')
+        group.locator('.group-preview .fold-toggle').click()
+        expect(first).to_be_hidden()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{label}-droid-large-narrow.png'))
+        assert not errors, errors
+        page.close()
+        print(f'PASS {label} Droid: 920-tool run retained through append, split and rejoin '
+              f'({folded_nodes} folded / {open_nodes} expanded live DOM elements)', flush=True)
+
+
 def native_reply(browser, base, source, sid=None, screenshot=None):
     context = browser.new_context(viewport={'width': 1280, 'height': 760}, service_workers='block')
     if sid:
@@ -261,6 +361,8 @@ def main():
             root.mkdir()
             with provider(source, root, args.binary) as (base, peer, extra):
                 exercise(browser, base, source, 'node', args.screenshots)
+                if source == 'droid':
+                    exercise_large_tool_run(browser, base, 'node', args.screenshots)
                 hub_root = root / 'hub'
                 hub_root.mkdir()
                 hub = Hub(hub_binary, hub_root, [
@@ -270,6 +372,8 @@ def main():
                 try:
                     hub_base = f'http://127.0.0.1:{hub.port}'
                     exercise(browser, hub_base, source, 'hub', args.screenshots)
+                    if source == 'droid':
+                        exercise_large_tool_run(browser, hub_base, 'hub', args.screenshots)
                     if source == 'opencode':
                         child = 'ses_sessiondock_sdk_child'
                         peer.create(child, str(peer.cwd))
