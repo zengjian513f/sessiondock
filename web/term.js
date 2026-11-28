@@ -2234,7 +2234,7 @@ async function openPendingSession(info, {historyMode = 'push'} = {}) {
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
   const finalScreen = pending.source === 'shell' && pending.final_screen && !running;
-  const noChat = typeof sessionHasChatView === 'function' && !sessionHasChatView(pending.source);
+  const noChat = !sessionHasChatView(pending.source);
   // 已结束但留有最终画面的 SSH 会话：控制台面板里只读显示它。
   if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false || noChat)
       && (running || retained || pending.final_screen))
@@ -2321,7 +2321,7 @@ async function resolveNewSession(info) {
     }
     // Following a CLI's first native record keeps the user's current surface.
     // Runtime discovery must not turn its composer into a fullscreen terminal.
-    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(linked.uid) : true;
+    const hasChat = sessionHasChatView(linked.uid);
     SdkView.selectMode(linked.uid, null, reopen ? 'terminal' : (hasChat ? 'chat' : defaultSessionView(linked.uid)));
     T.uid = linked.uid;
     await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
@@ -2515,7 +2515,7 @@ function renderTakeoverBtn() {
   const contentView = SessionContentView.sync();
   const sdk = $('#a-sdk');
   if (sdk) sdk.hidden = !SdkView.available(S.sel, S.agent);
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(S.sel) : sessionSourceOf(S.sel) !== 'kiro';
+  const hasChat = sessionHasChatView(S.sel);
   const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || !hasChat || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
   const terminalSelected = terminalVisible || (!hasChat && !contentView);
   b.innerHTML = uiIcon('terminal');
@@ -4996,7 +4996,7 @@ function renderComposer() {
     return;
   }
   const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(S.sel) : sessionSourceOf(S.sel) !== 'kiro';
+  const hasChat = sessionHasChatView(S.sel);
   const enabled=(conversationSendEnabled() || shell) && (hasChat || shell);
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');

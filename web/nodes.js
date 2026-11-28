@@ -92,7 +92,7 @@ function nativeSdkAvailableFor(sourceOrUid, agent = null) {
 function syncSessionViewBar(uid = typeof S !== 'undefined' ? S.sel : '') {
   const chat = document.querySelector('#a-chat');
   if (chat) {
-    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const hasChat = sessionHasChatView(uid);
     chat.hidden = !hasChat;
     chat.style.display = hasChat ? '' : 'none';
     if (!hasChat) {
@@ -334,7 +334,7 @@ function bindConsoleButton(button, uid, agent = null) {
   const group = button.closest('.session-views');
   if (group) {
     const chat = group.querySelector('#a-chat');
-    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const hasChat = sessionHasChatView(uid);
     if (chat) {
       chat.hidden = !hasChat;
       chat.style.display = hasChat ? '' : 'none';

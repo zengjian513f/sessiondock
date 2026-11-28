@@ -1527,12 +1527,12 @@ function nativeSdkMessage(item, source) {
 function savedSessionView(uid, agent) {
   const key = viewKey(uid, agent);
   const saved = store.get('sessionViews', {})?.[key];
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+  const hasChat = sessionHasChatView(uid);
   if (!hasChat) return ['sdk', 'terminal'].includes(saved) ? saved : null;
   return ['sdk', 'chat', 'terminal'].includes(saved) ? saved : null;
 }
 function rememberSessionView(uid, agent, mode) {
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+  const hasChat = sessionHasChatView(uid);
   const normalized = !hasChat && mode === 'chat' ? defaultSessionView(uid) : mode;
   const saved = store.get('sessionViews', {}) || {};
   saved[viewKey(uid, agent)] = normalized;
@@ -1540,7 +1540,7 @@ function rememberSessionView(uid, agent, mode) {
 }
 function defaultSessionView(uid) {
   const source = typeof sessionSourceOf === 'function' ? sessionSourceOf(uid) : String(uid || '').split(':')[0];
-  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(source) : source !== 'kiro';
+  const hasChat = sessionHasChatView(source);
   if (!hasChat) {
     if (typeof sessionHasRunningSdk === 'function' && sessionHasRunningSdk(uid)) return 'sdk';
     if (typeof findTermForSession === 'function' && findTermForSession(uid)) return 'terminal';
@@ -1590,7 +1590,7 @@ const SdkView = new Proxy({
     return this.selection?.key === viewKey(uid, agent) ? this.selection.mode : null;
   },
   selectMode(uid, agent, mode) {
-    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const hasChat = sessionHasChatView(uid);
     const nextMode = !hasChat && mode === 'chat' ? defaultSessionView(uid) : mode;
     const key = viewKey(uid, agent);
     this.views.set(key, nextMode);
@@ -1600,7 +1600,7 @@ const SdkView = new Proxy({
   async selectFor(uid, agent) {
     this.selectController?.abort();
     this.selectController = null;
-    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const hasChat = sessionHasChatView(uid);
     const key = viewKey(uid, agent);
     if (agent || (!this.available(uid, agent) && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]))) {
       if (!hasChat && !agent) {

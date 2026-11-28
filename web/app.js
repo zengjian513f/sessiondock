@@ -14012,7 +14012,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   }
   async function refreshPlan(executing = false) {
     if (!dialog.isConnected || !tree || (!executing && busy) || planning || checkingDirectories || uncertain || blockedReason()) return;
-    const fresh = false, selectedMode = 'move', version = selectionVersion, destination = target.value;
+    const version = selectionVersion, destination = target.value;
     const chosen = tree.sessions.filter(selectable).flatMap(member => member.member_uids.filter(uid => selectedUids.has(uid)));
     if (!chosen.length) {
       const previous = plan;
@@ -14028,10 +14028,10 @@ async function cloneSessionGroup(uid, resumed = null) {
     status.textContent = '正在读取清单…';
     paintProgress({phase:'planning'});
     try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode, selected_uids:chosen, target_node:destination,
+      const next = await request('api/session/clone/plan', {uid, new_ids:false, mode:'move', selected_uids:chosen, target_node:destination,
         ...(previous ? {previous_operation_id:previous.operation_id} : {})});
-      if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
-      if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
+      if (next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
+      if (next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
       if (!dialog.isConnected || version !== selectionVersion || destination !== target.value) {
         await discardPreview(next); return false;
