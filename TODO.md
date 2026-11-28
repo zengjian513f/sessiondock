@@ -30,6 +30,11 @@
 
 ## 会话与 SDK 调查
 
+- [ ] 修复 Codex 多代 rollout 回迁时对空原生索引行的识别。同一 SID 的多个历史路径在
+  `returning_placeholders` 中只保留一个候选，旧代路径有时会覆盖当前代，回迁误报
+  `move_conflict`。合成 Chromium 场景已复现。修正时继续保护带标题或目标端原生记录的行。
+  见[迁移交接合同](docs/session-move.md#当前移动交接与清理)。
+
 - [ ] 核对 `session_global_actions_browser.py` 刷新后侧栏仍应收起的断言。
   修复前基线与目录后退修复版均失败。
 
