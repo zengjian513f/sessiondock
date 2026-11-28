@@ -11,62 +11,76 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 250 files, 104424 lines.
+`crates/sessiondock/src`: 332 files, 143089 lines.
 
+- `agent_usage.rs` (243 lines)
 - `agy_sdk/`
-  - `mod.rs` (1137 lines)
-    - mods: `transcript`, `transport`
-  - `transcript.rs` (178 lines)
-  - `transport.rs` (719 lines)
+  - `actions.rs` (307 lines)
+  - `context.rs` (112 lines)
+  - `control.rs` (341 lines)
+  - `control_log.rs` (118 lines)
+  - `echo.rs` (187 lines)
+  - `mod.rs` (1826 lines)
+    - mods: `actions`, `context`, `control`, `control_log`, `echo`, `transcript`, `transport`
+  - `transcript.rs` (512 lines)
+  - `transport.rs` (799 lines)
 - `api/`
+  - `agent_usage.rs` (23 lines)
   - `audit.rs` (79 lines)
-  - `bug_report.rs` (825 lines)
-  - `bug_report_sdk.rs` (176 lines)
+  - `bug_report.rs` (839 lines)
+  - `bug_report_sdk.rs` (229 lines)
   - `cleanup.rs` (30 lines)
-  - `codex_sdk.rs` (424 lines)
-  - `codex_sdk_actions.rs` (170 lines)
+  - `codex_sdk.rs` (564 lines)
+  - `codex_sdk_actions.rs` (213 lines)
   - `codex_sdk_controls.rs` (61 lines)
-  - `conversation.rs` (738 lines)
-  - `events.rs` (37 lines)
-  - `files.rs` (522 lines)
+  - `conversation.rs` (736 lines)
+  - `events.rs` (23 lines)
+  - `files.rs` (561 lines)
   - `final_screen.rs` (54 lines)
-  - `health.rs` (51 lines)
-  - `hub.rs` (1139 lines)
-  - `lifecycle.rs` (1366 lines)
+  - `health.rs` (46 lines)
+  - `hub.rs` (1514 lines)
+  - `lifecycle.rs` (1523 lines)
   - `media.rs` (150 lines)
-  - `metadata.rs` (542 lines)
-  - `mod.rs` (463 lines)
-    - mods: `audit`, `bug_report`, `bug_report_sdk`, `cleanup`, `codex_sdk`, `codex_sdk_actions`, `codex_sdk_controls`, `conversation`, `events`, `files`, `final_screen`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `native_sdk`, `node_auth`, `process_links`, `quotas`, `read`, `relations`, `runtime`, `search`, `shell_env`, `terminal`, `transfer`, `trash`, `trash_tree`
-  - `native_sdk.rs` (417 lines)
+  - `metadata.rs` (558 lines)
+  - `mod.rs` (439 lines)
+    - mods: `agent_usage`, `audit`, `bug_report`, `bug_report_sdk`, `cleanup`, `codex_sdk`, `codex_sdk_actions`, `codex_sdk_controls`, `conversation`, `events`, `files`, `final_screen`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `native_sdk`, `node_auth`, `process_links`, `quotas`, `read`, `relations`, `runtime`, `sdk_resume`, `search`, `shell_env`, `syntax`, `terminal`, `transfer`, `trash`, `trash_tree`, `voice`
+  - `native_sdk.rs` (645 lines)
+    - mods: `snapshot_delta`
+  - `native_sdk/`
+    - `snapshot_delta.rs` (144 lines)
   - `node_auth.rs` (103 lines)
-  - `process_links.rs` (161 lines)
-  - `quotas.rs` (22 lines)
-  - `read.rs` (787 lines)
-  - `relations.rs` (264 lines)
-  - `runtime.rs` (562 lines)
+  - `process_links.rs` (176 lines)
+  - `quotas.rs` (25 lines)
+  - `read.rs` (792 lines)
+  - `relations.rs` (276 lines)
+  - `runtime.rs` (687 lines)
+  - `sdk_resume.rs` (148 lines)
   - `search.rs` (183 lines)
   - `shell_env.rs` (39 lines)
-  - `terminal.rs` (1214 lines)
-  - `transfer.rs` (975 lines)
-    - mods: `scp`
+  - `syntax.rs` (18 lines)
+  - `terminal.rs` (1313 lines)
+  - `transfer.rs` (1151 lines)
+    - mods: `fence`, `scp`
   - `transfer/`
+    - `fence.rs` (215 lines)
     - `scp.rs` (152 lines)
-  - `trash.rs` (737 lines)
-  - `trash_tree.rs` (163 lines)
-- `assets.rs` (297 lines)
+  - `trash.rs` (799 lines)
+  - `trash_tree.rs` (165 lines)
+  - `voice.rs` (71 lines)
+- `assets.rs` (300 lines)
 - `audit.rs` (370 lines)
   - mods: `intake`, `query`, `writer`
 - `audit/`
-  - `intake.rs` (265 lines)
-  - `query.rs` (204 lines)
-  - `writer.rs` (465 lines)
+  - `intake.rs` (260 lines)
+  - `query.rs` (201 lines)
+  - `writer.rs` (480 lines)
 - `bin/`
-  - `sessiondock-hub.rs` (204 lines)
-  - `sessiondock-transfer.rs` (146 lines)
+  - `sessiondock-hub.rs` (220 lines)
+  - `sessiondock-transfer.rs` (152 lines)
 - `bridge/`
   - `claude.rs` (430 lines)
   - `codex.rs` (217 lines)
-  - `live.rs` (235 lines)
+  - `live.rs` (255 lines)
   - `menus/`
     - `agy.rs` (314 lines)
     - `claude.rs` (712 lines)
@@ -78,283 +92,373 @@ python3 tests/module_map.py --write
   - `mod.rs` (14 lines)
     - mods: `claude`, `codex`, `live`, `menus`
 - `bug_report/`
-  - `mod.rs` (1053 lines)
+  - `mod.rs` (1076 lines)
     - mods: `worker`
-  - `worker.rs` (466 lines)
+  - `worker.rs` (470 lines)
 - `claude_sdk/`
-  - `actions.rs` (166 lines)
-  - `hosted.rs` (563 lines)
-  - `idle.rs` (60 lines)
-  - `mod.rs` (882 lines)
-    - mods: `actions`, `hosted`, `idle`, `protocol`, `transport`, `usage`
-  - `protocol.rs` (623 lines)
-  - `transport.rs` (464 lines)
-  - `usage.rs` (201 lines)
+  - `actions.rs` (233 lines)
+  - `background.rs` (174 lines)
+  - `hosted.rs` (489 lines)
+  - `mod.rs` (923 lines)
+    - mods: `actions`, `background`, `hosted`, `protocol`, `transport`, `usage`
+  - `protocol.rs` (632 lines)
+  - `transport.rs` (167 lines)
+  - `usage.rs` (110 lines)
 - `cleanup.rs` (133 lines)
+- `codebuddy_sdk/`
+  - `actions.rs` (161 lines)
+  - `background.rs` (208 lines)
+  - `hosted.rs` (541 lines)
+  - `mod.rs` (930 lines)
+    - mods: `actions`, `background`, `hosted`, `protocol`, `transport`, `usage`
+  - `protocol.rs` (557 lines)
+  - `transport.rs` (142 lines)
+  - `usage.rs` (19 lines)
 - `codex_sdk/`
-  - `actions.rs` (87 lines)
-  - `connection.rs` (319 lines)
+  - `actions.rs` (112 lines)
+  - `background.rs` (354 lines)
+  - `capacity.rs` (199 lines)
+  - `channel.rs` (379 lines)
+  - `connection.rs` (607 lines)
   - `controls.rs` (64 lines)
-  - `live.rs` (389 lines)
-  - `mod.rs` (742 lines)
-    - mods: `actions`, `connection`, `controls`, `live`, `observation`, `queue`, `receipts`, `usage`
-  - `observation.rs` (71 lines)
-  - `queue.rs` (401 lines)
-  - `receipts.rs` (191 lines)
-  - `usage.rs` (78 lines)
-- `config.rs` (710 lines)
+  - `creation.rs` (170 lines)
+  - `ledger.rs` (93 lines)
+  - `live.rs` (548 lines)
+  - `managed.rs` (205 lines)
+  - `mod.rs` (1214 lines)
+    - mods: `actions`, `background`, `capacity`, `channel`, `connection`, `controls`, `creation`, `ledger`, `live`, `managed`, `observation`, `providers`, `query`, `queue`, `receipts`, `retention`, `stopping`, `usage`, `websocket`
+  - `observation.rs` (73 lines)
+  - `providers.rs` (224 lines)
+  - `query.rs` (179 lines)
+  - `queue.rs` (604 lines)
+  - `receipts.rs` (164 lines)
+  - `retention.rs` (160 lines)
+  - `stopping.rs` (192 lines)
+  - `usage.rs` (87 lines)
+  - `websocket.rs` (85 lines)
+- `config.rs` (822 lines)
 - `conversation/`
   - `cli_state.rs` (761 lines)
   - `input.rs` (495 lines)
-  - `mod.rs` (1206 lines)
+  - `mod.rs` (1177 lines)
     - mods: `cli_state`, `input`, `paths`, `report_name`, `rewind`, `store`, `uploads`
   - `paths.rs` (73 lines)
   - `report_name.rs` (222 lines)
   - `rewind.rs` (134 lines)
-  - `store.rs` (977 lines)
+  - `store.rs` (950 lines)
+    - mods: `disk`
+  - `store/`
+    - `disk.rs` (134 lines)
   - `uploads.rs` (248 lines)
 - `delivery/`
-  - `driver.rs` (1238 lines)
+  - `driver.rs` (976 lines)
   - `mod.rs` (6 lines)
     - mods: `driver`, `target`
   - `target.rs` (204 lines)
+- `droid_sdk/`
+  - `actions.rs` (198 lines)
+  - `activity.rs` (491 lines)
+  - `hosted.rs` (462 lines)
+  - `mod.rs` (1025 lines)
+    - mods: `actions`, `activity`, `hosted`, `protocol`, `transport`, `writers`
+  - `protocol.rs` (392 lines)
+  - `transport.rs` (172 lines)
+  - `writers.rs` (319 lines)
 - `error.rs` (68 lines)
+- `file_version.rs` (55 lines)
 - `files/`
   - `boundary.rs` (467 lines)
-  - `media.rs` (113 lines)
-  - `mod.rs` (317 lines)
+  - `media.rs` (114 lines)
+  - `mod.rs` (286 lines)
     - mods: `boundary`, `media`, `references`, `response`, `write`
-  - `references.rs` (303 lines)
+  - `references.rs` (277 lines)
   - `response.rs` (519 lines)
-  - `write.rs` (949 lines)
+  - `write.rs` (922 lines)
 - `fingerprint.rs` (126 lines)
 - `grok_sdk/`
-  - `actions.rs` (366 lines)
-  - `idle.rs` (67 lines)
-  - `legacy_transport.rs` (242 lines)
-  - `live.rs` (499 lines)
-  - `mod.rs` (990 lines)
-    - mods: `actions`, `idle`, `live`, `steering`, `transport`
+  - `actions.rs` (425 lines)
+  - `background.rs` (327 lines)
+  - `live.rs` (653 lines)
+  - `mod.rs` (1043 lines)
+    - mods: `actions`, `background`, `live`, `steering`, `transport`
   - `steering.rs` (100 lines)
-  - `transport.rs` (486 lines)
-    - mods: `legacy`
+  - `transport.rs` (472 lines)
 - `hub/`
-  - `aggregate.rs` (948 lines)
-  - `client.rs` (873 lines)
-  - `groups.rs` (143 lines)
+  - `aggregate.rs` (1152 lines)
+  - `client.rs` (1311 lines)
+  - `groups.rs` (195 lines)
   - `identity.rs` (112 lines)
-  - `mod.rs` (35 lines)
-    - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `session_links`, `terminal_transport`, `transfer`, `relations`
-  - `namespace.rs` (322 lines)
-  - `nest.rs` (60 lines)
-  - `process_links.rs` (202 lines)
-  - `proxy.rs` (887 lines)
-  - `registry.rs` (1439 lines)
+  - `mod.rs` (37 lines)
+    - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `session_links`, `terminal_transport`, `transfer`, `relations`, `snapshots`
+  - `namespace.rs` (346 lines)
+  - `nest.rs` (424 lines)
+  - `process_links.rs` (223 lines)
+  - `proxy.rs` (910 lines)
+  - `registry.rs` (1872 lines)
   - `relations.rs` (86 lines)
-  - `resources.rs` (340 lines)
-  - `session_links.rs` (252 lines)
+  - `resources.rs` (317 lines)
+  - `session_links.rs` (297 lines)
+  - `snapshots.rs` (165 lines)
   - `terminal_transport.rs` (193 lines)
-  - `transfer.rs` (1318 lines)
-    - mods: `transport`
+  - `transfer.rs` (1669 lines)
+    - mods: `manifest`, `transport`
   - `transfer/`
+    - `manifest.rs` (81 lines)
     - `transport.rs` (158 lines)
-- `hub_config.rs` (131 lines)
+- `hub_config.rs` (145 lines)
 - `integrations.rs` (37 lines)
 - `json_compat.rs` (69 lines)
-- `lib.rs` (669 lines)
-  - mods: `agy_sdk`, `api`, `assets`, `audit`, `bridge`, `bug_report`, `claude_sdk`, `cleanup`, `codex_sdk`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `grok_sdk`, `hub`, `hub_config`, `integrations`, `json_compat`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `native_sdk`, `observe`, `opencode_sdk`, `polls`, `quota_statusline`, `quotas`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
+- `kiro_sdk/`
+  - `actions.rs` (1133 lines)
+  - `checkpoint.rs` (310 lines)
+  - `live.rs` (2079 lines)
+  - `mod.rs` (945 lines)
+    - mods: `actions`, `checkpoint`, `live`, `retry`, `transport`
+  - `retry.rs` (97 lines)
+  - `transport.rs` (998 lines)
+- `lib.rs` (758 lines)
+  - mods: `agent_usage`, `agy_sdk`, `api`, `assets`, `audit`, `bridge`, `bug_report`, `claude_sdk`, `cleanup`, `codebuddy_sdk`, `codex_sdk`, `config`, `conversation`, `delivery`, `droid_sdk`, `error`, `files`, `fingerprint`, `grok_sdk`, `hub`, `hub_config`, `integrations`, `json_compat`, `kiro_sdk`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `model_cache`, `native_replay`, `native_sdk`, `observe`, `opencode_sdk`, `polls`, `presentation`, `quota_statusline`, `quotas`, `runtime`, `sdk_common`, `sdk_message_time`, `search`, `security`, `sessions`, `shell_env`, `state`, `storage_maintenance`, `syntax`, `terminal`, `transfer`, `trash`, `ui_events`, `voice`, `session_links`, `file_version`
 - `lifecycle/`
-  - `agy_delete.rs` (211 lines)
-  - `autobind.rs` (424 lines)
-  - `clients.rs` (597 lines)
-  - `launcher.rs` (1284 lines)
+  - `agy_delete.rs` (431 lines)
+  - `autobind.rs` (446 lines)
+  - `clients.rs` (639 lines)
+  - `launcher.rs` (1658 lines)
   - `mod.rs` (10 lines)
     - mods: `autobind`, `clients`, `launcher`, `model`, `models`, `service`, `store`, `agy_delete`
-  - `model.rs` (631 lines)
-  - `models.rs` (673 lines)
-  - `service.rs` (1829 lines)
+  - `model.rs` (746 lines)
+  - `models.rs` (1063 lines)
+  - `service.rs` (1888 lines)
   - `store/`
     - `disk.rs` (211 lines)
     - `json.rs` (99 lines)
     - `mod.rs` (782 lines)
       - mods: `disk`, `json`
-- `list_sync.rs` (390 lines)
-- `log.rs` (137 lines)
+- `list_sync.rs` (602 lines)
+- `log.rs` (143 lines)
   - mods: `runtime`
 - `main.rs` (348 lines)
-- `media.rs` (616 lines)
-  - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`
+- `media.rs` (631 lines)
+  - mods: `descriptors`, `discovery`, `file_media`, `native_media`
 - `media/`
-  - `descriptors.rs` (299 lines)
+  - `descriptors.rs` (279 lines)
   - `discovery.rs` (248 lines)
   - `file_media.rs` (201 lines)
-  - `formats.rs` (9 lines)
-  - `native_media.rs` (370 lines)
+  - `native_media.rs` (350 lines)
 - `metadata/`
-  - `disk.rs` (137 lines)
-  - `mod.rs` (246 lines)
+  - `disk.rs` (132 lines)
+  - `mod.rs` (271 lines)
     - mods: `disk`, `model`, `relations`
-  - `model.rs` (824 lines)
+  - `model.rs` (881 lines)
     - mods: `transfer`
   - `relations.rs` (180 lines)
-  - `transfer.rs` (63 lines)
+  - `transfer.rs` (94 lines)
+- `model_cache.rs` (161 lines)
 - `native_replay.rs` (219 lines)
-- `native_sdk.rs` (969 lines)
-  - mods: `input_queue`
-- `native_sdk_queue.rs` (332 lines)
+- `native_sdk.rs` (1717 lines)
+  - mods: `input_queue`, `resources`
+- `native_sdk_queue.rs` (460 lines)
+- `native_sdk_resources.rs` (64 lines)
 - `observe.rs` (217 lines)
 - `opencode_sdk/`
-  - `actions.rs` (265 lines)
-  - `mod.rs` (911 lines)
-    - mods: `actions`, `project`, `transport`
-  - `project.rs` (221 lines)
-  - `transport.rs` (203 lines)
-- `polls.rs` (202 lines)
+  - `actions.rs` (276 lines)
+  - `background.rs` (415 lines)
+  - `mod.rs` (1015 lines)
+    - mods: `actions`, `background`, `project`, `transport`
+  - `project.rs` (217 lines)
+  - `transport.rs` (200 lines)
+- `polls.rs` (371 lines)
+- `presentation.rs` (498 lines)
 - `quota_statusline.rs` (98 lines)
-- `quotas.rs` (326 lines)
+- `quotas.rs` (517 lines)
+  - mods: `droid`
+- `quotas/`
+  - `droid.rs` (119 lines)
 - `runtime/`
   - `freeze.rs` (146 lines)
-  - `mod.rs` (1426 lines)
-    - mods: `freeze`, `process`, `process_links`, `procscan`, `spawn`
-  - `process.rs` (466 lines)
-  - `process_links.rs` (777 lines)
+  - `mod.rs` (1424 lines)
+    - mods: `freeze`, `process`, `process_links`, `procscan`, `sdk_spawn`, `spawn`
+  - `process.rs` (468 lines)
+  - `process_links.rs` (840 lines)
     - mods: `sync`
   - `process_links/`
-    - `sync.rs` (176 lines)
-  - `procscan.rs` (1143 lines)
-    - mods: `activity`
+    - `sync.rs` (225 lines)
+  - `procscan.rs` (1783 lines)
+    - mods: `activity`, `droid`, `kiro`
   - `procscan/`
-    - `activity.rs` (168 lines)
-  - `spawn.rs` (330 lines)
-- `search.rs` (881 lines)
+    - `activity.rs` (185 lines)
+    - `droid.rs` (88 lines)
+    - `kiro.rs` (68 lines)
+  - `sdk_spawn.rs` (219 lines)
+  - `spawn.rs` (344 lines)
+- `sdk_common/`
+  - `commands.rs` (161 lines)
+  - `host.rs` (207 lines)
+  - `hosted.rs` (314 lines)
+  - `mod.rs` (152 lines)
+    - mods: `commands`, `host`, `hosted`, `outbox`, `projection`, `usage`, `writers`
+  - `outbox.rs` (59 lines)
+  - `projection.rs` (89 lines)
+  - `usage.rs` (125 lines)
+  - `writers.rs` (410 lines)
+- `sdk_message_time.rs` (61 lines)
+- `search.rs` (886 lines)
   - mods: `cache`, `fold`, `prefilter`, `service`
 - `search/`
-  - `cache.rs` (865 lines)
-  - `fold.rs` (208 lines)
+  - `cache.rs` (977 lines)
+  - `fold.rs` (222 lines)
   - `prefilter.rs` (163 lines)
-  - `service.rs` (377 lines)
+  - `service.rs` (391 lines)
 - `security.rs` (130 lines)
-- `session_links.rs` (146 lines)
+- `session_links.rs` (148 lines)
 - `sessions/`
-  - `agy.rs` (498 lines)
+  - `agy.rs` (919 lines)
+    - mods: `steps`
+  - `agy/`
+    - `steps.rs` (126 lines)
   - `history.rs` (87 lines)
   - `index/`
-    - `agent_stops.rs` (267 lines)
-    - `graph.rs` (908 lines)
-    - `mod.rs` (1592 lines)
-      - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`
+    - `agent_stops.rs` (262 lines)
+    - `graph.rs` (977 lines)
+    - `mod.rs` (1880 lines)
+      - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`, `watch`
     - `names.rs` (200 lines)
-    - `native_state.rs` (229 lines)
+    - `native_state.rs` (395 lines)
     - `summary/`
-      - `agy.rs` (123 lines)
-      - `claude.rs` (472 lines)
-      - `codex.rs` (309 lines)
-      - `grok.rs` (164 lines)
-      - `mod.rs` (852 lines)
-        - mods: `agy`, `claude`, `codex`, `grok`, `opencode`
-      - `opencode.rs` (104 lines)
+      - `agy.rs` (133 lines)
+      - `claude.rs` (448 lines)
+      - `codebuddy.rs` (201 lines)
+      - `codex.rs` (225 lines)
+      - `droid.rs` (103 lines)
+      - `grok.rs` (167 lines)
+      - `kiro.rs` (73 lines)
+      - `mod.rs` (543 lines)
+        - mods: `agy`, `claude`, `codebuddy`, `codex`, `droid`, `grok`, `kiro`, `opencode`
+      - `opencode.rs` (107 lines)
     - `titles.rs` (19 lines)
+    - `watch.rs` (1120 lines)
+  - `kiro.rs` (859 lines)
+    - mods: `native`
+  - `kiro/`
+    - `native.rs` (148 lines)
   - `media_projection.rs` (216 lines)
-  - `mod.rs` (1524 lines)
-    - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
+  - `mod.rs` (1606 lines)
+    - mods: `history`, `index`, `agy`, `kiro`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `text`, `media_projection`
   - `native_input.rs` (336 lines)
   - `native_media.rs` (89 lines)
-  - `opencode.rs` (628 lines)
-  - `pages.rs` (662 lines)
-  - `providers.rs` (1347 lines)
-    - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
+  - `opencode.rs` (648 lines)
+  - `pages.rs` (724 lines)
+  - `providers.rs` (1103 lines)
+    - mods: `agy`, `claude`, `codebuddy`, `droid`, `envelopes`, `grok`, `image_content`, `kiro`, `opencode`, `tools`
   - `providers/`
-    - `agy.rs` (394 lines)
-    - `claude.rs` (1024 lines)
+    - `agy.rs` (420 lines)
+    - `claude.rs` (1033 lines)
+      - mods: `background`
+    - `claude/`
+      - `background.rs` (282 lines)
+    - `codebuddy.rs` (305 lines)
+    - `droid.rs` (123 lines)
     - `envelopes.rs` (275 lines)
-    - `grok.rs` (139 lines)
-    - `image_content.rs` (195 lines)
-    - `opencode.rs` (178 lines)
+    - `grok.rs` (88 lines)
+    - `image_content.rs` (187 lines)
+    - `kiro.rs` (59 lines)
+    - `opencode.rs` (195 lines)
     - `tools.rs` (1053 lines)
-  - `records.rs` (426 lines)
+  - `records.rs` (408 lines)
     - mods: `native_images`, `native_records`, `scanner`, `summary_projection`, `string_reader`, `tool_envelopes`
   - `records/`
-    - `native_images.rs` (532 lines)
-    - `native_records.rs` (194 lines)
+    - `native_images.rs` (531 lines)
+    - `native_records.rs` (230 lines)
       - mods: `replay_source`
     - `native_records/`
       - `replay_source.rs` (184 lines)
-    - `scanner.rs` (1003 lines)
+    - `scanner.rs` (1031 lines)
     - `string_reader.rs` (255 lines)
     - `summary_projection.rs` (91 lines)
     - `tool_envelopes.rs` (244 lines)
-  - `scope.rs` (108 lines)
-  - `sidebar.rs` (92 lines)
+  - `scope.rs` (140 lines)
+  - `sidebar.rs` (105 lines)
+  - `text.rs` (623 lines)
   - `views/`
     - `body.rs` (273 lines)
-    - `encoded.rs` (257 lines)
-    - `mod.rs` (2344 lines)
+    - `encoded.rs` (264 lines)
+    - `mod.rs` (2393 lines)
       - mods: `body`, `encoded`
 - `shell_env.rs` (224 lines)
-- `state.rs` (221 lines)
+- `state.rs` (236 lines)
+- `storage_maintenance.rs` (87 lines)
+- `syntax/`
+  - `chunks.rs` (68 lines)
+  - `mod.rs` (210 lines)
+    - mods: `chunks`
 - `terminal/`
   - `device.rs` (44 lines)
   - `final_screen.rs` (165 lines)
   - `input.rs` (165 lines)
-  - `mod.rs` (32 lines)
+  - `mod.rs` (31 lines)
     - mods: `device`, `final_screen`, `input`, `ownership`, `receipts`, `service`
-  - `ownership.rs` (820 lines)
+  - `ownership.rs` (785 lines)
   - `receipts.rs` (196 lines)
-  - `service.rs` (1286 lines)
+  - `service.rs` (1253 lines)
 - `transfer/`
-  - `bundle.rs` (752 lines)
+  - `bundle.rs` (800 lines)
     - mods: `dependencies`
   - `claude_tools.rs` (95 lines)
-  - `cleanup.rs` (107 lines)
+  - `cleanup.rs` (140 lines)
   - `code_mode.rs` (331 lines)
-  - `codex.rs` (682 lines)
+  - `codex.rs` (687 lines)
   - `codex_ids.rs` (149 lines)
-  - `codex_tools.rs` (236 lines)
+  - `codex_tools.rs` (249 lines)
+  - `compact.rs` (128 lines)
   - `coordination.rs` (102 lines)
-  - `dependencies.rs` (204 lines)
-  - `environment.rs` (308 lines)
-  - `files.rs` (1022 lines)
+  - `dependencies.rs` (203 lines)
+  - `droid.rs` (374 lines)
+  - `environment.rs` (455 lines)
+  - `files.rs` (1064 lines)
+  - `frozen.rs` (70 lines)
   - `grok_tools.rs` (167 lines)
-  - `group.rs` (516 lines)
+  - `group.rs` (550 lines)
     - mods: `claude_tools`, `grok_tools`
-  - `journal.rs` (106 lines)
+  - `journal.rs` (289 lines)
   - `json_bytes.rs` (269 lines)
-  - `mod.rs` (58 lines)
-    - mods: `bundle`, `cleanup`, `code_mode`, `codex`, `codex_ids`, `codex_tools`, `coordination`, `environment`, `files`, `group`, `json_bytes`, `moving`, `native`, `progress`, `service`, `transport`, `references`
-  - `moving.rs` (589 lines)
+  - `mod.rs` (60 lines)
+    - mods: `bundle`, `cleanup`, `code_mode`, `codex`, `codex_ids`, `codex_tools`, `coordination`, `droid`, `environment`, `files`, `group`, `json_bytes`, `moving`, `native`, `progress`, `selection`, `service`, `transport`, `references`
+  - `moving.rs` (698 lines)
   - `names.rs` (176 lines)
-  - `native.rs` (1029 lines)
-  - `prefix.rs` (238 lines)
+  - `native.rs` (1313 lines)
+  - `prefix.rs` (257 lines)
   - `progress.rs` (126 lines)
   - `references.rs` (422 lines)
-  - `service.rs` (1203 lines)
-    - mods: `journal`, `names`, `prefix`, `tool_requirements`
-  - `tool_requirements.rs` (64 lines)
+  - `selection.rs` (212 lines)
+  - `service.rs` (1401 lines)
+    - mods: `compact`, `frozen`, `journal`, `names`, `prefix`, `tool_requirements`
+  - `tool_requirements.rs` (72 lines)
   - `transport.rs` (291 lines)
-- `trash.rs` (880 lines)
-  - mods: `deferred`, `manifest`, `plan`, `tree`
+- `trash.rs` (898 lines)
+  - mods: `cache`, `deferred`, `manifest`, `plan`, `tree`
 - `trash/`
-  - `deferred.rs` (390 lines)
-  - `manifest.rs` (333 lines)
-  - `plan.rs` (144 lines)
+  - `cache.rs` (56 lines)
+  - `deferred.rs` (412 lines)
+  - `manifest.rs` (341 lines)
+  - `plan.rs` (172 lines)
   - `tree.rs` (265 lines)
-- `ui_events.rs` (268 lines)
+- `ui_events.rs` (319 lines)
+- `voice.rs` (3414 lines)
 
 ## process-links
 
-`crates/process-links/src`: 6 files, 1754 lines.
+`crates/process-links/src`: 6 files, 2469 lines.
 
-- `agent.rs` (196 lines)
-- `connections.rs` (358 lines)
-- `engine.rs` (410 lines)
-- `lib.rs` (270 lines)
+- `agent.rs` (244 lines)
+- `connections.rs` (817 lines)
+- `engine.rs` (431 lines)
+- `lib.rs` (310 lines)
   - mods: `agent`, `connections`, `engine`, `linux`, `resource_summary`
-- `linux.rs` (265 lines)
-- `resource_summary.rs` (255 lines)
+- `linux.rs` (353 lines)
+- `resource_summary.rs` (314 lines)
 
 ## resource-agent
 
-`crates/resource-agent/src`: 9 files, 3078 lines.
+`crates/resource-agent/src`: 11 files, 4577 lines.
 
 - `bandwidth.rs` (251 lines)
 - `events.rs` (100 lines)
@@ -362,40 +466,42 @@ python3 tests/module_map.py --write
 - `io_bpf.rs` (334 lines)
 - `io_events.rs` (206 lines)
   - mods: `bpf`
-- `main.rs` (35 lines)
-  - mods: `bandwidth`, `events`, `gpu`, `io_events`, `memory`, `runtime_log`, `server`, `usage`
-- `memory.rs` (53 lines)
-- `server.rs` (1602 lines)
-- `usage.rs` (316 lines)
+- `main.rs` (42 lines)
+  - mods: `bandwidth`, `events`, `gpu`, `io_events`, `memory`, `persistence`, `runtime_log`, `server`, `thread_writes`, `usage`
+- `memory.rs` (241 lines)
+- `persistence.rs` (453 lines)
+- `server.rs` (2147 lines)
+- `thread_writes.rs` (130 lines)
+- `usage.rs` (492 lines)
 
 ## ptyhost
 
-`crates/ptyhost/src`: 10 files, 3327 lines.
+`crates/ptyhost/src`: 10 files, 3350 lines.
 
 - `client.rs` (312 lines)
 - `dsr.rs` (146 lines)
 - `final_screen.rs` (98 lines)
-- `guard.rs` (285 lines)
+- `guard.rs` (296 lines)
   - mods: `binding`
 - `main.rs` (451 lines)
   - mods: `client`, `dsr`, `final_screen`, `guard`, `output`, `protocol`, `runtime_log`, `session`, `transport`
 - `native_binding.rs` (153 lines)
 - `output.rs` (213 lines)
 - `protocol.rs` (168 lines)
-- `session.rs` (1379 lines)
+- `session.rs` (1391 lines)
 - `transport.rs` (122 lines)
 
 ## ptyhost-client
 
-`crates/ptyhost-client/src`: 8 files, 2167 lines.
+`crates/ptyhost-client/src`: 8 files, 2164 lines.
 
-- `association.rs` (216 lines)
+- `association.rs` (225 lines)
 - `bound.rs` (244 lines)
-- `dto.rs` (272 lines)
+- `dto.rs` (263 lines)
 - `launch.rs` (259 lines)
 - `lib.rs` (694 lines)
   - mods: `association`, `bound`, `dto`, `launch`, `native_binding`, `transport`, `wire`
-- `native_binding.rs` (148 lines)
+- `native_binding.rs` (145 lines)
 - `transport.rs` (98 lines)
 - `wire.rs` (236 lines)
 
@@ -410,15 +516,24 @@ python3 tests/module_map.py --write
 
 ## sdkhost
 
-`crates/sdkhost/src`: 1 files, 427 lines.
+`crates/sdkhost/src`: 5 files, 957 lines.
 
-- `main.rs` (427 lines)
+- `channel.rs` (78 lines)
+- `commands.rs` (116 lines)
+- `main.rs` (606 lines)
+  - mods: `channel`, `commands`, `receipts`, `windows`
+- `receipts.rs` (74 lines)
+- `windows.rs` (83 lines)
 
 ## sdkhost-client
 
-`crates/sdkhost-client/src`: 3 files, 497 lines.
+`crates/sdkhost-client/src`: 7 files, 1538 lines.
 
-- `lib.rs` (9 lines)
-  - mods: `unix`, `unsupported`
-- `unix.rs` (398 lines)
-- `unsupported.rs` (90 lines)
+- `client.rs` (485 lines)
+- `cold.rs` (66 lines)
+- `lib.rs` (24 lines)
+  - mods: `client`, `platform`, `platform`, `unsupported`, `cold`, `segments`
+- `segments.rs` (231 lines)
+- `unix.rs` (163 lines)
+- `unsupported.rs` (96 lines)
+- `windows.rs` (473 lines)

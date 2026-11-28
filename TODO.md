@@ -3,111 +3,35 @@
 这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
 合同为准。
 
-- [ ] Orion 恢复 SSH 后补发前端 `02d820bc`（Droid 实时工具组卡顿，BUG-20261128-114131-acc417，
-  包含 `53da2063` 的 SDK 历史衔接、过程折叠和状态栏修复，`20d8d26c`、`035f597d` 的
-  Agy 工具气泡修复，以及 `c151366b` 的 Codex API 价值档位提示）
-  和节点服务 `fadc0486`（SDK 创建的父会话归属，BUG-20261128-120222-c64f34，包含 `9a6ce101`
-  的 Agy 重启回放请求归属和 `d181a42e` 的前后台状态修复）。
-  正式发布尝试均在 SSH 连接阶段超时。
+## 部署待办
 
-- [ ] Orion、Cetus 恢复 SSH 后补发节点服务与前端 `0bdb5258`（SDK 事件流短暂断线续传）。
-  本轮正式发布时两者均连接超时。
+2026-11-28 20:07–20:11（北京时间）只读舰队快照。前端列按运行中的 `/api/meta.build`
+核对，服务与资源代理按各自的二进制版本标记核对。Cetus 的前端和服务版本取自同次 Windows 探测的原始响应。
+宿主列沿用对应组件的发布记录，快照没有采集这两种宿主的版本。“—”表示目标不承载该组件。
 
-- [ ] Orion 恢复 SSH 后补发前端 `61ba7a6b`（回收站确认焦点、键盘操作、输入法和可读性）。
-  此版本包含目录筛选合并 `/tmp/...` 的 `9b8253f6`（BUG-20261127-001614-e8bf3d）、Agy Extra 强度名称 `129f4a48`
-  （BUG-20261126-234523-497989）和 Codex 重置卡修复 `819d1974`
-  （BUG-20261126-224947-6b9e54）、`7a1b9e50`（BUG-20261126-171859-baf6fb）。
-  正式部署时 Orion 的 SSH 连接超时；其余六个目标均已重启并通过健康检查。
+| 目标 | 探测 | 前端 | 节点或 Hub 服务 | ptyhost | sdkhost | 资源代理 |
+| --- | --- | --- | --- | --- | --- | --- |
+| lyra | active | 已同步 | 已同步 | 已交付 | 已交付 | — |
+| cygnus | active | 已同步 | 已同步 | 已交付 | 已交付 | — |
+| pavo | active | 已同步 | 已同步 | 已交付 | 已交付 | — |
+| orion | SSH 超时 | 待补发 | 待补发 | 待补发 | 待补发 | — |
+| hub | active | 已同步 | 已同步 | — | — | — |
+| vela | running | 已同步 | 已同步 | 已交付 | 已交付 | — |
+| cetus | running | 已同步 | 已同步 | 已交付 | 待核对补发 | — |
+| lyra-resources | active | — | — | — | — | 已同步 |
+| cygnus-resources | active | — | — | — | — | 已同步 |
+| pavo-resources | active | — | — | — | — | 已同步 |
 
-- [ ] Orion 恢复 SSH 后补发节点服务 `84b01854`（Agy 删除时重新核对原生会话，
-  BUG-20261127-031422-f70e89，含 `64de8e10` 的 Agy SDK 上下文压缩 BUG-20261126-155708-c3adac）和前端 `d57b9bba`（Mermaid 分组标题遮挡，
-  BUG-20261126-135344-8db5d6）。此版本包含后台任务底栏和日志查看 `16ad9c9c`
-  （BUG-20261125-075551-33faa4）、移除状态栏重复引导按钮 `033fcad2`
-  （BUG-20261126-155729-a47197）、Mermaid 缩放和平移修复 `d998804d`
-  （BUG-20261126-135344-8db5d6）、气泡宽度修复 `717f947a`
-  （BUG-20261126-135117-0033ca）、Codex 实时工具与异步题卡顺序修复 `0a912a94`
-  （BUG-20261126-125306-3c1d6a）。正式发布探测 SSH 超时。
+- 五个在线节点和 Hub 的前端均为 `02d820bc`（`20261128T114636586704Z`），服务版本均为
+  `20261128T120742329792Z`（`fadc0486`）。三个资源代理的版本均为 `20261121T044547546279Z`（`caca8dbb`）。
+- Orion 恢复连接后核对并补齐表中四项。ptyhost 需包含 Droid 接入 `b9159b17`。sdkhost 的
+  `39616151` 发布时 Orion 和 Cetus 均超时，Cetus 后续的前端和节点服务标记无法确认 sdkhost 版本。
+  补发时按组件选择当前快照并验证健康。见[宿主发布记录](docs/history-incidents.md#2026-11-15清理遗留测试宿主并按组件降低常驻开销)和[部署合同](docs/deployment.md)。
 
-- [ ] Orion 恢复 SSH 后补发前端 `62288915` 和节点服务 `0071d4e5`。前端包含 Codex 路径开头的消息排队修复
-  （BUG-20261126-120840-7d7b1f）和文件夹筛选右键单选及恢复多选 `d51edf71`
-  （BUG-20261126-120632-907ad1）。此前待补发功能包括 Codex 报告发送后的草稿清理
-  `cdda5edf`（BUG-20261126-112850-7ea65c）、Codex 首屏历史读取提速 `164853ac`
-  （BUG-20261126-112229-4312d3）和 Agy 删除选择器重置恢复（BUG-20261126-112036-4bce4b）。
-  前端与节点服务的正式部署均因 SSH 超时未完成。
-  此快照也包含此前待补发的前端 `fb922710` 和节点服务 `211d62f5`。
-  前端包含标题改名入口（BUG-20261126-095803-844878）、顶栏文件夹筛选（BUG-20261126-095139-fa70df）、
-  机器和 Agent 筛选右键恢复多选（BUG-20261126-094636-c012e0）、
-  迁移任务的 ⋯ 菜单及一小时快捷图标（BUG-20261126-065008-fb7d7b）、
-  用户绿色气泡的明暗主题修复（BUG-20261126-063413-4c1ccb）、
-  迁移目标缺目录置灰、关闭窗口后找回迁移任务（BUG-20261126-053423-52de47）、
-  停止会话树后的灰色未读角标（BUG-20261126-030145-19ff02）
-  与 `33605d22` 的全页卡顿监测、Hub 节点状态和输入框 Tab 路径补全
-  （BUG-20261123-082202-117ff4）。节点服务修复 Agy 回退后旧回复混入新回合
-  （BUG-20261126-051132-9b88af）。其余六个目标均已更新并通过健康检查。
-
-- [ ] Orion、Cetus 补发节点服务与前端 `20f18a07`，包含迁移后恢复研究关联
-  （BUG-20261122-010737-9c9f24）、`5442f1c3` 的八种 SDK 回合阶段、字符数和思考折叠
-  （BUG-20261121-111133-589aa4）、`46007545` 的 Kiro API 价值粗估（系数 0.15），
-  以及 `7b20331f` 的 Codex API 价值修复与 Standard、Fast、Ultrafast 价目同步
-  （BUG-20261121-080412-a6b7ee）。两台正式部署均 SSH 超时，联网后通过部署工具补发。
-
-- [ ] Orion、Cetus 补发第二轮组件修复的节点服务 `caca8dbb`（后端版本
-  `20261121T044547546279Z`）。两台在正式发布时均 SSH 超时。
-
-- [ ] Orion、Cetus 补发七项组件审查后的节点服务和前端 `38d20736`。本次发布中两台均在 SSH 连接时超时。
-
-- [ ] Orion、Cetus 补发 CodeBuddy 输出恢复修复 `5c140eb2`（BUG-20261121-015748-3bae52，
-  后端版本 `20261121T034709610086Z`，包含子代理启动、重开状态及子代理历史修复）。两台正式
-  部署均 SSH 超时。Lyra、Cygnus、Pavo、Vela 和 Hub 已更新服务二进制，重启并通过健康检查。
-
-- [ ] Orion、Cetus 补发 Agy 启动取消修复 `226adf2a`（BUG-20261120-122309-518082，
-  版本 `20261120T124544358967Z`）。两台正式部署均 SSH 超时；Lyra、Cygnus、Pavo、
-  Vela 和 Hub 已更新服务与前端，重启并通过健康检查。
-
-- [ ] Orion、Cetus 补发 Droid 回退分支历史修复 `d47c7312`
-  （BUG-20261120-103452-af158e，后端版本 `20261120T104556404314Z`）。
-  两台正式部署均 SSH 超时。Lyra、Cygnus、Pavo、Vela 和 Hub 已更新后端并通过健康检查。
-
-- [ ] Orion、Cetus 补发 Droid Core 7 天 API 价值统计修复 `129f95ab`
-  （BUG-20261120-062654-05c99e，后端版本 `20261120T063511809877Z`）。
-  两台正式部署均 SSH 超时；Lyra、Cygnus、Pavo、Vela 已更新后端并通过健康检查。
-
-- [ ] Orion、Cetus 补发 Agy 回退后输入对账的后端修复 `5b394a6a`
-  （BUG-20261120-050041-623923，版本 `20261120T051625733454Z`），包含 Agy
-  停止状态与回退冲突修复 `f0920068`。两台正式部署均 SSH 超时。
-  Lyra、Cygnus、Pavo、Vela 和 Hub 的后端已更新、重启并通过健康检查。
-
-- [ ] Orion、Cetus 补发 Agy 子代理后台任务与只读底栏状态修复 `7e7b622c`
-  （BUG-20261118-043820-6e33ab，版本 `20261118T045815532353Z`）：正式部署均已
-  尝试并因 SSH 超时未连接；Lyra、Cygnus、Pavo、Hub、Vela 已部署、重启并健康。
-
-- [ ] Orion、Cetus 补发后台迁移与会话冻结修复 `682d8efe`
-  （BUG-20261117-030514-c3841a，版本 `20261117T034714038936Z`）：正式部署已逐项
-  尝试，两台均 SSH 超时；联网后通过部署工具补发服务和前端。
-
-- [ ] Orion、Cetus 补发 Agy 延迟回显身份对账修复 `3f03173b`
-  （BUG-20261115-234238-df94ad，版本 `20261115T235145526458Z`）：正式 SSH 尝试超时；
-  Lyra、Cygnus、Pavo、Hub、Vela 已部署、重启并健康，现有会话宿主保留。
-
-- [ ] Orion、Cetus 补发原生分支/回退修复 `217e8359`（BUG-20261115-155602-e82f81，
-  版本 `20261115T165812622765Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、
-  Vela 已部署服务与前端、重启并健康，原有会话宿主保留。
-
-- [ ] Orion、Cetus 补发前端 `770db621`（气泡滚动渐隐，BUG-20261120-125152-47b539，
-  版本 `20261120T125841355046Z`）。两台正式部署均 SSH 超时，联网后用 `--web-only` 补发。
-  此快照包含引导回执修复 `aa23045f`、Agy 历史尾回合修复 `46411c12`，以及此前的
-  气泡横向滚动、目录后退、路径误判和额度底栏修复。
+## 会话与 SDK 调查
 
 - [ ] 核对 `session_global_actions_browser.py` 刷新后侧栏仍应收起的断言。
   修复前基线与目录后退修复版均失败。
-
-- [ ] Orion、Cetus 补发 Agent 周期用量、Agy/Droid API 价值及查询错误修正 `ec4f5458`
-  （发布快照 `ac3ea3d6`，版本 `20261115T162422064809Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
-  Hub、Vela 已部署、重启并健康，原生会话宿主保持运行。
-
-- [ ] Orion、Cetus 补发周期性读取及 Hub 快照修复的后端快照 `db78edd0`
-  （版本 `20261115T053112055239Z`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、
-  Hub、Vela 已部署、重启并健康。验收见 [事故记录](docs/history-incidents.md)。
 
 - [ ] 核对 `codex_sdk_stalled_browser.py:74` 的静默原生连接恢复：
   BUG-20261114-233657-ab4cea 验收中，已发布基线与修复版均在等待重新连接后的
@@ -118,18 +42,9 @@
   本次只读核对生产证据，未改写关系或重跑原迁移。后续确认关系与实际选择后，
   通过正式附属及迁移入口处理，不根据标题自动推断。
 
-- [ ] Orion、Cetus 补发 BUG-20261114-233657-ab4cea 的迟到创建修复 `ce8c24a8`
-  （已包含于发布快照 `bba2b5d3`）：正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、
-  Vela 已部署、重启并健康。
-
-- [ ] Orion 补发 Codex 中断回执修复 `f0ae5a5e` 的服务与前端
-  （BUG-20261114-053237-efca19）：正式部署 SSH 超时；其余六目标已发布、重启并健康。
-
 - [ ] BUG-20261113-231335-4ef293：额度计量变化原因与 Gemini App 0% 的差异仍待核对。
   原生周已用在重置时间不变时从 1.358% 降至 1.060%，服务快照还曾显示 0.154%。
-  消息内容回退、载入等待及重复切换的多余渲染已修复；Orion 仍需补发服务修复
-  `549c4e79`，Orion/Cetus 待补发前端 `497de694`（包含快速切换期间的历史复用及
-  隐藏输入布局优化，正式 SSH 超时）。本次 Lyra、Cygnus、Pavo、Hub、Vela 已发布并健康。
+  消息内容回退、载入等待及重复切换的多余渲染已修复。
   见[诊断记录](docs/history-incidents.md#bug-20261113-231335-4ef293agy-额度核对与首条消息位置)。
 
 - [ ] 核对 `agy_history_browser.py:1023` 的原生目录删除／侧栏刷新：
@@ -142,18 +57,7 @@
   首次选择后等待 `/api/codex-sdk/open` 超时，尚未到达停止断言。
   本次 `--case normal` 的节点/Hub、宽窄屏停止、保留蓝灯与卸载灭灯回归通过。
 
-- [ ] Orion、Cetus 补发 BUG-20261115-043012-a301cc 的自动换行、输出末尾滚动区与
-  待卸载蓝灯修复 `a3275115`、气泡内滚动光标条件前端 `3f9de930`，以及
-  全部正文预览修复 `aec95fe2`、去除蓝框前端 `4f5ed0f4` 与气泡滚动留白前端
-  `676e1a36`（BUG-20261115-160737-2a51fa）：正式部署 SSH 尝试均超时；
-  最新前端已在 Lyra、Cygnus、Pavo、Hub、Vela 部署、重启并健康。
-
-## Frontend delivery
-
-- [ ] Orion、Cetus 补发服务端展示计划 `347b563e`（版本
-  `20261116T025637998799Z`，包含活动会话切换与大快照分批前端 `095c41a3`）：
-  正式 SSH 尝试超时；Lyra、Cygnus、Pavo、Hub、Vela 的服务端和前端已更新、
-  重启并健康；资源代理及 ptyhost 未更新，现有宿主保留。
+## Frontend follow-up
 
 - [ ] 核对 Grok 假 CLI 夹具在窄屏重入后的历史／实时衔接：同一次合成发送出现
   两个同文用户气泡，改动前 `5ca71a0b` 前端亦为两个。先核对夹具的原生身份与
@@ -176,30 +80,12 @@
   在“不支持的命令”状态出现约 4 px 横向溢出；批处理前后前端及本次任务前的
   `b74c7a2b` 前端均复现。100% 明暗主题、十五种宽度通过，未将全套记为通过。
 
-- [ ] Orion 补发 Agy 后台任务通知前端 `d1506cb3`（BUG-20261113-132137-89196c）：
-  正式部署 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已仅发布前端、
-  重启并健康。专项 Chromium 节点／Hub 八组合与既有消息呈现六组合通过，已完成视觉验收。
-
-- [ ] Orion 补发 Agy 非图片附件修复 `27782c8e` 的服务与前端（BUG-20261112-075842-b01ef4）：
-  正式 SSH 探测超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康。
-  此版本也包含 Codex 后台状态修复 `3d83ac59`；Cetus 已同步，不再待补发。
 - [ ] 核对 `codex_sdk_status_browser.py` 的旧外部 CLI 提示与 daemon 卸载／重连假设：
   本次扩展尝试在这些原有断言失败，未将该综合套件记为通过，原文件保持不变。
   本次后台状态由独立 `codex_sdk_background_browser.py` 的节点／Hub 八组合验证。
 
-- [ ] Orion 补发工具过程警示修复 `c3ddda91`（BUG-20261111-113726-0d1e21）：
-  正式部署 SSH 探测超时，前端待恢复后补发。
-
 ## Droid integration
 
-- [ ] Orion、Cetus 补发 BUG-20261115-160646-a893db 的 Droid 内部提醒投影修复
-  `0e045cf1`（已包含于服务发布 `ac3ea3d6`）：正式 SSH 尝试超时；其余五目标
-  已部署、重启并健康。验收见 [事故记录](docs/history-incidents.md#bug-20261115-160646-a893dbdroid-内部提醒在连接前闪现)。
-
-- [ ] Orion 补发 Droid 接入 `b9159b17` 的 ptyhost，以及服务／前端
-  最新版本（含文件回退、子代理控制、活动通知、CLI 设置及普通会话移动）：正式 SSH 尝试超时。
-  Lyra、Cygnus、Pavo、Hub、Vela、Cetus 均已部署、重启并健康；Lyra 已启用 Droid。
-  三个资源代理不涉及本次组件，按范围排除。
 - [ ] macOS／Windows 安装 Droid 后补真实恢复验收；跨平台进程采集及原生 SID 匹配已接，
   当前只有系统命令与合成 Chromium 证据，不能以编译成功替代原生恢复验证。
 
@@ -243,10 +129,6 @@
   与备用正文修复版均复现于等待 `S.sessions` 移除 SID；此前正文、搜索、分页、
   追加、改写、缺失恢复及服务重启断言通过。待单独定位列表移除刷新，未改写断言。
 
-- [ ] Orion 补发服务 `388e839a`（含 SDK 平台补齐及 Agy 备用正文读取）与 sdkhost `5ea9eabc`：
-  2026-11-11 两轮正式部署的 SSH 探测均超时；Lyra、Cygnus、Pavo、Hub、Vela、Cetus
-  均已部署、重启并健康。这两轮无前端、ptyhost 或资源代理变更。
-
 - [ ] 核对既有综合测试的阻点：`agy_sdk_browser.py` 已按当前入口显式点击启动，
   但额度刷新按钮禁用断言仍失败；`agy_steer_browser.py` 截取 DOM 前 80 字符
   查找消息的断言失败。2026-11-15 两者在修复版与修复前已发布二进制均复现，
@@ -262,7 +144,6 @@
   根因未定。报告内 7 次长帧最长 27.363 秒，多数缺少脚本归因；原生会话期间仍有输出。
   隔离历史读取和 SDK 回放诊断未复现秒级阻塞。已补应用阶段耗时及 SDK 规模记录，
   下次现场需核对 `main_thread.long_frame.work`；未结束的永久阻塞仍需浏览器性能栈。
-  诊断增强 `25852c26` 已部署六目标并健康；Orion 正式连接超时，前端待补发。
   弱网模拟中等待网络时仍可操作，但积压的 120 工具／2400 增量恢复时观察到约一秒
   停顿，采样涉及 SSE 事件的状态栏／底栏布局与工具扫描；尚未重现现场 27 秒，需继续核实。
   源码定向探针进一步复现：300 条相同状态事件在 120／360 工具项下分别阻塞
@@ -274,60 +155,18 @@
   断言失败；未修改运行时代码的完整 44 组合重跑通过。待核实偶发交互或测试时序原因，
   现有证据不足以判断与报告中整页卡死的关系。
 
-- [ ] Orion 补发 SDK 节点复用、流式更新优化与双向历史分页 `0473c540`（服务与前端）：
-  本轮正式 SSH 尝试超时，待恢复后补发；ptyhost、sdkhost 和资源代理不在本次变更范围。
-
-- [ ] Orion 补发额度修复 `85d871ca`（BUG-20261107-104739-ad88f6，包含此前额度同步修复）。
-  Lyra、Cygnus、Pavo、Hub、Vela、Cetus 已部署、重启并健康；Orion 正式 SSH 尝试超时，
-  待恢复后补发服务与前端。三个资源代理、ptyhost 按组件范围排除。
-
 - [ ] `kiro_sdk_browser.py` 在 BUG-20261106-143936-9d8a6d 排查中于 stop/reopen 后重载，
   等待原会话侧栏行超时（第 406 行），未完成综合套件；待定位列表恢复路径。
   额度同步另由 `quota_sync_browser.py` 的节点／Hub、已停止／已启动 SDK 实际操作覆盖。
-
-- [ ] BUG-20261106-021317-6b1897：SDK 自动附属及临时回执修复 `6ce04eea`
-  已部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Vela、Cetus；原有 ptyhost 保留。
-  Orion 正式 SSH 尝试超时，待恢复后补发服务二进制；资源代理与 ptyhost 按组件范围排除。
 
 - [ ] `nest_tree_browser.py` 的 `Grandchild C renamed` 列表刷新等待超时：
   BUG-20261106-021317-6b1897 验证中，新构建与未修改的 `aa1ab8a8` 基线均在同一断言失败；
   四组宽窄屏／明暗主题详情父关系同步断言通过。待定位这条既存刷新路径。
 
-- [ ] BUG-20261105-075749-d52ddc：后台接收时间及隐藏缺失占位修复 `100ef0ae`
-  已部署、重启并健康于 Lyra、Cygnus、Pavo、Vela，Hub 前端已同步且健康。
-  后续移除旧分块时间条 `29e72863`、分支／回退确认 `665f0347` 均已以 web-only
-  同步上述五个目标且健康。
-  Orion、Cetus 正式 SSH 尝试超时，待恢复连接后补发后端、sdkhost 及前端；
-  三个资源代理按组件范围排除，现有宿主进程保持运行。
-
-
-- [ ] BUG-20261104-102740-283f30：SDK 查看入口修复 `f2c178bc` 已以 web-only
-  部署、重启并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。Orion SSH 超时待补发；
-  Vela 仍报 `Store(Invalid)`，发布和恢复旧文件后的健康检查均失败（`ROLLBACK_FAILED`），
-  18 个独立 ptyhost 保留，待恢复服务后补发。
-
 - [ ] 跟进 Kiro 重试浏览器一次窄屏刷新中的 `takenOver is not defined`。
   后续完整节点／Hub 重跑通过，已增强页面错误堆栈采集；原失败无堆栈，原因尚未确认。
 
-- [ ] BUG-20261103-112752-cb1c9d：错误分类及临时错误退避续跑 `b20fdfed` 已部署并健康于 Lyra、Cygnus、Pavo、Hub、Cetus。
-  Orion 正式 SSH 尝试超时，待补发；Vela 原生构建成功但启动失败，恢复旧文件仍不健康
-  （`ROLLBACK_FAILED`），18 个独立 ptyhost 保留，待恢复服务后补发。
-
-- [ ] BUG-20261103-104023-0c1a1a：SDK 停止状态修复 `12e0d6d3` 已上线
-  Lyra、Cygnus、Pavo、Hub、Cetus 并重启、健康。Orion SSH 超时待补发；
-  Vela 已尝试发布并恢复旧文件，但既有启动异常仍在，结果 `ROLLBACK_FAILED`，
-  18 个独立 ptyhost 保留；恢复服务后补发。
-
-- [ ] BUG-20261102-162048-b98299：长消息列表输入修复 `5b03e212` 已以 web-only
-  上线 Lyra、Cygnus、Pavo、Hub、Cetus 并完成重启和健康检查。Orion 连接超时待补发；
-  Vela 部署前服务已不可用，本次发布和自动回滚后的健康检查均失败，待恢复后补发。
-  本次未替换后端或 ptyhost，资源代理不在发布范围。
-
-- [ ] BUG-20261102-104958-712bf3：搜索修复 `6c6aa872` 已上线 Lyra、Cygnus、Pavo、Hub。
-  Orion、Cetus 正式部署连接超时，待补发；Vela 构建通过但启动报 `Store(Invalid)`，
-  自动恢复旧版本后同样启动失败，目前服务不可用，18 个独立 ptyhost 保留。
-  需只读定位持久状态校验失败并按恢复合同处理，不能清空或手改账本绕过。
-  现场首次搜索的完整耗时无法由旧日志还原；已补搜索全程回执并合并进度流，
+- [ ] BUG-20261102-104958-712bf3：现场首次搜索的完整耗时无法由旧日志还原；已补搜索全程回执并合并进度流，
   若仍慢，以新增 trace 的响应头、扫描进度、完成及可见数定位。
 
 - [ ] 更新 `codex_sdk_browser.py` 与 `codex_sdk_status_browser.py` 的旧自动启动假设：
@@ -417,49 +256,9 @@
   仍有效。保留原生历史，由原生投影重建语义定位，勿直接移动实时检查点。
   现场与备份范围见[维护记录](docs/history-incidents.md#cetus-provider-统一维护2026-11-11)。
 
-- [ ] 按部署报告补发仍未交付的目标及产物，恢复联机后用官方部署工具验证；
-  连通性以现场舰队状态为准，不沿用旧报告的离线机器数。见[部署](docs/deployment.md)。
-  Goal 状态图标前端 `d5c13fc2` 待补发 orion、vela；orion 正式尝试连接超时，
-  vela 发布前已不健康，恢复旧文件后仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub、
-  cetus 已发布、重启且健康；报告在 `target/deploy/20261103-045429-d5c13fc2/`。
-  选择会话树并固定身份迁移 `cc040207` 已交付 lyra、cygnus、pavo、hub，重启且健康；
-  orion、cetus SSH 超时；vela 构建通过，恢复旧文件后服务仍不可用（`ROLLBACK_FAILED`），
-  三者待补发。完整报告在未跟踪的 `target/deploy/20261102-074719-cc040207/`。
-  此前 Kiro 首次 headless／ACP 启动归属修复 `0a5dbf45`（包含 `f4652a8f`）已交付
-  lyra、cygnus、pavo、hub，重启且健康；前端保留已交付的 `c51a54b8`。
-  orion、cetus 正式发布尝试仍 SSH 超时；vela 在原生构建阶段停止发布，
-  旧服务拒绝连接导致身份保全失败，后端未替换。三者待恢复后补发，vela 必须先成功保全身份。
-  本轮逐目标日志及收尾记录在未跟踪的 `target/deploy/20261102-061906-0a5dbf45/`；
-  部署主进程在 vela 切换前终止，结果以 `completion.json` 和逐目标日志为准。
-  此前 Kiro 发布报告在 `target/deploy/20261102-015352-4bb9919b/`，vela 网页尝试恢复旧文件后
-  仍不健康（`ROLLBACK_FAILED`），见 `target/deploy/20261102-015155-4bb9919b/`。
-  此前后端快照 `6c1dad6c`（含 Codex 共享终端功能开关修复及 provider 恢复修复）
-  已交付 lyra、cygnus、pavo、hub 且健康；
-  orion、cetus 连接超时，vela 既有 `Store(Invalid)` 故障导致旧文件恢复后仍不健康，
-  三者待补发。本轮报告在 `target/deploy/20261030-182455-6c1dad6c/`。
-  此前前端快照 `7e122589`（滚动漏画修复，含此前重连及外部 CLI 启动提示修复）
-  待补发 orion、cetus、vela：前两者连接超时；vela 部署前即未正常运行，恢复旧文件后
-  服务仍不可用（`ROLLBACK_FAILED`）。lyra、cygnus、pavo、hub 已部署且健康；
-  cygnus 首次 45 秒健康检查超时并回滚，同快照以 90 秒窗口重试成功。
-  两份部署报告位于未跟踪的 `target/deploy/20261029-232108-7e122589/`。
-  Codex 推理禁用退避修复 `374daabf` 已交付 lyra、cygnus、pavo、hub；orion、cetus
-  离线待补发，vela 启动失败，文件自动回滚后服务仍未恢复（`ROLLBACK_FAILED`）。
-  显式启动/接管按钮及模式绑定 `3178d1eb`（仅前端）已交付上述四个在线目标；
-  orion、cetus 连接超时，vela 自动恢复旧文件后服务仍不可用，待恢复后补发。
-  浏览器验证及视觉证据在未跟踪的 `target/explicit-composer-start/`，部署报告在
-  `target/deploy/20261026-070212-3178d1eb/`。
-  分模式启动／停止与互斥切换确认 `fd99ce5d`（服务端及前端）已交付 lyra、cygnus、
-  pavo、hub 并通过健康检查；orion、cetus 连接超时，vela 文件自动回滚后服务仍未恢复
-  （`ROLLBACK_FAILED`），待恢复后补发。验证和视觉证据在未跟踪的
-  `target/session-mode-controls/`，部署报告在 `target/deploy/20261026-072055-fd99ce5d/`。
-  菜单按 SDK／CLI 配成两个启动停止开关 `77d8708b`（仅前端）已交付同四个在线目标；
-  orion、cetus 离线，vela 自动回滚后服务仍未恢复，待补发。证据在未跟踪的
-  `target/paired-mode-menu/`，部署报告在 `target/deploy/20261026-073659-77d8708b/`。
-
-- [ ] 恢复 Vela 的服务启动：气泡修复 `89b45c19` 发布及自动恢复旧文件后，launchd
-  均退出 1，stderr 为 `Store(Invalid)`，部署结果 `ROLLBACK_FAILED`，健康端点不可用。
-  只读定位无效存储及恢复方案，保留原生会话与状态；恢复后补发该修复。
-  本轮 Orion、Cetus 连接超时，亦待联机补发；报告在未跟踪的 `target/bug-ddd959/`。
+- [ ] 核对 Vela 旧有启动失败的原因。气泡修复 `89b45c19` 发布及恢复旧文件后，launchd
+  均退出 1，stderr 为 `Store(Invalid)`。本次探测显示服务正在运行，旧错误的存储原因仍待只读定位。
+  若复发，按恢复合同保留原生会话和状态。原现场报告在 `target/bug-ddd959/`。
 
 - [ ] Codex SDK 完成实际使用验收后再退役旧对话/终端交互模式；Windows 原生接入已有独立验证。
   子代理独立服务端草稿/附件身份待补，不能复用主会话草稿；当前行为见[Codex SDK](docs/codex-sdk.md)。
@@ -504,7 +303,7 @@
   quotas_browser 启动报 Launcher(UnsafePath)，droid_usage_browser 等待发送可用失败。
   `ec4f5458` 发布二进制放入独立测试目录、配已有测试宿主后，两套节点/Hub Chromium 通过；
   agent_usage_browser 同样通过，已验宽窄屏/明暗主题及错误状态。Droid 夹具需 cryptography，
-  在 Lyra p311 验收；Cygnus 缺该依赖。该次按独立专项结果以 `--test none` 发布，未宣称全库门禁通过。
+  在 Lyra p311 验收；Cygnus 缺该依赖。
 
 - [ ] 更新 `header_fold_browser.py` 对已有前后导航按钮的折叠预期：780px 时菜单包含
   `m-prev`、`m-next`，动作顺序断言遗漏二者；本次默认视图修改前的 `e6dffc16`
@@ -546,11 +345,9 @@
   删除进度诊断定位原因；保留成功数量、恢复结果与原生字节断言。
   评估发布门收集全部失败后统一修复，减少长菜单套件被重复执行的成本。
 
-- [ ] 补发 CodeBuddy 接入（`9210138e`）到离线节点 orion、cetus，以及启动失败中的
-  vela（部署时 launchd 未运行，旧文件已回滚，与此前记录的 Vela 启动问题相同）。
-  只有 lyra 安装了 CodeBuddy 并配置了 `codebuddy-cli-v1` profile 与
-  `SESSIONDOCK_CODEBUDDY_ROOT`；其他节点安装后按 [CodeBuddy](docs/codebuddy.md)
-  补 profile。
+- [ ] 其他节点安装 CodeBuddy 后，按 [CodeBuddy](docs/codebuddy.md) 补 profile。
+  既有安装记录中，只有 lyra 配置了 `codebuddy-cli-v1` profile 与 `SESSIONDOCK_CODEBUDDY_ROOT`。
+
 - [ ] CodeBuddy 未接入项（证据见 [CodeBuddy](docs/codebuddy.md)、[SDK](docs/codebuddy-sdk.md)）：
   真实 CLI 浏览器套件（`*_real`，需隔离登录）、输入就绪／菜单题卡、问题报告处理会话、
   移动与克隆、SDK 用量与上下文（CLI 无对应控制请求）、`steer` 引导（CLI 有
