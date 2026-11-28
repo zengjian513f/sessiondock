@@ -30,17 +30,33 @@ pub async fn capture(
     };
     let rows = SessionRow::from_list(&document);
     let root = scanner.root().to_path_buf();
-    // Capture the HTTP client before asking the coordinator for SSH evidence.
-    // Process observation failure must not prevent an otherwise valid create.
-    let observed = tokio::task::spawn_blocking(move || {
+    // Anchor runtime lookups to the process tree observed for this live socket.
+    let caller = tokio::task::spawn_blocking(move || {
         let snapshot = linux::collect(scanner.root());
         let owners = linux::local_socket_owners(scanner.root(), peer, &snapshot);
         let [owner] = owners.as_slice() else {
             return None;
         };
         let scan = scanner.scan_blocking();
+        Some((snapshot, owner.clone(), scan))
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some((snapshot, owner, scan)) = caller else {
+        return Ok(None);
+    };
+    // The CLI scan skips sdkhost trees. Dedicated SDKs independently verify
+    // ownership through their native session checkpoints and live host status.
+    let sdk_owners = if scan.tree.is_sdkhost_descendant(owner.pid) {
+        state.native_sdks.resource_process_owners(&rows).await
+    } else {
+        Vec::new()
+    };
+    let observation_root = root.clone();
+    let observed = tokio::task::spawn_blocking(move || {
         let owned = scan.attribution_processes(&rows);
-        let by_pid: BTreeMap<_, _> = owned
+        let mut by_pid: BTreeMap<_, _> = owned
             .iter()
             .flat_map(|(uid, pids)| {
                 pids.iter()
@@ -48,6 +64,13 @@ pub async fn capture(
                     .map(move |pid| (*pid as u32, uid))
             })
             .collect();
+        for (uid, process) in &sdk_owners {
+            if snapshot.entries.get(&process.pid).is_some_and(|entry| {
+                entry.process == *process && same_process(&observation_root, process)
+            }) {
+                by_pid.insert(process.pid, uid);
+            }
+        }
         let by_key: BTreeMap<_, _> = rows
             .iter()
             .map(|r| ((r.source.clone(), r.sid.to_ascii_lowercase()), r))
@@ -83,7 +106,7 @@ pub async fn capture(
             pid = entry.parent;
         }
 
-        if !linux::identity(scanner.root(), owner.pid).is_some_and(|(p, _)| p == *owner) {
+        if !same_process(&observation_root, &owner) {
             return None;
         }
         Some((

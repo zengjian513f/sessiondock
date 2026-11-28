@@ -150,7 +150,9 @@ on desktop/mobile in both themes.
 
 DELTA (BUG-20261106-021317-6b1897): on Linux, direct loopback SDK create requests capture
 an initiating session from the live client socket's process incarnation and its
-inherited native identity or owning CLI ancestor. Shared daemons are not callers.
+inherited native identity or owning CLI ancestor. For callers under sdkhost,
+the ancestor can also be a dedicated SDK process verified through its native
+binding and live host status. Shared daemons are not callers.
 Codex and native SDK creation save the parent before replying; create receipts and
 pending SDK list rows carry the same metadata as native rows; pending identities
 can also use the node attachment/detachment endpoint. Continuations are
