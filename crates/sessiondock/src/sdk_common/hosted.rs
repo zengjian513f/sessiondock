@@ -33,6 +33,45 @@ pub(crate) struct Stdout<'a> {
     pub catching_up: bool,
 }
 
+pub(crate) enum Observation {
+    OffsetOnly,
+    Delta,
+    Published,
+}
+
+pub(crate) struct DeltaBatch {
+    pending: bool,
+    last_publish: std::time::Instant,
+}
+
+impl DeltaBatch {
+    pub fn new() -> Self {
+        Self {
+            pending: false,
+            last_publish: std::time::Instant::now(),
+        }
+    }
+
+    pub fn record(&mut self, observation: Observation) {
+        match observation {
+            Observation::OffsetOnly => {}
+            Observation::Delta => self.pending = true,
+            Observation::Published => {
+                // The immediate snapshot already includes every preceding delta.
+                self.pending = false;
+                self.last_publish = std::time::Instant::now();
+            }
+        }
+    }
+
+    pub fn due(&self, batch: &Stdout<'_>) -> bool {
+        self.pending
+            && (batch.eof
+                || batch.offset >= batch.live_end
+                || self.last_publish.elapsed() >= Duration::from_millis(100))
+    }
+}
+
 impl Stdout<'_> {
     pub fn lines(&self) -> impl Iterator<Item = (u64, &[u8])> {
         let mut end = self.start;

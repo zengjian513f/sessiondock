@@ -166,6 +166,14 @@ def fake_cli():
             msg(p['messageId'],'user',p['text'],v['id']);reply(v,{})
             if p['text']=='hold':
                 held=True;note({'type':'assistant_text_delta','messageId':'held','blockIndex':0,'textDelta':'Droid working'})
+            elif p['text']=='delta burst':
+                for i in range(300):
+                    thinking = i < 150
+                    note({'type':'thinking_text_delta' if thinking else 'assistant_text_delta',
+                          'messageId':v['id'],'blockIndex':0 if thinking else 1,'textDelta':f'[{i:03}]'})
+                while log.with_name('delta-burst-hold').exists():
+                    time.sleep(.02)
+                note({'type':'agent_turn_completed','reason':'completed'})
             elif p['text']=='tool':
                 tool={'type':'tool_use','id':'tool-example','name':'Read','input':{'path':'synthetic.txt'}}
                 note({'type':'tool_call','toolUse':tool})

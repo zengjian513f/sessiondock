@@ -1,5 +1,6 @@
 //! Projection of observed native messages, not persisted history or an oracle.
 use super::*;
+use crate::sdk_common::hosted::Observation;
 
 use crate::sdk_common::projection::{self, block_row, streaming_block_row, text};
 
@@ -17,7 +18,7 @@ pub(super) fn observe_at(
     frame: Value,
     offset: Option<u64>,
     received: Option<String>,
-) {
+) -> Observation {
     // Native SessionStart hooks run before --resume loads its persisted SID.
     // These unprojected startup notifications carry a temporary process UUID;
     // discard their telemetry without accepting any of its content or identity.
@@ -37,7 +38,7 @@ pub(super) fn observe_at(
                 live.last_checkpoint_error = None;
             }
         }
-        return;
+        return Observation::OffsetOnly;
     }
     let is_delta =
         frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
@@ -59,7 +60,7 @@ pub(super) fn observe_at(
             stop.cancel();
         }
         session.publish(&mut live);
-        return;
+        return Observation::Published;
     }
     for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
         if let Some(value) = frame.get(field) {
@@ -150,11 +151,11 @@ pub(super) fn observe_at(
                 };
                 let _ = waiter.send(result);
             }
-            return;
+            return Observation::Published;
         }
         "control_request" => {
             let Some(key) = frame["request_id"].as_str() else {
-                return;
+                return Observation::OffsetOnly;
             };
             let native = &frame["request"];
             if native["subtype"] == "can_use_tool" {
@@ -537,10 +538,14 @@ pub(super) fn observe_at(
         _ => {}
     }
     if is_delta {
+        if offset.is_some() {
+            return Observation::Delta;
+        }
         session.publish_throttled(&mut live);
     } else {
         session.publish(&mut live);
     }
+    Observation::Published
 }
 
 /// The caller answers one native card. Permission suggestions are displayed

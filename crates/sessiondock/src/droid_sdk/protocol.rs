@@ -1,5 +1,6 @@
 //! Factory Droid 1.6 JSON-RPC projection. Native history remains read-only.
 use super::*;
+use crate::sdk_common::hosted::Observation;
 
 pub(super) fn request(id: &str, request: &Value) -> Value {
     json!({"jsonrpc":"2.0","type":"request","factoryApiVersion":"1.0.0",
@@ -138,7 +139,7 @@ pub(super) fn observe_at(
     frame: Value,
     offset: Option<u64>,
     received: Option<String>,
-) {
+) -> Observation {
     let mut live = lock(&session.live);
     if let Some(offset) = offset {
         live.stdout_offset = offset;
@@ -264,6 +265,7 @@ pub(super) fn observe_at(
                     &mut live,
                     json!({"id":id,"native_id":n["messageId"],"role":if thinking {"thinking"} else {"assistant"},"text":content,"content":content,"phase":"progress","sdk_streaming":true}),
                 );
+                return Observation::Delta;
             }
             "settings_updated" => settings(&mut live, &n["settings"]),
             "permission_resolved" => {
@@ -326,14 +328,8 @@ pub(super) fn observe_at(
             _ => {}
         }
     }
-    if matches!(
-        frame["params"]["notification"]["type"].as_str(),
-        Some("assistant_text_delta" | "thinking_text_delta")
-    ) {
-        session.publish_throttled(&mut live);
-    } else {
-        session.publish(&mut live);
-    }
+    session.publish(&mut live);
+    Observation::Published
 }
 fn usage(v: &Value) -> Value {
     // Factory reports uncached input separately from cache reads and writes.

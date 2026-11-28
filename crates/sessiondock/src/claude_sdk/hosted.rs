@@ -1,6 +1,8 @@
 //! Restartable stream transport. Only this adapter interprets Claude frames.
 use super::*;
-use crate::sdk_common::hosted::{Projection, Runtime, Stdout, Termination, uncertain_write};
+use crate::sdk_common::hosted::{
+    DeltaBatch, Observation, Projection, Runtime, Stdout, Termination, uncertain_write,
+};
 use crate::sdk_common::private_dir;
 use sdkhost_client::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -336,7 +338,10 @@ async fn run(
             secrets: &secrets,
         }
         .run(
-            &mut SessionProjection { session: &session },
+            &mut SessionProjection {
+                session: &session,
+                deltas: DeltaBatch::new(),
+            },
             stdout_offset,
             &mut caught_up,
             &mut end,
@@ -404,6 +409,7 @@ async fn run(
 
 struct SessionProjection<'a> {
     session: &'a Arc<Session>,
+    deltas: DeltaBatch,
 }
 
 impl Projection for SessionProjection<'_> {
@@ -450,9 +456,10 @@ impl Projection for SessionProjection<'_> {
                 .map_err(|_| "claude_sdk: invalid native stream-json output")?;
             let refresh = frame["type"] == "result"
                 || (frame["type"] == "system" && frame["subtype"] == "compact_boundary");
-            offset_dirty =
-                frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
-            protocol::observe_at(session, frame, Some(next), batch.received_at(next));
+            let observation =
+                protocol::observe_at(session, frame, Some(next), batch.received_at(next));
+            offset_dirty = !matches!(observation, Observation::Published);
+            self.deltas.record(observation);
             if refresh {
                 session.schedule_usage();
             }
@@ -460,7 +467,18 @@ impl Projection for SessionProjection<'_> {
                 return Err(error);
             }
         }
-        if offset_dirty {
+        if self.deltas.due(&batch) {
+            let mut live = lock(&session.live);
+            if batch.eof {
+                session.publish(&mut live);
+            } else {
+                session.publish_throttled(&mut live);
+            }
+            if let Some(error) = &live.last_checkpoint_error {
+                return Err(error.clone());
+            }
+            self.deltas.record(Observation::Published);
+        } else if offset_dirty {
             let mut live = lock(&session.live);
             if batch.eof {
                 live.save_checkpoint().map_err(error)?;

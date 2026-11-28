@@ -291,11 +291,17 @@ def fake_cli():
         record("assistant", frame_id, message, isSidechain=parent is not None)
         send({"type": "assistant", "uuid": frame_id, "message": message, "parent_tool_use_id": parent})
 
-    def stream_text(content, message_id, hold=False):
+    def stream_text(content, message_id, hold=False, burst=False):
         send({"type": "stream_event", "event": {"type": "message_start", "message": {"id": message_id, "model": state["model"]}}})
         send({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
-        for part in (content[:8], content[8:]):
+        parts = [f"[{i:03}]" for i in range(300)] if burst else (content[:8], content[8:])
+        for part in parts:
             send({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": part}}})
+        if burst:
+            content = "".join(parts)
+            # Keep stdout live but quiet until the browser sees all incremental text.
+            while log.with_name("delta-burst-hold").exists():
+                time.sleep(.02)
         if hold:
             interrupted.wait(30)
         send({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
@@ -473,7 +479,8 @@ def fake_cli():
                 response = request_control({"subtype": "request_user_dialog", "dialog_kind": "refusal_fallback_prompt",
                     "payload": {"originalModel": state["model"], "fallbackModel": "synthetic-fallback", "guidanceText": "Synthetic fallback choice"}})
                 stream_text("Dialog response " + json.dumps(((response or {}).get("response") or {}).get("response", {})), "dialog-response-" + message_id)
-            stream_text("Claude interrupted" if interrupted.is_set() else "Claude synthetic final " + content, "msg-final-" + message_id)
+            stream_text("Claude interrupted" if interrupted.is_set() else "Claude synthetic final " + content,
+                        "msg-final-" + message_id, burst=content == "delta burst")
             state["completed"] += 1
             send({"type": "result", "subtype": "success", "is_error": False, "uuid": str(uuid.uuid4()), "result": "final",
                 "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 10},

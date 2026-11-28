@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from droid_sdk_fixtures import DroidFixture
 from history_fixtures import BINARY
-from claude_sdk_browser import post, receipt, snapshot, wait_snapshot, open_sdk, send
+from claude_sdk_browser import delta_burst, post, receipt, snapshot, wait_snapshot, open_sdk, send
 
 
 def check(fixture,base,screenshots):
@@ -29,6 +29,7 @@ def check(fixture,base,screenshots):
         expect(page.locator('.native-sdk-pane').get_by_text('hello from browser',exact=True)).to_have_count(1)
         expect(page.locator('.native-sdk-pane').get_by_text('Droid final hello from browser',exact=True)).to_have_count(1)
         if screenshots:page.screenshot(path=str(screenshots/'droid-wide-light.png'),full_page=True)
+        delta_burst(page,fixture,expect,thinking_frames=150)
         send(page,'approval')
         req=wait_snapshot(page,fixture.uid,lambda r:bool(r['requests']))['raw']['requests'][0]
         assert req['type']=='approval'
@@ -102,7 +103,9 @@ def hub_check(root):
             with sync_playwright() as p:
                 browser=p.chromium.launch(headless=True);page=browser.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                 row=page.locator('#side .item[data-uid^="droid:"]').first;expect(row).to_be_visible();uid=row.get_attribute('data-uid')
-                open_sdk(page,f,expect,uid=uid);send(page,'hub Droid');expect(page.locator('.native-sdk-pane')).to_contain_text('Droid final hub Droid');browser.close()
+                open_sdk(page,f,expect,uid=uid);send(page,'hub Droid');expect(page.locator('.native-sdk-pane')).to_contain_text('Droid final hub Droid')
+                delta_burst(page,f,expect,thinking_frames=150)
+                browser.close()
         finally:hub.stop()
 
 

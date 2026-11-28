@@ -106,6 +106,44 @@ def send(page, text):
     page.locator("#sdk-send").click()
 
 
+def delta_burst(page, fixture, expect, *, thinking_frames=0):
+    thinking = "".join(f"[{i:03}]" for i in range(thinking_frames))
+    expected = "".join(f"[{i:03}]" for i in range(thinking_frames, 300))
+    # Count on the actual page subscription, before the renderer can coalesce paints.
+    probe = page.evaluate_handle("""() => {
+      const es = NativeSdkView.es;
+      const counts = {};
+      const listen = event => {
+        const {type} = JSON.parse(event.data);
+        counts[type] = (counts[type] || 0) + 1;
+      };
+      es.addEventListener('sdk', listen);
+      return {es, counts, listen};
+    }""")
+    gate = fixture.root / 'delta-burst-hold'
+    try:
+        gate.touch()
+        send(page, 'delta burst')
+        expect(page.locator('.sdk-live').get_by_text(expected, exact=True)).to_be_visible(timeout=15000)
+        assert page.evaluate('NativeSdkView.running'), 'expected the quiet, live stdout edge'
+        gate.unlink()
+        page.wait_for_function("""([answer, thinking]) => {
+          const has = (role, text) => NativeSdkView.raw.items.some(item => item.role === role && item.text === text);
+          return !NativeSdkView.running && has('assistant', answer) && (!thinking || has('thinking', thinking));
+        }""", arg=[expected, thinking])
+        counts = probe.evaluate("""probe => {
+          if (NativeSdkView.es !== probe.es) throw Error('SDK stream reconnected during burst');
+          return probe.counts;
+        }""")
+        print(f'{page.evaluate("NativeSdkView.uid")} 300 frames, SSE {counts}', flush=True)
+        assert counts.get('snapshot', 0) + counts.get('snapshot_delta', 0) > 0, counts
+        assert sum(counts.values()) <= 100, counts
+    finally:
+        gate.unlink(missing_ok=True)
+        probe.evaluate("p => p.es.removeEventListener('sdk', p.listen)")
+        probe.dispose()
+
+
 def browser_check(fixture, base, screenshots):
     from playwright.sync_api import sync_playwright, expect
     def capture(page, name):
@@ -642,6 +680,16 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    from playwright.sync_api import expect, sync_playwright
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-burst-') as temporary:
+        fixture = ClaudeFixture(Path(temporary))
+        with fixture.server(args.binary) as base, sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(base, wait_until='networkidle')
+            open_sdk(page, fixture, expect)
+            delta_burst(page, fixture, expect)
+            browser.close()
     for kind in ('user', 'approval'):
         with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-hooks-') as temporary:
             startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
