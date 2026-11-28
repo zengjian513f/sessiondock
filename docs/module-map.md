@@ -11,7 +11,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 332 files, 143089 lines.
+`crates/sessiondock/src`: 332 files, 143163 lines.
 
 - `agent_usage.rs` (243 lines)
 - `agy_sdk/`
@@ -98,10 +98,10 @@ python3 tests/module_map.py --write
 - `claude_sdk/`
   - `actions.rs` (233 lines)
   - `background.rs` (174 lines)
-  - `hosted.rs` (489 lines)
+  - `hosted.rs` (507 lines)
   - `mod.rs` (923 lines)
     - mods: `actions`, `background`, `hosted`, `protocol`, `transport`, `usage`
-  - `protocol.rs` (632 lines)
+  - `protocol.rs` (637 lines)
   - `transport.rs` (167 lines)
   - `usage.rs` (110 lines)
 - `cleanup.rs` (133 lines)
@@ -158,10 +158,10 @@ python3 tests/module_map.py --write
 - `droid_sdk/`
   - `actions.rs` (198 lines)
   - `activity.rs` (491 lines)
-  - `hosted.rs` (462 lines)
+  - `hosted.rs` (478 lines)
   - `mod.rs` (1025 lines)
     - mods: `actions`, `activity`, `hosted`, `protocol`, `transport`, `writers`
-  - `protocol.rs` (392 lines)
+  - `protocol.rs` (388 lines)
   - `transport.rs` (172 lines)
   - `writers.rs` (319 lines)
 - `error.rs` (68 lines)
@@ -293,7 +293,7 @@ python3 tests/module_map.py --write
 - `sdk_common/`
   - `commands.rs` (161 lines)
   - `host.rs` (207 lines)
-  - `hosted.rs` (314 lines)
+  - `hosted.rs` (353 lines)
   - `mod.rs` (152 lines)
     - mods: `commands`, `host`, `hosted`, `outbox`, `projection`, `usage`, `writers`
   - `outbox.rs` (59 lines)
